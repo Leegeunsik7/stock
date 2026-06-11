@@ -1,0 +1,130 @@
+@page "/replay"
+@inject LocalDatabase Db
+@inject IQuoteProvider Provider
+
+<div class="top">
+    <div class="hello"><h1>🔁 결정 리플레이</h1><p>내 실제 자산 추이 + 시그널 추종 분석 (로컬 데이터)</p></div>
+    <button class="addbtn" @onclick="LoadAsync" style="margin:0 16px">🔄 새로고침</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:900px">
+
+    @* 실제 자산 추이 *@
+    <div class="card-sec">
+        <div class="sec-h">📈 실제 자산 추이 <span class="sub" style="font-weight:400">(매일 자동 스냅샷)</span></div>
+        @if (_rep.Equity.Count >= 2)
+        {
+            @((MarkupString)EquitySvg())
+            <div class="sub" style="font-size:12px;margin-top:6px">
+                @_rep.Equity.First().Date (@_rep.Equity.First().Total.ToString("N0")원) → @_rep.Equity.Last().Date (@_rep.Equity.Last().Total.ToString("N0")원)
+            </div>
+        }
+        else
+        {
+            <div class="sub" style="font-size:13px">스냅샷이 2일 이상 쌓이면 추이가 표시됩니다(대시보드 진입 시 일별 자동 기록).</div>
+        }
+    </div>
+
+    @* 시그널 추종 *@
+    <div class="card-sec">
+        <div class="sec-h">🎯 시그널 추종 분석</div>
+        @if (_rep.BuyCount == 0)
+        {
+            <div class="sub" style="font-size:13px">매수 시그널 기록이 없습니다. 시그널 엔진에서 '전체 스캔'을 실행해 보세요.</div>
+        }
+        else
+        {
+            <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(3,1fr)">
+                <div class="tile g"><div class="lab">매수 시그널</div><div class="val num">@_rep.BuyCount</div></div>
+                <div class="tile @(_rep.FollowRate>=50?"u":"d")"><div class="lab">따름률</div><div class="val num">@_rep.FollowRate.ToString("0")%</div><div class="sub">@_rep.FollowedCount / @_rep.BuyCount 따름</div></div>
+                <div class="tile @(_ignoredAvg>=0?"u":"d")"><div class="lab">무시한 시그널 평균 가상수익</div><div class="val num">@(_priced ? _ignoredAvg.ToString("+0.0;-0.0;0") + "%" : "…")</div><div class="sub">@(_ignoredAvg>=0 && _priced ? "따랐다면 유리했을 가능성" : "")</div></div>
+            </div>
+
+            <table class="ctbl">
+                <thead><tr><th>시각</th><th>종목</th><th>전략</th><th style="text-align:right">추정 진입가</th><th style="text-align:right">현재가</th><th style="text-align:right">가상 수익</th><th>추종</th></tr></thead>
+                <tbody>
+                    @foreach (var s in _rep.Signals)
+                    {
+                        <tr>
+                            <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">@s.At.ToString("MM-dd HH:mm")</td>
+                            <td><b>@s.Name</b><br/><small class="sub">@s.Symbol</small></td>
+                            <td style="font-size:12px">@s.Strategy</td>
+                            <td class="num" style="text-align:right">@(s.EntryEst>0 ? s.EntryEst.ToString("N0") : "-")</td>
+                            <td class="num" style="text-align:right">@(s.Current>0 ? s.Current.ToString("N0") : "-")</td>
+                            <td class="num @(s.HypoReturnPct>=0?"up":"down")" style="text-align:right">@(s.Current>0 ? s.HypoReturnPct.ToString("+0.0;-0.0") + "%" : "-")</td>
+                            <td>@(s.Followed ? "✅ 따름" : "⬜ 무시")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="sub" style="font-size:11.5px;margin-top:8px">※ 추정 진입가 = 시그널 목표가÷1.05. 가상 수익은 현재가 기준 단순 비교이며 투자 권유가 아닙니다.</div>
+        }
+    </div>
+</div>
+
+<style>.card-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px}.sec-h{font-weight:700;margin-bottom:14px}</style>
+
+@code {
+    private ReplayReport _rep = new();
+    private bool _priced;
+    private decimal _ignoredAvg;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _priced = false; _ignoredAvg = 0;
+        _rep = ReplayService.Build(Db);
+        StateHasChanged();
+
+        // 시그널 종목 현재가 조회 → 가상 수익 계산 (시장별 그룹)
+        foreach (var grp in _rep.Signals.GroupBy(s => s.Market))
+        {
+            var syms = grp.Select(s => s.Symbol).Distinct().ToList();
+            try
+            {
+                var quotes = await Provider.GetQuotesAsync(syms, grp.Key);
+                foreach (var q in quotes)
+                    foreach (var s in _rep.Signals.Where(x => x.Symbol == q.Symbol))
+                        if (q.Price > 0) s.Current = q.Price;
+            }
+            catch { }
+        }
+
+        var ignored = _rep.Signals.Where(s => !s.Followed && s.Current > 0 && s.EntryEst > 0).ToList();
+        if (ignored.Count > 0) _ignoredAvg = ignored.Average(s => s.HypoReturnPct);
+        _priced = true;
+        StateHasChanged();
+    }
+
+    private string EquitySvg()
+    {
+        var pts = _rep.Equity;
+        if (pts.Count < 2) return "";
+        double w = 840, h = 200, padL = 64, padT = 12, padR = 14, padB = 22;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double max = (double)pts.Max(p => p.Total), min = (double)pts.Min(p => p.Total);
+        double range = max - min; if (range <= 0) range = 1;
+        var color = pts.Last().Total >= pts.First().Total ? "var(--up)" : "var(--down)";
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:200px;display:block'>");
+        for (int i = 0; i <= 4; i++)
+        {
+            double y = padT + plotH * i / 4.0;
+            double v = max - range * i / 4.0;
+            sb.Append($"<line x1='{padL}' y1='{y:F1}' x2='{padL + plotW:F1}' y2='{y:F1}' stroke='var(--line)'/>");
+            sb.Append($"<text x='4' y='{y + 4:F1}' fill='var(--sub)' font-size='10'>{v:N0}</text>");
+        }
+        var poly = new System.Text.StringBuilder();
+        for (int i = 0; i < pts.Count; i++)
+        {
+            double x = padL + (pts.Count == 1 ? 0 : (double)i / (pts.Count - 1) * plotW);
+            double y = padT + (max - (double)pts[i].Total) / range * plotH;
+            poly.Append($"{x:F1},{y:F1} ");
+        }
+        sb.Append($"<polyline points='{poly}' fill='none' stroke='{color}' stroke-width='2'/>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}

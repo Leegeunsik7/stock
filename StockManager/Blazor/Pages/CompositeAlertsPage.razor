@@ -1,4 +1,5 @@
 @page "/composite"
+@inject AiService Ai
 @implements IDisposable
 
 @* 복합 알림 — Blazor 네이티브 규칙 편집기(레거시 WinForms 관리창 이식).
@@ -8,6 +9,14 @@
 <p>규칙 @(_svc.Rules.Count)개 · 활성 @(_svc.Rules.Count(r=>r.Enabled))개 · 마지막 평가: @(_svc.LastRun==default?"없음":_svc.LastRun.ToString("HH:mm:ss"))</p></div>
 <button class="addbtn" style="background:var(--up);margin:0 6px" @onclick="AddNew">➕ 규칙 추가</button>
 <button class="addbtn" @onclick='async ()=>{await _svc.EvaluateNowAsync();StateHasChanged();}' style="margin-right:16px">🔄 지금 평가</button></div>
+
+@* 자연어 → 규칙 (🅱) — LLM은 검증 가능한 규칙 JSON만 생성, 편집기에 채워 검토 후 저장 *@
+<div style="margin:0 28px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="flex:1;min-width:280px" placeholder="🤖 자연어로 규칙 만들기 (예: 비트코인 RSI 30 아래로 가고 거래량 2배 늘면 알림)"
+           @bind="_nl" @bind:event="oninput" @onkeydown="OnNlKey" />
+    <button class="addbtn" style="background:var(--accent-2)" disabled="@(_aiBusy || !Ai.HasKey)" @onclick="CompileNl">@(_aiBusy?"생성 중…":"🤖 AI 규칙 생성")</button>
+    @if (!Ai.HasKey) { <span class="sub" style="font-size:12px">설정 마법사에서 Gemini 키 입력 시 사용 가능</span> }
+</div>
 
 @if (_editing != null)
 {
@@ -89,8 +98,24 @@
     private CompositeRule? _editing;
     private bool _isNew;
     private string _msg = "";
+    private string _nl = "";
+    private bool _aiBusy;
 
     protected override void OnInitialized() => _svc.Evaluated += Refresh;
+
+    private async Task OnNlKey(KeyboardEventArgs e) { if (e.Key == "Enter") await CompileNl(); }
+
+    // 자연어 → 규칙 생성 → 편집기에 채움(저장은 사용자가 검토 후)
+    private async Task CompileNl()
+    {
+        if (_aiBusy || string.IsNullOrWhiteSpace(_nl)) return;
+        _aiBusy = true; _msg = ""; StateHasChanged();
+        var (rule, err) = await Ai.CompileRuleAsync(_nl.Trim());
+        _aiBusy = false;
+        if (rule == null) { _msg = "🤖 " + err; return; }
+        _editing = rule; _isNew = true;
+        _msg = "🤖 AI가 규칙 초안을 만들었습니다. 검토·수정 후 '저장'을 누르세요.";
+    }
     private void Refresh() => InvokeAsync(StateHasChanged);
 
     private void AddNew()

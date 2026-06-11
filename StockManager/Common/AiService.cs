@@ -88,6 +88,76 @@ namespace StockManager.Common
             catch (Exception ex) { return "분석 오류: " + ex.Message; }
         }
 
+        // ===== 자연어 → 복합 알림 규칙 컴파일 (검증된 CompositeRule만 반환; 환각 안전) =====
+        //  LLM은 자유 조언이 아니라 '스키마 JSON'만 생성 → C#에서 파싱·검증 → 사용자 검토 후 저장.
+        public async Task<(CompositeRule? rule, string error)> CompileRuleAsync(string nl, string model = "gemini-2.0-flash")
+        {
+            var apiKey = _db.GetSecret("Gemini.ApiKey");
+            if (string.IsNullOrWhiteSpace(apiKey)) return (null, "Gemini API 키가 없습니다.");
+            if (string.IsNullOrWhiteSpace(nl)) return (null, "요청을 입력하세요.");
+
+            var prompt =
+                "다음 한국어 요청을 '복합 알림 규칙' JSON으로 변환하세요. 아래 스키마를 정확히 따르고 JSON만 출력하세요.\n" +
+                "{\"name\":string,\"assetKind\":\"coin|stock\",\"target\":\"코인은 KRW-BTC 형식, 주식은 005930 형식\"," +
+                "\"logic\":\"And|Or\",\"cooldownMin\":int,\"conditions\":[{\"metric\":\"Price|ChangePct|MaGapPct|Rsi|VolumeSurgePct\"," +
+                "\"param\":int,\"op\":\"Gte|Lte\",\"threshold\":number}]}\n" +
+                "metric: Price=현재가(원), ChangePct=당일 등락률(%), MaGapPct=param일 이동평균과의 괴리(%), " +
+                "Rsi=param일 RSI(0~100), VolumeSurgePct=전일 대비 거래량 증가율(%). op: Gte=이상, Lte=이하. param=MA/RSI 기간(기본 14).\n" +
+                $"요청: {nl}";
+
+            try
+            {
+                var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
+                var payload = JsonSerializer.Serialize(new
+                {
+                    contents = new[] { new { parts = new[] { new { text = prompt } } } },
+                    generationConfig = new { responseMimeType = "application/json", temperature = 0.1 }
+                });
+                using var res = await Http.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
+                var body = await res.Content.ReadAsStringAsync();
+                if (!res.IsSuccessStatusCode) return (null, $"생성 실패({(int)res.StatusCode})");
+                using var doc = JsonDocument.Parse(body);
+                var text = doc.RootElement.GetProperty("candidates")[0].GetProperty("content")
+                    .GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
+                return ParseRule(text);
+            }
+            catch (Exception ex) { return (null, "오류: " + ex.Message); }
+        }
+
+        private static (CompositeRule? rule, string error) ParseRule(string jsonText)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(jsonText);
+                var r = doc.RootElement;
+                var rule = new CompositeRule
+                {
+                    Name = Str(r, "name", "AI 규칙"),
+                    AssetKind = Str(r, "assetKind", "coin").Equals("stock", StringComparison.OrdinalIgnoreCase) ? "stock" : "coin",
+                    Target = Str(r, "target", ""),
+                    Logic = Str(r, "logic", "And").Equals("Or", StringComparison.OrdinalIgnoreCase) ? RuleLogic.Or : RuleLogic.And,
+                    CooldownMin = r.TryGetProperty("cooldownMin", out var cm) && cm.TryGetInt32(out var cmi) ? cmi : 30,
+                    Conditions = new()
+                };
+                if (r.TryGetProperty("conditions", out var conds) && conds.ValueKind == JsonValueKind.Array)
+                    foreach (var c in conds.EnumerateArray())
+                    {
+                        if (!Enum.TryParse<CondMetric>(Str(c, "metric", "Price"), true, out var metric)) metric = CondMetric.Price;
+                        if (!Enum.TryParse<CondOp>(Str(c, "op", "Gte"), true, out var op)) op = CondOp.Gte;
+                        int param = c.TryGetProperty("param", out var p) && p.TryGetInt32(out var pi) && pi > 0 ? pi : 14;
+                        decimal thr = c.TryGetProperty("threshold", out var t) ? Safe.JsonDec(t) : 0m;
+                        rule.Conditions.Add(new CompositeCondition { Metric = metric, Param = param, Op = op, Threshold = thr });
+                    }
+                if (string.IsNullOrWhiteSpace(rule.Target)) return (null, "대상(코인/종목)을 인식하지 못했습니다. 더 구체적으로 입력하세요.");
+                if (rule.Conditions.Count == 0) return (null, "조건을 인식하지 못했습니다.");
+                return (rule, "");
+            }
+            catch (Exception ex) { return (null, "규칙 파싱 실패: " + ex.Message); }
+        }
+
+        private static string Str(JsonElement e, string prop, string def)
+            => e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? def) : def;
+
         // 키 미설정·호출 실패 등 비정상 응답 식별 (텔레그램 전송/저장 가드용)
         public static bool IsError(string text) =>
             string.IsNullOrWhiteSpace(text) || text.StartsWith("⚠️") || text.StartsWith("분석 실패") || text.StartsWith("분석 오류") || text == "(응답 없음)";
