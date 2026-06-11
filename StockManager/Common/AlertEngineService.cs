@@ -70,6 +70,7 @@ namespace StockManager.Common
                 await ProcessPaperLimitsAsync();
                 await CheckDailyBriefAsync();
                 await CheckAutoDcaAsync();
+                await CheckOptimizerAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -119,6 +120,50 @@ namespace StockManager.Common
             var (ok, msg) = _paper.Place(PaperAsset.Coin, market, name, PaperSide.Buy, PaperKind.Market, amount / price, 0, price);
             Log.Info($"[AutoDCA·모의] {market} {amount:N0}원 → {(ok ? "체결" : "실패")}: {msg}");
             if (ok) AlertCenter.Instance.RaiseSystem("🤖 자동 DCA (모의)", $"{name} {amount:N0}원 매수 — {msg}", AlertLevel.Info);
+        }
+
+        // ===== 오버나잇 전략 옵티마이저 🅔 (옵트인 · 읽기전용 백테스트) =====
+        //  유휴 시간에 보유 주식마다 MA크로스 기간 격자를 전수 백테스트해 종목별 최적값 발굴.
+        //  주문/DCA를 절대 건드리지 않음(발굴만). 결과는 Optimizer.Results(JSON)에 저장 → /optimizer가 표시.
+        //  IntervalHours(기본 24) 간격으로 1회. API 보호: 종목당 짧은 간격 + 25종목 상한.
+        private async Task CheckOptimizerAsync()
+        {
+            if (_db!.GetSetting("Optimizer.Enabled") != "true" || _provider == null) return;
+            int hours = int.TryParse(_db.GetSetting("Optimizer.IntervalHours"), out var hh) && hh > 0 ? hh : 24;
+            if (DateTime.TryParse(_db.GetSetting("Optimizer.LastRun"), out var last) && (DateTime.Now - last).TotalHours < hours) return;
+
+            var holdings = _db.GetAllHoldings()
+                .Where(h => h.Market != Market.CRYPTO && !string.IsNullOrWhiteSpace(h.Symbol))
+                .GroupBy(h => h.Symbol, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+                .Take(25).ToList();
+            if (holdings.Count == 0) return;
+
+            _db.SetSetting("Optimizer.LastRun", DateTime.Now.ToString("o"));   // 먼저 마킹(중복 실행 방지 — DCA/Brief와 동일 규약)
+
+            var snap = new OptSnapshot { GeneratedAt = DateTime.Now.ToString("o") };
+            foreach (var h in holdings)
+            {
+                try
+                {
+                    var candles = await _provider.GetHistoryAsync(h.Symbol, h.Market,
+                        DateTime.Now.AddMonths(-18), DateTime.Now);
+                    var r = StrategyOptimizer.Optimize(h.Symbol, string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name, candles, h.Market);
+                    snap.Rows.Add(StrategyOptimizer.ToRow(r));
+                }
+                catch (Exception ex) { Log.Warn($"[Optimizer] {h.Symbol} 실패: {ex.Message}"); }
+                await Task.Delay(150);   // API 한도 보호
+            }
+
+            try { _db.SetSetting("Optimizer.Results", System.Text.Json.JsonSerializer.Serialize(snap)); }
+            catch (Exception ex) { Log.Warn($"[Optimizer] 결과 저장 실패: {ex.Message}"); }
+
+            var best = snap.Rows.Where(r => r.IsValid).OrderByDescending(r => r.TotalReturn).FirstOrDefault();
+            int valid = snap.Rows.Count(r => r.IsValid);
+            if (best != null)
+                AlertCenter.Instance.RaiseSystem("🌙 오버나잇 옵티마이저",
+                    $"{valid}/{snap.Rows.Count}종목 분석 완료 · 최고 {best.Name} {best.Label} ({best.TotalReturn:+0.0;-0.0}%)",
+                    AlertLevel.Info);
+            Log.Info($"[Optimizer] {valid}/{snap.Rows.Count}종목 격자탐색 완료");
         }
 
         // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====

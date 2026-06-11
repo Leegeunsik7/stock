@@ -37,25 +37,46 @@ namespace StockManager.Common
         /// <summary>시드 1,000,000원 · 수수료/세금/슬리피지 반영 백테스트 (캔들 30개 이상 권장).</summary>
         public static BacktestSummary Run(List<Candle> candles, int strategy, Market market)
         {
+            var closes = candles.Select(c => c.Close).ToList();
+            var ema12 = EmaSeries(closes, 12);
+            var ema26 = EmaSeries(closes, 26);
+            return RunCore(candles, market, i => GetSignal(candles, closes, ema12, ema26, i, strategy));
+        }
+
+        /// <summary>MA 골든/데드크로스 — 단·장기 기간을 파라미터화(옵티마이저 격자탐색용).</summary>
+        public static BacktestSummary RunMaCross(List<Candle> candles, Market market, int shortP, int longP)
+        {
+            if (shortP < 1 || longP <= shortP) return new BacktestSummary();
+            var closes = candles.Select(c => c.Close).ToList();
+            return RunCore(candles, market, i => MaCrossSig(closes, i, shortP, longP), warmup: longP + 1);
+        }
+
+        private static int MaCrossSig(List<decimal> closes, int i, int s, int l)
+        {
+            if (i < l) return 0;
+            var ms = Avg(closes, i - s + 1, s);
+            var ml = Avg(closes, i - l + 1, l);
+            var msP = Avg(closes, i - s, s);
+            var mlP = Avg(closes, i - l, l);
+            if (msP < mlP && ms > ml) return 1;
+            if (msP > mlP && ms < ml) return -1;
+            return 0;
+        }
+
+        // 공통 시뮬 코어 — 신호 함수만 주입(Run/RunMaCross 공유). 비용모델·강제청산·MDD/Sharpe 동일.
+        private static BacktestSummary RunCore(List<Candle> candles, Market market, Func<int, int> signalAt, int warmup = 30)
+        {
             var cost = TradingCost.Default;
-            decimal equity = 1_000_000m;
-            decimal initial = equity;
+            decimal equity = 1_000_000m, initial = equity;
             int qty = 0;
             decimal entryPrice = 0;
             var equityCurve = new List<decimal>();
             var tradeReturns = new List<decimal>();
 
-            // closes/EMA는 1회만 전체 계산 (원본 M1 최적화 유지)
-            var closes = candles.Select(c => c.Close).ToList();
-            var ema12 = EmaSeries(closes, 12);
-            var ema26 = EmaSeries(closes, 26);
-
-            for (int i = 30; i < candles.Count; i++)
+            for (int i = warmup; i < candles.Count; i++)
             {
-                var sig = GetSignal(candles, closes, ema12, ema26, i, strategy);
+                var sig = signalAt(i);
                 var price = candles[i].Close;
-
-                // 슬리피지 반영한 실행가 (불리하게)
                 var execPrice = sig switch
                 {
                     1 => price * (1 + cost.SlippageRate),
@@ -73,19 +94,15 @@ namespace StockManager.Common
                 else if (sig == -1 && qty > 0)
                 {
                     var amount = qty * execPrice;
-                    var commission = cost.Commission(market, amount);
-                    var tax = cost.SellTax(market, amount);
-                    equity += amount - commission - tax;
-                    if (entryPrice > 0)
-                        tradeReturns.Add((execPrice - entryPrice) / entryPrice * 100m);
+                    equity += amount - cost.Commission(market, amount) - cost.SellTax(market, amount);
+                    if (entryPrice > 0) tradeReturns.Add((execPrice - entryPrice) / entryPrice * 100m);
                     qty = 0;
                 }
 
                 equityCurve.Add(equity + qty * price);
             }
 
-            // 마감 시 강제 청산 + 마지막 점 덮어쓰기 (원본 룰)
-            if (qty > 0 && candles.Count > 0 && equityCurve.Count > 0)
+            if (qty > 0 && candles.Count > 0 && equityCurve.Count > 0)   // 마감 강제 청산 + 마지막 점 덮어쓰기
             {
                 var lastP = candles.Last().Close * (1 - cost.SlippageRate);
                 var amount = qty * lastP;
@@ -95,10 +112,7 @@ namespace StockManager.Common
             }
 
             var totalReturn = (equity - initial) / initial * 100m;
-
-            // MDD (running max · O(n))
-            decimal runningMax = equityCurve.Count > 0 ? equityCurve[0] : initial;
-            decimal maxDD = 0m;
+            decimal runningMax = equityCurve.Count > 0 ? equityCurve[0] : initial, maxDD = 0m;
             foreach (var e in equityCurve)
             {
                 if (e > runningMax) runningMax = e;
