@@ -31,7 +31,14 @@
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
             <div><label class="flbl">포트</label><input class="fin" style="width:90px" type="number" @bind="_lanPort" /></div>
             <div><label class="flbl">접속 PIN</label><input class="fin" style="width:130px" @bind="_lanPin" /></div>
+            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="GenPin">🎲 PIN 생성</button>
             <button class="addbtn" @onclick="ApplyLan">적용</button>
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:var(--sub);line-height:1.7">
+            <b>원격 접속(외부망):</b> 앱 개발 없이 두 가지 중 택1 —<br/>
+            ① <b>Tailscale</b>(권장): 설치 후 <code>tailscale up</code> → 폰에서 <code>http://(이PC의 Tailscale IP):@_lanPort</code> (사설 메시·암호화)<br/>
+            ② <b>Cloudflare Tunnel</b>: <code>cloudflared tunnel --url http://localhost:@_lanPort</code> → 발급 URL 접속(공개, Access로 보호 권장)<br/>
+            <b>헤드리스 상주:</b> <code>MS2E.StockSuite.exe --headless</code> (UI 없이 엔진+서버만, 트레이로 종료). PIN 10회 오류 시 60초 잠금.
         </div>
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">
             상태: @(LanStatusServer.Instance.Running ? $"🟢 실행 중 (포트 {LanStatusServer.Instance.Port})" : "⚪ 중지")
@@ -64,6 +71,12 @@
         _lanEnabled = Db.GetSetting("Lan.Enabled") == "true";
         if (int.TryParse(Db.GetSetting("Lan.Port"), out var p)) _lanPort = p;
         _lanPin = Db.GetSetting("Lan.Pin") ?? "";
+    }
+
+    private void GenPin()
+    {
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(4);
+        _lanPin = (BitConverter.ToUInt32(bytes, 0) % 1_000_000).ToString("D6");   // 무작위 6자리
     }
 
     private void ApplyLan()

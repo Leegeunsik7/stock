@@ -28,6 +28,10 @@ namespace StockManager.Common
         public int Port { get; private set; }
         public string LastError { get; private set; } = "";
 
+        // PIN 무차별 대입 방어 (인터넷 노출 대비) — 실패 누적 시 일시 잠금. 루프가 단일 스레드라 평이한 필드로 충분.
+        private int _failCount;
+        private DateTime _lockUntil;
+
         private LanStatusServer() { }
 
         /// <summary>Lan.Enabled=="true"일 때만 시작. 이미 실행 중이면 무시. (앱 시작 시·설정 변경 시 호출)</summary>
@@ -83,9 +87,16 @@ namespace StockManager.Common
             if (path is "/" or "/index.html") { Write(ctx, 200, "text/html; charset=utf-8", Html()); return; }
             if (path == "/api/status")
             {
+                if (DateTime.Now < _lockUntil) { Write(ctx, 429, "application/json", "{\"error\":\"locked\"}"); return; }
                 var pin = _db!.GetSetting("Lan.Pin") ?? "";
                 var given = ctx.Request.QueryString["pin"] ?? "";
-                if (string.IsNullOrEmpty(pin) || !TimeSafeEquals(given, pin)) { Write(ctx, 401, "application/json", "{\"error\":\"unauthorized\"}"); return; }
+                if (string.IsNullOrEmpty(pin) || !TimeSafeEquals(given, pin))
+                {
+                    if (++_failCount >= 10) { _lockUntil = DateTime.Now.AddSeconds(60); _failCount = 0; Log.Warn("[LAN] PIN 10회 실패 → 60초 잠금"); }
+                    Write(ctx, 401, "application/json", "{\"error\":\"unauthorized\"}");
+                    return;
+                }
+                _failCount = 0;
                 Write(ctx, 200, "application/json; charset=utf-8", StatusJson());
                 return;
             }

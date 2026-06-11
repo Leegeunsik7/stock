@@ -112,7 +112,17 @@ namespace StockManager
                 Log.Info("===== 종료 =====");
             }
 
-            bool classic = args is { Length: > 0 } && args[0].Equals("--classic", StringComparison.OrdinalIgnoreCase);
+            bool Has(string flag) => args is { Length: > 0 } && Array.Exists(args, a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
+            bool classic = Has("--classic");
+            bool headless = Has("--headless");
+
+            // 헤드리스: UI(WebView) 없이 엔진 + LAN 서버만 트레이로 상주 (상시 켜두는 홈 서버)
+            if (headless)
+            {
+                Log.Info("[Headless] UI 없이 엔진/LAN 서버 상주 모드");
+                RunHeadless(db, Cleanup);
+                return;
+            }
 
             if (!classic)
             {
@@ -146,6 +156,38 @@ namespace StockManager
         {
             var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             return v == null ? "v3" : $"v{v.Major}.{v.Minor}.{v.Build}";
+        }
+
+        // 헤드리스 상주 — 트레이 아이콘 + 메시지 루프(UI 폼 없음). LAN 서버는 Lan.Enabled일 때만 동작.
+        private static void RunHeadless(LocalDatabase db, Action cleanup)
+        {
+            var lan = LanStatusServer.Instance;
+            lan.Start(db);   // 멱등 — 이미 위에서 시작됐으면 무시
+
+            var tray = new NotifyIcon
+            {
+                Icon = System.Drawing.SystemIcons.Information,
+                Visible = true,
+                Text = $"MS2-E {AppVersion()} (헤드리스)"
+            };
+            var menu = new ContextMenuStrip();
+            menu.Items.Add(new ToolStripMenuItem(lan.Running ? $"🟢 LAN 서버 :{lan.Port}" : "⚪ LAN 비활성 (UI 모드에서 설정)") { Enabled = false });
+            menu.Items.Add(new ToolStripMenuItem("대시보드 열기", null, (s, e) =>
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo($"http://localhost:{lan.Port}") { UseShellExecute = true }); }
+                catch { }
+            }) { Enabled = lan.Running });
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripMenuItem("종료", null, (s, e) => { try { tray.Visible = false; } catch { } cleanup(); Application.Exit(); }));
+            tray.ContextMenuStrip = menu;
+
+            tray.BalloonTipTitle = $"MS2-E {AppVersion()} · 헤드리스";
+            tray.BalloonTipText = lan.Running
+                ? $"LAN 서버 실행 중 :{lan.Port} (읽기전용). 트레이 우클릭 → 대시보드 열기"
+                : "엔진 상주 중. LAN 서버는 UI 모드에서 활성화·PIN 설정 후 사용하세요.";
+            try { tray.ShowBalloonTip(5000); } catch { }
+
+            Application.Run();   // 폼 없는 메시지 루프 (트레이 '종료'까지 유지)
         }
     }
 }
