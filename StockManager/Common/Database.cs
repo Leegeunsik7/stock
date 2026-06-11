@@ -1,10 +1,12 @@
 // ============================================================================
-// StockManager.Common - 로컬 데이터베이스 (v2.2)
+// StockManager.Common - 로컬 데이터베이스 (v3.5.0)
 // [개선점]
 //  · Safe.Dec/Int/Long/Str/DT 적용 (DBNull 예외 방지)
 //  · 신규 인덱스 (Signals, News)
 //  · 신규 테이블: Alerts, Dividends, BrokerAccounts
 //  · Settings Key-Value 편의 메서드
+//  · v3.5.0 동시성 방어: WAL + busy_timeout(5s) + SQLITE_BUSY/LOCKED 지수 백오프 재시도
+//    (Blazor UI · WinForms 창 · AlertEngineService 백그라운드가 단일 portfolio.db 공유)
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -40,6 +42,7 @@ namespace StockManager.Common
             Execute(@"
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;   -- 잠금 시 즉시 throw하지 않고 최대 5초 대기 (1차 방어)
 
 CREATE TABLE IF NOT EXISTS Holdings (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,46 +137,58 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
 ");
         }
 
-        public int Execute(string sql, Dictionary<string, object>? pars = null)
+        // ── DB 동시성 방어 (v3.5.0) ──────────────────────────────────────
+        //  WAL + busy_timeout(5s)로 1차 방어하고, 그래도 SQLITE_BUSY(5)/LOCKED(6)가
+        //  발생하면 지수 백오프로 재시도. 단일 _conn + lock으로 프로세스 내 직렬화 유지.
+        //  (백오프 sleep은 lock 밖에서 수행 → 대기 중 다른 스레드를 막지 않음)
+        private const int MaxRetries = 5;
+
+        private TResult WithRetry<TResult>(Func<SqliteCommand, TResult> body,
+            string sql, Dictionary<string, object>? pars)
         {
-            lock (_lock)
+            int attempt = 0;
+            while (true)
             {
-                using var cmd = _conn.CreateCommand();
-                cmd.CommandText = sql;
-                if (pars != null)
-                    foreach (var kv in pars) cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
-                return cmd.ExecuteNonQuery();
+                try
+                {
+                    lock (_lock)
+                    {
+                        using var cmd = _conn.CreateCommand();
+                        cmd.CommandText = sql;
+                        if (pars != null)
+                            foreach (var kv in pars) cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
+                        return body(cmd);
+                    }
+                }
+                catch (SqliteException ex) when (
+                    (ex.SqliteErrorCode == 5 || ex.SqliteErrorCode == 6) && attempt < MaxRetries)
+                {
+                    attempt++;
+                    Log.Warn($"[DB] 잠금 재시도 {attempt}/{MaxRetries} (code {ex.SqliteErrorCode})");
+                    Thread.Sleep(40 * (1 << (attempt - 1)));   // 40·80·160·320·640ms
+                }
             }
         }
 
+        public int Execute(string sql, Dictionary<string, object>? pars = null)
+            => WithRetry(cmd => cmd.ExecuteNonQuery(), sql, pars);
+
         public DataTable Query(string sql, Dictionary<string, object>? pars = null)
-        {
-            lock (_lock)
+            => WithRetry(cmd =>
             {
-                using var cmd = _conn.CreateCommand();
-                cmd.CommandText = sql;
-                if (pars != null)
-                    foreach (var kv in pars) cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
                 using var rdr = cmd.ExecuteReader();
                 var dt = new DataTable();
                 dt.Load(rdr);
                 return dt;
-            }
-        }
+            }, sql, pars);
 
         public T? QueryScalar<T>(string sql, Dictionary<string, object>? pars = null)
-        {
-            lock (_lock)
+            => WithRetry<T?>(cmd =>
             {
-                using var cmd = _conn.CreateCommand();
-                cmd.CommandText = sql;
-                if (pars != null)
-                    foreach (var kv in pars) cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
                 var v = cmd.ExecuteScalar();
                 if (v == null || v == DBNull.Value) return default;
                 return (T)Convert.ChangeType(v, typeof(T));
-            }
-        }
+            }, sql, pars);
 
         // ===== Holdings =====
         public void SaveHolding(Holding h)
