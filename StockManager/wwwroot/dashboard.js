@@ -9,6 +9,7 @@ window.dashboard = {
 
 // Ctrl+K 명령 팔레트 단축키
 window.dashboard.initHotkeys = function (dotnetRef) {
+  window._cmdRef = dotnetRef;                 // 검색바(kbar) 클릭 등에서 재사용
   if (window._mksHotkey) return; window._mksHotkey = true;
   document.addEventListener('keydown', function (e) {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
@@ -19,4 +20,6 @@ window.dashboard.initHotkeys = function (dotnetRef) {
     }
   });
 };
+// 검색바 클릭 → Ctrl+K와 동일하게 명령 팔레트 열기 (기존 setFocus 미존재 버그 수정)
+window.dashboard.openPalette = function () { try { window._cmdRef && window._cmdRef.invokeMethodAsync('OpenPalette'); } catch (_) {} };
 window.dashboard.focusEl = function (el) { try { el && el.focus(); } catch (_) {} };

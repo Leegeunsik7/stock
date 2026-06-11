@@ -20,6 +20,12 @@ namespace StockManager.Common
         private System.Windows.Forms.Timer? _timer;
         private bool _busy;
 
+        // 코인 일봉 캐시 (API 한도 방어) — 30초 주기 평가가 같은 일봉을 반복 페치하던 비용 절감.
+        // 티커(현재가/등락률)는 매번 신선하게, 캔들만 5분 TTL로 재사용.
+        private readonly Dictionary<string, (List<decimal> closes, List<decimal> vols, DateTime at)> _coinCandleCache
+            = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan CandleTtl = TimeSpan.FromMinutes(5);
+
         public List<CompositeRule> Rules { get; private set; } = new();
         public DateTime LastRun { get; private set; }
         public int LastFiredCount { get; private set; }
@@ -86,16 +92,27 @@ namespace StockManager.Common
 
         private async Task<MarketCtx?> BuildCoinCtxAsync(string market)
         {
-            var ts = await _upbit.GetTickersAsync(new[] { market });
+            var ts = await _upbit.GetTickersAsync(new[] { market });   // 현재가/등락률은 매번 신선하게
             var t = ts.FirstOrDefault();
             if (t == null) return null;
-            var candles = await _upbit.GetCandlesAsync(market, 30);
+            var (closes, vols) = await GetCoinCandlesCachedAsync(market);
             return new MarketCtx
             {
                 Market = market, Price = t.Price, ChangePct = t.ChangeRate * 100m,
-                Closes = candles.Select(c => c.Close).ToList(),
-                Volumes = candles.Select(c => (decimal)c.Volume).ToList()
+                Closes = closes, Volumes = vols
             };
+        }
+
+        // 일봉 5분 TTL 캐시 — 만료 시에만 재페치.
+        private async Task<(List<decimal> closes, List<decimal> vols)> GetCoinCandlesCachedAsync(string market)
+        {
+            if (_coinCandleCache.TryGetValue(market, out var c) && DateTime.Now - c.at < CandleTtl)
+                return (c.closes, c.vols);
+            var candles = await _upbit.GetCandlesAsync(market, 30);
+            var closes = candles.Select(x => x.Close).ToList();
+            var vols = candles.Select(x => (decimal)x.Volume).ToList();
+            if (closes.Count > 0) _coinCandleCache[market] = (closes, vols, DateTime.Now);
+            return (closes, vols);
         }
 
         private async Task<MarketCtx?> BuildStockCtxAsync(string symbol)
