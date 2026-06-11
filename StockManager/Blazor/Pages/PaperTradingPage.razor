@@ -68,16 +68,66 @@
     }
 </div>
 
+@* 자동 DCA (모의 전용) — 백그라운드 엔진이 일정 간격마다 PaperBroker로만 정액 매수 *@
+<div style="padding:0 28px 40px">
+    <div class="wh"><span class="h">🤖 자동 DCA <span class="sub" style="font-weight:400">(모의 전용 · 실주문 아님)</span></span></div>
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:12px">
+            <input type="checkbox" @bind="_dcaEnabled" /> 자동 DCA 사용 (끄면 즉시 중지 = 킬스위치)
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <div><label class="flbl">마켓</label><input class="fin" style="width:120px" @bind="_dcaMarket" placeholder="KRW-BTC" /></div>
+            <div><label class="flbl">1회 금액(원)</label><input class="fin" style="width:130px" type="number" @bind="_dcaAmount" /></div>
+            <div><label class="flbl">주기(시간)</label><input class="fin" style="width:90px" type="number" @bind="_dcaHours" /></div>
+            <button class="addbtn" @onclick="ApplyDca">적용</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">
+            @if (_dcaEnabled) { <span>🟢 활성 — @_dcaMarket @(_dcaAmount.ToString("N0"))원 / @(_dcaHours)시간. 마지막 실행: @_dcaLast</span> }
+            else { <span>⚪ 중지됨</span> }
+            @if (_dcaMsg.Length > 0) { <div>@_dcaMsg</div> }
+        </div>
+        <div style="margin-top:6px;font-size:11.5px;color:var(--warn)">⚠️ 모의 계좌로만 체결됩니다. 실거래 자동매매는 별도(거래 설정의 무장·한도 가드).</div>
+    </div>
+</div>
+
 @code {
     private string _ts = "", _toast = "";
     private CancellationTokenSource? _cts;
+    private bool _dcaEnabled;
+    private string _dcaMarket = "KRW-BTC", _dcaMsg = "", _dcaLast = "없음";
+    private decimal _dcaAmount = 100_000m;
+    private int _dcaHours = 24;
     private readonly (string label, string market, decimal amt, PaperSide side)[] _quickOrders =
     {
         ("BTC 100만 매수","KRW-BTC",1_000_000m,PaperSide.Buy), ("ETH 50만 매수","KRW-ETH",500_000m,PaperSide.Buy),
         ("SOL 30만 매수","KRW-SOL",300_000m,PaperSide.Buy), ("BTC 50만 매도","KRW-BTC",500_000m,PaperSide.Sell),
     };
 
-    protected override async Task OnInitializedAsync() { await Refresh(); _cts = new CancellationTokenSource(); _ = Loop(_cts.Token); }
+    protected override async Task OnInitializedAsync()
+    {
+        LoadDca();
+        await Refresh(); _cts = new CancellationTokenSource(); _ = Loop(_cts.Token);
+    }
+
+    private void LoadDca()
+    {
+        _dcaEnabled = Db.GetSetting("AutoDca.Enabled") == "true";
+        var m = Db.GetSetting("AutoDca.Market"); if (!string.IsNullOrWhiteSpace(m)) _dcaMarket = m;
+        if (decimal.TryParse(Db.GetSetting("AutoDca.AmountKrw"), out var a) && a > 0) _dcaAmount = a;
+        if (int.TryParse(Db.GetSetting("AutoDca.IntervalHours"), out var h) && h > 0) _dcaHours = h;
+        _dcaLast = DateTime.TryParse(Db.GetSetting("AutoDca.LastRun"), out var t) ? t.ToString("MM-dd HH:mm") : "없음";
+    }
+
+    private void ApplyDca()
+    {
+        if (_dcaEnabled && (!_dcaMarket.StartsWith("KRW-", StringComparison.OrdinalIgnoreCase) || _dcaAmount <= 0))
+        { _dcaMsg = "코인 마켓(KRW-…)과 양수 금액을 입력하세요."; return; }
+        Db.SetSetting("AutoDca.Enabled", _dcaEnabled ? "true" : "false");
+        Db.SetSetting("AutoDca.Market", _dcaMarket.Trim());
+        Db.SetSetting("AutoDca.AmountKrw", ((long)_dcaAmount).ToString());
+        Db.SetSetting("AutoDca.IntervalHours", Math.Clamp(_dcaHours, 1, 720).ToString());
+        _dcaMsg = _dcaEnabled ? "적용됨. 백그라운드 엔진이 주기마다 모의 매수합니다." : "자동 DCA를 중지했습니다.";
+    }
     private async Task Loop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)

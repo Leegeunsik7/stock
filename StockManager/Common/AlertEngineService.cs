@@ -69,6 +69,7 @@ namespace StockManager.Common
                 await CheckStockRulesAsync();
                 await ProcessPaperLimitsAsync();
                 await CheckDailyBriefAsync();
+                await CheckAutoDcaAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -92,6 +93,32 @@ namespace StockManager.Common
             try { usd = await _fx.GetUsdKrwAsync(); } catch { }
             await ai.MorningBriefAsync(usd, pushTelegram: true);
             Log.Info("[AlertEngine] 아침 브리핑 생성·전송");
+        }
+
+        // ===== 자동 DCA (⚠️ 모의 전용) — 실주문 경로(BrokerHub/LiveBrokers) 절대 미접촉 =====
+        //  옵트인(AutoDca.Enabled). 일정 간격마다 PaperBroker로만 정액 매수. 킬스위치=토글 OFF.
+        private async Task CheckAutoDcaAsync()
+        {
+            if (_db!.GetSetting("AutoDca.Enabled") != "true" || _paper == null) return;
+            int hours = int.TryParse(_db.GetSetting("AutoDca.IntervalHours"), out var hh) && hh > 0 ? hh : 24;
+            if (DateTime.TryParse(_db.GetSetting("AutoDca.LastRun"), out var last) && (DateTime.Now - last).TotalHours < hours) return;
+
+            var market = _db.GetSetting("AutoDca.Market");
+            if (string.IsNullOrWhiteSpace(market)) market = "KRW-BTC";
+            if (!market.StartsWith("KRW-", StringComparison.OrdinalIgnoreCase)) return;   // 안전: 코인 KRW 마켓만
+            decimal amount = decimal.TryParse(_db.GetSetting("AutoDca.AmountKrw"), out var a) && a > 0 ? a : 100_000m;
+            amount = Math.Min(amount, 10_000_000m);                                       // 안전 상한
+
+            decimal price = 0m;
+            try { var ts = await _upbit.GetTickersAsync(new[] { market }); price = ts.FirstOrDefault()?.Price ?? 0m; } catch { }
+            if (price <= 0) return;
+
+            _db.SetSetting("AutoDca.LastRun", DateTime.Now.ToString("o"));                // 먼저 마킹(중복 매수 방지)
+            _paper.Reload();
+            var name = market.Replace("KRW-", "");
+            var (ok, msg) = _paper.Place(PaperAsset.Coin, market, name, PaperSide.Buy, PaperKind.Market, amount / price, 0, price);
+            Log.Info($"[AutoDCA·모의] {market} {amount:N0}원 → {(ok ? "체결" : "실패")}: {msg}");
+            if (ok) AlertCenter.Instance.RaiseSystem("🤖 자동 DCA (모의)", $"{name} {amount:N0}원 매수 — {msg}", AlertLevel.Info);
         }
 
         // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====
