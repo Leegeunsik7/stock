@@ -66,6 +66,13 @@ namespace StockManager.Blazor
         private readonly Dictionary<string, decimal> _coinPx = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, decimal> _stockPx = new(StringComparer.OrdinalIgnoreCase);
 
+        // 일봉 캔들 캐시 (API 한도 방어) — 일봉은 분 단위로 거의 불변하므로 5분 TTL.
+        // LoadAsync가 watch 코인마다 GetCandlesAsync를 반복 호출하던 비용을 ~30배 절감.
+        private readonly Dictionary<string, List<decimal>> _candleCache = new(StringComparer.OrdinalIgnoreCase);
+        private DateTime _candleCacheAt;
+        private string _candleCacheKey = "";
+        private static readonly TimeSpan CandleTtl = TimeSpan.FromMinutes(5);
+
         /// <summary>모의 포지션 평가용 현재가 (주식은 KRW 환산값 — 원본 PaperTrading 규약)</summary>
         public decimal PriceOf(PaperAsset a, string sym) =>
             a == PaperAsset.Coin ? (_coinPx.TryGetValue(sym, out var p) ? p : 0m)
@@ -104,30 +111,20 @@ namespace StockManager.Blazor
                 if (kv.Value.Qty > 0 && _coinPx.TryGetValue(kv.Key, out var px))
                     coinValue += kv.Value.Qty * px;
 
-            // 코인 위젯 행 + 신호 스캔(일봉 30개)
+            // 코인 위젯 행 + 신호 스캔 — 일봉은 5분 캐시(GetWatchCandlesAsync)로 API 호출 절감
+            var candleMap = await GetWatchCandlesAsync(watch);
             Coins = new List<CoinRow>();
-            var candleMap = new Dictionary<string, List<decimal>>(StringComparer.OrdinalIgnoreCase);
             int idx = 0;
             foreach (var m in watch)
             {
+                if (idx++ >= 4) break;   // 위젯에는 상위 4종만 표시
                 tickMap.TryGetValue(m, out var t);
-                List<decimal> closes = new();
-                try
-                {
-                    var candles = await _upbit.GetCandlesAsync(m, 30);
-                    closes = candles.Select(c => c.Close).ToList();
-                }
-                catch { }
-                if (closes.Count > 0) candleMap[m] = closes;
-
-                if (idx++ < 4)   // 위젯에는 상위 4종만 표시
-                {
-                    var spark = closes.Count >= 2
-                        ? closes.Skip(Math.Max(0, closes.Count - 8)).Select(c => (double)c).ToArray()
-                        : Array.Empty<double>();
-                    Coins.Add(new CoinRow(t?.KoreanName ?? m.Replace("KRW-", ""), m,
-                        t?.Price ?? 0m, t?.ChangeRate ?? 0m, spark));
-                }
+                candleMap.TryGetValue(m, out var closes);
+                var spark = (closes != null && closes.Count >= 2)
+                    ? closes.Skip(Math.Max(0, closes.Count - 8)).Select(c => (double)c).ToArray()
+                    : Array.Empty<double>();
+                Coins.Add(new CoinRow(t?.KoreanName ?? m.Replace("KRW-", ""), m,
+                    t?.Price ?? 0m, t?.ChangeRate ?? 0m, spark));
             }
             ScanSignals(watch, tickMap, candleMap);
 
@@ -228,6 +225,34 @@ namespace StockManager.Blazor
         {
             if (!DateTime.TryParse(ymd, out var dt)) return ymd;
             return new[] { "일", "월", "화", "수", "목", "금", "토" }[(int)dt.DayOfWeek];
+        }
+
+        // 일봉 캔들을 5분 TTL로 캐시 — watch 구성이 바뀌거나 만료 시에만 재페치.
+        private async Task<Dictionary<string, List<decimal>>> GetWatchCandlesAsync(List<string> watch)
+        {
+            var key = string.Join(",", watch);
+            if (key == _candleCacheKey && _candleCache.Count > 0 && DateTime.Now - _candleCacheAt < CandleTtl)
+                return _candleCache;   // 캐시 적중 — Upbit 캔들 API 호출 생략
+
+            var map = new Dictionary<string, List<decimal>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in watch)
+            {
+                try
+                {
+                    var candles = await _upbit.GetCandlesAsync(m, 30);
+                    var closes = candles.Select(c => c.Close).ToList();
+                    if (closes.Count > 0) map[m] = closes;
+                }
+                catch { }
+            }
+            if (map.Count > 0)   // 일부라도 받았으면 캐시 갱신 (전부 실패 시 직전 캐시 유지)
+            {
+                _candleCache.Clear();
+                foreach (var kv in map) _candleCache[kv.Key] = kv.Value;
+                _candleCacheAt = DateTime.Now;
+                _candleCacheKey = key;
+            }
+            return _candleCache.Count > 0 ? _candleCache : map;
         }
 
         // ===== 임박 신호 스캔(코인 일봉) =====
