@@ -68,10 +68,30 @@ namespace StockManager.Common
                 await CheckCoinAlertsAsync();
                 await CheckStockRulesAsync();
                 await ProcessPaperLimitsAsync();
+                await CheckDailyBriefAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
             finally { _busy = false; }
+        }
+
+        // ===== 아침 브리핑 (옵트인) — Brief.Enabled일 때 하루 1회 텔레그램 전송 =====
+        private async Task CheckDailyBriefAsync()
+        {
+            if (_db!.GetSetting("Brief.Enabled") != "true") return;
+            int hour = int.TryParse(_db.GetSetting("Brief.Hour"), out var h) ? Math.Clamp(h, 0, 23) : 8;
+            if (DateTime.Now.Hour < hour) return;                       // 설정 시각 이전이면 대기
+            var today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (_db.GetSetting("Brief.LastSent") == today) return;      // 오늘 이미 전송됨
+
+            var ai = new AiService(_db);
+            if (!ai.HasKey) return;                                     // 키 없으면 마킹도 안 함(키 넣으면 그날 전송)
+
+            _db.SetSetting("Brief.LastSent", today);                    // 중복 전송 방지(생성 실패해도 당일 재시도 안 함)
+            decimal usd = 1380m;
+            try { usd = await _fx.GetUsdKrwAsync(); } catch { }
+            await ai.MorningBriefAsync(usd, pushTelegram: true);
+            Log.Info("[AlertEngine] 아침 브리핑 생성·전송");
         }
 
         // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====

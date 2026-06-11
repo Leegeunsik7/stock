@@ -1,0 +1,124 @@
+@page "/advisor"
+@inject AiService Ai
+@inject FxConverter Fx
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>🤖 AI 투자 비서</h1><p>내 포트폴리오·시그널·거래 데이터 기반 자연어 질의 (환율 @_usdKrw.ToString("N0"))</p></div>
+    <button class="addbtn" style="background:var(--warn);margin:0 6px" disabled="@_busy" @onclick="Brief">🌅 아침 브리핑</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:760px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:14px">
+        ℹ️ 답변은 <b>로컬 DB의 실제 수치</b>만 근거로 생성됩니다(없는 값은 추측 안 함). <b>정보 제공이며 투자 권유가 아닙니다.</b>
+    </div>
+
+    @if (!Ai.HasKey)
+    {
+        <div style="background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);border-radius:var(--radius);padding:14px;margin-bottom:14px;font-size:13px">
+            ⚠️ Gemini API 키가 없습니다. <a href="/setup" style="color:var(--accent)">설정 마법사</a>에서 키를 입력하면 비서가 동작합니다.
+        </div>
+    }
+
+    @* 대화 기록 *@
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;min-height:120px">
+        @if (_chat.Count == 0)
+        {
+            <div style="color:var(--sub);font-size:13px;padding:8px 0">아래 예시를 누르거나 질문을 입력해 보세요.</div>
+        }
+        @foreach (var m in _chat)
+        {
+            <div style="align-self:@(m.Role=="user"?"flex-end":"flex-start");max-width:88%;
+                        background:@(m.Role=="user"?"var(--accent)":"var(--card)");
+                        color:@(m.Role=="user"?"#fff":"var(--ink)");
+                        border:1px solid @(m.Role=="user"?"var(--accent)":"var(--line)");
+                        border-radius:12px;padding:11px 14px;font-size:13.5px;line-height:1.65;white-space:pre-wrap">@m.Text</div>
+        }
+        @if (_busy)
+        {
+            <div style="align-self:flex-start;color:var(--sub);font-size:13px;padding:6px 0">🤔 분석 중…</div>
+        }
+    </div>
+
+    @* 예시 칩 *@
+    <div class="qa" style="margin-bottom:10px">
+        @foreach (var s in _suggest)
+        {
+            <span @onclick="() => Ask(s)" style="cursor:pointer">@s</span>
+        }
+    </div>
+
+    @* 입력 *@
+    <div style="display:flex;gap:8px">
+        <input class="srch" style="flex:1" placeholder="예: 내 포트폴리오에서 가장 위험한 종목은?" @bind="_q" @bind:event="oninput" @onkeydown="OnKey" />
+        <button class="addbtn" disabled="@(_busy || string.IsNullOrWhiteSpace(_q))" @onclick="() => Ask(_q)">전송</button>
+    </div>
+
+    @* 아침 브리핑 자동 전송(옵트인) *@
+    <div style="margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px">
+        <label class="ck" style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" checked="@_briefEnabled" @onchange="OnBriefToggle" />
+            매일 아침 브리핑을 텔레그램으로 자동 전송
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--sub)">
+            전송 시각
+            <input class="fin" style="width:70px" type="number" min="0" max="23" value="@_briefHour" @onchange="OnBriefHour" /> 시
+            <span>· 백그라운드 엔진이 하루 1회 전송 (텔레그램 키 필요)</span>
+        </div>
+    </div>
+</div>
+
+<style>.ck input{width:16px;height:16px}</style>
+
+@code {
+    private record Msg(string Role, string Text);
+    private readonly System.Collections.Generic.List<Msg> _chat = new();
+    private readonly string[] _suggest =
+    {
+        "내 수익률 어때?", "가장 위험한 종목은?", "리밸런싱 조언 줘", "최근 시그널 요약해줘"
+    };
+    private string _q = "";
+    private bool _busy;
+    private decimal _usdKrw = 1380m;
+    private bool _briefEnabled;
+    private int _briefHour = 8;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _briefEnabled = Db.GetSetting("Brief.Enabled") == "true";
+        if (int.TryParse(Db.GetSetting("Brief.Hour"), out var h)) _briefHour = Math.Clamp(h, 0, 23);
+        try { _usdKrw = await Fx.GetUsdKrwAsync(); } catch { }
+    }
+
+    private async Task OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") await Ask(_q); }
+
+    private async Task Ask(string question)
+    {
+        if (_busy || string.IsNullOrWhiteSpace(question)) return;
+        _chat.Add(new Msg("user", question.Trim()));
+        _q = ""; _busy = true; StateHasChanged();
+        var answer = await Ai.AskAsync(question.Trim(), _usdKrw);
+        _chat.Add(new Msg("ai", answer));
+        _busy = false;
+    }
+
+    private async Task Brief()
+    {
+        if (_busy) return;
+        _busy = true; StateHasChanged();
+        var text = await Ai.MorningBriefAsync(_usdKrw, pushTelegram: false);
+        _chat.Add(new Msg("ai", "🌅 아침 브리핑\n" + text));
+        _busy = false;
+    }
+
+    private void OnBriefToggle(ChangeEventArgs e)
+    {
+        _briefEnabled = e.Value is bool b && b;
+        Db.SetSetting("Brief.Enabled", _briefEnabled ? "true" : "false");
+    }
+
+    private void OnBriefHour(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var h)) { _briefHour = Math.Clamp(h, 0, 23); Db.SetSetting("Brief.Hour", _briefHour.ToString()); }
+    }
+}
