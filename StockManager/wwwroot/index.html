@@ -14,6 +14,11 @@
   <div id="blazor-error-ui" style="display:none">오류가 발생했습니다. <a href="" class="reload">새로고침</a></div>
   <script src="_framework/blazor.webview.js" autostart="false"></script>
   <script src="dashboard.js"></script>
+  <!-- (선택) TradingView Lightweight Charts: 이 파일을 직접 배치하면 '고급차트'가 활성화됩니다.
+       https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js → wwwroot/lib/ 에 저장.
+       미배치여도(404) 앱은 정상 동작하며 기본 SVG 차트로 폴백합니다. -->
+  <script src="lib/lightweight-charts.standalone.production.js"></script>
+  <script src="tvchart.js"></script>
   <script>Blazor.start();</script>
 </body>
 </html>

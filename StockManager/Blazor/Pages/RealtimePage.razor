@@ -1,6 +1,7 @@
 @page "/realtime"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject IJSRuntime JS
 @implements IDisposable
 @using System.Threading
 @using System.Data
@@ -87,7 +88,10 @@
             <select class="srch" style="width:118px" @bind="_indicator">
                 @foreach (var ind in _indicatorNames) { <option value="@ind">@ind</option> }
             </select>
+            <button class="pill @(_advChart?"r":"b")" style="border:0;cursor:pointer;padding:6px 12px;font-size:12px" @onclick="ToggleAdv"
+                    title="TradingView 고급차트 (lib 미배치 시 기본 차트)">@(_advChart ? "고급차트 ✓" : "고급차트")</button>
         </div>
+        @if (!string.IsNullOrEmpty(_advNotice)) { <div class="sub" style="font-size:11.5px;padding:4px 0">@_advNotice</div> }
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px"
              @onwheel="OnWheel" @onwheel:preventDefault>
             @if (_loadingChart)
@@ -97,6 +101,10 @@
             else if (_candles.Count < 2)
             {
                 <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">왼쪽에서 종목을 선택하세요.</div>
+            }
+            else if (_advChart)
+            {
+                <div id="tvchart" style="height:360px"></div>
             }
             else
             {
@@ -153,6 +161,8 @@
     private string _indicator = "RSI";   // ⚠️ 지표 변경 = 다시 그리기만, 재로드 없음 (원본 비대칭 룰)
     private int _visibleCount = 100;
     private string _titleSuffix = "", _titleColor = "var(--ink)";
+    private bool _advChart, _tvDirty;     // TradingView 고급차트 토글 / 재렌더 필요 플래그
+    private string _advNotice = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -388,6 +398,7 @@
         catch { _candles = new(); }
         _visibleCount = Math.Min(100, Math.Max(2, _candles.Count));   // 줌 리셋 (원본)
         UpdateTitle();
+        _tvDirty = true;                                              // 고급차트 재렌더 대상
         _loadingChart = false; StateHasChanged();
     }
 
@@ -648,6 +659,44 @@
             pts.Append($"{x:F1},{y:F1} ");
         }
         if (pts.Length > 0) sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/>");
+    }
+
+    // ===== TradingView 고급차트 (lib 미배치 시 기본 SVG로 자동 폴백) =====
+    private async Task ToggleAdv()
+    {
+        if (!_advChart)
+        {
+            bool avail;
+            try { avail = await JS.InvokeAsync<bool>("tvchart.available"); } catch { avail = false; }
+            if (!avail) { _advNotice = "TradingView 라이브러리(wwwroot/lib/lightweight-charts…)가 없어 기본 차트를 사용합니다."; return; }
+            _advNotice = ""; _advChart = true; _tvDirty = true;
+        }
+        else
+        {
+            _advChart = false;
+            try { await JS.InvokeVoidAsync("tvchart.dispose"); } catch { }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (!_advChart || !_tvDirty || _candles.Count < 2) return;
+        _tvDirty = false;
+        var data = _candles.TakeLast(180).Select(c => new
+        {
+            time = c.Date.ToString("yyyy-MM-dd"),
+            open = (double)c.Open, high = (double)c.High, low = (double)c.Low, close = (double)c.Close
+        }).ToArray();
+        bool dark = Db.GetSetting("UI.Theme") == "dark";
+        bool ok;
+        try { ok = await JS.InvokeAsync<bool>("tvchart.render", "tvchart", data, dark); }
+        catch { ok = false; }
+        if (!ok)   // lib 미로드 등 → 기본 차트로 폴백
+        {
+            _advChart = false;
+            _advNotice = "TradingView 라이브러리가 없어 기본 차트로 표시합니다. (wwwroot/lib/ 에 lightweight-charts 배치 시 활성화)";
+            StateHasChanged();
+        }
     }
 
     public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
