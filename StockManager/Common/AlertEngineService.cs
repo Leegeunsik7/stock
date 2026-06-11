@@ -93,7 +93,7 @@ namespace StockManager.Common
                 _coinPx[t.Market] = t.Price;
                 foreach (var a in state.Alerts.Where(a => string.Equals(a.Market, t.Market, StringComparison.OrdinalIgnoreCase)))
                 {
-                    bool cross = a.Above ? t.Price >= a.Target : t.Price <= a.Target;
+                    bool cross = AlertPolicy.CoinCross(a.Above, a.Target, t.Price);
                     if (cross && !a.Triggered)
                     {
                         a.Triggered = true; changed = true;
@@ -129,16 +129,13 @@ namespace StockManager.Common
                 foreach (var q in quotes)
                 {
                     // 5% 이상 급변 (prev > 0 가드 — 원본과 동일)
-                    if (_prevStock.TryGetValue(q.Symbol, out var prev) && prev > 0 && prev != q.Price)
+                    if (_prevStock.TryGetValue(q.Symbol, out var prev) && AlertPolicy.IsSurge(prev, q.Price))
                     {
                         var pct = (q.Price - prev) / prev * 100m;
-                        if (Math.Abs(pct) >= 5)
-                        {
-                            AlertCenter.Instance.RaisePrice(q.Symbol,
-                                $"급변동 감지 · {q.Symbol} {q.Name}",
-                                $"{Formatter.Pct(pct)} ({Formatter.Money(prev, q.Currency)} → {Formatter.Money(q.Price, q.Currency)})",
-                                AlertLevel.Warning);
-                        }
+                        AlertCenter.Instance.RaisePrice(q.Symbol,
+                            $"급변동 감지 · {q.Symbol} {q.Name}",
+                            $"{Formatter.Pct(pct)} ({Formatter.Money(prev, q.Currency)} → {Formatter.Money(q.Price, q.Currency)})",
+                            AlertLevel.Warning);
                     }
                     _prevStock[q.Symbol] = q.Price;
                     _stockPxKrw[q.Symbol] = q.Price * (q.Currency == Currency.USD ? _usdKrw : 1m);
@@ -150,14 +147,7 @@ namespace StockManager.Common
                     {
                         var cond = (AlertCondition)Safe.Int(r["Condition"]);
                         var target = Safe.Dec(r["TargetValue"]);
-                        bool hit = cond switch
-                        {
-                            AlertCondition.PriceAbove => q.Price >= target,
-                            AlertCondition.PriceBelow => q.Price <= target,
-                            AlertCondition.ChangeRateAbove => q.ChangeRate >= target,
-                            AlertCondition.ChangeRateBelow => q.ChangeRate <= target,
-                            _ => false
-                        };
+                        bool hit = AlertPolicy.StockRuleHit(cond, target, q.Price, q.ChangeRate);
                         if (hit)
                         {
                             AlertCenter.Instance.RaisePrice(q.Symbol,
