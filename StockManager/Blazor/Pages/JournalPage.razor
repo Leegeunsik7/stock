@@ -1,0 +1,115 @@
+@page "/journal"
+@inject LocalDatabase Db
+@inject AiService Ai
+
+<div class="top">
+    <div class="hello"><h1>🧭 인과 추적 저널</h1><p>거래·시그널·알림·뉴스를 한 타임라인으로 — "왜 움직였나"를 LLM이 사후 복기 (정보 제공용)</p></div>
+    <input class="srch" style="width:150px" placeholder="종목 필터 (선택)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:110px;margin:0 8px" @bind="_rangeDays" @bind:after="Reload">
+        <option value="7">최근 7일</option><option value="30">최근 30일</option><option value="90">최근 90일</option>
+    </select>
+    <button class="addbtn" style="margin-right:16px" @onclick="Reload">🔄 조회</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:920px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+        <select class="srch" style="width:200px" @bind="_model">
+            <option value="gemini-2.0-flash">gemini-2.0-flash (기본)</option>
+            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+        </select>
+        <span style="color:var(--sub);font-size:12px">「🧠 왜 움직였나」는 그날의 기록만 근거로 LLM이 복기합니다.</span>
+    </div>
+
+    @if (!Ai.HasKey)
+    {
+        <div style="background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12.5px">
+            ⚠️ Gemini API 키가 없어 인과 복기는 비활성화됩니다. (타임라인 조회는 키 없이도 동작) 거래 설정에서 키를 입력하세요.
+        </div>
+    }
+
+    @if (_days.Count == 0)
+    {
+        <div style="color:var(--sub);padding:24px 2px">최근 @(_rangeDays)일 @(string.IsNullOrWhiteSpace(_symbol) ? "" : $"({_symbol}) ")기록이 없습니다. 거래·시그널·알림·뉴스가 쌓이면 여기에 타임라인으로 표시됩니다.</div>
+    }
+    else
+    {
+        <div class="sub" style="font-size:12px;margin-bottom:10px">@(_days.Count)일 · 총 @(_days.Sum(d => d.Events.Count))건 이벤트</div>
+
+        @foreach (var day in _days)
+        {
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                    <div style="font-weight:800;font-size:14px">@day.Date.ToString("yyyy-MM-dd (ddd)")</div>
+                    @if (day.EquityChangePct is { } chg)
+                    {
+                        <span class="@(chg>=0?"up":"down")" style="font-weight:700;font-size:12.5px">총자산 @chg.ToString("+0.0;-0.0")%</span>
+                    }
+                    <span style="color:var(--sub);font-size:12px">· @(day.Events.Count)건</span>
+                    <button class="ghost" style="margin-left:auto;padding:4px 11px;font-size:12px"
+                            disabled="@(!Ai.HasKey || _annotating==day.Date)" @onclick="() => ExplainAsync(day)">
+                        @(_annotating==day.Date ? "복기 중…" : "🧠 왜 움직였나")
+                    </button>
+                </div>
+
+                @if (!string.IsNullOrEmpty(day.Annotation))
+                {
+                    <div style="background:color-mix(in srgb,var(--accent) 8%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:10px 13px;margin-bottom:12px;font-size:13px;line-height:1.65;white-space:pre-wrap">@day.Annotation</div>
+                }
+
+                <div style="display:flex;flex-direction:column;gap:8px">
+                    @foreach (var e in day.Events)
+                    {
+                        <div style="display:flex;gap:10px;align-items:flex-start">
+                            <div style="width:46px;color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums;flex-shrink:0;padding-top:1px">@e.When.ToString("HH:mm")</div>
+                            <div style="flex-shrink:0">@e.Icon</div>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-size:13px">
+                                    <span style="display:inline-block;font-size:10.5px;color:var(--sub);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-right:6px;vertical-align:1px">@e.KindLabel</span>
+                                    @e.Title
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(e.Detail))
+                                {
+                                    <div style="font-size:11.5px;color:var(--sub);margin-top:2px;overflow:hidden;text-overflow:ellipsis">@e.Detail</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private int _rangeDays = 30;
+    private string _symbol = "", _model = "gemini-2.0-flash";
+    private DateTime? _annotating;
+    private List<JournalDay> _days = new();
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        var to = DateTime.Now;
+        var from = to.AddDays(-Math.Max(1, _rangeDays));
+        var sym = string.IsNullOrWhiteSpace(_symbol) ? null : _symbol.Trim();
+        var events = CausalJournal.BuildTimeline(Db, from, to, sym);
+        _days = CausalJournal.GroupByDay(Db, events);
+        StateHasChanged();
+    }
+
+    private async Task ExplainAsync(JournalDay day)
+    {
+        if (!Ai.HasKey || _annotating == day.Date) return;
+        _annotating = day.Date; StateHasChanged();
+        try
+        {
+            var ctx = CausalJournal.BuildDayContext(Db, day);
+            day.Annotation = await Ai.ExplainDayAsync(ctx, _model);
+        }
+        catch (Exception ex) { day.Annotation = "복기 오류: " + ex.Message; }
+        finally { _annotating = null; StateHasChanged(); }
+    }
+}

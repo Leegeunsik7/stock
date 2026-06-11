@@ -60,6 +60,19 @@ namespace StockManager.Common
             return text;
         }
 
+        // ===== 인과 추적 저널 — '그날의 기록'만 근거로 왜 움직였는지 해석(환각 방지) =====
+        public Task<string> ExplainDayAsync(string dayContext, string model = "gemini-2.0-flash")
+        {
+            var prompt =
+                "당신은 신중한 투자 코치입니다. 아래 [그날의 기록]에 실제로 적힌 사실만 근거로, " +
+                "그날 포트폴리오·종목이 왜 그렇게 움직였는지 인과적으로 한국어 2~4줄로 복기하세요.\n" +
+                "규칙: ① 기록에 없는 외부 사건·수치는 지어내지 마세요. ② 단정 대신 '~로 보입니다/~영향으로 추정' 식으로 신중히. " +
+                "③ 사건 간 연결(예: 시그널→매수, 뉴스→급등 알림)을 짚으세요. ④ 근거가 약하면 '기록만으로는 단정 어렵다'고 하세요. " +
+                "⑤ 투자 권유가 아닌 사후 복기입니다. 마크다운 없이 평문으로.\n\n" +
+                $"[그날의 기록]\n{dayContext}";
+            return CompleteAsync(prompt, model);
+        }
+
         // ===== 공용 Gemini 완성 호출 (grounded prompt → text) =====
         public async Task<string> CompleteAsync(string prompt, string model = "gemini-2.0-flash")
         {
