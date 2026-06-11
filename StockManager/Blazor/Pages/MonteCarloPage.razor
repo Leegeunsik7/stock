@@ -1,0 +1,124 @@
+@page "/montecarlo"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@using System.Threading
+
+<div class="top">
+    <div class="hello"><h1>🎲 포트폴리오 몬테카를로</h1><p>보유 종목 과거수익률·상관관계로 미래 분포 시뮬 (정보 제공용)</p></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)">기간
+        <select class="srch" style="width:90px" @bind="_horizon">
+            <option value="5">1주</option><option value="21">1개월</option><option value="63">3개월</option>
+        </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub);margin:0 8px">시뮬
+        <select class="srch" style="width:90px" @bind="_sims">
+            <option value="2000">2,000</option><option value="5000">5,000</option><option value="10000">10,000</option>
+        </select>
+    </label>
+    <button class="addbtn" style="margin-right:16px" disabled="@_busy" @onclick="RunAsync">@(_busy?"시뮬 중…":"▶ 실행")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:900px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 과거 90일 일수익률의 평균·공분산을 추정해 상관관계를 보존한 채 미래 경로를 @(_sims)회 시뮬합니다.
+        정규분포·정상성 가정의 단순 모델이며 <b>미래를 보장하지 않습니다(투자 권유 아님).</b>
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세 수집 + 시뮬레이션 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_res is { Sims: > 0 })
+    {
+        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(4,1fr)">
+            <div class="tile @(_res.ExpReturnPct>=0?"u":"d")"><div class="lab">기대 수익률 (@HzLabel)</div><div class="val num">@_res.ExpReturnPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">중앙값 (P50)</div><div class="val num">@_res.P50.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile d"><div class="lab">VaR 95% (최대손실)</div><div class="val num">-@_res.Var95Pct.ToString("0.0")%</div></div>
+            <div class="tile @(_res.ProbLossPct<50?"u":"d")"><div class="lab">손실 확률</div><div class="val num">@_res.ProbLossPct.ToString("0.0")%</div></div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px">
+            <div style="font-weight:700;margin-bottom:6px">@HzLabel 후 수익률 분포 (@(_assets)종목 · @_res.Sims.ToString("N0")회)</div>
+            @((MarkupString)HistSvg())
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--sub);margin-top:6px">
+                <span>비관 P5 <b class="down">@_res.P5.ToString("+0.0;-0.0")%</b></span>
+                <span>중앙 P50 <b>@_res.P50.ToString("+0.0;-0.0")%</b></span>
+                <span>낙관 P95 <b class="up">@_res.P95.ToString("+0.0;-0.0")%</b></span>
+            </div>
+        </div>
+        <div class="sub" style="font-size:12px">
+            해석: @HzLabel 뒤 포트폴리오는 <b>90% 확률로 @_res.P5.ToString("+0.0;-0.0")% ~ @_res.P95.ToString("+0.0;-0.0")%</b> 구간에 있을 것으로 시뮬됩니다.
+        </div>
+    }
+</div>
+
+@code {
+    private int _horizon = 21, _sims = 2000, _assets;
+    private bool _busy;
+    private string _msg = "";
+    private McResult? _res;
+
+    private string HzLabel => _horizon switch { 5 => "1주", 63 => "3개월", _ => "1개월" };
+
+    protected override async Task OnInitializedAsync() => await RunAsync();
+
+    private async Task RunAsync()
+    {
+        _busy = true; _msg = ""; _res = null; StateHasChanged();
+        try
+        {
+            var holdings = Db.GetAllHoldings();
+            if (holdings.Count == 0) { _msg = "보유 종목이 없습니다. 포트폴리오에 종목을 추가하세요."; return; }
+
+            decimal usd = 1380m; try { usd = await Fx.GetUsdKrwAsync(); } catch { }
+            var returns = await CorrelationAnalyzer.CollectReturnsAsync(
+                Provider, holdings.Select(h => (h.Symbol, h.Market)), 90);
+
+            var used = holdings.Where(h => returns.ContainsKey(h.Symbol) && returns[h.Symbol].Count >= 2).ToList();
+            if (used.Count == 0) { _msg = "수익률 히스토리를 수집하지 못했습니다(시세 제공자 확인)."; return; }
+
+            var rows = used.Select(h => returns[h.Symbol].Select(d => (double)d).ToArray()).ToArray();
+            var rawW = used.Select(h => (double)(h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? usd : 1m))).ToArray();
+            var sum = rawW.Sum();
+            var weights = sum > 0 ? rawW.Select(w => w / sum).ToArray() : rawW.Select(_ => 1.0 / rawW.Length).ToArray();
+            _assets = used.Count;
+
+            _res = MonteCarlo.Simulate(rows, weights, _horizon, _sims);
+            if (_res.Sims == 0) _msg = "시뮬에 필요한 데이터가 부족합니다.";
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private string HistSvg()
+    {
+        if (_res is not { Sims: > 0 } r || r.Histogram.Length == 0) return "";
+        double w = 860, h = 200, padL = 8, padR = 8, padT = 8, padB = 22;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        int n = r.Histogram.Length, max = r.Histogram.Max(); if (max == 0) max = 1;
+        double bw = plotW / n;
+        double range = r.HistMax - r.HistMin; if (range <= 0) range = 1;
+        double ZeroX() => padL + (0 - r.HistMin) / range * plotW;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:200px;display:block'>");
+        for (int i = 0; i < n; i++)
+        {
+            double bh = (double)r.Histogram[i] / max * plotH;
+            double x = padL + i * bw;
+            double center = r.HistMin + (i + 0.5) / n * range;
+            string col = center < 0 ? "var(--down)" : "var(--up)";
+            sb.Append($"<rect x='{x:F1}' y='{padT + plotH - bh:F1}' width='{Math.Max(1, bw - 1):F1}' height='{bh:F1}' fill='{col}' opacity='0.75'/>");
+        }
+        // 0% 기준선
+        if (r.HistMin < 0 && r.HistMax > 0)
+        {
+            double zx = ZeroX();
+            sb.Append($"<line x1='{zx:F1}' y1='{padT}' x2='{zx:F1}' y2='{padT + plotH:F1}' stroke='var(--sub)' stroke-dasharray='3 3'/>");
+            sb.Append($"<text x='{zx + 3:F1}' y='{padT + 12}' fill='var(--sub)' font-size='10'>0%</text>");
+        }
+        sb.Append($"<text x='{padL}' y='{h - 6}' fill='var(--sub)' font-size='10'>{r.HistMin:+0.0;-0.0}%</text>");
+        sb.Append($"<text x='{padL + plotW - 36:F1}' y='{h - 6}' fill='var(--sub)' font-size='10'>{r.HistMax:+0.0;-0.0}%</text>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}
