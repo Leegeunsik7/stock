@@ -4,6 +4,7 @@
 //  · 위젯 데이터를 한 번에 로드하여 컴포넌트에 제공.
 // ============================================================================
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -16,13 +17,20 @@ namespace StockManager.Blazor
     public record ActItem(string Text, string When);
     public record SignalRow(string Side, string Name, string Reason, int Pct);
 
-    public class DashboardService
+    public class DashboardService : IDisposable
     {
         private readonly IQuoteProvider _provider;
         private readonly LocalDatabase _db;
         private readonly UpbitProvider _upbit = new();
         private readonly FxConverter _fx = new();
         public PaperBroker Broker { get; }
+
+        // 업비트 WebSocket 실시간가 오버레이 (추가형 — 폴링이 권위 있는 폴백). 백그라운드 스레드가
+        // _wsPx(ConcurrentDictionary)만 쓰고, _coinPx 병합은 UI 스레드 LoadAsync에서 수행(스레드 안전).
+        private readonly UpbitWebSocketClient _ws = new();
+        private readonly ConcurrentDictionary<string, (decimal px, DateTime at)> _wsPx = new(StringComparer.OrdinalIgnoreCase);
+        private string _wsKey = "";
+        private bool _wsHooked;
 
         public DashboardService(IQuoteProvider provider, LocalDatabase db)
         {
@@ -102,9 +110,14 @@ namespace StockManager.Blazor
             var watch = state.Watch.Count > 0 ? state.Watch
                 : new List<string> { "KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL", "KRW-DOGE" };
 
+            EnsureWs(watch);
             var tickMap = new Dictionary<string, CryptoTick>(StringComparer.OrdinalIgnoreCase);
             try { foreach (var t in await _upbit.GetTickersAsync(watch)) tickMap[t.Market] = t; } catch { }
             foreach (var kv in tickMap) _coinPx[kv.Key] = kv.Value.Price;
+            // WS 실시간가가 더 신선(15초 이내)하면 우선 적용 — 폴링은 폴백으로 유지
+            foreach (var m in watch)
+                if (_wsPx.TryGetValue(m, out var w) && (DateTime.Now - w.at).TotalSeconds < 15)
+                    _coinPx[m] = w.px;
 
             decimal coinValue = 0;
             foreach (var kv in state.Holdings)
@@ -123,8 +136,10 @@ namespace StockManager.Blazor
                 var spark = (closes != null && closes.Count >= 2)
                     ? closes.Skip(Math.Max(0, closes.Count - 8)).Select(c => (double)c).ToArray()
                     : Array.Empty<double>();
+                decimal px = (_wsPx.TryGetValue(m, out var ws) && (DateTime.Now - ws.at).TotalSeconds < 15)
+                    ? ws.px : (t?.Price ?? 0m);   // 위젯도 WS 실시간가 우선
                 Coins.Add(new CoinRow(t?.KoreanName ?? m.Replace("KRW-", ""), m,
-                    t?.Price ?? 0m, t?.ChangeRate ?? 0m, spark));
+                    px, t?.ChangeRate ?? 0m, spark));
             }
             ScanSignals(watch, tickMap, candleMap);
 
@@ -226,6 +241,26 @@ namespace StockManager.Blazor
             if (!DateTime.TryParse(ymd, out var dt)) return ymd;
             return new[] { "일", "월", "화", "수", "목", "금", "토" }[(int)dt.DayOfWeek];
         }
+
+        // 업비트 WebSocket 구독 보장 — 최초 1회 핸들러 연결, watch 구성이 바뀌면 재구독.
+        // 실패해도 폴링이 계속 동작하므로 try/catch로 흡수(추가형 보강). ⚠️ 런타임 검증 필요.
+        private void EnsureWs(List<string> watch)
+        {
+            if (watch.Count == 0) return;
+            if (!_wsHooked)
+            {
+                _ws.TickReceived += t => _wsPx[t.Market] = (t.Price, DateTime.Now);   // 백그라운드 스레드
+                _wsHooked = true;
+            }
+            var key = string.Join(",", watch);
+            if (key != _wsKey)
+            {
+                _wsKey = key;
+                try { _ = _ws.StartAsync(watch); } catch { /* 폴링 폴백 */ }
+            }
+        }
+
+        public void Dispose() { try { _ws.Dispose(); } catch { } }
 
         // 일봉 캔들을 5분 TTL로 캐시 — watch 구성이 바뀌거나 만료 시에만 재페치.
         private async Task<Dictionary<string, List<decimal>>> GetWatchCandlesAsync(List<string> watch)
