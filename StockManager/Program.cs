@@ -99,8 +99,12 @@ namespace StockManager
             // (해당 WinForms 창이 열려 있으면 그 창이 처리하므로 자동 스킵)
             AlertEngineService.Instance.Start(db, provider);
 
+            // 읽기전용 LAN 상태 서버(옵트인 — Lan.Enabled=="true"일 때만 시작)
+            LanStatusServer.Instance.Start(db);
+
             void Cleanup()
             {
+                LanStatusServer.Instance.Stop();
                 AlertEngineService.Instance.Stop();
                 CompositeAlertService.Instance.Stop();
                 TrayNotifier.Dispose();

@@ -22,6 +22,24 @@
         <button class="addbtn" @onclick="OpenBrokerSettings">⚙️ 거래 설정 열기</button>
     </div>
 
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">📱 LAN 상태 서버 (읽기전용)</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">같은 와이파이의 폰 브라우저에서 포트폴리오 현황만 조회. 주문·설정 변경은 불가(이 PC에서만).</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" @bind="_lanEnabled" /> 서버 사용
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <div><label class="flbl">포트</label><input class="fin" style="width:90px" type="number" @bind="_lanPort" /></div>
+            <div><label class="flbl">접속 PIN</label><input class="fin" style="width:130px" @bind="_lanPin" /></div>
+            <button class="addbtn" @onclick="ApplyLan">적용</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">
+            상태: @(LanStatusServer.Instance.Running ? $"🟢 실행 중 (포트 {LanStatusServer.Instance.Port})" : "⚪ 중지")
+            @if (!string.IsNullOrEmpty(LanStatusServer.Instance.LastError)) { <div style="color:var(--warn)">@LanStatusServer.Instance.LastError</div> }
+            @if (_lanMsg.Length > 0) { <div>@_lanMsg</div> }
+        </div>
+    </div>
+
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px">
         <div style="font-weight:700;margin-bottom:14px">빠른 설정</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -34,12 +52,28 @@
 @code {
     private bool _live;
     private string _upAk = "", _kisAk = "";
+    private bool _lanEnabled;
+    private int _lanPort = 8787;
+    private string _lanPin = "", _lanMsg = "";
 
     protected override void OnInitialized()
     {
         _live = BrokerHub.IsLive(Db);
         (_upAk, _) = ApiKeyVault.GetUpbit(Db);
         (_kisAk, _, _) = ApiKeyVault.GetKis(Db);
+        _lanEnabled = Db.GetSetting("Lan.Enabled") == "true";
+        if (int.TryParse(Db.GetSetting("Lan.Port"), out var p)) _lanPort = p;
+        _lanPin = Db.GetSetting("Lan.Pin") ?? "";
+    }
+
+    private void ApplyLan()
+    {
+        if (_lanEnabled && string.IsNullOrWhiteSpace(_lanPin)) { _lanMsg = "보안을 위해 PIN을 설정하세요."; return; }
+        Db.SetSetting("Lan.Enabled", _lanEnabled ? "true" : "false");
+        Db.SetSetting("Lan.Port", Math.Clamp(_lanPort, 1, 65535).ToString());
+        Db.SetSetting("Lan.Pin", _lanPin.Trim());
+        LanStatusServer.Instance.Restart(Db);
+        _lanMsg = _lanEnabled ? "적용됨. 폰 브라우저에서 http://(이PC IP):" + _lanPort + " 접속." : "서버를 중지했습니다.";
     }
 
     private void SetMode(bool live) { BrokerHub.SetLive(Db, live); _live = live; }
