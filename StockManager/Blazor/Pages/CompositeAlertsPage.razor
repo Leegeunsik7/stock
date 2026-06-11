@@ -1,46 +1,138 @@
 @page "/composite"
 @implements IDisposable
 
+@* 복합 알림 — Blazor 네이티브 규칙 편집기(레거시 WinForms 관리창 이식).
+   단일 소스 CompositeAlertService.Instance.Rules를 직접 편집하고 Persist(). *@
+
 <div class="top"><div class="hello"><h1>🧠 복합 알림</h1>
 <p>규칙 @(_svc.Rules.Count)개 · 활성 @(_svc.Rules.Count(r=>r.Enabled))개 · 마지막 평가: @(_svc.LastRun==default?"없음":_svc.LastRun.ToString("HH:mm:ss"))</p></div>
-<button class="addbtn" @onclick='async ()=>{await _svc.EvaluateNowAsync();StateHasChanged();}' style="margin:0 16px">🔄 지금 평가</button>
-<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="OpenManager">⚙️ 규칙 관리</button></div>
+<button class="addbtn" style="background:var(--up);margin:0 6px" @onclick="AddNew">➕ 규칙 추가</button>
+<button class="addbtn" @onclick='async ()=>{await _svc.EvaluateNowAsync();StateHasChanged();}' style="margin-right:16px">🔄 지금 평가</button></div>
+
+@if (_editing != null)
+{
+    <div style="margin:0 28px 18px;background:var(--card);border:1.5px solid var(--accent);border-radius:var(--radius);padding:18px">
+        <div style="font-weight:700;margin-bottom:14px">@(_isNew ? "새 규칙" : "규칙 편집")</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:end">
+            <div style="grid-column:span 2"><label class="flbl">규칙 이름</label><input class="fin" @bind="_editing.Name" /></div>
+            <div><label class="flbl">자산</label>
+                <select class="fin" @bind="_editing.AssetKind"><option value="coin">코인</option><option value="stock">주식</option></select></div>
+            <div><label class="flbl">대상(마켓/심볼)</label><input class="fin" @bind="_editing.Target" placeholder="KRW-BTC / 005930" /></div>
+            <div><label class="flbl">쿨다운(분)</label><input class="fin" type="number" min="0" @bind="_editing.CooldownMin" /></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px">
+            <b style="font-size:13px">조건</b>
+            <select class="fin" style="width:120px" @bind="_editing.Logic">
+                <option value="And">모두 충족(AND)</option><option value="Or">하나라도(OR)</option>
+            </select>
+            <button class="pill r" style="border:0;cursor:pointer;padding:4px 10px" @onclick="AddCond">+ 조건</button>
+        </div>
+
+        @foreach (var cond in _editing.Conditions)
+        {
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+                <select class="fin" style="width:170px" @bind="cond.Metric">
+                    <option value="@CondMetric.Price">현재가</option>
+                    <option value="@CondMetric.ChangePct">등락률(%)</option>
+                    <option value="@CondMetric.MaGapPct">MA 괴리(%)</option>
+                    <option value="@CondMetric.Rsi">RSI</option>
+                    <option value="@CondMetric.VolumeSurgePct">거래량 증가(%)</option>
+                </select>
+                @if (cond.Metric == CondMetric.MaGapPct || cond.Metric == CondMetric.Rsi)
+                {
+                    <input class="fin" style="width:90px" type="number" min="1" @bind="cond.Param" title="기간" />
+                }
+                <select class="fin" style="width:80px" @bind="cond.Op">
+                    <option value="@CondOp.Gte">≥</option><option value="@CondOp.Lte">≤</option>
+                </select>
+                <input class="fin" style="width:130px" type="number" step="0.01" @bind="cond.Threshold" title="임계값" />
+                <button class="pill b" style="border:0;cursor:pointer;padding:4px 9px" @onclick="() => _editing.Conditions.Remove(cond)">✕</button>
+                <span class="sub" style="font-size:12px">@cond.Describe()</span>
+            </div>
+        }
+        @if (_editing.Conditions.Count == 0) { <div class="sub" style="font-size:12.5px;margin-bottom:8px">'+ 조건'으로 조건을 추가하세요.</div> }
+
+        <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+            <button class="addbtn" @onclick="SaveEdit">💾 저장</button>
+            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="() => _editing = null">취소</button>
+            @if (!string.IsNullOrEmpty(_msg)) { <span class="sub">@_msg</span> }
+        </div>
+    </div>
+}
 
 <div style="padding:0 28px 40px">
-    <div style="margin-bottom:14px;color:var(--sub);font-size:13px">규칙을 추가·편집하려면 '규칙 관리' 버튼을 누르세요(WinForms 편집 창). 평가 결과는 아래에서 실시간으로 확인합니다.</div>
     <table class="ctbl">
-        <thead><tr><th>사용</th><th>이름</th><th>대상</th><th>조건 요약</th><th>마지막 발생</th><th>쿨다운</th></tr></thead>
+        <thead><tr><th>사용</th><th>이름</th><th>대상</th><th>조건 요약</th><th>마지막 발생</th><th>쿨다운</th><th>관리</th></tr></thead>
         <tbody>
             @foreach (var r in _svc.Rules)
             {
                 <tr>
-                    <td>@(r.Enabled?"✅":"⏸")</td>
+                    <td><button class="pill @(r.Enabled?"r":"b")" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Toggle(r)">@(r.Enabled?"✅ 사용":"⏸ 중지")</button></td>
                     <td><b>@r.Name</b></td>
                     <td>@(r.AssetKind=="stock"?"📈":"🪙") @r.Target</td>
                     <td style="font-size:12px;color:var(--sub)">@string.Join(r.Logic==RuleLogic.And?" AND ":" OR ", r.Conditions.Select(c=>c.Describe()))</td>
                     <td style="font-size:12px;color:var(--sub)">@(r.LastFired?.ToString("MM-dd HH:mm") ?? "-")</td>
                     <td style="font-size:12px;color:var(--sub)">@(r.CooldownMin)분</td>
+                    <td>
+                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Edit(r)">편집</button>
+                        <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;margin-left:3px" @onclick="() => Delete(r)">삭제</button>
+                    </td>
                 </tr>
             }
         </tbody>
     </table>
-    @if (_svc.Rules.Count == 0)
-    {
-        <div style="padding:40px;text-align:center;color:var(--sub)">'규칙 관리' 버튼으로 복합 알림 규칙을 추가하세요.</div>
-    }
+    @if (_svc.Rules.Count == 0) { <div style="padding:40px;text-align:center;color:var(--sub)">'➕ 규칙 추가'로 복합 알림 규칙을 만드세요.</div> }
 </div>
 
 @code {
     private readonly CompositeAlertService _svc = CompositeAlertService.Instance;
-    private System.Threading.CancellationTokenSource? _cts;
+    private CompositeRule? _editing;
+    private bool _isNew;
+    private string _msg = "";
 
-    protected override void OnInitialized()
+    protected override void OnInitialized() => _svc.Evaluated += Refresh;
+    private void Refresh() => InvokeAsync(StateHasChanged);
+
+    private void AddNew()
     {
-        _svc.Evaluated += Refresh;
-        _cts = new System.Threading.CancellationTokenSource();
+        _isNew = true; _msg = "";
+        _editing = new CompositeRule
+        {
+            Name = "새 규칙", AssetKind = "coin", Target = "KRW-BTC", Logic = RuleLogic.And,
+            Conditions = new() { new CompositeCondition { Metric = CondMetric.Rsi, Param = 14, Op = CondOp.Lte, Threshold = 30 } }
+        };
     }
 
-    private void Refresh() => InvokeAsync(StateHasChanged);
-    private void OpenManager() => ModuleBridge.Open("Composite");
-    public void Dispose() { _svc.Evaluated -= Refresh; _cts?.Cancel(); _cts?.Dispose(); }
+    private void Edit(CompositeRule r) { _isNew = false; _msg = ""; _editing = Clone(r); }
+
+    private void AddCond() => _editing?.Conditions.Add(new CompositeCondition { Metric = CondMetric.Price, Op = CondOp.Gte });
+
+    private void SaveEdit()
+    {
+        if (_editing == null) return;
+        if (string.IsNullOrWhiteSpace(_editing.Name) || string.IsNullOrWhiteSpace(_editing.Target)) { _msg = "이름과 대상을 입력하세요."; return; }
+        if (_editing.Conditions.Count == 0) { _msg = "조건을 1개 이상 추가하세요."; return; }
+
+        if (_isNew) _svc.Rules.Add(_editing);
+        else
+        {
+            var i = _svc.Rules.FindIndex(x => x.Id == _editing!.Id);
+            if (i >= 0) _svc.Rules[i] = _editing; else _svc.Rules.Add(_editing);
+        }
+        _svc.Persist();          // 저장 + Evaluated 이벤트로 UI 갱신
+        _editing = null;
+    }
+
+    private void Toggle(CompositeRule r) { r.Enabled = !r.Enabled; _svc.Persist(); }
+    private void Delete(CompositeRule r) { _svc.Rules.RemoveAll(x => x.Id == r.Id); _svc.Persist(); if (_editing?.Id == r.Id) _editing = null; }
+
+    private static CompositeRule Clone(CompositeRule r) => new()
+    {
+        Id = r.Id, Name = r.Name, AssetKind = r.AssetKind, Target = r.Target,
+        Logic = r.Logic, Enabled = r.Enabled, CooldownMin = r.CooldownMin, LastFired = r.LastFired,
+        Conditions = r.Conditions.Select(c => new CompositeCondition
+        { Metric = c.Metric, Param = c.Param, Op = c.Op, Threshold = c.Threshold }).ToList()
+    };
+
+    public void Dispose() => _svc.Evaluated -= Refresh;
 }
