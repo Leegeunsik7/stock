@@ -3,79 +3,142 @@
 @inject NavigationManager Nav
 @inject ToastService Toasts
 
-@* 레거시 WinForms SetupWizard의 Blazor 네이티브 이식 (단일 스크롤 폼).
-   연결 테스트는 공용 ConnectionTester로 WinForms와 동일 로직. 키는 DPAPI(SetSecret) 저장. *@
+@* 레거시 WinForms SetupWizard의 Blazor 이식 — 원본과 동일한 5스텝 마법사.
+   연결 테스트는 공용 ConnectionTester(WinForms와 동일 로직). 키는 DPAPI(SetSecret) 저장. *@
 
 <div class="top">
-    <div class="hello"><h1>🚀 설정 마법사</h1><p>Gemini · KIS · 텔레그램 — 키 입력 후 즉시 연결 확인 (모두 선택)</p></div>
+    <div class="hello"><h1>🚀 설정 마법사</h1><p>@_steps[_step] · 외부 연동 키를 한 번에 설정 (모두 선택)</p></div>
     <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin-right:16px"
-            @onclick='() => Nav.NavigateTo("/settings")'>← 설정으로</button>
+            @onclick='() => Nav.NavigateTo("/settings")'>✕ 닫기</button>
 </div>
 
-<div style="padding:0 28px 40px;max-width:640px">
-    <div style="background:color-mix(in srgb,var(--ok) 10%,transparent);border:1px solid var(--ok);border-radius:10px;padding:12px;font-size:12.5px;color:var(--ok);margin-bottom:18px;line-height:1.6">
-        🔐 입력한 키는 Windows DPAPI로 암호화되어 이 PC·이 사용자 계정에서만 복호화됩니다. 평문 저장되지 않습니다.
+<div style="padding:0 28px 40px;max-width:680px">
+
+    @* ===== 스텝 레일 ===== *@
+    <div class="stepper">
+        @for (int i = 0; i < _steps.Length; i++)
+        {
+            var idx = i;
+            <div class="step @(idx == _step ? "active" : "") @(StepDone(idx) ? "done" : "")">
+                <span class="dot">@(StepDone(idx) && idx != _step ? "✓" : (idx + 1).ToString())</span>
+                <span class="lbl">@_steps[idx]</span>
+            </div>
+            @if (i < _steps.Length - 1) { <span class="bar"></span> }
+        }
     </div>
 
-    @* Gemini *@
-    <div class="card-sec">
-        <div class="sec-h">🧠 Gemini AI <span class="sub" style="font-weight:400">기업 분석 / 뉴스 감성분석</span></div>
-        <label class="flbl">API Key</label>
-        <input class="fin" type="password" @bind="_gemini" />
-        <div class="test-row">
-            <button class="addbtn" disabled="@_busyG" @onclick="TestGemini">🔌 연결 테스트</button>
-            <span style="color:@StatusColor(_gOk)">@(_gStatus.Length == 0 ? "연결 상태: 미확인" : _gStatus)</span>
-        </div>
-        <div class="hint">키 발급: aistudio.google.com → Get API key</div>
+    <div class="card-sec" style="min-height:280px">
+        @switch (_step)
+        {
+            case 0:   // 환영
+                <div class="sec-h">환영합니다 👋</div>
+                <p style="line-height:1.8;color:var(--ink)">
+                    이 마법사는 외부 연동 키를 한 번에 설정합니다.<br/>
+                    • <b>Gemini AI</b> — 기업 분석 / 뉴스 감성분석<br/>
+                    • <b>한국투자증권(KIS)</b> — 실시간 시세 우선 제공<br/>
+                    • <b>텔레그램</b> — Critical 알림 자동 전송<br/><br/>
+                    세 가지 모두 선택 사항이며, 미설정 시에도 네이버·야후 시세로 동작합니다.
+                </p>
+                <div class="okbox">🔐 입력한 키는 Windows DPAPI로 암호화되어 이 PC·이 사용자 계정에서만 복호화됩니다. 평문 저장되지 않습니다.</div>
+                break;
+
+            case 1:   // Gemini
+                <div class="sec-h">🧠 Gemini AI</div>
+                <p class="sub" style="margin-bottom:12px">Google AI Studio에서 발급한 API 키를 입력하세요.</p>
+                <label class="flbl">API Key</label>
+                <input class="fin" type="password" @bind="_gemini" />
+                <div class="test-row">
+                    <button class="addbtn" disabled="@_busyG" @onclick="TestGemini">🔌 연결 테스트</button>
+                    <span style="color:@StatusColor(_gOk)">@(_gStatus.Length == 0 ? "연결 상태: 미확인" : _gStatus)</span>
+                </div>
+                <div class="hint">키 발급: aistudio.google.com → Get API key</div>
+                break;
+
+            case 2:   // KIS
+                <div class="sec-h">🏦 한국투자증권 (KIS)</div>
+                <p class="sub" style="margin-bottom:12px">KIS Developers에서 발급한 App Key / Secret을 입력하세요.</p>
+                <label class="flbl">App Key</label>
+                <input class="fin" type="password" @bind="_kisKey" />
+                <label class="flbl" style="margin-top:10px">App Secret</label>
+                <input class="fin" type="password" @bind="_kisSecret" />
+                <label class="flbl" style="margin-top:10px">계좌번호 (예: 12345678-01)</label>
+                <input class="fin" @bind="_kisAcc" placeholder="12345678-01" />
+                <label class="ck"><input type="checkbox" @bind="_kisPaper" /> 모의투자(VTS) 모드</label>
+                <div class="test-row">
+                    <button class="addbtn" disabled="@_busyK" @onclick="TestKis">🔌 연결 테스트</button>
+                    <span style="color:@StatusColor(_kOk)">@(_kStatus.Length == 0 ? "연결 상태: 미확인" : _kStatus)</span>
+                </div>
+                <div class="hint">OAuth 토큰 발급(/oauth2/tokenP)으로 검증합니다.</div>
+                break;
+
+            case 3:   // Telegram
+                <div class="sec-h">📱 텔레그램 봇</div>
+                <p class="sub" style="margin-bottom:12px">@@BotFather에서 만든 봇 토큰과 수신 Chat ID를 입력하세요.</p>
+                <label class="flbl">Bot Token</label>
+                <input class="fin" type="password" @bind="_tgToken" />
+                <label class="flbl" style="margin-top:10px">Chat ID</label>
+                <input class="fin" @bind="_tgChat" />
+                <div class="test-row">
+                    <button class="addbtn" disabled="@_busyT" @onclick="TestTelegram">🔌 연결 테스트</button>
+                    <span style="color:@StatusColor(_tOk)">@(_tStatus.Length == 0 ? "연결 상태: 미확인" : _tStatus)</span>
+                </div>
+                <div class="hint">Chat ID 입력 시 테스트 메시지를 실제로 1건 전송합니다.</div>
+                break;
+
+            case 4:   // 완료
+                <div class="sec-h">🎉 설정 요약</div>
+                <div style="line-height:2;font-size:13.5px">
+                    @SummaryRow("Gemini AI", _gemini, _gOk)<br/>
+                    @SummaryRow("한국투자증권 KIS", _kisKey, _kOk)<br/>
+                    @SummaryRow("텔레그램", _tgToken, _tOk)
+                </div>
+                <div class="okbox" style="margin-top:14px">@(_kOk == true ? "→ KIS가 실시간 시세 우선 제공자로 사용됩니다." : "→ 미설정 시 네이버·야후 시세로 동작합니다.") · '완료'를 누르면 DPAPI로 암호화 저장됩니다.</div>
+                break;
+        }
     </div>
 
-    @* KIS *@
-    <div class="card-sec">
-        <div class="sec-h">🏦 한국투자증권 (KIS) <span class="sub" style="font-weight:400">실시간 시세 우선 제공</span></div>
-        <label class="flbl">App Key</label>
-        <input class="fin" type="password" @bind="_kisKey" />
-        <label class="flbl" style="margin-top:10px">App Secret</label>
-        <input class="fin" type="password" @bind="_kisSecret" />
-        <label class="flbl" style="margin-top:10px">계좌번호 (예: 12345678-01)</label>
-        <input class="fin" @bind="_kisAcc" placeholder="12345678-01" />
-        <label class="ck"><input type="checkbox" @bind="_kisPaper" /> 모의투자(VTS) 모드</label>
-        <div class="test-row">
-            <button class="addbtn" disabled="@_busyK" @onclick="TestKis">🔌 연결 테스트</button>
-            <span style="color:@StatusColor(_kOk)">@(_kStatus.Length == 0 ? "연결 상태: 미확인" : _kStatus)</span>
-        </div>
-        <div class="hint">OAuth 토큰 발급(/oauth2/tokenP)으로 검증합니다.</div>
-    </div>
-
-    @* Telegram *@
-    <div class="card-sec">
-        <div class="sec-h">📱 텔레그램 봇 <span class="sub" style="font-weight:400">Critical 알림 자동 전송</span></div>
-        <label class="flbl">Bot Token</label>
-        <input class="fin" type="password" @bind="_tgToken" />
-        <label class="flbl" style="margin-top:10px">Chat ID</label>
-        <input class="fin" @bind="_tgChat" />
-        <div class="test-row">
-            <button class="addbtn" disabled="@_busyT" @onclick="TestTelegram">🔌 연결 테스트</button>
-            <span style="color:@StatusColor(_tOk)">@(_tStatus.Length == 0 ? "연결 상태: 미확인" : _tStatus)</span>
-        </div>
-        <div class="hint">Chat ID 입력 시 테스트 메시지를 실제로 1건 전송합니다.</div>
-    </div>
-
-    <div style="display:flex;gap:10px;align-items:center">
-        <button class="addbtn" @onclick="Save">💾 저장</button>
-        <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick='() => Nav.NavigateTo("/settings")'>취소</button>
-        <span class="sub" style="font-size:12px">@(_kOk == true ? "→ KIS가 실시간 시세 우선 제공자로 사용됩니다." : "→ 미설정 시 네이버·야후 시세로 동작합니다.")</span>
+    @* ===== 내비게이션 ===== *@
+    <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+        <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)"
+                disabled="@(_step == 0)" @onclick="() => _step--">← 이전</button>
+        <span style="flex:1"></span>
+        @if (_step >= 1 && _step <= 3)
+        {
+            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="() => _step++">건너뛰기</button>
+        }
+        @if (_step < _steps.Length - 1)
+        {
+            <button class="addbtn" @onclick="() => _step++">다음 →</button>
+        }
+        else
+        {
+            <button class="addbtn" style="background:var(--ok)" @onclick="Save">✅ 완료</button>
+        }
     </div>
 </div>
 
 <style>
-    .card-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px}
-    .sec-h{font-weight:700;margin-bottom:14px}
+    .card-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;margin-bottom:16px}
+    .sec-h{font-weight:700;font-size:15px;margin-bottom:14px}
     .ck{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px;cursor:pointer}
-    .test-row{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;font-size:12.5px}
+    .test-row{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap;font-size:12.5px}
     .hint{color:var(--sub);font-size:11.5px;margin-top:8px}
+    .okbox{background:color-mix(in srgb,var(--ok) 10%,transparent);border:1px solid var(--ok);border-radius:10px;padding:12px;font-size:12.5px;color:var(--ok);line-height:1.6}
+    .stepper{display:flex;align-items:center;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+    .stepper .step{display:flex;align-items:center;gap:7px;opacity:.5}
+    .stepper .step.active{opacity:1}
+    .stepper .step.done{opacity:1}
+    .stepper .dot{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:var(--card-2);border:1px solid var(--line)}
+    .stepper .step.active .dot{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .stepper .step.done .dot{background:var(--ok);color:#fff;border-color:var(--ok)}
+    .stepper .lbl{font-size:12.5px;font-weight:600}
+    .stepper .bar{flex:0 0 18px;height:2px;background:var(--line)}
 </style>
 
 @code {
+    private readonly string[] _steps = { "환영", "Gemini AI", "한국투자증권", "텔레그램", "완료" };
+    private int _step;
+
     private string _gemini = "", _kisKey = "", _kisSecret = "", _kisAcc = "", _tgToken = "", _tgChat = "";
     private bool _kisPaper = true;
     private string _gStatus = "", _kStatus = "", _tStatus = "";
@@ -92,6 +155,8 @@
         _tgToken = Db.GetSecret("Telegram.Token") ?? "";
         _tgChat = Db.GetSetting("Telegram.ChatId") ?? "";
     }
+
+    private bool StepDone(int i) => i switch { 1 => _gOk == true, 2 => _kOk == true, 3 => _tOk == true, _ => false };
 
     private async Task TestGemini()
     {
@@ -130,7 +195,12 @@
         Db.SetSetting("Telegram.Enabled", !string.IsNullOrWhiteSpace(_tgToken) ? "true" : "false");
         Db.SetSetting("Setup.Completed", "true");
         Toasts.Success("설정 저장됨", "API 키가 DPAPI로 암호화되어 저장되었습니다. (Provider 반영은 재시작 후)");
+        Nav.NavigateTo("/settings");
     }
+
+    private static string SummaryRow(string name, string val, bool? tested)
+        => (tested == true ? "✅" : !string.IsNullOrWhiteSpace(val) ? "🟡" : "⬜")
+           + "  " + name + " — " + (tested == true ? "연결 확인됨" : !string.IsNullOrWhiteSpace(val) ? "입력됨 (미검증)" : "미설정");
 
     private static string StatusColor(bool? ok) => ok == true ? "var(--ok)" : ok == false ? "var(--up)" : "var(--sub)";
 }
