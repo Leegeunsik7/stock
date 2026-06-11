@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MS2-E Stock Suite</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<link rel="stylesheet" href="app.css" />  <!-- 프로토타입 <style> 내용을 복사 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+</head><body>
+  <div id="app"></div>
+  <script src="_framework/blazor.webview.js" autostart="false"></script>
+  <script>
+    window.initSortable = (id) => {
+      const el = document.getElementById(id); if(!el) return;
+      new Sortable(el, { animation:180, handle:'.grip', ghostClass:'sortable-ghost' });
+    };
+    Blazor.start();
+  </script>
+</body></html>

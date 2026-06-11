@@ -1,0 +1,24 @@
+// BlazorHomeForm — WinForms 폼 안에 Blazor 대시보드를 호스팅 (Blazor Hybrid)
+// 활성화: .txt 제거 → .cs. (csproj를 Microsoft.NET.Sdk.Razor + BlazorWebView 패키지로 변경 후)
+using System;
+using System.Windows.Forms;
+using Microsoft.AspNetCore.Components.WebView.WindowsForms;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace StockManager
+{
+    public class BlazorHomeForm : Form
+    {
+        public BlazorHomeForm(IServiceCollection services)
+        {
+            Text = "MS2-E Stock Suite";
+            WindowState = FormWindowState.Maximized;
+            StartPosition = FormStartPosition.CenterScreen;
+
+            var view = new BlazorWebView { Dock = DockStyle.Fill, HostPage = "wwwroot/index.html" };
+            view.Services = services.BuildServiceProvider();
+            view.RootComponents.Add<StockManager.Blazor.App>("#app");
+            Controls.Add(view);
+        }
+    }
+}

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MS2-E Stock Suite — 새 대시보드 (프로토타입)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f6fb; --canvas:#eef1f7; --card:#ffffff; --card-2:#f8fafc;
+    --ink:#1b2330; --sub:#697586; --line:#e4e8f0;
+    --side:#141a2a; --side-ink:#cdd5e4; --side-sub:#7b8499; --side-active:#1f2940;
+    --accent:#4f5bd5; --accent-2:#6d78e6;
+    --up:#e0344b; --down:#2563eb; --warn:#e0992b; --ok:#1aa06d;
+    --shadow:0 1px 2px rgba(20,26,42,.04), 0 8px 24px rgba(20,26,42,.06);
+    --radius:14px;
+    font-family:"Pretendard Variable",Pretendard,system-ui,sans-serif;
+  }
+  [data-theme="dark"]{
+    --bg:#10141d; --canvas:#0c0f17; --card:#161b27; --card-2:#1b2230;
+    --ink:#e8edf6; --sub:#8b95a8; --line:#262d3c;
+    --side:#0a0d15; --side-ink:#c4cdde; --side-sub:#6b7488; --side-active:#1a2233;
+    --accent:#6d78e6; --accent-2:#8b95f0;
+    --up:#ff5a6e; --down:#5b8cff;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--canvas);color:var(--ink);display:flex;min-height:100vh;font-size:14px;-webkit-font-smoothing:antialiased}
+  ::selection{background:var(--accent);color:#fff}
+
+  /* ===== Sidebar ===== */
+  .side{width:248px;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;flex-shrink:0;transition:width .22s ease}
+  .side.collapsed{width:72px}
+  .brand{display:flex;align-items:center;gap:12px;padding:20px 20px 16px}
+  .brand .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:grid;place-items:center;font-weight:800;color:#fff;flex-shrink:0}
+  .brand .t{font-weight:800;font-size:15px;letter-spacing:-.2px;line-height:1.1}
+  .brand .v{font-size:11px;color:var(--side-sub)}
+  .side.collapsed .brand .meta,.side.collapsed .navtxt,.side.collapsed .sectlbl,.side.collapsed .usermeta{display:none}
+  .kbar{margin:6px 14px 14px;background:#1c2438;border:1px solid #2a3450;border-radius:10px;color:var(--side-sub);font-size:12.5px;padding:9px 12px;display:flex;align-items:center;gap:8px;cursor:text}
+  .kbar kbd{margin-left:auto;background:#2a3450;border-radius:5px;padding:2px 6px;font-size:10.5px;color:#aab4c8}
+  .sectlbl{font-size:10.5px;letter-spacing:.12em;color:var(--side-sub);padding:14px 22px 6px;font-weight:700}
+  nav{flex:1;overflow-y:auto}
+  .nav{display:flex;align-items:center;gap:12px;padding:9px 22px;color:var(--side-ink);cursor:pointer;border-left:3px solid transparent;font-size:13.5px}
+  .nav .ic{width:18px;text-align:center;opacity:.9}
+  .nav:hover{background:#181f31}
+  .nav.active{background:var(--side-active);border-left-color:var(--accent-2);color:#fff;font-weight:600}
+  .side-foot{border-top:1px solid #222a3c;padding:12px 18px;display:flex;align-items:center;gap:10px}
+  .ava{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#3a456b,#566197);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
+  .usermeta .n{font-size:13px;font-weight:600}.usermeta .e{font-size:11px;color:var(--side-sub)}
+
+  /* ===== Main ===== */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{display:flex;align-items:center;gap:18px;padding:18px 28px;background:transparent}
+  .hello{flex:1;min-width:0}
+  .hello h1{font-size:21px;font-weight:800;letter-spacing:-.4px}
+  .hello h1 b{color:var(--accent)}
+  .hello p{color:var(--sub);font-size:12.5px;margin-top:3px}
+  .search{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:9px 14px;width:300px;box-shadow:var(--shadow)}
+  .search input{border:0;outline:0;background:transparent;color:var(--ink);width:100%;font-size:13px}
+  .badges{display:flex;gap:14px;align-items:center}
+  .dot{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--sub)}
+  .dot i{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+  .iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer;font-size:16px;box-shadow:var(--shadow)}
+  .iconbtn:hover{border-color:var(--accent)}
+
+  .hint{margin:0 28px 8px;color:var(--sub);font-size:12px;display:flex;align-items:center;gap:8px}
+  .addbtn{margin-left:auto;background:var(--accent);color:#fff;border:0;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .addbtn:hover{background:var(--accent-2)}
+
+  /* ===== Widget grid ===== */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px;padding:6px 28px 40px;align-content:start}
+  .w{grid-column:span 4;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .w.col6{grid-column:span 6}.w.col8{grid-column:span 8}.w.col12{grid-column:span 12}
+  .w.sortable-ghost{opacity:.35;border:2px dashed var(--accent)}
+  .w.sortable-chosen{box-shadow:0 18px 40px rgba(20,26,42,.18)}
+  .wh{display:flex;align-items:center;gap:9px;padding:14px 16px 10px}
+  .wh .h{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .wh .h .em{font-size:15px}
+  .grip{cursor:grab;color:var(--sub);opacity:.5;font-size:14px;letter-spacing:-2px}
+  .grip:active{cursor:grabbing}
+  .wh .x{margin-left:auto;color:var(--sub);cursor:pointer;border:0;background:transparent;font-size:15px;opacity:.55;border-radius:6px;width:24px;height:24px}
+  .wh .x:hover{opacity:1;background:var(--card-2);color:var(--up)}
+  .wb{padding:6px 16px 18px}
+
+  /* stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:2px 28px 4px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;position:relative;overflow:hidden}
+  .tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
+  .tile.u::before{background:var(--up)}.tile.d::before{background:var(--down)}.tile.k::before{background:var(--warn)}.tile.g::before{background:var(--ok)}
+  .tile .lab{color:var(--sub);font-size:12px}
+  .tile .val{font-size:26px;font-weight:800;letter-spacing:-.6px;margin-top:6px;font-variant-numeric:tabular-nums}
+  .tile .sub{font-size:11.5px;color:var(--sub);margin-top:3px}
+
+  .row{display:flex;align-items:center;justify-content:space-between;padding:9px 2px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .row .nm{font-weight:600}.row .nm small{color:var(--sub);font-weight:400;margin-left:6px}
+  .num{font-variant-numeric:tabular-nums;font-weight:700}
+  .up{color:var(--up)}.down{color:var(--down)}
+  .spark{height:26px}
+  .donut{width:128px;height:128px;border-radius:50%;display:grid;place-items:center;margin:6px auto 0;
+    background:conic-gradient(var(--accent) 0 75%, var(--line) 75% 100%)}
+  .donut .in{width:92px;height:92px;border-radius:50%;background:var(--card);display:grid;place-items:center;text-align:center}
+  .donut .in b{font-size:22px}.donut .in span{font-size:11px;color:var(--sub)}
+  .legend{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .legend .li{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .legend .li i{width:10px;height:10px;border-radius:3px}
+  .bars{display:flex;align-items:flex-end;gap:10px;height:150px;padding-top:10px}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:flex-end;height:100%}
+  .bars .b .bar{width:60%;border-radius:6px 6px 0 0;background:linear-gradient(var(--accent-2),var(--accent));transition:height .4s}
+  .bars .b .lab{font-size:11px;color:var(--sub)}.bars .b .vv{font-size:11px;font-weight:700}
+  .prog{height:7px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:7px}
+  .prog i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+  .pill{font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px}
+  .pill.b{background:color-mix(in srgb,var(--down) 14%,transparent);color:var(--down)}
+  .pill.r{background:color-mix(in srgb,var(--up) 14%,transparent);color:var(--up)}
+  .act{display:flex;gap:10px;align-items:flex-start;padding:8px 0;font-size:12.5px}
+  .act i{width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--ok)}
+  .act .tm{margin-left:auto;color:var(--sub);font-size:11px;white-space:nowrap}
+  .order{display:flex;gap:8px;margin-top:10px}
+  .order button{flex:1;border:0;border-radius:9px;padding:11px;font-weight:700;cursor:pointer;color:#fff}
+  .order .buy{background:var(--up)}.order .sell{background:var(--down)}
+  .qa{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .qa span{background:var(--card-2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .qa span:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* gallery modal */
+  .mask{position:fixed;inset:0;background:rgba(10,13,21,.5);display:none;place-items:center;z-index:50;backdrop-filter:blur(2px)}
+  .mask.on{display:grid}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;width:560px;max-width:92vw;box-shadow:0 30px 80px rgba(0,0,0,.4);overflow:hidden}
+  .modal h3{padding:18px 20px;border-bottom:1px solid var(--line);font-size:15px}
+  .gal{padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;max-height:60vh;overflow:auto}
+  .gcard{border:1px solid var(--line);border-radius:11px;padding:14px;cursor:pointer;background:var(--card-2)}
+  .gcard:hover{border-color:var(--accent)}
+  .gcard.dis{opacity:.4;pointer-events:none}
+  .gcard .gt{font-weight:700;font-size:13px}.gcard .gd{color:var(--sub);font-size:11.5px;margin-top:4px}
+  .modal .foot{padding:14px 20px;border-top:1px solid var(--line);text-align:right}
+  .modal .foot button{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:9px 18px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body data-theme="light">
+
+<aside class="side" id="side">
+  <div class="brand">
+    <div class="logo">₩</div>
+    <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.1</div></div>
+  </div>
+  <div class="kbar" onclick="alert('Ctrl+K 명령 팔레트 (프로토타입)')">🔍 검색하거나 이동… <kbd>Ctrl K</kbd></div>
+  <div class="sectlbl">WORKSPACE</div>
+  <nav id="nav"></nav>
+  <div class="side-foot">
+    <div class="ava">이</div>
+    <div class="usermeta"><div class="n">이근식</div><div class="e">gslee@angtec.com</div></div>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="top">
+    <div class="hello">
+      <h1>좋은 저녁입니다, <b>이근식</b>님</h1>
+      <p id="subline">2026년 06월 05일 금요일 · 위젯을 드래그해서 원하는 대로 배치하세요</p>
+    </div>
+    <div class="search">🔎 <input placeholder="종목·코인 검색 (Ctrl+K)" /></div>
+    <div class="badges">
+      <span class="dot"><i></i>업비트</span>
+      <span class="dot"><i></i>KIS</span>
+      <span class="dot"><i style="background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)"></i>모의</span>
+    </div>
+    <button class="iconbtn" id="themeBtn" title="테마 전환">🌙</button>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="hint">⠿ 끌어서, 또는 ✕ 로 위젯을 정리할 수 있어요
+    <button class="addbtn" onclick="openGallery()">+ 위젯 추가</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="mask" id="mask"><div class="modal">
+  <h3>위젯 추가</h3>
+  <div class="gal" id="gal"></div>
+  <div class="foot"><button onclick="closeGallery()">닫기</button></div>
+</div></div>
+
+<script>
+const NAV = [
+  ["🏠","홈",1],["📈","실시간 시세"],["💼","포트폴리오"],["🧠","AI 분석"],
+  ["📰","뉴스 레이더"],["⚡","시그널 엔진"],["🔔","알림 센터"],["🪙","코인 실시간"],
+  ["🧮","총자산"],["🧪","모의투자"],["⚙️","설정"]
+];
+document.getElementById('nav').innerHTML = NAV.map((n,i)=>
+  `<div class="nav ${n[2]?'active':''}" onclick="setActive(${i})"><span class="ic">${n[0]}</span><span class="navtxt">${n[1]}</span></div>`).join('');
+function setActive(i){document.querySelectorAll('.nav').forEach((e,j)=>e.classList.toggle('active',i===j));}
+
+const TILES = [
+  ['총자산','g','142,860,000','+3.2% 오늘'],
+  ['평가손익','u','+4,420,000','수익률 +3.2%'],
+  ['코인 평가','k','38,200,000','업비트 5종목'],
+  ['모의 계좌','d','10,640,000','+6.4% 누적'],
+];
+document.getElementById('tiles').innerHTML = TILES.map(t=>
+  `<div class="tile ${t[1]}"><div class="lab">${t[0]}</div><div class="val num">${t[2]}</div><div class="sub">${t[3]}</div></div>`).join('');
+
+function spark(data,color){
+  const w=240,h=26,mn=Math.min(...data),mx=Math.max(...data),r=mx-mn||1;
+  const pts=data.map((v,i)=>`${(i/(data.length-1)*w).toFixed(1)},${(h-(v-mn)/r*h).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2"/></svg>`;
+}
+
+const WIDGETS = {
+  coins:{title:'🪙 코인 실시간', col:'col4', body:()=>`
+    ${[['비트코인','93,146,000',-2.47],['이더리움','2,488,000',-6.08],['리플','1,676',-4.06],['솔라나','97,350',-5.39]]
+    .map(c=>`<div class="row"><div class="nm">${c[0]}</div>
+      <div style="flex:1;margin:0 14px">${spark(Array.from({length:12},()=>50+Math.random()*40),'var(--down)')}</div>
+      <div style="text-align:right"><div class="num">${c[1]}</div><div class="num down" style="font-size:11px">${c[2]}%</div></div></div>`).join('')}`},
+  pie:{title:'🧮 자산 구성', col:'col4', body:()=>`
+    <div class="donut" style="background:conic-gradient(var(--accent) 0 56%,var(--accent-2) 56% 83%,var(--warn) 83% 100%)">
+      <div class="in"><b class="num">1.43억</b><span>총자산</span></div></div>
+    <div class="legend">
+      <div class="li"><i style="background:var(--accent)"></i>주식(원화) · 56%</div>
+      <div class="li"><i style="background:var(--accent-2)"></i>주식(외화) · 27%</div>
+      <div class="li"><i style="background:var(--warn)"></i>코인 · 17%</div></div>`},
+  weekly:{title:'📊 주간 수익률', col:'col8', body:()=>{
+    const d=[['월',62],['화',70],['수',66],['목',80],['금',74],['토',90],['일',78]];
+    return `<div class="bars">${d.map(x=>`<div class="b"><div class="vv">${x[1]}</div><div class="bar" style="height:${x[1]}%"></div><div class="lab">${x[0]}</div></div>`).join('')}</div>`;}},
+  paper:{title:'🧪 모의투자 계좌', col:'col4', body:()=>`
+    <div class="row"><div class="nm">현금</div><div class="num">5,420,000</div></div>
+    <div class="row"><div class="nm">포지션 평가</div><div class="num">5,220,000</div></div>
+    <div class="row"><div class="nm">총손익</div><div class="num up">+640,000 (+6.4%)</div></div>
+    <div class="order"><button class="buy">매수</button><button class="sell">매도</button></div>
+    <div class="qa"><span onclick="event.stopPropagation()">BTC 100만 매수</span><span>ETH 50만 매도</span><span>모든 알림 끄기</span></div>`},
+  imminent:{title:'⏳ 임박 마감 / 신호', col:'col4', body:()=>`
+    ${[['BUY','삼성전자 골든크로스','방금',88],['SELL','SK하이닉스 RSI 과열','12분',64],['BUY','BTC 20MA 돌파',' 1시간',55]]
+    .map(o=>`<div style="padding:9px 0;border-bottom:1px solid var(--line)"><div style="display:flex;align-items:center;gap:8px">
+      <span class="pill ${o[0]==='BUY'?'r':'b'}">${o[0]}</span><b style="font-size:12.5px">${o[1]}</b>
+      <span style="margin-left:auto;color:var(--sub);font-size:11px">${o[2]} 전</span></div>
+      <div class="prog"><i style="width:${o[3]}%"></i></div></div>`).join('')}`},
+  activity:{title:'📡 최근 활동', col:'col4', body:()=>`
+    ${[['BTC 지정가 알림 도달 (93,000,000)','방금'],['모의 매수 체결 · ETH 0.2','3분 전'],['포트폴리오 동기화 완료','11분 전'],['주간 리포트 생성','1시간 전']]
+    .map(a=>`<div class="act"><i></i><div>${a[0]}</div><div class="tm">${a[1]}</div></div>`).join('')}`},
+};
+
+let layout = ['coins','pie','weekly','paper','imminent','activity'];
+
+function render(){
+  const g=document.getElementById('grid');
+  g.innerHTML = layout.map(k=>{const w=WIDGETS[k];return `
+    <div class="w ${w.col}" data-k="${k}">
+      <div class="wh"><span class="grip" title="드래그">⠿</span><span class="h">${w.title}</span>
+        <button class="x" title="제거" onclick="removeW('${k}')">✕</button></div>
+      <div class="wb">${w.body()}</div>
+    </div>`;}).join('');
+  new Sortable(g,{animation:180,handle:'.grip',ghostClass:'sortable-ghost',chosenClass:'sortable-chosen',
+    onEnd:()=>{layout=[...g.children].map(c=>c.dataset.k);}});
+}
+function removeW(k){layout=layout.filter(x=>x!==k);render();}
+function openGallery(){
+  document.getElementById('gal').innerHTML = Object.entries(WIDGETS).map(([k,w])=>{
+    const has=layout.includes(k);
+    return `<div class="gcard ${has?'dis':''}" onclick="addW('${k}')"><div class="gt">${w.title}</div>
+      <div class="gd">${has?'이미 추가됨':'클릭하여 대시보드에 추가'}</div></div>`;}).join('');
+  document.getElementById('mask').classList.add('on');
+}
+function closeGallery(){document.getElementById('mask').classList.remove('on');}
+function addW(k){if(!layout.includes(k)){layout.push(k);render();}closeGallery();}
+document.getElementById('mask').onclick=e=>{if(e.target.id==='mask')closeGallery();};
+
+document.getElementById('themeBtn').onclick=function(){
+  const b=document.body, dark=b.dataset.theme==='dark';
+  b.dataset.theme=dark?'light':'dark'; this.textContent=dark?'🌙':'☀️';
+};
+
+render();
+</script>
+</body>
+</html>

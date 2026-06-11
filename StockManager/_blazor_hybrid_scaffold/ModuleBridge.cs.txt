@@ -1,0 +1,32 @@
+// ModuleBridge — Blazor UI에서 기존 WinForms 모듈 창을 그대로 여는 다리.
+// 기존 모듈을 재작성하지 않고 공존시키는 핵심.
+using System;
+using StockManager.Common;
+
+namespace StockManager
+{
+    public static class ModuleBridge
+    {
+        private static IQuoteProvider _provider = null!;
+        private static LocalDatabase _db = null!;
+
+        public static void Configure(IQuoteProvider provider, LocalDatabase db)
+        { _provider = provider; _db = db; }
+
+        public static void Open(string key)
+        {
+            void Themed(System.Windows.Forms.Form f){ try { ThemeManager.Apply(f); } catch {} f.Show(); }
+            switch (key)
+            {
+                case "Realtime":   Themed(new RealtimeWatcher.MainForm(_provider, _db)); break;
+                case "Portfolio":  Themed(new Portfolio.MainForm(_provider, _db)); break;
+                case "AI":         Themed(new AIAnalysis.MainForm(_provider, _db)); break;
+                case "News":       Themed(new NewsRadar.MainForm(_db)); break;
+                case "Signal":     Themed(new SignalEngine.MainForm(_provider, _db)); break;
+                case "Crypto":     Themed(new CryptoWatcher.MainForm(_db)); break;
+                case "TotalAsset": Themed(new TotalAsset.MainForm(_provider, _db)); break;
+                case "Paper":      Themed(new PaperTrading.MainForm(_provider, _db)); break;
+            }
+        }
+    }
+}

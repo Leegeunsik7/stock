@@ -1,0 +1,287 @@
+@page "/signals"
+@inject DashboardService Svc
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@implements IDisposable
+@using System.Threading
+@using System.Data
+
+<div class="top"><div class="hello"><h1>⚡ 시그널 엔진</h1><p>@_ts</p></div>
+<button class="addbtn" style="background:var(--warn);margin:0 6px" disabled="@_scanning" @onclick="ScanStocksAsync">@(_scanning?"스캔 중…":"🔍 전체 스캔(주식)")</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="CleanupOld">🗑 30일 이전 정리</button>
+<button class="addbtn" style="margin:0 16px 0 6px" @onclick="Refresh">🔄 새로고침</button></div>
+
+@if (!string.IsNullOrEmpty(_scanMsg)) { <div style="padding:0 28px 10px;color:var(--sub);font-size:12.5px">@_scanMsg</div> }
+
+@* ===== 백테스팅 — 비용 모델 반영 (원본 RunStrategyWithCost) ===== *@
+<div style="margin:0 28px 18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px">
+    <div style="font-weight:700;margin-bottom:12px">🔬 백테스팅 <small class="sub" style="font-weight:400">시드 100만 · 수수료(KR 0.015%/US $0.99)·매도세(KOSPI 0.18%/KOSDAQ 0.23%)·슬리피지 0.1% 반영</small></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+        <div><label class="flbl">전략</label>
+            <select class="fin" style="width:210px" @bind="_btStrategy">
+                @for (int i = 0; i < BacktestEngine.StrategyNames.Length; i++) { var ii = i; <option value="@ii">@BacktestEngine.StrategyNames[ii]</option> }
+            </select></div>
+        <div><label class="flbl">종목 (자유 입력 가능)</label>
+            <input class="fin" style="width:220px" list="btSymbols" @bind="_btSymbol" />
+            <datalist id="btSymbols">
+                @foreach (var (sym, name, _) in SampleData.All()) { <option value="@(sym + " - " + name)" /> }
+            </datalist></div>
+        <div><label class="flbl">기간(월)</label><input class="fin" type="number" min="1" max="60" style="width:80px" @bind="_btMonths" /></div>
+        <button class="addbtn" disabled="@_btBusy" @onclick="RunBacktestAsync">@(_btBusy?"실행 중…":"🚀 실행")</button>
+        @if (!string.IsNullOrEmpty(_btMsg)) { <b style="color:@_btMsgColor;font-size:13px">@_btMsg</b> }
+    </div>
+    @if (_bt != null && _bt.EquityCurve.Count > 0)
+    {
+        <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:420px">@((MarkupString)EquitySvg())</div>
+            <div style="flex:0 0 235px;background:var(--card-2);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.9">
+                시작 1,000,000 → 종료 <b class="num">@_bt.EquityCurve.Last().ToString("N0")</b><br/>
+                수익률 <b class="num @(_bt.TotalReturn>=0?"up":"down")">@Formatter.Pct(_bt.TotalReturn)</b><br/>
+                MDD <span class="num">@_bt.MaxDrawdown.ToString("F2")%</span><br/>
+                거래 @_bt.TradeCount 회 · 승률 @_bt.WinRate.ToString("F1")%<br/>
+                Sharpe @_bt.Sharpe.ToString("F2")<br/>
+                <small class="sub">(수수료·세금·슬리피지 반영)</small>
+            </div>
+        </div>
+    }
+</div>
+
+@* ===== 코인 임박 신호 (감시 코인 일봉) ===== *@
+<div style="padding:0 28px 8px"><b>⏳ 코인 임박 신호</b> <small class="sub">감시 코인 일봉 · 골든/데드크로스 · RSI · 신고가</small></div>
+<div style="padding:0 28px 20px">
+    @if (Svc.Signals.Count == 0) { <div style="padding:14px;color:var(--sub)">현재 포착된 신호가 없습니다.</div> }
+    @foreach (var s in Svc.Signals)
+    {
+        <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+            <div style="display:flex;align-items:center;gap:10px">
+                <span class="pill @(s.Side=="BUY"?"r":"b")" style="font-size:12px;padding:4px 10px">@s.Side</span>
+                <b style="font-size:13.5px">@s.Name</b>
+                <span style="color:var(--sub);font-size:12.5px">@s.Reason</span>
+            </div>
+            <div class="prog" style="margin-top:6px"><i style="width:@(s.Pct)%"></i></div>
+        </div>
+    }
+</div>
+
+@* ===== 시그널 이력 (DB · 최근 200건) ===== *@
+<div style="padding:0 28px 8px"><b>⚡ 시그널 이력</b> <small class="sub">매수 시그널만 알림 발행 — 원본 비대칭 룰</small></div>
+<div style="overflow:auto;padding:0 28px 40px">
+    <table class="ctbl">
+        <thead><tr><th>시각</th><th>종목</th><th>이름</th><th>구분</th><th>전략</th><th>근거</th><th style="text-align:right">목표가</th><th style="text-align:right">손절가</th><th style="text-align:right">신뢰도</th></tr></thead>
+        <tbody>
+            @foreach (var s in _sigs)
+            {
+                var txt = SignalText(s.Type);
+                <tr>
+                    <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">@s.At.ToString("MM-dd HH:mm")</td>
+                    <td><b>@s.Sym</b></td>
+                    <td style="font-size:12.5px">@s.Name</td>
+                    <td style="font-weight:700;color:@SignalColor(txt)">@txt</td>
+                    <td style="font-size:12px">@s.Strategy</td>
+                    <td style="font-size:12px;color:var(--sub)">@s.Reason</td>
+                    <td class="num" style="text-align:right">@s.Target.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@s.Stop.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@s.Conf.ToString("F1")%</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (_sigs.Count == 0) { <div style="padding:30px;text-align:center;color:var(--sub)">시그널 이력이 없습니다. '🔍 전체 스캔'을 실행해 보세요.</div> }
+</div>
+
+@code {
+    private string _ts = "", _scanMsg = "";
+    private bool _scanning;
+    private CancellationTokenSource? _cts;
+
+    private record SigRow(DateTime At, string Sym, string Name, SignalType Type, string Strategy, string Reason, decimal Target, decimal Stop, decimal Conf);
+    private List<SigRow> _sigs = new();
+
+    // 백테스트 상태
+    private int _btStrategy = 0, _btMonths = 12;   // 기간 기본 12개월 (원본)
+    private string _btSymbol = "005930 - 삼성전자", _btMsg = "", _btMsgColor = "var(--ok)";
+    private bool _btBusy;
+    private BacktestSummary? _bt;
+
+    protected override async Task OnInitializedAsync()
+    {
+        LoadSignals();
+        await Refresh();
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(30_000, ct); } catch { return; }
+            await Refresh(); await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task Refresh() { await Svc.LoadAsync(); LoadSignals(); _ts = DateTime.Now.ToString("HH:mm:ss"); }
+
+    private void LoadSignals()
+    {
+        try
+        {
+            var dt = Db.Query("SELECT * FROM Signals ORDER BY GeneratedAt DESC LIMIT 200");
+            _sigs = dt.Rows.Cast<DataRow>().Select(r => new SigRow(
+                Safe.DT(r["GeneratedAt"]), Safe.Str(r["Symbol"]), Safe.Str(r["Name"]),
+                (SignalType)Safe.Int(r["Signal"]), Safe.Str(r["Strategy"]), Safe.Str(r["Reason"]),
+                Safe.Dec(r["TargetPrice"]), Safe.Dec(r["StopLoss"]), Safe.Dec(r["Confidence"]))).ToList();
+        }
+        catch { _sigs = new(); }
+    }
+
+    // ===== 주식 전체 스캔 — 원본 ScanSignalsAsync 룰:
+    //  60캔들 미만 스킵 · 골든크로스=저장+알림(Warning) / 데드크로스=저장만 (비대칭)
+    //  목표/손절 계수 ×1.05/0.97(신뢰 65), ×0.95/1.02(신뢰 60) · 종목별 실패는 스킵
+    private async Task ScanStocksAsync()
+    {
+        _scanning = true; _scanMsg = "🔍 전체 스캔 중..."; StateHasChanged();
+        int found = 0;
+        foreach (var (sym, name, mkt) in SampleData.All())
+        {
+            try
+            {
+                var candles = await Provider.GetHistoryAsync(sym, mkt,
+                    DateTime.Now.AddMonths(-6), DateTime.Now, _cts?.Token ?? default);
+                if (candles.Count < 60) continue;
+                var closes = candles.Select(c => c.Close).ToList();
+                var ma5 = closes.TakeLast(5).Average();
+                var ma20 = closes.TakeLast(20).Average();
+                var ma5P = closes.SkipLast(1).TakeLast(5).Average();
+                var ma20P = closes.SkipLast(1).TakeLast(20).Average();
+
+                if (ma5P < ma20P && ma5 > ma20)
+                {
+                    SaveSignal(sym, name, SignalType.Buy, "이평 골든크로스",
+                        $"MA5({ma5:N0}) > MA20({ma20:N0}) 돌파",
+                        closes.Last() * 1.05m, closes.Last() * 0.97m, 65);
+                    AlertCenter.Instance.RaiseSignal(sym,
+                        $"🟢 매수 시그널 · {name}", $"골든크로스 ({closes.Last():N0})", AlertLevel.Warning);
+                    found++;
+                }
+                else if (ma5P > ma20P && ma5 < ma20)
+                {
+                    SaveSignal(sym, name, SignalType.Sell, "이평 데드크로스",
+                        $"MA5({ma5:N0}) < MA20({ma20:N0}) 이탈",
+                        closes.Last() * 0.95m, closes.Last() * 1.02m, 60);
+                    found++;   // 매도는 알림 없음 (원본 비대칭 룰)
+                }
+            }
+            catch (Exception ex) { Log.Warn($"[Scan] {sym}: {ex.Message}"); }
+        }
+        LoadSignals();
+        _scanMsg = $"✅ {found}건의 시그널 감지";
+        _scanning = false;
+    }
+
+    private void SaveSignal(string sym, string name, SignalType type, string strategy, string reason,
+        decimal target, decimal stop, decimal conf)
+    {
+        Db.Execute(@"INSERT INTO Signals(Symbol,Name,Signal,Strength,Strategy,Reason,TargetPrice,StopLoss,Confidence,GeneratedAt)
+            VALUES(@s,@n,@sig,@str,@stra,@r,@t,@sl,@c,@g)",
+            new()
+            {
+                ["@s"] = sym, ["@n"] = name,
+                ["@sig"] = (int)type, ["@str"] = (int)SignalStrength.Medium,
+                ["@stra"] = strategy, ["@r"] = reason,
+                ["@t"] = (double)target, ["@sl"] = (double)stop,
+                ["@c"] = (double)conf, ["@g"] = DateTime.Now.ToString("o")
+            });
+    }
+
+    // 30일 이전 시그널 정리 (원본 보존 기간 룰)
+    private void CleanupOld()
+    {
+        try
+        {
+            Db.Execute("DELETE FROM Signals WHERE GeneratedAt < @d",
+                new() { ["@d"] = DateTime.Now.AddDays(-30).ToString("o") });
+            LoadSignals();
+            _scanMsg = "🗑 30일 이전 시그널 정리 완료";
+        }
+        catch { }
+    }
+
+    // ===== 백테스트 실행 — 원본 룰: 자유입력 Split 파싱 · 30캔들 미만 거부 · 결과 색=수익률 부호 =====
+    private async Task RunBacktestAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_btSymbol)) { _btMsg = "종목 선택"; _btMsgColor = "var(--down)"; return; }
+        var symbol = _btSymbol.Split(' ')[0];
+        var market = SampleData.All().FirstOrDefault(x => x.Item1 == symbol).Item3;   // 미발견 → 기본 KOSPI (원본)
+        _btBusy = true; _btMsg = ""; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(symbol, market,
+                DateTime.Now.AddMonths(-Math.Clamp(_btMonths, 1, 60)), DateTime.Now, _cts?.Token ?? default);
+            if (candles.Count < 30) { _btMsg = "히스토리 부족"; _btMsgColor = "var(--down)"; _bt = null; }
+            else
+            {
+                _bt = BacktestEngine.Run(candles, _btStrategy, market);
+                _btMsg = $"💰 수익률 {Formatter.Pct(_bt.TotalReturn)} · MDD {_bt.MaxDrawdown:F2}% · Sharpe {_bt.Sharpe:F2} · 승률 {_bt.WinRate:F1}%";
+                _btMsgColor = _bt.TotalReturn >= 0 ? "var(--ok)" : "var(--down)";
+            }
+        }
+        catch (Exception ex) { _btMsg = "실행 실패: " + ex.Message; _btMsgColor = "var(--down)"; }
+        _btBusy = false;
+    }
+
+    // Equity Curve — X축은 거래일 인덱스 "Day N" (비영업일 왜곡 제거 — 원본 룰), 선색=수익률 부호
+    private string EquitySvg()
+    {
+        if (_bt == null || _bt.EquityCurve.Count == 0) return "";
+        var curve = _bt.EquityCurve;
+        double w = 760, h = 280, padL = 64, padT = 14, padR = 14, padB = 26;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double maxV = (double)curve.Max(), minV = (double)curve.Min();
+        double range = maxV - minV; if (range == 0) range = 1;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:280px;display:block'>");
+        for (int i = 0; i <= 4; i++)
+        {
+            double v = maxV - range * i / 4;
+            double y = padT + plotH * i / 4.0;
+            sb.Append($"<line x1='{padL}' y1='{y:F1}' x2='{padL + plotW:F1}' y2='{y:F1}' stroke='var(--line)'/>");
+            sb.Append($"<text x='4' y='{y + 4:F1}' fill='var(--sub)' font-size='10'>{v:N0}</text>");
+        }
+        var color = _bt.TotalReturn >= 0 ? "var(--ok)" : "var(--down)";
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < curve.Count; i++)
+        {
+            double x = padL + (curve.Count == 1 ? 0 : (double)i / (curve.Count - 1) * plotW);
+            double y = padT + (maxV - (double)curve[i]) / range * plotH;
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='2'/>");
+        for (int i = 0; i <= 4; i++)
+        {
+            int idx = i * (curve.Count - 1) / 4;
+            double x = padL + (curve.Count == 1 ? 0 : (double)idx / (curve.Count - 1) * plotW);
+            sb.Append($"<text x='{x - 14:F1}' y='{padT + plotH + 16:F1}' fill='var(--sub)' font-size='10'>Day {idx}</text>");
+        }
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private static string SignalText(SignalType t) => t switch
+    {
+        SignalType.StrongBuy => "⭐ 강력매수",
+        SignalType.Buy => "🟢 매수",
+        SignalType.Hold => "➖ 관망",
+        SignalType.Sell => "🔴 매도",
+        SignalType.StrongSell => "❌ 강력매도",
+        _ => "?"
+    };
+
+    // 원본 룰: 표시 텍스트 기반 색 판정 ("강력매수"도 "매수" 포함 → 상승색)
+    private static string SignalColor(string txt) =>
+        txt.Contains("매수") || txt.Contains("Buy") ? "var(--ok)"
+        : txt.Contains("매도") || txt.Contains("Sell") ? "var(--down)" : "var(--warn)";
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

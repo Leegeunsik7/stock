@@ -1,0 +1,70 @@
+// ============================================================================
+// PortfolioService - 거래 기록 → 보유 평단 재계산 (Blazor/WinForms 공용) (v3.4.2)
+//  원본 02_Portfolio.MainForm.RecomputeAverage 이식 — 숨은 룰 보존:
+//   · 전체 거래 이력을 시간순으로 재집계하는 이동평균법 (매도 시 평단 불변·원가 비례 차감)
+//   · 보유 0 상태의 매도 거래는 무시 (이상 데이터 가드)
+//   · 전량 매도 시 cost=0, qty=0 (0/0 방지) → 평단 0
+//   · 기존 Holding의 Name/Market/Currency/BrokerAccount 보존
+// ============================================================================
+using System;
+
+namespace StockManager.Common
+{
+    public static class PortfolioService
+    {
+        /// <summary>거래 추가 후 반드시 호출 — 거래 이력 전체로 해당 종목의 수량·평단을 재계산해 저장.</summary>
+        public static void RecomputeAverage(LocalDatabase db, string symbol, string? fallbackName = null)
+        {
+            var dt = db.Query(
+                "SELECT * FROM Transactions WHERE Symbol=@s ORDER BY ExecutedAt",
+                new() { ["@s"] = symbol });
+
+            int qty = 0;
+            decimal cost = 0;
+            foreach (System.Data.DataRow r in dt.Rows)
+            {
+                var t = (TransactionType)Safe.Int(r["Type"]);
+                var q = Safe.Int(r["Quantity"]);
+                var p = Safe.Dec(r["Price"]);
+                if (t == TransactionType.Buy)
+                {
+                    cost += p * q;
+                    qty += q;
+                }
+                else if (t == TransactionType.Sell)
+                {
+                    if (qty == 0) continue;               // 매도할 수량 없음 (이상)
+                    if (qty == q) { cost = 0; qty = 0; }  // 전량 매도 시 평단 0 (0/0 방지)
+                    else
+                    {
+                        cost = cost * (qty - q) / qty;    // 이동평균법: 평단 유지, 원가 비례 차감
+                        qty -= q;
+                    }
+                }
+            }
+
+            var avg = qty > 0 ? cost / qty : 0;
+            var dtH = db.Query("SELECT * FROM Holdings WHERE Symbol=@s LIMIT 1", new() { ["@s"] = symbol });
+            bool has = dtH.Rows.Count > 0;
+            bool krx = symbol.Length == 6 && char.IsDigit(symbol[0]);   // 프로젝트 공통 시장 추론 룰
+
+            var h = new Holding
+            {
+                Symbol = symbol,
+                Name = has ? Safe.Str(dtH.Rows[0]["Name"])
+                           : (string.IsNullOrWhiteSpace(fallbackName) ? symbol : fallbackName!.Trim()),
+                Market = has ? (Market)Safe.Int(dtH.Rows[0]["Market"])
+                             : (krx ? Market.KRX_KOSPI : Market.US_NASDAQ),
+                Currency = has ? (Currency)Safe.Int(dtH.Rows[0]["Currency"])
+                               : (krx ? Currency.KRW : Currency.USD),
+                Quantity = qty,
+                AvgPrice = avg,
+                // 원본은 CurrentPrice를 0으로 덮고 직후 시세 갱신에 의존했음 —
+                // 시세 조회 실패 시 평가액이 0이 되는 회귀를 막기 위해 저장된 현재가를 보존
+                CurrentPrice = has ? Safe.Dec(dtH.Rows[0]["CurrentPrice"]) : 0m,
+                BrokerAccount = has ? Safe.Str(dtH.Rows[0]["BrokerAccount"]) : "",
+            };
+            db.SaveHolding(h);
+        }
+    }
+}

@@ -1,0 +1,654 @@
+@page "/realtime"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@implements IDisposable
+@using System.Threading
+@using System.Data
+
+<style>
+    @@keyframes flashU { from { background: color-mix(in srgb, var(--up) 30%, transparent); } to { background: transparent; } }
+    @@keyframes flashD { from { background: color-mix(in srgb, var(--down) 30%, transparent); } to { background: transparent; } }
+</style>
+
+<div class="top"><div class="hello"><h1>📈 실시간 시세</h1><p style="color:@_statusColor">@_status</p></div>
+<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)">갱신주기
+    <select class="srch" style="width:76px" value="@_intervalSec" @onchange="OnIntervalChanged">
+        @foreach (var s in new[] { 1, 3, 5, 10, 30 }) { <option value="@s">@(s)초</option> }
+    </select>
+</label>
+<button class="addbtn" style="background:var(--warn);margin:0 8px" disabled="@_scanning" @onclick="Scan52Async">🔥 52주 스캔</button>
+<button class="addbtn" style="margin-right:16px" @onclick="RefreshNowAsync">🔄 새로고침</button></div>
+
+<div style="display:flex;gap:8px;padding:0 28px 12px;flex-wrap:wrap;align-items:center">
+    @foreach (var g in _groups)
+    {
+        <button class="pill @(g==_group?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SetGroup(g)">@g</button>
+    }
+    <input class="srch" style="width:170px" placeholder="종목코드 추가 (005930/AAPL)" @bind="_newSym" @onkeydown="OnAddKey" />
+    <button class="addbtn" @onclick="AddSymbolAsync">➕ 추가</button>
+    <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="ToggleAlertForm">🔔 알림 규칙</button>
+</div>
+
+@* ===== 알림 규칙 등록 — AlertEngineService가 백그라운드에서 평가 (one-shot) ===== *@
+@if (_showAlertForm)
+{
+    <div style="margin:0 28px 14px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+        <div><label class="flbl">종목코드</label><input class="fin" style="width:120px" @bind="_arSym" /></div>
+        <div><label class="flbl">조건</label>
+            <select class="fin" @bind="_arCond">
+                <option value="0">현재가 이상</option><option value="1">현재가 이하</option>
+                <option value="2">등락률 이상(%)</option><option value="3">등락률 이하(%)</option>
+            </select></div>
+        <div><label class="flbl">기준값</label><input class="fin" type="number" step="0.01" style="width:140px" @bind="_arTarget" /></div>
+        <div><label class="flbl">채널</label>
+            <select class="fin" @bind="_arChannel">
+                <option value="0">데스크톱</option><option value="1">텔레그램</option><option value="2">전체</option>
+            </select></div>
+        <button class="addbtn" @onclick="SaveAlertRule">✅ 등록</button>
+        @if (!string.IsNullOrEmpty(_arMsg)) { <span style="color:var(--sub);font-size:12.5px">@_arMsg</span> }
+    </div>
+}
+
+<div style="display:grid;grid-template-columns:minmax(440px,1fr) minmax(420px,1.1fr);gap:18px;padding:0 28px 40px">
+    <div>
+        <table class="ctbl">
+            <thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">전일대비</th><th style="text-align:right">등락률</th><th style="text-align:right">거래량</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var w in _watch)
+                {
+                    var q = _quotes.GetValueOrDefault(w.sym);
+                    var diff = q != null ? q.Price - q.PreviousClose : 0m;
+                    var rate = q != null && q.PreviousClose > 0 ? diff / q.PreviousClose * 100m : 0m;
+                    var ver = _flashVer.GetValueOrDefault(w.sym);
+                    var rowKey = w.sym + ":" + ver;
+                    var rowStyle = RowStyle(w.sym, ver);
+                    <tr @key="rowKey" style="@rowStyle"
+                        @onclick="() => SelectAsync(w.sym, NameOf(w), DetectMarket(w.sym))">
+                        <td><b>@NameOf(w)</b><br/><small class="sub">@w.sym</small></td>
+                        <td class="num" style="text-align:right">@PriceText(q)</td>
+                        <td class="num @(diff>=0?"up":"down")" style="text-align:right">@DiffText(q, diff)</td>
+                        <td class="num @(rate>=0?"up":"down")" style="text-align:right">@RateText(q, rate)</td>
+                        <td class="num sub" style="text-align:right;font-size:12px">@VolText(q)</td>
+                        <td style="text-align:center"><button title="이 그룹에서 삭제" style="border:0;background:transparent;cursor:pointer;color:var(--sub)"
+                            @onclick:stopPropagation="true" @onclick="() => DeleteSymbolAsync(w.sym)">✕</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @if (_watch.Count == 0) { <div style="padding:30px;text-align:center;color:var(--sub)">종목을 추가하세요.</div> }
+    </div>
+    <div>
+        <div class="wh" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="h" style="color:@_titleColor">📊 @_sel.name @_titleSuffix</span>
+            <span style="flex:1"></span>
+            <select class="srch" style="width:88px" value="@_periodIdx" @onchange="OnPeriodChanged">
+                @for (int i = 0; i < _periods.Length; i++) { var ii = i; <option value="@ii">@_periods[ii].label</option> }
+            </select>
+            <select class="srch" style="width:118px" @bind="_indicator">
+                @foreach (var ind in _indicatorNames) { <option value="@ind">@ind</option> }
+            </select>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px"
+             @onwheel="OnWheel" @onwheel:preventDefault>
+            @if (_loadingChart)
+            {
+                <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">차트 로딩 중…</div>
+            }
+            else if (_candles.Count < 2)
+            {
+                <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">왼쪽에서 종목을 선택하세요.</div>
+            }
+            else
+            {
+                @((MarkupString)MainChartSvg())
+                @((MarkupString)VolumeSvg())
+                @if (_candles.Count >= 30)
+                {
+                    @((MarkupString)IndicatorSvg())
+                }
+                else
+                {
+                    <div style="padding:10px 0;color:var(--sub);font-size:12px;text-align:center">보조지표는 캔들 30개 이상부터 표시됩니다.</div>
+                }
+                <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--sub)">
+                    <span>휠로 확대/축소 · 표시 @Visible.Count/@_candles.Count 캔들</span>
+                    <span>저 @_candles.Min(c=>c.Low).ToString("N0") · 고 @_candles.Max(c=>c.High).ToString("N0")</span>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    // ===== 워치리스트 그룹 (원본 5종 고정 탭) =====
+    private readonly string[] _groups = { "⭐ 즐겨찾기", "🇰🇷 국내주식", "🇺🇸 미국주식", "💎 반도체", "🔋 2차전지" };
+    private string _group = "⭐ 즐겨찾기";
+    private List<(string sym, string name)> _watch = new();
+
+    private readonly Dictionary<string, Quote> _quotes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, decimal> _prev = new(StringComparer.OrdinalIgnoreCase);     // 플래시용 직전 가격
+    private readonly Dictionary<string, int> _flashVer = new(StringComparer.OrdinalIgnoreCase);     // 행 재생성 키(애니메이션 재생)
+    private readonly Dictionary<string, string> _flashAnim = new(StringComparer.OrdinalIgnoreCase); // flashU/flashD
+
+    private int _intervalSec = 3;   // 원본 기본 3초
+    private string _status = "준비됨", _statusColor = "var(--ok)";
+    private string _newSym = "";
+    private bool _scanning;
+
+    // 알림 규칙 폼
+    private bool _showAlertForm;
+    private string _arSym = "", _arMsg = "";
+    private int _arCond, _arChannel;
+    private decimal _arTarget;
+
+    private (string sym, string name, Market mkt) _sel = ("", "—", Market.KRX_KOSPI);
+    private List<Candle> _candles = new();
+    private bool _loadingChart;
+    private CancellationTokenSource? _cts;
+
+    // ===== 차트 상태 (원본 ChartForm 룰) =====
+    private readonly (string label, int months)[] _periods = { ("3개월", 3), ("6개월", 6), ("1년", 12), ("3년", 36), ("5년", 60) };
+    private int _periodIdx = 1;   // 기본 6개월 (원본 SelectedIndex=1)
+    private readonly string[] _indicatorNames = { "RSI", "MACD", "Stochastic", "볼린저밴드" };
+    private string _indicator = "RSI";   // ⚠️ 지표 변경 = 다시 그리기만, 재로드 없음 (원본 비대칭 룰)
+    private int _visibleCount = 100;
+    private string _titleSuffix = "", _titleColor = "var(--ink)";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadGroupAsync();
+        await SelectFirstAsync();
+        RestartLoop();
+    }
+
+    private void RestartLoop()
+    {
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(_intervalSec * 1000, ct); } catch { return; }
+            await RefreshAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // ⚠️ 원본 룰: 주기 변경 → 타이머 재시작 + "즉시 1회 갱신"
+    private async Task OnIntervalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var sec)) _intervalSec = sec;
+        RestartLoop();
+        await RefreshAsync();
+    }
+
+    private async Task SetGroup(string g)
+    {
+        if (_group == g) return;
+        _group = g;
+        await ReloadGroupAsync();
+        await SelectFirstAsync();
+    }
+
+    // 원본 ReloadGroupAsync: Watchlist 우선, 빈 그룹 → 샘플 폴백 (그룹명 "미국" 포함 → USTop, Take 10)
+    private async Task ReloadGroupAsync()
+    {
+        _watch.Clear();
+        try
+        {
+            var dt = Db.Query("SELECT Symbol, Name FROM Watchlist WHERE GroupName=@g ORDER BY SortOrder",
+                new() { ["@g"] = _group });
+            if (dt.Rows.Count == 0)
+            {
+                var samples = _group.Contains("미국") ? SampleData.USTop : SampleData.KoreanTop;
+                foreach (var (s, n, _) in samples.Take(10)) _watch.Add((s, n));
+            }
+            else
+            {
+                foreach (DataRow r in dt.Rows) _watch.Add((Safe.Str(r["Symbol"]), Safe.Str(r["Name"])));
+            }
+        }
+        catch { }
+        await RefreshAsync();
+    }
+
+    private async Task RefreshNowAsync() => await RefreshAsync();
+
+    private async Task RefreshAsync()
+    {
+        bool anyOk = false, anyFail = false;
+        // 혼합 그룹(예: 반도체 = 005930+NVDA) 대응 — 시장별로 묶어 조회 (원본 룰)
+        foreach (var grp in _watch.GroupBy(w => DetectMarket(w.sym)))
+        {
+            try
+            {
+                var qs = await Provider.GetQuotesAsync(grp.Select(x => x.sym), grp.Key);
+                foreach (var q in qs)
+                {
+                    // 가격 변동 감지 → 플래시 (원본: 등락률 부호로 색 결정, 800ms)
+                    if (_prev.TryGetValue(q.Symbol, out var p) && p > 0 && p != q.Price)
+                    {
+                        _flashVer[q.Symbol] = _flashVer.GetValueOrDefault(q.Symbol) + 1;
+                        _flashAnim[q.Symbol] = q.ChangeRate > 0 ? "flashU" : "flashD";
+                    }
+                    _prev[q.Symbol] = q.Price;
+                    _quotes[q.Symbol] = q;
+                }
+                anyOk = true;
+            }
+            catch { anyFail = true; }   // 실패해도 그리드는 직전 데이터 유지 (원본 룰)
+        }
+
+        if (anyOk && !anyFail) { _status = $"✅ {_quotes.Count}개 종목 갱신됨 · {DateTime.Now:HH:mm:ss}"; _statusColor = "var(--ok)"; }
+        else if (anyFail) { _status = "⚠️ 갱신 실패"; _statusColor = "var(--down)"; }
+    }
+
+    private async Task SelectFirstAsync()
+    {
+        if (_watch.Count == 0) { _sel = ("", "—", Market.KRX_KOSPI); _candles = new(); return; }
+        var f = _watch[0];
+        await SelectAsync(f.sym, NameOf(f), DetectMarket(f.sym));
+    }
+
+    // 가격 변동 행 플래시 — ver(변동 횟수)로 행을 재생성해 0.8s 애니메이션을 재생 (원본 800ms 플래시 대응)
+    private string RowStyle(string sym, int ver)
+    {
+        var s = "cursor:pointer;";
+        if (sym == _sel.sym) s += "background:var(--card-2);";
+        if (ver > 0) s += $"animation:{_flashAnim.GetValueOrDefault(sym, "flashU")} .8s ease-out;";
+        return s;
+    }
+
+    private static string PriceText(Quote? q) => q != null ? Formatter.Money(q.Price, q.Currency) : "-";
+    private static string DiffText(Quote? q, decimal diff) => q != null ? $"{(diff >= 0 ? "▲" : "▼")} {Math.Abs(diff):N0}" : "-";
+    private static string RateText(Quote? q, decimal rate) => q != null ? rate.ToString("+0.00;-0.00") + "%" : "-";
+    private static string VolText(Quote? q) => q != null ? q.Volume.ToString("N0") : "-";
+
+    private string NameOf((string sym, string name) w)
+    {
+        var q = _quotes.GetValueOrDefault(w.sym);
+        if (q != null && !string.IsNullOrEmpty(q.Name)) return q.Name;
+        return string.IsNullOrEmpty(w.name) ? w.sym : w.name;
+    }
+
+    // ===== 종목 추가/삭제 (원본 룰: UPSERT·대문자화·SectorMap 이름 / 삭제는 현재 그룹만) =====
+    private async Task OnAddKey(KeyboardEventArgs e) { if (e.Key == "Enter") await AddSymbolAsync(); }
+
+    private async Task AddSymbolAsync()
+    {
+        var sym = _newSym.Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(sym)) return;
+        var name = SectorMap.NameOf(sym);
+        try
+        {
+            Db.Execute(@"INSERT INTO Watchlist(Symbol,Name,Market,GroupName,SortOrder)
+                         VALUES(@s,@n,@m,@g,0)
+                         ON CONFLICT(Symbol,GroupName) DO UPDATE SET Name=@n",
+                new() { ["@s"] = sym, ["@n"] = name, ["@m"] = (int)DetectMarket(sym), ["@g"] = _group });
+        }
+        catch { }
+        _newSym = "";
+        await ReloadGroupAsync();
+    }
+
+    private async Task DeleteSymbolAsync(string sym)
+    {
+        try
+        {
+            Db.Execute("DELETE FROM Watchlist WHERE Symbol=@s AND GroupName=@g",
+                new() { ["@s"] = sym, ["@g"] = _group });
+        }
+        catch { }
+        await ReloadGroupAsync();
+    }
+
+    // ===== 52주 신고/신저가 스캔 (원본: SampleData 전체 · 종가 기준 · 이벤트당 Warning 알림) =====
+    private async Task Scan52Async()
+    {
+        _scanning = true;
+        _status = "🔍 52주 신고/신저가 스캔 중..."; _statusColor = "var(--warn)";
+        StateHasChanged();
+        try
+        {
+            var events = await ExtremeScanner.ScanAsync(Provider, SampleData.All(), _cts?.Token ?? default);
+            foreach (var ev in events)
+            {
+                AlertCenter.Instance.RaisePrice(ev.Symbol,
+                    $"{(ev.IsHigh ? "📈 52주 신고가" : "📉 52주 신저가")} · {ev.Name}",
+                    $"현재 {ev.CurrentPrice:N0} · 기존 {ev.Extreme52:N0} (Δ {Formatter.Pct(ev.ChangePct)})",
+                    AlertLevel.Warning);
+            }
+            _status = $"✅ 52주 스캔 완료: 신고가 {events.Count(x => x.IsHigh)} · 신저가 {events.Count(x => !x.IsHigh)}";
+            _statusColor = "var(--ok)";
+        }
+        catch (Exception ex) { _status = "⚠️ 스캔 실패: " + ex.Message; _statusColor = "var(--down)"; }
+        _scanning = false;
+    }
+
+    // ===== 알림 규칙 등록 (원본 AlertRuleDialog 매핑 룰 · IsActive=1/IsTriggered=0) =====
+    private void ToggleAlertForm()
+    {
+        _showAlertForm = !_showAlertForm;
+        if (_showAlertForm && !string.IsNullOrEmpty(_sel.sym)) _arSym = _sel.sym;
+        _arMsg = "";
+    }
+
+    private void SaveAlertRule()
+    {
+        if (string.IsNullOrWhiteSpace(_arSym)) { _arMsg = "종목코드를 입력하세요."; return; }
+        var cond = _arCond switch
+        {
+            0 => AlertCondition.PriceAbove,
+            1 => AlertCondition.PriceBelow,
+            2 => AlertCondition.ChangeRateAbove,
+            _ => AlertCondition.ChangeRateBelow
+        };
+        var ch = _arChannel switch { 1 => AlertChannel.Telegram, 2 => AlertChannel.All, _ => AlertChannel.Desktop };
+        try
+        {
+            Db.Execute(@"INSERT INTO AlertRules(Symbol,Condition,TargetValue,IsActive,IsTriggered,CreatedAt,Channel)
+                         VALUES(@s,@c,@t,1,0,@d,@ch)",
+                new()
+                {
+                    ["@s"] = _arSym.Trim().ToUpperInvariant(),
+                    ["@c"] = (int)cond,
+                    ["@t"] = (double)_arTarget,
+                    ["@d"] = DateTime.Now.ToString("o"),
+                    ["@ch"] = (int)ch
+                });
+            _arMsg = $"✅ 등록됨 — 백그라운드 엔진이 평가하며, 발동 시 자동 해제됩니다(one-shot).";
+        }
+        catch (Exception ex) { _arMsg = "등록 실패: " + ex.Message; }
+    }
+
+    // 원본 DetectMarket 룰: 6자리 + 숫자 시작 → KRX, 아니면 NASDAQ
+    private static Market DetectMarket(string symbol) =>
+        symbol.Length == 6 && char.IsDigit(symbol[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private async Task SelectAsync(string sym, string name, Market mkt)
+    {
+        _sel = (sym, name, mkt);
+        await LoadChartAsync();
+    }
+
+    // ⚠️ 원본 룰: 기간 변경/종목 선택 = 데이터 재로드 + 줌 리셋 (지표 변경은 이 경로를 타지 않음)
+    private async Task LoadChartAsync()
+    {
+        if (string.IsNullOrEmpty(_sel.sym)) return;
+        _loadingChart = true; StateHasChanged();
+        try
+        {
+            _candles = await Provider.GetHistoryAsync(_sel.sym, _sel.mkt,
+                DateTime.Now.AddMonths(-_periods[_periodIdx].months), DateTime.Now);
+        }
+        catch { _candles = new(); }
+        _visibleCount = Math.Min(100, Math.Max(2, _candles.Count));   // 줌 리셋 (원본)
+        UpdateTitle();
+        _loadingChart = false; StateHasChanged();
+    }
+
+    // 타이틀 = 마지막 종가 + 직전 캔들 대비 등락률 (prev.Close==0 가드 — 원본 룰)
+    private void UpdateTitle()
+    {
+        if (_candles.Count == 0) { _titleSuffix = ""; _titleColor = "var(--ink)"; return; }
+        var last = _candles[^1];
+        var prev = _candles.Count > 1 ? _candles[^2] : last;
+        var rate = prev.Close == 0 ? 0 : (last.Close - prev.Close) / prev.Close * 100m;
+        _titleSuffix = $"{last.Close:N0}  {Formatter.Pct(rate)}";
+        _titleColor = rate > 0 ? "var(--up)" : rate < 0 ? "var(--down)" : "var(--sub)";
+    }
+
+    private async Task OnPeriodChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var idx))
+            _periodIdx = Math.Clamp(idx, 0, _periods.Length - 1);
+        await LoadChartAsync();
+    }
+
+    // 원본 휠 줌: ±10 캔들, 클램프 [20, 전체]
+    private void OnWheel(WheelEventArgs e)
+    {
+        if (_candles.Count == 0) return;
+        var delta = e.DeltaY < 0 ? -10 : 10;
+        _visibleCount = Math.Max(20, Math.Min(_candles.Count, _visibleCount + delta));
+    }
+
+    private List<Candle> Visible
+    {
+        get
+        {
+            var take = Math.Min(_visibleCount, _candles.Count);
+            return take <= 0 ? new List<Candle>() : _candles.GetRange(_candles.Count - take, take);
+        }
+    }
+
+    // ===== 메인 차트: 캔들 + MA5/20/60 오버레이 (5% 가격 여백 — 원본 룰) =====
+    private string MainChartSvg()
+    {
+        var cs = Visible;
+        if (cs.Count < 2) return "";
+        int start = _candles.Count - cs.Count;
+        double w = 560, h = 300, padL = 4, padR = 56, padT = 8, padB = 6;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        decimal maxP = cs.Max(c => c.High), minP = cs.Min(c => c.Low);
+        var rangeP = maxP - minP; if (rangeP == 0) rangeP = 1;
+        var marginP = rangeP * 0.05m;
+        maxP += marginP; minP -= marginP;
+        double range = (double)(maxP - minP);
+        double slot = plotW / cs.Count, bw = Math.Max(2, slot * 0.6);
+        double Y(decimal v) => padT + plotH - ((double)(v - minP) / range) * plotH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:300px;display:block'>");
+        for (int g = 0; g <= 4; g++)
+        {
+            double gy = padT + plotH * g / 4.0;
+            decimal pv = maxP - (decimal)(range * g / 4.0);
+            sb.Append($"<line x1='{padL}' y1='{gy:F1}' x2='{padL + plotW:F1}' y2='{gy:F1}' stroke='var(--line)' stroke-width='1'/>");
+            sb.Append($"<text x='{padL + plotW + 4:F1}' y='{gy + 4:F1}' fill='var(--sub)' font-size='10'>{pv:N0}</text>");
+        }
+        // 캔들 (한국식: 상승=빨강 --up, 하락=파랑 --down)
+        for (int i = 0; i < cs.Count; i++)
+        {
+            var c = cs[i];
+            double cx = padL + slot * i + slot / 2;
+            bool up = c.Close >= c.Open;
+            string col = up ? "var(--up)" : "var(--down)";
+            sb.Append($"<line x1='{cx:F1}' y1='{Y(c.High):F1}' x2='{cx:F1}' y2='{Y(c.Low):F1}' stroke='{col}' stroke-width='1'/>");
+            double yo = Y(c.Open), yc = Y(c.Close);
+            double top = Math.Min(yo, yc), bh = Math.Max(2, Math.Abs(yo - yc));
+            sb.Append($"<rect x='{cx - bw / 2:F1}' y='{top:F1}' width='{bw:F1}' height='{bh:F1}' fill='{col}'/>");
+        }
+        // MA 오버레이 — 전체 캔들 기준 계산, 워밍업 구간 미표시 (원본 DrawMA 룰)
+        AppendMa(sb, cs, start, 5, "#d8b021", padL, padT, slot, plotH, minP, range);
+        AppendMa(sb, cs, start, 20, "#c850c8", padL, padT, slot, plotH, minP, range);
+        AppendMa(sb, cs, start, 60, "#28aaaa", padL, padT, slot, plotH, minP, range);
+        sb.Append($"<text x='{padL + plotW - 122:F0}' y='{padT + 10}' fill='#d8b021' font-size='10' font-weight='700'>MA5</text>");
+        sb.Append($"<text x='{padL + plotW - 88:F0}' y='{padT + 10}' fill='#c850c8' font-size='10' font-weight='700'>MA20</text>");
+        sb.Append($"<text x='{padL + plotW - 44:F0}' y='{padT + 10}' fill='#28aaaa' font-size='10' font-weight='700'>MA60</text>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private void AppendMa(System.Text.StringBuilder sb, List<Candle> visible, int offset, int period, string color,
+        double padL, double padT, double slot, double plotH, decimal minP, double range)
+    {
+        if (_candles.Count < period) return;   // 원본 가드
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < visible.Count; i++)
+        {
+            var globalIdx = offset + i;
+            if (globalIdx < period - 1) continue;   // 워밍업 구간 미표시 (원본)
+            decimal sum = 0;
+            for (int j = 0; j < period; j++) sum += _candles[globalIdx - j].Close;
+            var ma = sum / period;
+            double x = padL + slot * i + slot / 2;
+            double y = padT + plotH - ((double)(ma - minP) / range) * plotH;
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        if (pts.Length > 0)
+            sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/>");
+    }
+
+    // ===== 거래량 패널 (상승=빨강/하락=파랑, maxV 0 가드 — 원본 룰) =====
+    private string VolumeSvg()
+    {
+        var cs = Visible;
+        if (cs.Count < 2) return "";
+        double w = 560, h = 64, padL = 4, padR = 56, padT = 12, padB = 2;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        long maxV = cs.Max(c => c.Volume); if (maxV == 0) maxV = 1;
+        double slot = plotW / cs.Count;
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:64px;display:block'>");
+        sb.Append("<text x='4' y='10' fill='var(--sub)' font-size='9' font-weight='700'>거래량</text>");
+        for (int i = 0; i < cs.Count; i++)
+        {
+            var c = cs[i];
+            double bh = (double)c.Volume / maxV * plotH;
+            double x = padL + slot * i + slot / 2;
+            string col = c.Close >= c.Open ? "var(--up)" : "var(--down)";
+            sb.Append($"<rect x='{x - slot * 0.35:F1}' y='{padT + plotH - bh:F1}' width='{slot * 0.7:F1}' height='{Math.Max(1, bh):F1}' fill='{col}' opacity='0.7'/>");
+        }
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    // ===== 보조지표 패널 — 캔들 30개 미만 미표시 (원본 룰) =====
+    private string IndicatorSvg()
+    {
+        var cs = Visible;
+        if (cs.Count < 2 || _candles.Count < 30) return "";
+        int start = _candles.Count - cs.Count;
+        double w = 560, h = 96, padL = 4, padR = 56, padT = 12, padB = 4;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double slot = plotW / cs.Count;
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:96px;display:block'>");
+        switch (_indicator)
+        {
+            case "MACD": AppendMacd(sb, cs.Count, start, padL, padT, plotW, plotH, slot); break;
+            case "Stochastic": AppendStoch(sb, cs.Count, start, padL, padT, plotW, plotH, slot); break;
+            case "볼린저밴드": AppendPctB(sb, cs.Count, start, padL, padT, plotW, plotH, slot); break;
+            default: AppendRsi(sb, cs.Count, start, padL, padT, plotW, plotH, slot); break;
+        }
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    // 0~100 스케일 시리즈 (RSI·스토캐스틱 공용 — 원본 DrawSeries)
+    private static void AppendSeries01(System.Text.StringBuilder sb, List<decimal> data, int count, int start,
+        double padL, double padT, double plotH, double slot, string color)
+    {
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < count; i++)
+        {
+            var idx = start + i;
+            if (idx >= data.Count) break;
+            double v = (double)data[idx];
+            double x = padL + slot * i + slot / 2;
+            double y = padT + (100 - v) / 100.0 * plotH;
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        if (pts.Length > 0) sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/>");
+    }
+
+    private void AppendRsi(System.Text.StringBuilder sb, int count, int start, double padL, double padT, double plotW, double plotH, double slot)
+    {
+        double y30 = padT + plotH * 0.7, y70 = padT + plotH * 0.3;   // 30/70 가이드 (원본)
+        sb.Append($"<line x1='{padL}' y1='{y30:F1}' x2='{padL + plotW:F1}' y2='{y30:F1}' stroke='var(--down)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<line x1='{padL}' y1='{y70:F1}' x2='{padL + plotW:F1}' y2='{y70:F1}' stroke='var(--up)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{y30 + 3:F1}' fill='var(--sub)' font-size='9'>30</text>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{y70 + 3:F1}' fill='var(--sub)' font-size='9'>70</text>");
+        sb.Append("<text x='4' y='10' fill='var(--sub)' font-size='9' font-weight='700'>RSI(14)</text>");
+        AppendSeries01(sb, IndicatorMath.Rsi(_candles), count, start, padL, padT, plotH, slot, "#f0a030");
+    }
+
+    private void AppendStoch(System.Text.StringBuilder sb, int count, int start, double padL, double padT, double plotW, double plotH, double slot)
+    {
+        var (k, d) = IndicatorMath.Stochastic(_candles);
+        double y20 = padT + plotH * 0.8, y80 = padT + plotH * 0.2;   // 20/80 가이드 (원본)
+        sb.Append($"<line x1='{padL}' y1='{y20:F1}' x2='{padL + plotW:F1}' y2='{y20:F1}' stroke='var(--down)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<line x1='{padL}' y1='{y80:F1}' x2='{padL + plotW:F1}' y2='{y80:F1}' stroke='var(--up)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{y20 + 3:F1}' fill='var(--sub)' font-size='9'>20</text>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{y80 + 3:F1}' fill='var(--sub)' font-size='9'>80</text>");
+        sb.Append("<text x='4' y='10' fill='var(--sub)' font-size='9' font-weight='700'>Stochastic(14,3)</text>");
+        AppendSeries01(sb, k, count, start, padL, padT, plotH, slot, "#f0a030");   // %K
+        AppendSeries01(sb, d, count, start, padL, padT, plotH, slot, "#28aaaa");   // %D
+    }
+
+    private void AppendPctB(System.Text.StringBuilder sb, int count, int start, double padL, double padT, double plotW, double plotH, double slot)
+    {
+        var pctB = IndicatorMath.BollingerPctB(_candles);
+        double yTop = padT + plotH * 0.1, yMid = padT + plotH * 0.5, yBot = padT + plotH * 0.9;   // 1.0/0.5/0.0 (원본)
+        sb.Append($"<line x1='{padL}' y1='{yTop:F1}' x2='{padL + plotW:F1}' y2='{yTop:F1}' stroke='var(--warn)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<line x1='{padL}' y1='{yMid:F1}' x2='{padL + plotW:F1}' y2='{yMid:F1}' stroke='var(--sub)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<line x1='{padL}' y1='{yBot:F1}' x2='{padL + plotW:F1}' y2='{yBot:F1}' stroke='var(--warn)' stroke-dasharray='3 3' opacity='0.5'/>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{yTop + 3:F1}' fill='var(--sub)' font-size='9'>상단</text>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{yMid + 3:F1}' fill='var(--sub)' font-size='9'>중심</text>");
+        sb.Append($"<text x='{padL + plotW + 4:F1}' y='{yBot + 3:F1}' fill='var(--sub)' font-size='9'>하단</text>");
+        sb.Append("<text x='4' y='10' fill='var(--sub)' font-size='9' font-weight='700'>볼린저 %B (20,2σ)</text>");
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < count; i++)
+        {
+            var idx = start + i;
+            if (idx >= pctB.Count) break;
+            double v = (double)Math.Clamp(pctB[idx], -0.5m, 1.5m);   // 표시 클램프 (원본)
+            double x = padL + slot * i + slot / 2;
+            double y = padT + (0.9 - v * 0.8) * plotH;
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        if (pts.Length > 0) sb.Append($"<polyline points='{pts}' fill='none' stroke='#b462e0' stroke-width='1.8'/>");
+    }
+
+    private void AppendMacd(System.Text.StringBuilder sb, int count, int start, double padL, double padT, double plotW, double plotH, double slot)
+    {
+        var (macd, signal, hist) = IndicatorMath.Macd(_candles);
+        double maxV = 0;
+        for (int i = 0; i < count; i++)
+        {
+            var idx = start + i;
+            if (idx >= hist.Count) break;
+            maxV = Math.Max(maxV, Math.Abs((double)macd[idx]));
+            maxV = Math.Max(maxV, Math.Abs((double)signal[idx]));
+            maxV = Math.Max(maxV, Math.Abs((double)hist[idx]));
+        }
+        if (maxV == 0) maxV = 1;   // 0 가드 (원본)
+        double zeroY = padT + plotH / 2;
+        sb.Append($"<line x1='{padL}' y1='{zeroY:F1}' x2='{padL + plotW:F1}' y2='{zeroY:F1}' stroke='var(--sub)' opacity='0.4'/>");
+        sb.Append("<text x='4' y='10' fill='var(--sub)' font-size='9' font-weight='700'>MACD(12,26,9)</text>");
+        for (int i = 0; i < count; i++)
+        {
+            var idx = start + i;
+            if (idx >= hist.Count) break;
+            double hv = (double)hist[idx] / maxV * (plotH / 2);
+            double x = padL + slot * i + slot / 2;
+            string col = hist[idx] >= 0 ? "var(--up)" : "var(--down)";
+            sb.Append($"<rect x='{x - slot * 0.35:F1}' y='{zeroY - Math.Max(0, hv):F1}' width='{slot * 0.7:F1}' height='{Math.Abs(hv):F1}' fill='{col}' opacity='0.6'/>");
+        }
+        AppendCenteredLine(sb, macd, count, start, padL, padT, plotH, slot, maxV, "#28aaaa");
+        AppendCenteredLine(sb, signal, count, start, padL, padT, plotH, slot, maxV, "#f0a030");
+    }
+
+    private static void AppendCenteredLine(System.Text.StringBuilder sb, List<decimal> data, int count, int start,
+        double padL, double padT, double plotH, double slot, double maxV, string color)
+    {
+        double zeroY = padT + plotH / 2;
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < count; i++)
+        {
+            var idx = start + i;
+            if (idx >= data.Count) break;
+            double x = padL + slot * i + slot / 2;
+            double y = zeroY - (double)data[idx] / maxV * (plotH / 2);
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        if (pts.Length > 0) sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/>");
+    }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

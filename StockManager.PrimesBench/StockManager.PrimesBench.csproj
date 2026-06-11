@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- 무의존 원칙: BenchmarkDotNet 대신 Stopwatch 기반 경량 하니스 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StockManager\StockManager.csproj" />
+  </ItemGroup>
+
+</Project>

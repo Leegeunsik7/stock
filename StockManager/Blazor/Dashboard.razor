@@ -1,0 +1,275 @@
+@page "/"
+@inject DashboardService Svc
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject ToastService Toasts
+@implements IDisposable
+
+<div class="top">
+    <div class="hello">
+        <h1>좋은 하루입니다, <b>이근식</b>님</h1>
+        <p>@DateTime.Now.ToString("yyyy년 MM월 dd일 dddd") · 위젯을 드래그해서 원하는 대로 배치하세요</p>
+    </div>
+    <div class="search">🔎 <input placeholder="종목·코인 검색 (Ctrl+K)" /></div>
+    <div class="badges">
+        <span class="dot"><i></i>업비트</span>
+        <span class="dot"><i></i>KIS</span>
+        <span class="dot"><i style="background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)"></i>모의</span>
+    </div>
+    <button class="iconbtn" @onclick="ToggleTheme" title="테마 전환">@(_theme == "dark" ? "☀️" : "🌙")</button>
+</div>
+
+<div class="tiles">
+    <div class="tile g"><div class="lab">총자산</div><div class="val num">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
+    <div class="tile u"><div class="lab">평가손익(주식)</div><div class="val num">@Svc.Pnl.ToString("N0")</div><div class="sub">수익률 @Svc.Ret.ToString("+0.0;-0.0;0.0")%</div></div>
+    <div class="tile k"><div class="lab">코인 평가</div><div class="val num">@Svc.CoinValue.ToString("N0")</div><div class="sub">업비트</div></div>
+    <div class="tile d"><div class="lab">모의 계좌</div><div class="val num">@((Svc.PaperCash + Svc.PaperPosVal).ToString("N0"))</div><div class="sub">@Svc.PaperRet.ToString("+0.0;-0.0;0.0")% 누적</div></div>
+</div>
+
+<div class="hint">⠿ 끌어서, 또는 ✕ 로 위젯을 정리할 수 있어요
+    <button class="addbtn" @onclick="() => _gallery = true">+ 위젯 추가</button>
+</div>
+
+<div class="grid" id="widgetGrid">
+    @foreach (var k in _layout)
+    {
+        <div class="w @(ColOf(k)) @(_dragOver == k && _drag != k ? "drag-over" : "")" data-k="@k" @key="k"
+             @ondragover:preventDefault="true"
+             @ondragenter="() => OnDragEnter(k)"
+             @ondrop="() => OnDrop(k)">
+            @* 헤더(그립)만 draggable — 본문 버튼 클릭과 충돌하지 않음 *@
+            <div class="wh" draggable="true"
+                 @ondragstart="() => OnDragStart(k)" @ondragend="OnDragEnd">
+                <span class="grip" title="드래그해서 순서 변경">⠿</span>
+                <span class="h">@TitleOf(k)</span>
+                @if (LinkOf(k) is { } href)
+                {
+                    <button class="open" title="모듈 열기" @onclick="() => Nav.NavigateTo(href)">↗</button>
+                }
+                <button class="x" title="제거" @onclick="() => Remove(k)">✕</button>
+            </div>
+            <div class="wb">
+                @switch (k)
+                {
+                    case "coins":
+                        @foreach (var c in Svc.Coins)
+                        {
+                            <div class="row">
+                                <div class="nm">@c.Name</div>
+                                <div style="flex:1;margin:0 14px">@Spark(c.Spark, c.ChangeRate >= 0 ? "var(--up)" : "var(--down)")</div>
+                                <div style="text-align:right">
+                                    <div class="num">@c.Price.ToString("N0")</div>
+                                    <div class="num @(c.ChangeRate >= 0 ? "up" : "down")" style="font-size:11px">@((c.ChangeRate*100).ToString("+0.00;-0.00"))%</div>
+                                </div>
+                            </div>
+                        }
+                        break;
+
+                    case "pie":
+                        <div class="donut" style="background:@DonutCss()">
+                            <div class="in"><b class="num">@Eok(Svc.Total)</b><span>총자산</span></div>
+                        </div>
+                        <div class="legend">
+                            <div class="li"><i style="background:var(--accent)"></i>주식(원화) · @Pct(Svc.AllocKrwStock)%</div>
+                            <div class="li"><i style="background:var(--accent-2)"></i>주식(외화) · @Pct(Svc.AllocUsdStock)%</div>
+                            <div class="li"><i style="background:var(--warn)"></i>코인 · @Pct(Svc.AllocCoin)%</div>
+                        </div>
+                        break;
+
+                    case "weekly":
+                        <div class="bars">
+                            @foreach (var d in Svc.Weekly)
+                            {
+                                var hPct = (int)((double)d.Value / MaxW() * 100);
+                                <div class="b"><div class="vv">@WeeklyVal(d.Value)</div><div class="bar" style="height:@(Math.Max(6, hPct))%"></div><div class="lab">@d.Label</div></div>
+                            }
+                        </div>
+                        @if (Svc.WeeklySample)
+                        {
+                            <div class="sub" style="text-align:right;color:var(--sub);font-size:11px;margin-top:4px">샘플 — 매일 자동 기록되어 채워집니다</div>
+                        }
+                        break;
+
+                    case "paper":
+                        <div class="row"><div class="nm">현금</div><div class="num">@Svc.PaperCash.ToString("N0")</div></div>
+                        <div class="row"><div class="nm">포지션 평가</div><div class="num">@Svc.PaperPosVal.ToString("N0")</div></div>
+                        <div class="row"><div class="nm">총손익</div><div class="num @(Svc.PaperPnl >= 0 ? "up" : "down")">@Svc.PaperPnl.ToString("+#,##0;-#,##0;0") (@Svc.PaperRet.ToString("+0.0;-0.0;0.0")%)</div></div>
+                        <div class="order">
+                            <button class="buy" @onclick="() => Quick(_qaMarket, _qaAmt, PaperSide.Buy)">매수</button>
+                            <button class="sell" @onclick="() => Quick(_qaMarket, _qaAmt, PaperSide.Sell)">매도</button>
+                        </div>
+                        <div class="qa">
+                            <span @onclick='() => Quick("KRW-BTC", 1_000_000, PaperSide.Buy)'>BTC 100만 매수</span>
+                            <span @onclick='() => Quick("KRW-ETH", 500_000, PaperSide.Sell)'>ETH 50만 매도</span>
+                            <span @onclick="OpenPaperModule">모의투자 창 열기</span>
+                        </div>
+                        break;
+
+                    case "imminent":
+                        @if (Svc.Signals.Count == 0)
+                        {
+                            <div class="sub" style="color:var(--sub);padding:8px 0">현재 포착된 신호가 없습니다. (감시 코인 일봉 기준)</div>
+                        }
+                        @foreach (var o in Svc.Signals)
+                        {
+                            <div style="padding:9px 0;border-bottom:1px solid var(--line)">
+                                <div style="display:flex;align-items:center;gap:8px">
+                                    <span class="pill @(o.Side == "BUY" ? "r" : "b")">@o.Side</span>
+                                    <b style="font-size:12.5px">@o.Name</b>
+                                    <span style="margin-left:auto;color:var(--sub);font-size:11px">@o.Reason</span>
+                                </div>
+                                <div class="prog"><i style="width:@(o.Pct)%"></i></div>
+                            </div>
+                        }
+                        break;
+
+                    case "activity":
+                        @if (Svc.Activity.Count == 0)
+                        {
+                            <div class="sub" style="color:var(--sub);padding:8px 0">최근 활동이 없습니다. 모의 주문을 실행해 보세요.</div>
+                        }
+                        @foreach (var a in Svc.Activity)
+                        {
+                            <div class="act"><i></i><div>@a.Text</div><div class="tm">@a.When</div></div>
+                        }
+                        break;
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@if (_gallery)
+{
+    <div class="mask on" @onclick="() => _gallery = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>위젯 추가</h3>
+            <div class="gal">
+                @foreach (var k in _all)
+                {
+                    var has = _layout.Contains(k);
+                    <div class="gcard @(has ? "dis" : "")" @onclick="() => Add(k)">
+                        <div class="gt">@TitleOf(k)</div>
+                        <div class="gd">@(has ? "이미 추가됨" : "클릭하여 추가")</div>
+                    </div>
+                }
+            </div>
+            <div class="foot"><button @onclick="() => _gallery = false">닫기</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<string> _layout = new();
+    private readonly string[] _all = { "coins", "pie", "weekly", "paper", "imminent", "activity" };
+    private bool _gallery;
+    private string _theme = "light";
+
+    // HTML5 네이티브 DnD 상태 (외부 라이브러리 없음)
+    private string? _drag;       // 드래그 중인 위젯 키
+    private string? _dragOver;   // 현재 드롭 대상으로 호버된 위젯 키
+
+    private const string _qaMarket = "KRW-BTC";
+    private const decimal _qaAmt = 1_000_000m;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _theme = Svc.Theme;
+        _layout = Svc.LoadLayout();
+        await Svc.LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (first) await JS.InvokeVoidAsync("dashboard.setTheme", _theme);
+    }
+
+    // ===== 위젯 드래그 정렬 (순수 HTML5 DnD) =====
+    private void OnDragStart(string k) { _drag = k; _dragOver = null; }
+    private void OnDragEnter(string k) { if (_drag != null && k != _drag) _dragOver = k; }
+    private void OnDragEnd() { _drag = null; _dragOver = null; }
+
+    private void OnDrop(string targetKey)
+    {
+        if (_drag is null || _drag == targetKey) { OnDragEnd(); return; }
+        var from = _layout.IndexOf(_drag);
+        var to = _layout.IndexOf(targetKey);
+        if (from >= 0 && to >= 0)
+        {
+            _layout.RemoveAt(from);
+            _layout.Insert(to, _drag);
+            Svc.SaveLayout(_layout);   // 변경 즉시 영속 (다음 진입 시 유지)
+        }
+        OnDragEnd();
+    }
+
+    // 위젯 헤더 ↗ 클릭 → 해당 모듈로 딥링크 (Saved-View 부재 → 모듈 라우트로 매핑)
+    private static string? LinkOf(string k) => k switch
+    {
+        "coins" => "/coins",
+        "pie" => "/assets",
+        "weekly" => "/assets",
+        "paper" => "/paper",
+        "imminent" => "/signals",
+        "activity" => "/paper",
+        _ => null
+    };
+
+    private void Remove(string k) { _layout.Remove(k); Svc.SaveLayout(_layout); }
+    private void Add(string k) { if (!_layout.Contains(k)) { _layout.Add(k); Svc.SaveLayout(_layout); } _gallery = false; }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        Svc.Theme = _theme;
+        await JS.InvokeVoidAsync("dashboard.setTheme", _theme);
+    }
+
+    private async Task Quick(string market, decimal amt, PaperSide side)
+    {
+        var (ok, msg) = Svc.QuickPaper(market, amt, side);
+        await Svc.LoadAsync();
+        StateHasChanged();
+        // 차단형 alert → 액션형 토스트. 체결 시 [모의투자 보기] 딥링크 버튼 노출.
+        if (ok)
+            Toasts.Success("모의 주문 체결", msg + "\n(모의투자 — 실제 주문 아님)", new()
+            {
+                new ToastButton("모의투자 보기", () => { Nav.NavigateTo("/paper"); return Task.CompletedTask; }, Primary: true)
+            });
+        else
+            Toasts.Warning("주문 실패", msg);
+    }
+
+    private void OpenPaperModule() => ModuleBridge.Open("Paper");
+
+    // ===== 표시 헬퍼 =====
+    private string TitleOf(string k) => k switch
+    {
+        "coins" => "🪙 코인 실시간", "pie" => "🧮 자산 구성", "weekly" => "📊 주간 수익률",
+        "paper" => "🧪 모의투자 계좌", "imminent" => "⏳ 임박 신호", "activity" => "📡 최근 활동", _ => k
+    };
+    private string ColOf(string k) => k switch { "weekly" => "col8", _ => "col4" };
+
+    private MarkupString Spark(double[] d, string color)
+    {
+        if (d == null || d.Length < 2) return (MarkupString)"";
+        double w = 240, h = 26, mn = d.Min(), mx = d.Max(); var r = (mx - mn) == 0 ? 1 : (mx - mn);
+        var pts = string.Join(" ", d.Select((v, i) => $"{(i / (double)(d.Length - 1) * w):F1},{(h - (v - mn) / r * h):F1}"));
+        return (MarkupString)$"<svg class='spark' viewBox='0 0 {w} {h}' preserveAspectRatio='none' style='width:100%'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='2'/></svg>";
+    }
+
+    private decimal Tot => Svc.AllocKrwStock + Svc.AllocUsdStock + Svc.AllocCoin;
+    private string Pct(decimal v) => Tot > 0 ? (v / Tot * 100m).ToString("0.0") : "0.0";
+    private string Eok(decimal v) => v >= 100_000_000m ? $"{v / 100_000_000m:0.0}억" : $"{v / 10_000m:N0}만";
+    private string WeeklyVal(decimal v) => Svc.WeeklySample ? ((int)v).ToString() : Eok(v);
+    private double MaxW() { var w = Svc.Weekly.Count > 0 ? (double)Svc.Weekly.Max(x => x.Value) : 1; return w <= 0 ? 1 : w; }
+    private string DonutCss()
+    {
+        var t = Tot <= 0 ? 1m : Tot;
+        var a = (double)(Svc.AllocKrwStock / t * 100);
+        var b = a + (double)(Svc.AllocUsdStock / t * 100);
+        return $"conic-gradient(var(--accent) 0 {a:F1}%, var(--accent-2) {a:F1}% {b:F1}%, var(--warn) {b:F1}% 100%)";
+    }
+
+    public void Dispose() { }
+}

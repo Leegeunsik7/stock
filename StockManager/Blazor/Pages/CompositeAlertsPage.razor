@@ -1,0 +1,46 @@
+@page "/composite"
+@implements IDisposable
+
+<div class="top"><div class="hello"><h1>🧠 복합 알림</h1>
+<p>규칙 @(_svc.Rules.Count)개 · 활성 @(_svc.Rules.Count(r=>r.Enabled))개 · 마지막 평가: @(_svc.LastRun==default?"없음":_svc.LastRun.ToString("HH:mm:ss"))</p></div>
+<button class="addbtn" @onclick='async ()=>{await _svc.EvaluateNowAsync();StateHasChanged();}' style="margin:0 16px">🔄 지금 평가</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="OpenManager">⚙️ 규칙 관리</button></div>
+
+<div style="padding:0 28px 40px">
+    <div style="margin-bottom:14px;color:var(--sub);font-size:13px">규칙을 추가·편집하려면 '규칙 관리' 버튼을 누르세요(WinForms 편집 창). 평가 결과는 아래에서 실시간으로 확인합니다.</div>
+    <table class="ctbl">
+        <thead><tr><th>사용</th><th>이름</th><th>대상</th><th>조건 요약</th><th>마지막 발생</th><th>쿨다운</th></tr></thead>
+        <tbody>
+            @foreach (var r in _svc.Rules)
+            {
+                <tr>
+                    <td>@(r.Enabled?"✅":"⏸")</td>
+                    <td><b>@r.Name</b></td>
+                    <td>@(r.AssetKind=="stock"?"📈":"🪙") @r.Target</td>
+                    <td style="font-size:12px;color:var(--sub)">@string.Join(r.Logic==RuleLogic.And?" AND ":" OR ", r.Conditions.Select(c=>c.Describe()))</td>
+                    <td style="font-size:12px;color:var(--sub)">@(r.LastFired?.ToString("MM-dd HH:mm") ?? "-")</td>
+                    <td style="font-size:12px;color:var(--sub)">@(r.CooldownMin)분</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (_svc.Rules.Count == 0)
+    {
+        <div style="padding:40px;text-align:center;color:var(--sub)">'규칙 관리' 버튼으로 복합 알림 규칙을 추가하세요.</div>
+    }
+</div>
+
+@code {
+    private readonly CompositeAlertService _svc = CompositeAlertService.Instance;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        _svc.Evaluated += Refresh;
+        _cts = new System.Threading.CancellationTokenSource();
+    }
+
+    private void Refresh() => InvokeAsync(StateHasChanged);
+    private void OpenManager() => ModuleBridge.Open("Composite");
+    public void Dispose() { _svc.Evaluated -= Refresh; _cts?.Cancel(); _cts?.Dispose(); }
+}

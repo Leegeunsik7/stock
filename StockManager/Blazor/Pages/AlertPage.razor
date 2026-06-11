@@ -1,0 +1,48 @@
+@page "/alerts"
+@inject LocalDatabase Db
+@implements IDisposable
+
+<div class="top"><div class="hello"><h1>🔔 알림 센터</h1><p>실시간 알림 피드 · @(_items.Count)건</p></div>
+<button class="addbtn" @onclick="Reload" style="margin:0 16px">🔄 새로고침</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin-right:12px"
+        @onclick="MarkAllRead">✓ 모두 읽음</button></div>
+
+<div style="padding:0 28px 40px">
+    @foreach (var a in _items)
+    {
+        <div class="act" style="padding:12px 0;border-bottom:1px solid var(--line);align-items:flex-start">
+            <i style="margin-top:5px;background:@LevelColor(a.Level);width:8px;height:8px;border-radius:50%;flex-shrink:0"></i>
+            <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+                    <b style="font-size:13px">@a.Title</b>
+                    <span class="pill @(a.Level==AlertLevel.Critical?"r":"b")" style="font-size:10px;padding:2px 6px">@LevelKr(a.Level)</span>
+                    <small class="sub">@a.Source · @a.Symbol</small>
+                </div>
+                <div style="color:var(--sub);font-size:12.5px">@a.Message</div>
+            </div>
+            <div class="tm">@a.Time.ToString("MM-dd HH:mm")</div>
+        </div>
+    }
+    @if (_items.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">최근 알림이 없습니다.</div> }
+</div>
+
+@code {
+    private List<AlertItem> _items = new();
+
+    protected override void OnInitialized()
+    {
+        Reload();
+        AlertCenter.Instance.AlertRaised += OnNew;
+    }
+
+    private void OnNew(object? _, AlertItem a) { _items.Insert(0, a); if (_items.Count > 200) _items.RemoveAt(_items.Count - 1); InvokeAsync(StateHasChanged); }
+    private void Reload() { try { _items = AlertCenter.Instance.GetFromDb(200); } catch { } }
+    private void MarkAllRead() { try { AlertCenter.Instance.MarkAllRead(); Reload(); } catch { } }
+
+    private static string LevelColor(AlertLevel l) => l switch
+    { AlertLevel.Critical => "var(--down)", AlertLevel.Warning => "var(--warn)", _ => "var(--ok)" };
+    private static string LevelKr(AlertLevel l) => l switch
+    { AlertLevel.Critical => "중요", AlertLevel.Warning => "경고", _ => "정보" };
+
+    public void Dispose() => AlertCenter.Instance.AlertRaised -= OnNew;
+}

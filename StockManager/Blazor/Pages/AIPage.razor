@@ -1,0 +1,45 @@
+@page "/ai"
+@inject AiService Ai
+
+<div class="top"><div class="hello"><h1>🧠 AI 분석</h1><p>Gemini 기반 종목 분석</p></div></div>
+
+<div style="padding:0 28px 40px;max-width:860px">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+        <input class="srch" style="width:160px" placeholder="종목코드 (005930)" @bind="_symbol" />
+        <select class="srch" @bind="_market">
+            @foreach (var m in Enum.GetValues<Market>()) { <option value="@m">@m</option> }
+        </select>
+        <select class="srch" @bind="_model">
+            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+            <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+            <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+        </select>
+        <button class="addbtn" disabled="@_busy" @onclick="Analyze">@(_busy?"분석 중…":"🚀 AI 분석")</button>
+    </div>
+
+    @if (!Ai.HasKey)
+    {
+        <div style="background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:13px">
+            ⚠️ Gemini API 키가 설정되지 않았습니다. 거래 설정에서 키를 입력하면 분석이 가능합니다.
+        </div>
+    }
+
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;min-height:280px;white-space:pre-wrap;line-height:1.7;font-size:13.5px">
+        @if (_busy) { <span style="color:var(--sub)">@_symbol 분석 중입니다…</span> }
+        else if (string.IsNullOrEmpty(_result)) { <span style="color:var(--sub)">종목코드를 입력하고 'AI 분석'을 누르세요.</span> }
+        else { @_result }
+    </div>
+</div>
+
+@code {
+    private string _symbol = "005930", _market = "KRX_KOSPI", _model = "gemini-2.0-flash", _result = "";
+    private bool _busy;
+
+    private async Task Analyze()
+    {
+        if (string.IsNullOrWhiteSpace(_symbol)) return;
+        _busy = true; _result = ""; StateHasChanged();
+        _result = await Ai.AnalyzeAsync(_symbol.Trim(), _market, _model);
+        _busy = false; StateHasChanged();
+    }
+}

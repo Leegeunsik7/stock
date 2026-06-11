@@ -1,0 +1,225 @@
+@page "/coins"
+@inject DashboardService Svc
+@inject BithumbProvider Bithumb
+@inject FxConverter Fx
+@implements IDisposable
+@using System.Threading
+
+<div class="top">
+    <div class="hello"><h1>🪙 코인 실시간</h1><p>업비트 · 빗썸 · 바이낸스 김프 · 환율 @_usdKrw.ToString("N0") · @_ts</p></div>
+    <div class="badges">
+        <span class="dot"><i></i>업비트 @(_upbit.Count)종</span>
+        <span class="dot" style="@(_bithumb.Count==0?"opacity:.4":"")"><i style="background:var(--warn)"></i>빗썸 @(_bithumb.Count)종</span>
+        <span class="dot" style="@(_bn.Count==0?"opacity:.4":"")"><i style="background:var(--accent-2)"></i>바낸 @(_bn.Count)종</span>
+    </div>
+    <button class="addbtn" @onclick="RefreshAsync" style="margin:0 16px">🔄 새로고침</button>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap;align-items:center">
+    @foreach (var t in _tabs)
+    {
+        <button class="pill @(t==_tab?"r":"b")" style="padding:6px 14px;cursor:pointer;border:0;font-size:12.5px" @onclick="()=>_tab=t">@t</button>
+    }
+    <input class="srch" placeholder="🔍 코인 검색 (BTC, 비트코인)" @bind="_q" @bind:event="oninput" />
+    <select class="srch" @bind="_sort">
+        <option value="val">거래대금순</option>
+        <option value="change">변동률순</option>
+        <option value="name">이름순</option>
+    </select>
+    <span class="sub" style="font-size:12px">표시 @(Rows.Count())종 / 전체 @(_allSymbols)종</span>
+</div>
+
+<div style="overflow:auto;padding:0 28px 40px">
+    <table class="ctbl">
+        <thead><tr>
+            <th>코인</th><th style="text-align:right">업비트</th>
+            <th style="text-align:right">빗썸</th>
+            <th style="text-align:right">거래소 차이</th>
+            <th style="text-align:right">바낸($)</th>
+            <th style="text-align:right">김프%</th>
+            <th style="text-align:right">24h 변화</th>
+            <th style="text-align:right">거래대금(24h)</th>
+            <th>보유</th><th>모의 주문</th>
+        </tr></thead>
+        <tbody>
+            @foreach (var r in Rows)
+            {
+                <tr>
+                    <td><b>@r.Name</b><br/><small class="sub">@r.Symbol</small></td>
+                    <td class="num" style="text-align:right">@(r.UpbitPx>0 ? r.UpbitPx.ToString("N0") : "-")</td>
+                    <td class="num" style="text-align:right;@(r.BithumbPx==0?"color:var(--sub)":"")">@(r.BithumbPx>0 ? r.BithumbPx.ToString("N0") : "-")</td>
+                    <td class="num" style="text-align:right;@DiffColor(r.Diff)">@(r.UpbitPx>0 && r.BithumbPx>0 ? (r.Diff>=0?"+":"")+r.Diff.ToString("0.00")+"%" : "-")</td>
+                    <td class="num" style="text-align:right;color:var(--sub)">@(r.BnUsdt>0 ? "$"+FmtUsd(r.BnUsdt) : "-")</td>
+                    <td class="num" style="text-align:right;@KimchiColor(r)">@(r.HasKimchi ? (r.Kimchi>=0?"+":"")+r.Kimchi.ToString("0.00")+"%" : "-")</td>
+                    <td style="text-align:right"><span class="@(r.Change>=0?"up":"down") num">@r.Change.ToString("+0.00;-0.00")%</span></td>
+                    <td class="num sub" style="text-align:right;font-size:12px">@Fmt(r.TradeVal)</td>
+                    <td style="font-size:12px">@(r.Held>0 ? r.Held.ToString("0.####") : "-")</td>
+                    <td>
+                        @if (r.UpbitPx > 0)
+                        {
+                            <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11.5px" @onclick="()=>QuickBuy(r.Symbol)">매수</button>
+                            <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11.5px;margin-left:3px" @onclick="()=>QuickSell(r.Symbol)">매도</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (!Rows.Any()) { <div style="padding:40px;text-align:center;color:var(--sub)">데이터를 불러오는 중이거나 검색 결과가 없습니다.</div> }
+</div>
+
+@if (!string.IsNullOrEmpty(_toast))
+{
+    <div style="position:fixed;bottom:24px;right:28px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 20px;box-shadow:0 10px 30px rgba(0,0,0,.2);z-index:90;max-width:360px">
+        @_toast
+        <button style="border:0;background:transparent;cursor:pointer;margin-left:10px" @onclick="()=>_toast=string.Empty">✕</button>
+    </div>
+}
+
+@code {
+    private readonly string[] _tabs = { "전체", "업비트", "빗썸", "보유중" };
+    private List<CryptoTick> _upbit = new();
+    private List<BithumbTick> _bithumb = new();
+    private Dictionary<string, BinanceTick> _bn = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, decimal> _held = new();
+    private Dictionary<string, string> _nameMap = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _krwMarkets = new();
+    private readonly UpbitProvider _upbitProv = new();
+    private readonly BinanceProvider _binance = new();
+    private decimal _usdKrw = 1380m;   // 환율 실패 시 직전 캐시값 유지 (원본 룰)
+    private string _tab = "전체", _q = "", _sort = "val";
+    private string _toast = "", _ts = "";
+    private int _allSymbols;
+    private CancellationTokenSource? _cts;
+
+    private record CoinRow(string Symbol, string Name, decimal UpbitPx, decimal BithumbPx,
+        decimal Diff, decimal Change, decimal TradeVal, decimal Held,
+        decimal BnUsdt, decimal Kimchi, bool HasKimchi);
+
+    private IEnumerable<CoinRow> Rows
+    {
+        get
+        {
+            var uMap = new Dictionary<string, CryptoTick>(StringComparer.OrdinalIgnoreCase);
+            foreach (var u in _upbit) uMap[u.Market.Replace("KRW-", "")] = u;
+            var bMap = new Dictionary<string, BithumbTick>(StringComparer.OrdinalIgnoreCase);
+            foreach (var b in _bithumb) bMap[b.Symbol] = b;
+
+            IEnumerable<string> symbols = _tab switch
+            {
+                "업비트" => uMap.Keys,
+                "빗썸" => bMap.Keys,
+                "보유중" => _held.Where(h => h.Value > 0).Select(h => h.Key.Replace("KRW-", "")),
+                _ => uMap.Keys.Union(bMap.Keys, StringComparer.OrdinalIgnoreCase)
+            };
+
+            var rows = symbols.Select(sym =>
+            {
+                uMap.TryGetValue(sym, out var u);
+                bMap.TryGetValue(sym, out var b);
+                decimal up = u?.Price ?? 0, bp = b?.Price ?? 0;
+                decimal diff = up > 0 && bp > 0 ? (up - bp) / bp * 100m : 0m;
+                decimal change = u != null ? u.ChangeRate * 100m : (b?.ChangeRate ?? 0m);
+                decimal tradeVal = Math.Max(u?.AccTradePrice24h ?? 0m, b?.TradeValueKrw ?? 0m);
+                _held.TryGetValue("KRW-" + sym, out var held);
+                var name = u?.KoreanName is { Length: > 0 } kn ? kn
+                         : (_nameMap.TryGetValue(sym, out var nm) && nm.Length > 0 ? nm : sym);
+                // 김치 프리미엄 — 원본 룰: (업비트가 − 바낸가×환율)/공정가×100, 세 값 모두 >0일 때만, 아니면 "-"
+                decimal bnUsdt = _bn.TryGetValue(sym + "USDT", out var bt) ? bt.Price : 0m;
+                decimal fair = bnUsdt > 0 && _usdKrw > 0 ? bnUsdt * _usdKrw : 0m;
+                bool hasK = up > 0 && fair > 0;
+                decimal kimchi = hasK ? (up - fair) / fair * 100m : 0m;
+                return new CoinRow(sym, name, up, bp, diff, change, tradeVal, held, bnUsdt, kimchi, hasK);
+            });
+
+            if (!string.IsNullOrWhiteSpace(_q))
+                rows = rows.Where(r => r.Symbol.Contains(_q, StringComparison.OrdinalIgnoreCase)
+                                    || r.Name.Contains(_q, StringComparison.OrdinalIgnoreCase));
+
+            return (_sort switch
+            {
+                "change" => rows.OrderByDescending(r => Math.Abs(r.Change)),
+                "name" => rows.OrderBy(r => r.Name),
+                _ => rows.OrderByDescending(r => r.TradeVal)
+            }).Take(120);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _cts = new CancellationTokenSource();
+        _ = LoopAsync(_cts.Token);
+    }
+
+    private async Task LoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(15_000, ct); } catch { return; }
+            await RefreshAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        // 환율 + 바이낸스 USDT (김프 교차계산용) — 실패 시 직전 값 유지
+        try { _usdKrw = await Fx.GetUsdKrwAsync(); } catch { }
+        try { var bn = await _binance.GetAllUsdt24hAsync(); if (bn.Count > 0) _bn = bn; } catch { }
+
+        // 빗썸: 전체 종목(인증 불필요, 안정적) — 기준 데이터
+        try { _bithumb = await Bithumb.GetAllTickersAsync(); } catch { }
+
+        // 업비트: 실제 KRW 마켓 목록으로 조회(잘못된 마켓 섞임 방지). 마켓 목록은 1회만 로드 후 캐싱.
+        try
+        {
+            if (_krwMarkets.Count == 0)
+            {
+                var markets = await _upbitProv.GetMarketsAsync();
+                if (markets.Count > 0)
+                {
+                    _nameMap = markets.ToDictionary(m => m.Market.Replace("KRW-", ""), m => m.KoreanName, StringComparer.OrdinalIgnoreCase);
+                    _krwMarkets = markets.Select(m => m.Market).ToList();
+                }
+            }
+            if (_krwMarkets.Count > 0)
+            {
+                var ticks = new List<CryptoTick>();
+                for (int i = 0; i < _krwMarkets.Count; i += 100)
+                    ticks.AddRange(await _upbitProv.GetTickersAsync(_krwMarkets.Skip(i).Take(100)));
+                _upbit = ticks;
+            }
+        }
+        catch { }
+
+        try
+        {
+            var state = Svc.GetCryptoState();
+            _held = state.Holdings.Where(kv => kv.Value.Qty > 0).ToDictionary(k => k.Key, v => v.Value.Qty);
+        }
+        catch { }
+
+        _allSymbols = _upbit.Select(u => u.Market.Replace("KRW-", ""))
+            .Union(_bithumb.Select(b => b.Symbol), StringComparer.OrdinalIgnoreCase).Count();
+        _ts = DateTime.Now.ToString("HH:mm:ss");
+    }
+
+    private void QuickBuy(string sym) { var (_, msg) = Svc.QuickPaper("KRW-" + sym, 100_000m, PaperSide.Buy); _toast = msg; }
+    private void QuickSell(string sym) { var (_, msg) = Svc.QuickPaper("KRW-" + sym, 100_000m, PaperSide.Sell); _toast = msg; }
+
+    private static string DiffColor(decimal d) => d > 0 ? "color:var(--up)" : d < 0 ? "color:var(--down)" : "color:var(--sub)";
+
+    // 김프 색: 양수=상승색/음수=하락색/0 또는 미계산=보조색 (원본 룰)
+    private static string KimchiColor(CoinRow r) =>
+        !r.HasKimchi ? "color:var(--sub)" : r.Kimchi > 0 ? "color:var(--up)" : r.Kimchi < 0 ? "color:var(--down)" : "color:var(--sub)";
+
+    // 원본 Fmt 룰: 100 이상 → 천단위 정수, 미만 → 소수 4자리
+    private static string FmtUsd(decimal p) => p >= 100 ? p.ToString("N0") : p.ToString("0.####");
+
+    private static string Fmt(decimal v) =>
+        v >= 1_000_000_000_000m ? $"{v/1_000_000_000_000m:0.0}조" :
+        v >= 100_000_000m ? $"{v/100_000_000m:0.0}억" : v.ToString("N0");
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

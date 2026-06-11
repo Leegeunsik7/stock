@@ -1,0 +1,87 @@
+@page "/assets"
+@inject DashboardService Svc
+@implements IDisposable
+@using System.Threading
+
+<div class="top"><div class="hello"><h1>🧮 총자산</h1><p>전체 자산 구성 · @_ts</p></div>
+<button class="addbtn" @onclick="LoadAsync" style="margin:0 16px">🔄 새로고침</button></div>
+
+<div class="tiles" style="padding:0 28px 16px">
+    <div class="tile g"><div class="lab">총자산</div><div class="val num">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
+    <div class="tile u"><div class="lab">주식(원화)</div><div class="val num">@Svc.AllocKrwStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocKrwStock)%</div></div>
+    <div class="tile k"><div class="lab">주식(외화·KRW)</div><div class="val num">@Svc.AllocUsdStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocUsdStock)%  (USD@Svc.UsdKrw.ToString("N0"))</div></div>
+    <div class="tile d"><div class="lab">코인</div><div class="val num">@Svc.CoinValue.ToString("N0")</div><div class="sub">@Pct(Svc.AllocCoin)%</div></div>
+</div>
+
+<div style="display:flex;gap:20px;padding:0 28px 40px;flex-wrap:wrap">
+    <div style="flex:0 0 260px">
+        <div class="wh"><span class="h">자산 구성</span></div>
+        <div class="donut" style="background:@DonutCss()">
+            <div class="in"><b class="num">@Eok(Svc.Total)</b><span>총자산</span></div>
+        </div>
+        <div class="legend" style="margin-top:12px">
+            <div class="li"><i style="background:var(--accent)"></i>주식(원화) · @Pct(Svc.AllocKrwStock)%</div>
+            <div class="li"><i style="background:var(--accent-2)"></i>주식(외화) · @Pct(Svc.AllocUsdStock)%</div>
+            <div class="li"><i style="background:var(--warn)"></i>코인 · @Pct(Svc.AllocCoin)%</div>
+        </div>
+    </div>
+    <div style="flex:1;min-width:320px">
+        <div class="wh"><span class="h">코인 보유</span></div>
+        <table class="ctbl" style="font-size:13px">
+            <thead><tr><th>코인</th><th style="text-align:right">현재가</th><th style="text-align:right">24h</th><th style="text-align:right">스파크</th></tr></thead>
+            <tbody>
+                @foreach (var c in Svc.Coins)
+                {
+                    <tr>
+                        <td>@c.Name</td>
+                        <td class="num" style="text-align:right">@c.Price.ToString("N0")</td>
+                        <td class="num @(c.ChangeRate>=0?"up":"down")" style="text-align:right">@((c.ChangeRate*100).ToString("+0.00;-0.00"))%</td>
+                        <td style="width:120px">@((MarkupString)SparkSvg(c.Spark, c.ChangeRate>=0?"var(--up)":"var(--down)"))</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    private string _ts = "";
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(60_000, ct); } catch { return; }
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task LoadAsync() { await Svc.LoadAsync(); _ts = DateTime.Now.ToString("HH:mm:ss"); }
+
+    private decimal Tot => Svc.AllocKrwStock + Svc.AllocUsdStock + Svc.AllocCoin;
+    private string Pct(decimal v) => Tot > 0 ? (v / Tot * 100m).ToString("0.0") : "0.0";
+    private string Eok(decimal v) => v >= 100_000_000m ? $"{v/100_000_000m:0.0}억" : $"{v/10_000m:N0}만";
+    private string DonutCss()
+    {
+        var t = Tot <= 0 ? 1m : Tot;
+        var a = (double)(Svc.AllocKrwStock/t*100); var b = a + (double)(Svc.AllocUsdStock/t*100);
+        return $"conic-gradient(var(--accent) 0 {a:F1}%, var(--accent-2) {a:F1}% {b:F1}%, var(--warn) {b:F1}% 100%)";
+    }
+    private static string SparkSvg(double[] d, string color)
+    {
+        if (d == null || d.Length < 2) return "";
+        double w=120,h=24,mn=d.Min(),mx=d.Max(); var r=mx-mn==0?1:mx-mn;
+        var pts=string.Join(" ",d.Select((v,i)=>$"{(i/(double)(d.Length-1)*w):F1},{(h-(v-mn)/r*h):F1}"));
+        return $"<svg viewBox='0 0 {w} {h}' style='width:100%;height:24px' preserveAspectRatio='none'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.5'/></svg>";
+    }
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

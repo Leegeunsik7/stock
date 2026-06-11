@@ -1,0 +1,98 @@
+@page "/paper"
+@inject DashboardService Svc
+@inject LocalDatabase Db
+@implements IDisposable
+@using System.Threading
+
+<div class="top"><div class="hello"><h1>🧪 모의투자</h1><p>모의 계좌 · @_ts</p></div>
+<button class="addbtn" @onclick="Refresh" style="margin:0 16px">🔄 새로고침</button>
+<button class="addbtn" style="margin-right:12px;background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="OpenSettings">⚙️ 거래설정</button></div>
+
+<div class="tiles" style="padding:0 28px 16px">
+    <div class="tile g"><div class="lab">시드</div><div class="val num">@Svc.Broker.Account.Seed.ToString("N0")</div></div>
+    <div class="tile k"><div class="lab">현금</div><div class="val num">@Svc.PaperCash.ToString("N0")</div></div>
+    <div class="tile u"><div class="lab">포지션 평가</div><div class="val num">@Svc.PaperPosVal.ToString("N0")</div></div>
+    <div class="tile @(Svc.PaperPnl>=0?"u":"d")"><div class="lab">총손익</div><div class="val num @(Svc.PaperPnl>=0?"up":"down")">@Svc.PaperPnl.ToString("+#,##0;-#,##0;0") (@Svc.PaperRet.ToString("+0.0;-0.0")%)</div></div>
+</div>
+
+<div style="padding:0 28px;display:grid;grid-template-columns:1fr 1fr;gap:18px">
+    <div>
+        <div class="wh"><span class="h">📦 보유 포지션</span></div>
+        <table class="ctbl">
+            <thead><tr><th>종류</th><th>종목</th><th style="text-align:right">수량</th><th style="text-align:right">평단</th><th style="text-align:right">현재가</th><th style="text-align:right">평가액</th><th style="text-align:right">평가손익</th></tr></thead>
+            <tbody>
+                @foreach (var p in Svc.Broker.Account.Positions.OrderByDescending(p => p.Qty * Svc.PriceOf(p.Asset, p.Symbol)))
+                {
+                    var cur = Svc.PriceOf(p.Asset, p.Symbol);   // 주식은 KRW 환산가 (원본 규약)
+                    var val = p.Qty * cur;
+                    var pnl = (cur - p.Avg) * p.Qty;
+                    <tr><td>@(p.Asset==PaperAsset.Coin?"🪙":"📈")</td><td>@p.Name<br/><small class="sub">@p.Symbol</small></td>
+                        <td class="num" style="text-align:right">@p.Qty.ToString("0.####")</td>
+                        <td class="num" style="text-align:right">@p.Avg.ToString("N0")</td>
+                        <td class="num" style="text-align:right">@(cur > 0 ? cur.ToString("N0") : "-")</td>
+                        <td class="num" style="text-align:right">@(cur > 0 ? val.ToString("N0") : "-")</td>
+                        <td class="num @(pnl>0?"up":pnl<0?"down":"")" style="text-align:right">@(cur > 0 ? pnl.ToString("+#,##0;-#,##0;0") : "-")</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div>
+        <div class="wh"><span class="h">🧾 최근 주문</span></div>
+        <table class="ctbl">
+            <thead><tr><th>시간</th><th>종목</th><th>구분</th><th>상태</th></tr></thead>
+            <tbody>
+                @foreach (var o in Svc.Broker.Account.Orders.Take(10))
+                {
+                    <tr><td style="font-size:11px;color:var(--sub)">@o.Time.ToString("MM-dd HH:mm")</td>
+                        <td>@o.Name</td>
+                        <td><span class="pill @(o.Side==PaperSide.Buy?"r":"b")">@(o.Side==PaperSide.Buy?"매수":"매도")</span></td>
+                        <td style="font-size:12px;color:var(--sub)">@StatusKr(o.Status)</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div style="padding:18px 28px">
+    <div class="wh"><span class="h">⚡ 빠른 주문 (모의)</span></div>
+    <div class="qa">
+        @foreach (var q in _quickOrders)
+        {
+            <span @onclick="()=>QuickAction(q.market, q.amt, q.side)" style="cursor:pointer">@q.label</span>
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(_toast))
+    {
+        <div style="margin-top:10px;padding:10px 14px;background:var(--card-2);border-radius:9px;color:var(--sub)">@_toast</div>
+    }
+</div>
+
+@code {
+    private string _ts = "", _toast = "";
+    private CancellationTokenSource? _cts;
+    private readonly (string label, string market, decimal amt, PaperSide side)[] _quickOrders =
+    {
+        ("BTC 100만 매수","KRW-BTC",1_000_000m,PaperSide.Buy), ("ETH 50만 매수","KRW-ETH",500_000m,PaperSide.Buy),
+        ("SOL 30만 매수","KRW-SOL",300_000m,PaperSide.Buy), ("BTC 50만 매도","KRW-BTC",500_000m,PaperSide.Sell),
+    };
+
+    protected override async Task OnInitializedAsync() { await Refresh(); _cts = new CancellationTokenSource(); _ = Loop(_cts.Token); }
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(10_000, ct); } catch { return; }
+            await Refresh(); await InvokeAsync(StateHasChanged);
+        }
+    }
+    private async Task Refresh() { await Svc.LoadAsync(); _ts = DateTime.Now.ToString("HH:mm:ss"); }
+    private void QuickAction(string market, decimal amt, PaperSide side)
+    {
+        var (ok, msg) = Svc.QuickPaper(market, amt, side);
+        _toast = msg; _ = Refresh();
+    }
+    private void OpenSettings() => ModuleBridge.Open("BrokerSettings");
+    private static string StatusKr(PaperStatus s) => s switch
+    { PaperStatus.Filled=>"체결", PaperStatus.Pending=>"대기", PaperStatus.Canceled=>"취소", _=>"거부" };
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

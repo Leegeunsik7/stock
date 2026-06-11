@@ -1,0 +1,25 @@
+[변경 전]
+<Project Sdk="Microsoft.NET.Sdk">
+
+[변경 후]
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+[PropertyGroup 유지/확인]
+  <OutputType>WinExe</OutputType>
+  <TargetFramework>net8.0-windows</TargetFramework>
+  <UseWindowsForms>true</UseWindowsForms>
+  <Nullable>enable</Nullable>
+  <ImplicitUsings>enable</ImplicitUsings>
+
+[패키지 추가]
+<ItemGroup>
+  <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="8.0.*" />
+</ItemGroup>
+
+[wwwroot 정적 파일 포함 — 보통 Razor SDK가 자동 포함. 누락 시:]
+<ItemGroup>
+  <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+</ItemGroup>
+
+※ 복원 명령:  dotnet restore  (사내망이면 NuGet 소스 접근 확인)
+※ 복원/빌드가 막히면 이 통합은 보류하고, 디자인 프로토타입(HTML)만 사용해도 됩니다.

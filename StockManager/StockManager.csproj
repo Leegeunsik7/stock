@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StockManager</RootNamespace>
+    <AssemblyName>MS2E.StockSuite</AssemblyName>
+    <ApplicationIcon></ApplicationIcon>
+
+    <!--
+      ⚠️ AnyCPU: 키움 OpenAPI+는 32비트 전용이므로,
+      Kiwoom 실시간 필요 시 아래 주석을 해제해 x86으로 빌드:
+      <PlatformTarget>x86</PlatformTarget>
+    -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
+
+    <Version>3.4.2</Version>
+    <Product>MS2-E Stock Suite</Product>
+    <Company>Angtec</Company>
+    <Authors>Angtec Engineering</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+    <PackageReference Include="QuestPDF" Version="2024.10.1" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- v3.1: Blazor Hybrid 대시보드 (WebView2 런타임 필요) -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="8.0.10" />
+  </ItemGroup>
+
+  <!-- 디자인 프로토타입/스캐폴드(.html/.txt/.md)는 컴파일 대상에서 제외 -->
+  <ItemGroup>
+    <Content Remove="_design_prototype\**" />
+    <Content Remove="_blazor_hybrid_scaffold\**" />
+    <Content Remove="_optional_webview2\**" />
+    <None Include="_design_prototype\**" />
+    <None Include="_blazor_hybrid_scaffold\**" />
+    <None Include="_optional_webview2\**" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,243 @@
+// ============================================================================
+// AlertEngineService - 알림·체결 백그라운드 평가 서비스 (v3.4.2)
+//  Blazor 홈이 기본 진입점이 되면서 "창이 열려 있어야만 돌던" 3개 엔진이
+//  침묵하는 문제를 해결한다. 앱 시작 시 Start() 1회 호출로 상시 평가.
+//   ① 코인 지정가 알림  — Crypto.State(JSON) 기반, 이탈 시 재무장(re-arm) 정책
+//   ② 주식 AlertRules    — DB 기반, 발동 즉시 IsTriggered=1 (one-shot 정책)
+//      + 폴링 간 5% 이상 급변 감지 (AlertRules 등록 종목 한정)
+//   ③ 모의투자 지정가    — PaperBroker.ProcessLimits 자동 체결
+//  ⚠️ 해당 WinForms 창(CryptoWatcher/RealtimeWatcher/PaperTrading)이 열려 있으면
+//     그 창이 같은 일을 하므로 이중 발동을 막기 위해 해당 항목 평가를 건너뛴다.
+// ============================================================================
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace StockManager.Common
+{
+    public class AlertEngineService
+    {
+        public static AlertEngineService Instance { get; } = new();
+
+        private LocalDatabase? _db;
+        private IQuoteProvider? _provider;
+        private readonly UpbitProvider _upbit = new();
+        private readonly FxConverter _fx = new();
+        private PaperBroker? _paper;
+        private System.Windows.Forms.Timer? _timer;
+        private bool _busy;
+
+        // 5% 급변 감지용 직전 폴링 가격 (원본 RealtimeWatcher._prevPrices 대응)
+        private readonly Dictionary<string, decimal> _prevStock = new(StringComparer.OrdinalIgnoreCase);
+        // 지정가 체결용 가격 캐시 (주식은 KRW 환산값 — 원본 PaperTrading 규약)
+        private readonly Dictionary<string, decimal> _coinPx = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, decimal> _stockPxKrw = new(StringComparer.OrdinalIgnoreCase);
+        private decimal _usdKrw = 1380m;
+
+        public DateTime LastRun { get; private set; }
+
+        private AlertEngineService() { }
+
+        /// <summary>앱 시작 시 1회 호출. 기본 10초 주기(원본 PaperTrading 갱신 주기와 동일).</summary>
+        public void Start(LocalDatabase db, IQuoteProvider provider, int intervalMs = 10_000)
+        {
+            _db = db; _provider = provider;
+            _paper = new PaperBroker(db);
+            if (_timer != null) return;
+            _timer = new System.Windows.Forms.Timer { Interval = intervalMs };
+            _timer.Tick += async (s, e) => await TickAsync();
+            _timer.Start();
+        }
+
+        public void Stop() { _timer?.Stop(); _timer?.Dispose(); _timer = null; }
+
+        private static bool FormOpen<T>() where T : Form
+        {
+            try { return Application.OpenForms.OfType<T>().Any(f => !f.IsDisposed); }
+            catch { return false; }
+        }
+
+        private async Task TickAsync()
+        {
+            if (_db == null || _busy) return;
+            _busy = true;
+            try
+            {
+                await CheckCoinAlertsAsync();
+                await CheckStockRulesAsync();
+                await ProcessPaperLimitsAsync();
+                LastRun = DateTime.Now;
+            }
+            catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
+            finally { _busy = false; }
+        }
+
+        // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====
+        private async Task CheckCoinAlertsAsync()
+        {
+            if (FormOpen<CryptoWatcher.MainForm>()) return;   // 창이 직접 처리 중
+            var state = LoadCryptoState();
+            if (state.Alerts.Count == 0) return;
+
+            var markets = state.Alerts.Select(a => a.Market)
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (markets.Count == 0) return;
+
+            var ticks = await _upbit.GetTickersAsync(markets);
+            bool changed = false;
+            foreach (var t in ticks)
+            {
+                _coinPx[t.Market] = t.Price;
+                foreach (var a in state.Alerts.Where(a => string.Equals(a.Market, t.Market, StringComparison.OrdinalIgnoreCase)))
+                {
+                    bool cross = a.Above ? t.Price >= a.Target : t.Price <= a.Target;
+                    if (cross && !a.Triggered)
+                    {
+                        a.Triggered = true; changed = true;
+                        var dir = a.Above ? "이상" : "이하";
+                        AlertCenter.Instance.RaisePrice(t.Market,
+                            $"🪙 {t.KoreanName} 지정가 {dir} 도달",
+                            $"{t.KoreanName}({t.Market}) 현재가 {t.Price:N0}원이 목표 {a.Target:N0}원 {dir}입니다.",
+                            AlertLevel.Critical);
+                    }
+                    else if (!cross && a.Triggered) { a.Triggered = false; changed = true; } // 재무장
+                }
+            }
+            if (changed) SaveCryptoState(state);
+        }
+
+        // ===== ② 주식 AlertRules (one-shot) + 5% 급변 (원본 RealtimeWatcher.CheckPriceAlerts) =====
+        private async Task CheckStockRulesAsync()
+        {
+            if (_provider == null || FormOpen<RealtimeWatcher.MainForm>()) return;
+
+            var symDt = _db!.Query("SELECT DISTINCT Symbol FROM AlertRules WHERE IsActive=1 AND IsTriggered=0");
+            if (symDt.Rows.Count == 0) return;
+            var symbols = symDt.Rows.Cast<System.Data.DataRow>()
+                .Select(r => Safe.Str(r["Symbol"]))
+                .Where(s => !string.IsNullOrEmpty(s)).ToList();
+
+            foreach (var group in symbols.GroupBy(DetectMarket))
+            {
+                List<Quote> quotes;
+                try { quotes = await _provider.GetQuotesAsync(group, group.Key); }
+                catch { continue; }
+
+                foreach (var q in quotes)
+                {
+                    // 5% 이상 급변 (prev > 0 가드 — 원본과 동일)
+                    if (_prevStock.TryGetValue(q.Symbol, out var prev) && prev > 0 && prev != q.Price)
+                    {
+                        var pct = (q.Price - prev) / prev * 100m;
+                        if (Math.Abs(pct) >= 5)
+                        {
+                            AlertCenter.Instance.RaisePrice(q.Symbol,
+                                $"급변동 감지 · {q.Symbol} {q.Name}",
+                                $"{Formatter.Pct(pct)} ({Formatter.Money(prev, q.Currency)} → {Formatter.Money(q.Price, q.Currency)})",
+                                AlertLevel.Warning);
+                        }
+                    }
+                    _prevStock[q.Symbol] = q.Price;
+                    _stockPxKrw[q.Symbol] = q.Price * (q.Currency == Currency.USD ? _usdKrw : 1m);
+
+                    var rules = _db.Query(
+                        "SELECT * FROM AlertRules WHERE Symbol=@s AND IsActive=1 AND IsTriggered=0",
+                        new() { ["@s"] = q.Symbol });
+                    foreach (System.Data.DataRow r in rules.Rows)
+                    {
+                        var cond = (AlertCondition)Safe.Int(r["Condition"]);
+                        var target = Safe.Dec(r["TargetValue"]);
+                        bool hit = cond switch
+                        {
+                            AlertCondition.PriceAbove => q.Price >= target,
+                            AlertCondition.PriceBelow => q.Price <= target,
+                            AlertCondition.ChangeRateAbove => q.ChangeRate >= target,
+                            AlertCondition.ChangeRateBelow => q.ChangeRate <= target,
+                            _ => false
+                        };
+                        if (hit)
+                        {
+                            AlertCenter.Instance.RaisePrice(q.Symbol,
+                                $"알림 달성 · {q.Name}",
+                                $"{cond} {target} (현재 {Formatter.Money(q.Price, q.Currency)})",
+                                AlertLevel.Critical);
+                            _db.Execute("UPDATE AlertRules SET IsTriggered=1 WHERE Id=@id",
+                                new() { ["@id"] = Safe.Int(r["Id"]) });   // one-shot 자동 해제
+                        }
+                    }
+                }
+            }
+        }
+
+        // ===== ③ 모의투자 지정가 자동 체결 (원본 PaperTrading.RefreshAsync 대응) =====
+        private async Task ProcessPaperLimitsAsync()
+        {
+            if (_paper == null || FormOpen<PaperTrading.MainForm>()) return;
+
+            _paper.Reload();   // 다른 인스턴스(Blazor QuickPaper 등)가 저장한 최신 상태 반영
+            var pending = _paper.Account.Orders
+                .Where(o => o.Status == PaperStatus.Pending && o.Kind == PaperKind.Limit).ToList();
+            if (pending.Count == 0) return;
+
+            try { _usdKrw = await _fx.GetUsdKrwAsync(); } catch { /* 캐시값 유지 */ }
+
+            // 코인 가격
+            var coinSyms = pending.Where(o => o.Asset == PaperAsset.Coin).Select(o => o.Symbol)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (coinSyms.Count > 0)
+            {
+                try { foreach (var t in await _upbit.GetTickersAsync(coinSyms)) _coinPx[t.Market] = t.Price; }
+                catch { }
+            }
+
+            // 주식 가격 (시장별 그룹 · USD는 KRW 환산 — 원본 규약 유지)
+            var stockSyms = pending.Where(o => o.Asset == PaperAsset.Stock)
+                .Select(o => (o.Symbol, o.StockMarket)).Distinct().ToList();
+            foreach (var grp in stockSyms.GroupBy(x => x.StockMarket))
+            {
+                try
+                {
+                    var quotes = await _provider!.GetQuotesAsync(grp.Select(x => x.Symbol), grp.Key);
+                    bool usd = grp.Key == Market.US_NYSE || grp.Key == Market.US_NASDAQ || grp.Key == Market.US_AMEX;
+                    foreach (var q in quotes)
+                        if (q.Price > 0) _stockPxKrw[q.Symbol] = q.Price * (usd ? _usdKrw : 1m);
+                }
+                catch { }
+            }
+
+            if (_paper.ProcessLimits(PriceOf))
+                Log.Info("[AlertEngine] 모의 지정가 자동 체결 발생");
+        }
+
+        private decimal PriceOf(PaperAsset a, string sym) =>
+            a == PaperAsset.Coin
+                ? (_coinPx.TryGetValue(sym, out var p) ? p : 0m)
+                : (_stockPxKrw.TryGetValue(sym, out var s) ? s : 0m);
+
+        // 원본 RealtimeWatcher.DetectMarket 룰: 6자리 + 숫자 시작 → KRX, 아니면 NASDAQ
+        private static Market DetectMarket(string symbol) =>
+            symbol.Length == 6 && char.IsDigit(symbol[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+        private CryptoWatcher.CryptoState LoadCryptoState()
+        {
+            try
+            {
+                var j = _db!.GetSetting("Crypto.State");
+                if (!string.IsNullOrWhiteSpace(j))
+                    return System.Text.Json.JsonSerializer.Deserialize<CryptoWatcher.CryptoState>(j)
+                           ?? new CryptoWatcher.CryptoState();
+            }
+            catch { }
+            return new CryptoWatcher.CryptoState();
+        }
+
+        private void SaveCryptoState(CryptoWatcher.CryptoState s)
+        {
+            try { _db!.SetSetting("Crypto.State", System.Text.Json.JsonSerializer.Serialize(s)); }
+            catch (Exception ex) { Log.Warn($"[AlertEngine] Crypto.State 저장 실패: {ex.Message}"); }
+        }
+    }
+}

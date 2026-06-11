@@ -1,0 +1,13 @@
+# 라인엔딩 정규화 — 저장소엔 LF, 체크아웃은 OS 기본
+* text=auto
+
+# Windows 전용 소스/스크립트는 CRLF 유지
+*.cs    text eol=crlf
+*.razor text eol=crlf
+*.csproj text eol=crlf
+*.sln   text eol=crlf
+
+# 이진/비교 불필요
+*.png binary
+*.ico binary
+*.pdf binary

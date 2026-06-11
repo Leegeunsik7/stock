@@ -1,0 +1,58 @@
+@page "/alert-history"
+@inject LocalDatabase Db
+
+<div class="top"><div class="hello"><h1>📜 알림 이력</h1><p>검색·필터 · @(_filtered.Count)건</p></div>
+<button class="addbtn" @onclick="Load" style="margin:0 16px">🔄 새로고침</button></div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap;align-items:center">
+    <select class="srch" @bind="_lvl"><option value="">전체 레벨</option><option value="Info">Info</option><option value="Warning">Warning</option><option value="Critical">Critical</option></select>
+    <select class="srch" @bind="_src"><option value="">전체 소스</option><option value="Price">Price</option><option value="News">News</option><option value="Signal">Signal</option><option value="Dividend">Dividend</option><option value="System">System</option></select>
+    <input class="srch" placeholder="🔍 검색…" @bind="_q" @bind:event="oninput" />
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub);cursor:pointer">
+        <input type="checkbox" @bind="_unreadOnly" /> 읽지않음만
+    </label>
+</div>
+
+<div style="overflow:auto;padding:0 28px 40px">
+    <table class="ctbl">
+        <thead><tr><th>시간</th><th>레벨</th><th>소스</th><th>종목</th><th>제목</th><th>메시지</th></tr></thead>
+        <tbody>
+            @foreach (var a in _filtered.Take(300))
+            {
+                <tr style="@RowStyle(a)">
+                    <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">@a.Time.ToString("MM-dd HH:mm")</td>
+                    <td><span class="pill @(a.Level==AlertLevel.Critical?"r":"b")" style="font-size:10px">@a.Level</span></td>
+                    <td style="font-size:12px;color:var(--sub)">@a.Source</td>
+                    <td style="font-size:12px">@a.Symbol</td>
+                    <td style="font-size:12.5px"><b>@a.Title</b></td>
+                    <td style="font-size:12px;color:var(--sub)">@a.Message</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private List<AlertItem> _all = new();
+    private string _lvl = "", _src = "", _q = "";
+    private bool _unreadOnly;
+
+    private List<AlertItem> _filtered => _all
+        .Where(a => (string.IsNullOrEmpty(_lvl) || a.Level.ToString() == _lvl)
+                 && (string.IsNullOrEmpty(_src) || a.Source.ToString() == _src)
+                 && (!_unreadOnly || !a.IsRead)
+                 && (string.IsNullOrEmpty(_q) || a.Title.Contains(_q, StringComparison.OrdinalIgnoreCase) || a.Message.Contains(_q, StringComparison.OrdinalIgnoreCase)))
+        .ToList();
+
+    protected override void OnInitialized() => Load();
+    private void Load() { try { _all = AlertCenter.Instance.GetFromDb(500); } catch { } }
+
+    // 원본 AlertCenterForm 룰: 미읽음=굵게 · Critical=하락색 · Warning=경고색 (행 전체)
+    private static string RowStyle(AlertItem a)
+    {
+        var s = a.IsRead ? "" : "font-weight:700;";
+        if (a.Level == AlertLevel.Critical) s += "color:var(--down);";
+        else if (a.Level == AlertLevel.Warning) s += "color:var(--warn);";
+        return s;
+    }
+}

@@ -1,0 +1,27 @@
+# === .NET / Visual Studio ===
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# === 빌드 산출물 ===
+[Dd]ebug/
+[Rr]elease/
+publish/
+*.dll
+*.pdb
+
+# === 테스트 ===
+[Tt]est[Rr]esults/
+*.trx
+*.coverage
+coverage*.json
+
+# === 기타 ===
+*.log
+.idea/
+*.tmp
+Thumbs.db

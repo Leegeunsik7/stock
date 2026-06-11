@@ -1,0 +1,83 @@
+// ============================================================================
+// [옵트인 템플릿] WebChartForm — WebView2 + TradingView Lightweight Charts
+//  · 활성화 방법:
+//    1) NuGet 패키지 추가:  dotnet add package Microsoft.Web.WebView2
+//    2) WebView2 런타임 설치 확인(대부분 최신 Windows/Edge에 기본 포함)
+//    3) 이 파일을 프로젝트 폴더로 옮기고 확장자를 .cs 로 변경
+//    4) 차트를 열 때 new ChartForm(...) 대신 new WebChartForm(title, candles, dark) 사용
+//  · 인터넷이 필요(라이브러리 CDN). 오프라인이면 lightweight-charts.standalone.js를
+//    로컬에 받아 HTML의 <script src>를 파일 경로로 바꾸세요.
+//  · 장점: 다크/라이트 완벽 지원, 휠 줌·드래그 등 상용 HTS급 조작감.
+// ============================================================================
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Web.WebView2.WinForms;   // NuGet: Microsoft.Web.WebView2
+using StockManager.Common;
+
+namespace StockManager.RealtimeWatcher
+{
+    public class WebChartForm : Form
+    {
+        private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
+        private readonly List<Candle> _candles;
+        private readonly bool _dark;
+
+        public WebChartForm(string title, List<Candle> candles, bool dark)
+        {
+            _candles = candles ?? new List<Candle>();
+            _dark = dark;
+            Text = "📈 " + title;
+            Size = new Size(1000, 640);
+            StartPosition = FormStartPosition.CenterScreen;
+            Controls.Add(_web);
+            Load += async (s, e) => await InitAsync();
+        }
+
+        private async Task InitAsync()
+        {
+            try
+            {
+                await _web.EnsureCoreWebView2Async();
+                _web.NavigateToString(BuildHtml());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("WebView2 초기화 실패: " + ex.Message +
+                    "\nWebView2 런타임 설치가 필요할 수 있습니다.");
+            }
+        }
+
+        private string BuildHtml()
+        {
+            var bg = _dark ? "#181c24" : "#ffffff";
+            var text = _dark ? "#e6e6e6" : "#1c2028";
+            var grid = _dark ? "#2a2f3a" : "#e6e9ef";
+            var up = "#e15050"; var down = "#4687e1";
+
+            var sb = new StringBuilder();
+            foreach (var c in _candles)
+                sb.Append($"{{time:'{c.Date:yyyy-MM-dd}',open:{c.Open},high:{c.High},low:{c.Low},close:{c.Close}}},");
+
+            return $@"<!doctype html><html><head><meta charset='utf-8'>
+<style>html,body,#c{{height:100%;margin:0;background:{bg}}}</style>
+<script src='https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js'></script>
+</head><body><div id='c'></div>
+<script>
+const chart = LightweightCharts.createChart(document.getElementById('c'), {{
+  layout: {{ background:{{color:'{bg}'}}, textColor:'{text}' }},
+  grid: {{ vertLines:{{color:'{grid}'}}, horzLines:{{color:'{grid}'}} }},
+  rightPriceScale:{{borderColor:'{grid}'}}, timeScale:{{borderColor:'{grid}'}},
+  autoSize:true
+}});
+const s = chart.addCandlestickSeries({{ upColor:'{up}', downColor:'{down}', borderUpColor:'{up}', borderDownColor:'{down}', wickUpColor:'{up}', wickDownColor:'{down}' }});
+s.setData([{sb}]);
+chart.timeScale().fitContent();
+</script></body></html>";
+        }
+    }
+}

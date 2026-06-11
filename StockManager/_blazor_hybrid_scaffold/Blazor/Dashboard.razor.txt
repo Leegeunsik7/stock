@@ -1,0 +1,29 @@
+@* 위젯 대시보드. 데이터는 기존 LocalDatabase/UpbitProvider/PaperBroker를 그대로 호출해 채운다.
+   드래그는 wwwroot의 SortableJS + JS interop으로 연결(OnAfterRenderAsync에서 초기화). *@
+<div class="tiles">
+  <div class="tile g"><div class="lab">총자산</div><div class="val num">@TotalAsset.ToString("N0")</div></div>
+  <div class="tile u"><div class="lab">평가손익</div><div class="val num">@Pnl.ToString("N0")</div></div>
+  <div class="tile k"><div class="lab">코인 평가</div><div class="val num">@CoinValue.ToString("N0")</div></div>
+  <div class="tile d"><div class="lab">모의 계좌</div><div class="val num">@PaperEquity.ToString("N0")</div></div>
+</div>
+
+<div class="grid" id="widgetGrid">
+  @* TODO: 위젯 카드들. 각 카드에 class="w" data-k="..." + .grip(드래그) + .x(제거) *@
+  @* 예: 코인 시세 위젯은 UpbitProvider.GetTickersAsync(state.Watch)로 채움 *@
+</div>
+
+@code {
+  // 실제 통합 시: 생성자 주입 또는 정적 접근으로 기존 엔진 사용
+  //   var db = ...; var broker = new PaperBroker(db);
+  //   var ticks = await new UpbitProvider().GetTickersAsync(markets);
+  private decimal TotalAsset = 142_860_000, Pnl = 4_420_000, CoinValue = 38_200_000, PaperEquity = 10_640_000;
+
+  protected override async Task OnAfterRenderAsync(bool first)
+  {
+    if (first)
+    {
+      // await JS.InvokeVoidAsync("initSortable", "widgetGrid");  // wwwroot/index.html에 initSortable 정의
+      // 배치 저장: db.SetSetting("Dashboard.Layout", json)
+    }
+  }
+}

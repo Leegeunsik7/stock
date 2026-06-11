@@ -1,0 +1,83 @@
+@inject ToastService Toasts
+@implements IDisposable
+
+<div class="toast-wrap">
+    @foreach (var t in Toasts.Active)
+    {
+        <div class="toast @LevelCls(t.Level)" @key="t.Id">
+            <div class="toast-body">
+                <span class="toast-ic">@LevelIcon(t.Level)</span>
+                <div class="toast-text">
+                    @if (!string.IsNullOrEmpty(t.Title)) { <div class="toast-title">@t.Title</div> }
+                    @if (!string.IsNullOrEmpty(t.Message)) { <div class="toast-msg">@t.Message</div> }
+                </div>
+                <button class="toast-x" title="닫기" @onclick="() => Toasts.Dismiss(t.Id)">✕</button>
+            </div>
+            @if (t.Buttons.Count > 0)
+            {
+                <div class="toast-actions">
+                    @foreach (var b in t.Buttons)
+                    {
+                        <button class="toast-btn @(b.Primary ? "primary" : "")" @onclick="() => RunAsync(t, b)">@b.Label</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly HashSet<Guid> _scheduled = new();
+
+    protected override void OnInitialized() => Toasts.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        ScheduleTimeouts();
+        StateHasChanged();
+    });
+
+    // 새 토스트마다 1회만 자동 닫힘 예약 (TimeoutMs<=0 이면 수동 닫기 전용)
+    private void ScheduleTimeouts()
+    {
+        var alive = new HashSet<Guid>();
+        foreach (var t in Toasts.Active)
+        {
+            alive.Add(t.Id);
+            if (t.TimeoutMs <= 0 || !_scheduled.Add(t.Id)) continue;
+            var id = t.Id; var ms = t.TimeoutMs;
+            _ = Task.Run(async () =>
+            {
+                try { await Task.Delay(ms); } catch { return; }
+                await InvokeAsync(() => Toasts.Dismiss(id));
+            });
+        }
+        _scheduled.RemoveWhere(g => !alive.Contains(g));   // 닫힌 토스트 예약 정리
+    }
+
+    // 버튼 클릭: 토스트 즉시 닫고 → 전달받은 액션 실행 (요구사항)
+    private async Task RunAsync(ToastMessage t, ToastButton b)
+    {
+        Toasts.Dismiss(t.Id);
+        try { await b.OnClick(); }
+        catch (Exception ex) { StockManager.Common.Log.Warn($"[Toast] 액션 실패: {ex.Message}"); }
+    }
+
+    private static string LevelCls(ToastLevel l) => l switch
+    {
+        ToastLevel.Success => "ok",
+        ToastLevel.Warning => "warn",
+        ToastLevel.Error => "err",
+        _ => "info"
+    };
+
+    private static string LevelIcon(ToastLevel l) => l switch
+    {
+        ToastLevel.Success => "✅",
+        ToastLevel.Warning => "⚠️",
+        ToastLevel.Error => "⛔",
+        _ => "🔔"
+    };
+
+    public void Dispose() => Toasts.Changed -= OnChanged;
+}

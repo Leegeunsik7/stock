@@ -1,0 +1,10 @@
+<div class="app-shell" data-theme="@Theme">
+    <NavMenu OnOpenModule="OpenModule" />
+    <div class="main">
+        <Dashboard />
+    </div>
+</div>
+@code {
+    private string Theme = "light";
+    private void OpenModule(string key) => StockManager.ModuleBridge.Open(key); // 기존 WinForms 모듈 오픈
+}

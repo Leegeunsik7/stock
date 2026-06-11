@@ -1,0 +1,119 @@
+@page "/news"
+@inject NewsService News
+@inject LocalDatabase Db
+@implements IDisposable
+@using System.Threading
+
+<div class="top"><div class="hello"><h1>📰 뉴스 레이더</h1><p>구글뉴스 실시간 · @_stats · @_ts</p></div>
+<button class="addbtn" @onclick="Reload" style="margin:0 16px">🔄 새로고침</button></div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="width:220px" placeholder="🔍 키워드 (예: 삼성전자, 반도체)" @bind="_kw" @onkeydown="OnKey" />
+    <button class="addbtn" @onclick="Reload">검색</button>
+    <select class="srch" @bind="_sent">
+        <option value="전체">감성: 전체</option>
+        <option value="긍정">😊 긍정</option>
+        <option value="부정">😟 부정</option>
+        <option value="중립">😐 중립</option>
+    </select>
+    <button class="addbtn" style="background:var(--warn)" disabled="@_analyzing" @onclick="AnalyzeAsync">@(_analyzing?"분석 중…":"🧠 AI 감성분석")</button>
+    @if (!string.IsNullOrEmpty(_aiMsg)) { <span style="color:var(--sub);font-size:12.5px">@_aiMsg</span> }
+    @foreach (var k in _presets)
+    {
+        <button class="pill b" style="border:0;cursor:pointer;padding:5px 12px;font-size:12px" @onclick="()=>Quick(k)">@k</button>
+    }
+</div>
+
+<div style="padding:0 28px 40px">
+    @if (_loading) { <div style="padding:40px;text-align:center;color:var(--sub)">불러오는 중…</div> }
+    @foreach (var n in View)
+    {
+        var badge = Badge(n);
+        <a href="@n.Url" target="_blank" style="text-decoration:none;color:inherit">
+            <div style="padding:14px 0;border-bottom:1px solid var(--line)">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                    <span style="color:@badge.color;font-size:11.5px;font-weight:700">@badge.text</span>
+                    <span style="font-size:13.5px;font-weight:600">@n.Title</span>
+                    @if (n.RelatedSymbols.Count > 0)
+                    {
+                        <small class="sub" style="font-size:11px">@string.Join(",", n.RelatedSymbols)</small>
+                    }
+                </div>
+                <div style="color:var(--sub);font-size:12.5px;margin-bottom:4px">@Trim(n.Summary)</div>
+                <div style="color:var(--sub);font-size:11.5px">@n.Source · @n.PublishedAt.ToString("MM-dd HH:mm")</div>
+            </div>
+        </a>
+    }
+    @if (!_loading && !View.Any()) { <div style="padding:40px;text-align:center;color:var(--sub)">뉴스가 없습니다.</div> }
+</div>
+
+@code {
+    private List<NewsArticle> _items = new();
+    private readonly string[] _presets = { "코스피", "반도체", "삼성전자", "2차전지", "환율", "금리" };
+    private string _kw = "", _ts = "", _sent = "전체", _aiMsg = "", _stats = "";
+    private bool _loading, _analyzing;
+    private CancellationTokenSource? _cts;
+
+    // 감성 3분류 임계 ±0.3 (원본 룰 — 0은 미분석 센티널이라 중립으로 표시)
+    private IEnumerable<NewsArticle> View => _sent switch
+    {
+        "긍정" => _items.Where(n => n.SentimentScore > 0.3m),
+        "부정" => _items.Where(n => n.SentimentScore < -0.3m),
+        "중립" => _items.Where(n => n.SentimentScore >= -0.3m && n.SentimentScore <= 0.3m),
+        _ => _items
+    };
+
+    protected override async Task OnInitializedAsync() { await Reload(); _cts = new CancellationTokenSource(); _ = Loop(_cts.Token); }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(120_000, ct); } catch { return; }
+            await Reload(); await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") await Reload(); }
+    private async Task Quick(string k) { _kw = k; await Reload(); }
+
+    private async Task Reload()
+    {
+        _loading = true; StateHasChanged();
+        try { _items = await News.FetchAsync(_kw); } catch { }
+        _loading = false; _ts = DateTime.Now.ToString("HH:mm:ss");
+        UpdateStats();
+        StateHasChanged();
+    }
+
+    // ⚠️ SentimentScore == 0 이 '미분석' 센티널 · 회당 20건 제한 (원본 룰)
+    private async Task AnalyzeAsync()
+    {
+        if (_analyzing) return;
+        var targets = _items.Where(n => n.SentimentScore == 0).Take(20).ToList();
+        _analyzing = true;
+        _aiMsg = targets.Count > 0 ? $"🧠 {targets.Count}건 감성분석 중..." : "";
+        StateHasChanged();
+        var (_, msg, _) = await News.AnalyzeSentimentAsync(Db, targets, _cts?.Token ?? default);
+        _aiMsg = msg;
+        _analyzing = false;
+        UpdateStats();
+        StateHasChanged();
+    }
+
+    private void UpdateStats()
+    {
+        var shown = View.Count();
+        var pos = View.Count(n => n.SentimentScore > 0.3m);
+        var neg = View.Count(n => n.SentimentScore < -0.3m);
+        _stats = $"📊 표시 {shown}건 (수집 {_items.Count}) · 긍정 {pos} · 부정 {neg}";
+    }
+
+    private static (string text, string color) Badge(NewsArticle n) =>
+        n.SentimentScore > 0.3m ? ("😊 긍정", "var(--ok)")
+        : n.SentimentScore < -0.3m ? ("😟 부정", "var(--down)")
+        : ("😐 중립", "var(--sub)");
+
+    private static string Trim(string s) => string.IsNullOrEmpty(s) ? "" : (s.Length > 140 ? s[..140] + "…" : s);
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}
