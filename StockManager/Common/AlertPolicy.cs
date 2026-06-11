@@ -32,5 +32,19 @@ namespace StockManager.Common
             if (prev <= 0 || prev == price) return false;
             return Math.Abs((price - prev) / prev * 100m) >= thresholdPct;
         }
+
+        /// <summary>
+        /// 코인 지정가 알림 1스텝 — 재무장(re-arm) 정책.
+        /// 조건 진입(미발동→교차) 시 fired=true·triggered=true(발동), 조건 이탈(발동→비교차) 시
+        /// triggered=false(재무장, 발동 안 함), 그 외 상태 유지(이미 발동 중이면 재발동 없음).
+        /// 반환: (이번에 발동했는가, 갱신된 triggered).
+        /// </summary>
+        public static (bool fired, bool triggered) StepAlert(bool above, decimal target, decimal price, bool wasTriggered)
+        {
+            bool cross = CoinCross(above, target, price);
+            if (cross && !wasTriggered) return (true, true);     // 진입 → 발동
+            if (!cross && wasTriggered) return (false, false);   // 이탈 → 재무장
+            return (false, wasTriggered);                        // 유지(발동 중 재발동 없음)
+        }
     }
 }

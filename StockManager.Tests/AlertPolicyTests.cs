@@ -47,5 +47,47 @@ namespace StockManager.Tests
             Assert.True(AlertPolicy.IsSurge(1000, 1030, 3m));    // 3% 임계 → +3% 충족
             Assert.False(AlertPolicy.IsSurge(1000, 1020, 3m));   // +2% 미달
         }
+
+        // ===== 재무장(re-arm) 스텝 =====
+        [Fact]
+        public void StepAlert_Enter_Fires()
+        {
+            var (fired, triggered) = AlertPolicy.StepAlert(above: true, target: 1000, price: 1000, wasTriggered: false);
+            Assert.True(fired); Assert.True(triggered);          // 미발동 상태에서 진입 → 발동
+        }
+
+        [Fact]
+        public void StepAlert_StillCrossing_NoRefire()
+        {
+            var (fired, triggered) = AlertPolicy.StepAlert(true, 1000, 1100, wasTriggered: true);
+            Assert.False(fired); Assert.True(triggered);         // 이미 발동 중 → 재발동 없음, 유지
+        }
+
+        [Fact]
+        public void StepAlert_Exit_ReArms()
+        {
+            var (fired, triggered) = AlertPolicy.StepAlert(true, 1000, 900, wasTriggered: true);
+            Assert.False(fired); Assert.False(triggered);        // 조건 이탈 → 재무장(발동 안 함)
+        }
+
+        [Fact]
+        public void StepAlert_BelowAndNotTriggered_Idle()
+        {
+            var (fired, triggered) = AlertPolicy.StepAlert(true, 1000, 900, wasTriggered: false);
+            Assert.False(fired); Assert.False(triggered);
+        }
+
+        [Fact]
+        public void StepAlert_FullCycle_FiresTwice()
+        {
+            // 진입→발동, 이탈→재무장, 재진입→재발동 (재무장이 핵심)
+            bool trig = false; int fires = 0;
+            foreach (var price in new decimal[] { 1100, 1200, 900, 1100 })   // 진입·유지·이탈·재진입
+            {
+                var (f, nt) = AlertPolicy.StepAlert(true, 1000, price, trig);
+                trig = nt; if (f) fires++;
+            }
+            Assert.Equal(2, fires);   // 첫 진입 + 재무장 후 재진입 = 2회
+        }
     }
 }

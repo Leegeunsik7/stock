@@ -93,17 +93,16 @@ namespace StockManager.Common
                 _coinPx[t.Market] = t.Price;
                 foreach (var a in state.Alerts.Where(a => string.Equals(a.Market, t.Market, StringComparison.OrdinalIgnoreCase)))
                 {
-                    bool cross = AlertPolicy.CoinCross(a.Above, a.Target, t.Price);
-                    if (cross && !a.Triggered)
+                    var (fired, nt) = AlertPolicy.StepAlert(a.Above, a.Target, t.Price, a.Triggered);
+                    if (nt != a.Triggered) { a.Triggered = nt; changed = true; }   // 발동/재무장 시 상태 변화
+                    if (fired)
                     {
-                        a.Triggered = true; changed = true;
                         var dir = a.Above ? "이상" : "이하";
                         AlertCenter.Instance.RaisePrice(t.Market,
                             $"🪙 {t.KoreanName} 지정가 {dir} 도달",
                             $"{t.KoreanName}({t.Market}) 현재가 {t.Price:N0}원이 목표 {a.Target:N0}원 {dir}입니다.",
                             AlertLevel.Critical);
                     }
-                    else if (!cross && a.Triggered) { a.Triggered = false; changed = true; } // 재무장
                 }
             }
             if (changed) SaveCryptoState(state);
