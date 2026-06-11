@@ -1,6 +1,7 @@
 @page "/paper"
 @inject DashboardService Svc
 @inject LocalDatabase Db
+@inject NavigationManager Nav
 @implements IDisposable
 @using System.Threading
 
@@ -91,7 +92,7 @@
         var (ok, msg) = Svc.QuickPaper(market, amt, side);
         _toast = msg; _ = Refresh();
     }
-    private void OpenSettings() => ModuleBridge.Open("BrokerSettings");
+    private void OpenSettings() => Nav.NavigateTo("/broker");   // Blazor 네이티브 거래설정 페이지
     private static string StatusKr(PaperStatus s) => s switch
     { PaperStatus.Filled=>"체결", PaperStatus.Pending=>"대기", PaperStatus.Canceled=>"취소", _=>"거부" };
     public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
