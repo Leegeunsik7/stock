@@ -38,6 +38,13 @@ namespace StockManager
             // DB 초기화
             var db = new LocalDatabase();
 
+            // 보안(at-rest): 레거시 또는 DPAPI 폴백으로 평문 저장된 민감 키를 DPAPI로 재암호화
+            db.MigrateSecretsAtRest(new[]
+            {
+                "Gemini.ApiKey", "KIS.AppKey", "KIS.AppSecret", "KIS.Account",
+                "Upbit.AccessKey", "Upbit.SecretKey", "Telegram.Token"
+            });
+
             // 테마 로드 (블랙/화이트)
             ThemeManager.Load(db);
 

@@ -53,6 +53,10 @@ namespace StockManager.Common
                 return "";
             }
         }
+
+        /// <summary>stored가 DPAPI로 암호화된 형식(enc:v1: 마커)인지. 평문·빈값·null이면 false.</summary>
+        public static bool IsProtected(string? stored) =>
+            !string.IsNullOrEmpty(stored) && stored.StartsWith(Marker, StringComparison.Ordinal);
     }
 
     /// <summary>DB/JSON에서 안전한 형변환</summary>

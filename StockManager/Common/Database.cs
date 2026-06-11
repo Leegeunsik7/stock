@@ -264,6 +264,22 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
 
         public void SetSecret(string key, string value) => SetSetting(key, Secret.Protect(value));
 
+        /// <summary>지정한 비밀 키들 중 평문(레거시 또는 DPAPI 폴백)으로 남은 값을 DPAPI로 재암호화(at-rest).
+        /// 이미 암호화됐거나 비어 있으면 건너뜀. 반환값=재암호화한 건수. 앱 시작 시 1회 호출 권장.</summary>
+        public int MigrateSecretsAtRest(IEnumerable<string> keys)
+        {
+            int migrated = 0;
+            foreach (var key in keys)
+            {
+                var raw = GetSetting(key);
+                if (string.IsNullOrEmpty(raw) || Secret.IsProtected(raw)) continue;
+                SetSecret(key, raw);   // Protect → enc:v1:
+                migrated++;
+            }
+            if (migrated > 0) Log.Info($"[Security] 평문 비밀 {migrated}건 DPAPI 재암호화 완료");
+            return migrated;
+        }
+
         // ===== Alerts =====
         public void AddAlert(AlertItem a)
         {
