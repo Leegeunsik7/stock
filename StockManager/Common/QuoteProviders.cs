@@ -205,41 +205,16 @@ namespace StockManager.Common
 
         public async Task<List<Quote>> GetQuotesAsync(IEnumerable<string> symbols, Market market, CancellationToken ct = default)
         {
+            // ⚠️ Yahoo v7/finance/quote 배치 API는 이제 crumb 인증을 요구해 빈 응답/401이 잦음.
+            //    인증 불필요한 v8/finance/chart(단건 GetQuoteAsync)로 순회 — 안정적(국내 네이버와 동일 패턴).
             var symArr = symbols.ToArray();
-            if (symArr.Length == 0) return new List<Quote>();
-
-            var syms = string.Join(",", symArr.Select(s => YahooSymbol(s, market)));
-            var url = $"https://query1.finance.yahoo.com/v7/finance/quote?symbols={syms}";
             var list = new List<Quote>();
-            try
+            foreach (var s in symArr)
             {
-                var json = await _http.GetStringAsync(url, ct);
-                using var doc = JsonDocument.Parse(json);
-                if (!doc.RootElement.GetProperty("quoteResponse").TryGetProperty("result", out var results))
-                    return list;
-
-                foreach (var e in results.EnumerateArray())
-                {
-                    var sym = Safe.JsonStr(e, "symbol");
-                    var clean = sym.Replace(".KS", "").Replace(".KQ", "");
-                    list.Add(new Quote
-                    {
-                        Symbol = clean,
-                        Name = e.TryGetProperty("longName", out var n) ? (n.GetString() ?? sym) : sym,
-                        Market = market,
-                        Currency = market >= Market.US_NYSE && market <= Market.US_AMEX ? Currency.USD : Currency.KRW,
-                        Price = Safe.JsonDec(e, "regularMarketPrice"),
-                        PreviousClose = Safe.JsonDec(e, "regularMarketPreviousClose"),
-                        High = Safe.JsonDec(e, "regularMarketDayHigh"),
-                        Low = Safe.JsonDec(e, "regularMarketDayLow"),
-                        Volume = Safe.JsonLong(e, "regularMarketVolume"),
-                        MarketCap = Safe.JsonDec(e, "marketCap"),
-                        Timestamp = DateTime.Now,
-                        Source = DataSource.YahooFinance
-                    });
-                }
+                var q = await GetQuoteAsync(s, market, ct);
+                if (q != null) list.Add(q);
+                try { await Task.Delay(40, ct); } catch (TaskCanceledException) { break; }
             }
-            catch (Exception ex) { Log.Warn($"[Yahoo] 배치 조회 실패: {ex.Message}"); }
             return list;
         }
 

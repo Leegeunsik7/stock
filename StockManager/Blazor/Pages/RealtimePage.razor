@@ -129,7 +129,7 @@
 
 @code {
     // ===== 워치리스트 그룹 (원본 5종 고정 탭) =====
-    private readonly string[] _groups = { "⭐ 즐겨찾기", "🇰🇷 국내주식", "🇺🇸 미국주식", "💎 반도체", "🔋 2차전지" };
+    private readonly string[] _groups = { "⭐ 즐겨찾기", "🇰🇷 국내주식", "🇺🇸 미국주식", "💎 반도체", "🔋 2차전지", "🤖 AI", "🦾 AI 피지컬" };
     private string _group = "⭐ 즐겨찾기";
     private List<(string sym, string name)> _watch = new();
 
@@ -214,8 +214,7 @@
                 new() { ["@g"] = _group });
             if (dt.Rows.Count == 0)
             {
-                var samples = _group.Contains("미국") ? SampleData.USTop : SampleData.KoreanTop;
-                foreach (var (s, n, _) in samples.Take(10)) _watch.Add((s, n));
+                foreach (var (s, n) in DefaultsFor(_group).Take(12)) _watch.Add((s, n));   // 그룹별 큐레이션 폴백
             }
             else
             {
@@ -224,6 +223,26 @@
         }
         catch { }
         await RefreshAsync();
+    }
+
+    // 그룹별 큐레이션 종목(빈 그룹 폴백). DB Watchlist에 직접 추가하면 그 목록이 우선.
+    //  ※ '피지컬'을 'AI'보다 먼저 검사(둘 다 "AI" 포함하므로 순서 중요).
+    private static (string sym, string name)[] DefaultsFor(string group)
+    {
+        if (group.Contains("반도체")) return new[] {
+            ("005930","삼성전자"),("000660","SK하이닉스"),("042700","한미반도체"),("NVDA","NVIDIA"),("AMD","AMD"),
+            ("TSM","TSMC"),("INTC","Intel"),("AVGO","Broadcom"),("MU","Micron"),("ASML","ASML") };
+        if (group.Contains("2차전지")) return new[] {
+            ("373220","LG에너지솔루션"),("006400","삼성SDI"),("051910","LG화학"),("247540","에코프로비엠"),
+            ("086520","에코프로"),("066970","엘앤에프"),("TSLA","Tesla"),("ALB","Albemarle") };
+        if (group.Contains("피지컬")) return new[] {           // 피지컬 AI(로보틱스/하드웨어) — AI 검사보다 먼저
+            ("454910","두산로보틱스"),("277810","레인보우로보틱스"),("108490","로보티즈"),
+            ("TSLA","Tesla"),("NVDA","NVIDIA"),("ISRG","Intuitive Surgical"),("ABB","ABB") };
+        if (group.Contains("AI")) return new[] {
+            ("NVDA","NVIDIA"),("MSFT","Microsoft"),("GOOGL","Alphabet"),("META","Meta"),("PLTR","Palantir"),
+            ("AMD","AMD"),("035420","NAVER"),("035720","카카오") };
+        if (group.Contains("미국")) return SampleData.USTop.Select(x => (x.sym, x.name)).ToArray();
+        return SampleData.KoreanTop.Select(x => (x.sym, x.name)).ToArray();
     }
 
     private async Task RefreshNowAsync() => await RefreshAsync();

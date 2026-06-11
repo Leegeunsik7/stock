@@ -76,7 +76,16 @@ namespace StockManager.Common
                 });
                 using var res = await Http.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
                 var json = await res.Content.ReadAsStringAsync();
-                if (!res.IsSuccessStatusCode) return $"분석 실패({(int)res.StatusCode}): {Trunc(json)}";
+                if (!res.IsSuccessStatusCode)
+                {
+                    return (int)res.StatusCode switch
+                    {
+                        429 => "⚠️ Gemini 무료 할당량(분당/일일)을 초과했습니다. 잠시 후 다시 시도하거나 다른 모델 선택·유료 플랜을 사용하세요.",
+                        404 => $"⚠️ 모델 '{model}'을(를) 찾을 수 없습니다. gemini-2.0-flash 등 현행 모델을 선택하세요.",
+                        400 or 403 => "⚠️ API 키가 유효하지 않거나 권한이 없습니다. 설정 마법사에서 키를 확인하세요.",
+                        _ => $"분석 실패({(int)res.StatusCode}): {Trunc(json)}"
+                    };
+                }
                 using var doc = JsonDocument.Parse(json);
                 var text = doc.RootElement
                     .GetProperty("candidates")[0]
@@ -115,7 +124,13 @@ namespace StockManager.Common
                 });
                 using var res = await Http.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"));
                 var body = await res.Content.ReadAsStringAsync();
-                if (!res.IsSuccessStatusCode) return (null, $"생성 실패({(int)res.StatusCode})");
+                if (!res.IsSuccessStatusCode)
+                    return (null, (int)res.StatusCode switch
+                    {
+                        429 => "무료 할당량 초과 — 잠시 후 재시도하세요.",
+                        404 => "모델을 찾을 수 없습니다(현행 모델 사용).",
+                        _ => $"생성 실패({(int)res.StatusCode})"
+                    });
                 using var doc = JsonDocument.Parse(body);
                 var text = doc.RootElement.GetProperty("candidates")[0].GetProperty("content")
                     .GetProperty("parts")[0].GetProperty("text").GetString() ?? "";

@@ -18,7 +18,7 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.12.0</Version>
+    <Version>3.12.1</Version>
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

@@ -10,9 +10,10 @@
             @foreach (var m in Enum.GetValues<Market>()) { <option value="@m">@m</option> }
         </select>
         <select class="srch" @bind="_model">
-            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-            <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-            <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash (기본)</option>
+            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
         </select>
         <button class="addbtn" disabled="@_busy" @onclick="Analyze">@(_busy?"분석 중…":"🚀 AI 분석")</button>
     </div>
