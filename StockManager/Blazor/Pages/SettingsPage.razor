@@ -44,7 +44,7 @@
 
     private void SetMode(bool live) { BrokerHub.SetLive(Db, live); _live = live; }
     private void OpenBrokerSettings() => Nav.NavigateTo("/broker");   // Blazor 네이티브 페이지 (WinForms 팝업 제거)
-    private void OpenSetup() => ModuleBridge.Open("Settings");        // 설정 마법사는 아직 WinForms 위임
+    private void OpenSetup() => Nav.NavigateTo("/setup");             // Blazor 네이티브 설정 마법사
 
     private static string MaskKey(string k) =>
         string.IsNullOrWhiteSpace(k) ? "(미설정)" :

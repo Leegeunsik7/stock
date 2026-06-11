@@ -1,0 +1,136 @@
+@page "/setup"
+@inject LocalDatabase Db
+@inject NavigationManager Nav
+@inject ToastService Toasts
+
+@* 레거시 WinForms SetupWizard의 Blazor 네이티브 이식 (단일 스크롤 폼).
+   연결 테스트는 공용 ConnectionTester로 WinForms와 동일 로직. 키는 DPAPI(SetSecret) 저장. *@
+
+<div class="top">
+    <div class="hello"><h1>🚀 설정 마법사</h1><p>Gemini · KIS · 텔레그램 — 키 입력 후 즉시 연결 확인 (모두 선택)</p></div>
+    <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin-right:16px"
+            @onclick='() => Nav.NavigateTo("/settings")'>← 설정으로</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:640px">
+    <div style="background:color-mix(in srgb,var(--ok) 10%,transparent);border:1px solid var(--ok);border-radius:10px;padding:12px;font-size:12.5px;color:var(--ok);margin-bottom:18px;line-height:1.6">
+        🔐 입력한 키는 Windows DPAPI로 암호화되어 이 PC·이 사용자 계정에서만 복호화됩니다. 평문 저장되지 않습니다.
+    </div>
+
+    @* Gemini *@
+    <div class="card-sec">
+        <div class="sec-h">🧠 Gemini AI <span class="sub" style="font-weight:400">기업 분석 / 뉴스 감성분석</span></div>
+        <label class="flbl">API Key</label>
+        <input class="fin" type="password" @bind="_gemini" />
+        <div class="test-row">
+            <button class="addbtn" disabled="@_busyG" @onclick="TestGemini">🔌 연결 테스트</button>
+            <span style="color:@StatusColor(_gOk)">@(_gStatus.Length == 0 ? "연결 상태: 미확인" : _gStatus)</span>
+        </div>
+        <div class="hint">키 발급: aistudio.google.com → Get API key</div>
+    </div>
+
+    @* KIS *@
+    <div class="card-sec">
+        <div class="sec-h">🏦 한국투자증권 (KIS) <span class="sub" style="font-weight:400">실시간 시세 우선 제공</span></div>
+        <label class="flbl">App Key</label>
+        <input class="fin" type="password" @bind="_kisKey" />
+        <label class="flbl" style="margin-top:10px">App Secret</label>
+        <input class="fin" type="password" @bind="_kisSecret" />
+        <label class="flbl" style="margin-top:10px">계좌번호 (예: 12345678-01)</label>
+        <input class="fin" @bind="_kisAcc" placeholder="12345678-01" />
+        <label class="ck"><input type="checkbox" @bind="_kisPaper" /> 모의투자(VTS) 모드</label>
+        <div class="test-row">
+            <button class="addbtn" disabled="@_busyK" @onclick="TestKis">🔌 연결 테스트</button>
+            <span style="color:@StatusColor(_kOk)">@(_kStatus.Length == 0 ? "연결 상태: 미확인" : _kStatus)</span>
+        </div>
+        <div class="hint">OAuth 토큰 발급(/oauth2/tokenP)으로 검증합니다.</div>
+    </div>
+
+    @* Telegram *@
+    <div class="card-sec">
+        <div class="sec-h">📱 텔레그램 봇 <span class="sub" style="font-weight:400">Critical 알림 자동 전송</span></div>
+        <label class="flbl">Bot Token</label>
+        <input class="fin" type="password" @bind="_tgToken" />
+        <label class="flbl" style="margin-top:10px">Chat ID</label>
+        <input class="fin" @bind="_tgChat" />
+        <div class="test-row">
+            <button class="addbtn" disabled="@_busyT" @onclick="TestTelegram">🔌 연결 테스트</button>
+            <span style="color:@StatusColor(_tOk)">@(_tStatus.Length == 0 ? "연결 상태: 미확인" : _tStatus)</span>
+        </div>
+        <div class="hint">Chat ID 입력 시 테스트 메시지를 실제로 1건 전송합니다.</div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center">
+        <button class="addbtn" @onclick="Save">💾 저장</button>
+        <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick='() => Nav.NavigateTo("/settings")'>취소</button>
+        <span class="sub" style="font-size:12px">@(_kOk == true ? "→ KIS가 실시간 시세 우선 제공자로 사용됩니다." : "→ 미설정 시 네이버·야후 시세로 동작합니다.")</span>
+    </div>
+</div>
+
+<style>
+    .card-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px}
+    .sec-h{font-weight:700;margin-bottom:14px}
+    .ck{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px;cursor:pointer}
+    .test-row{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;font-size:12.5px}
+    .hint{color:var(--sub);font-size:11.5px;margin-top:8px}
+</style>
+
+@code {
+    private string _gemini = "", _kisKey = "", _kisSecret = "", _kisAcc = "", _tgToken = "", _tgChat = "";
+    private bool _kisPaper = true;
+    private string _gStatus = "", _kStatus = "", _tStatus = "";
+    private bool? _gOk, _kOk, _tOk;
+    private bool _busyG, _busyK, _busyT;
+
+    protected override void OnInitialized()
+    {
+        _gemini = Db.GetSecret("Gemini.ApiKey") ?? "";
+        _kisKey = Db.GetSecret("KIS.AppKey") ?? "";
+        _kisSecret = Db.GetSecret("KIS.AppSecret") ?? "";
+        _kisAcc = Db.GetSetting("KIS.AccountNo") ?? "";
+        _kisPaper = Db.GetSetting("KIS.IsPaper") != "false";
+        _tgToken = Db.GetSecret("Telegram.Token") ?? "";
+        _tgChat = Db.GetSetting("Telegram.ChatId") ?? "";
+    }
+
+    private async Task TestGemini()
+    {
+        _busyG = true; _gStatus = "🔌 연결 확인 중..."; _gOk = null; StateHasChanged();
+        try { var (ok, msg) = await ConnectionTester.Gemini(_gemini.Trim()); _gOk = ok; _gStatus = (ok ? "✅ " : "❌ ") + msg; }
+        catch (System.Exception ex) { _gOk = false; _gStatus = "❌ " + ex.Message; }
+        _busyG = false;
+    }
+
+    private async Task TestKis()
+    {
+        _busyK = true; _kStatus = "🔌 연결 확인 중..."; _kOk = null; StateHasChanged();
+        try { var (ok, msg) = await ConnectionTester.Kis(_kisKey.Trim(), _kisSecret.Trim(), _kisPaper); _kOk = ok; _kStatus = (ok ? "✅ " : "❌ ") + msg; }
+        catch (System.Exception ex) { _kOk = false; _kStatus = "❌ " + ex.Message; }
+        _busyK = false;
+    }
+
+    private async Task TestTelegram()
+    {
+        _busyT = true; _tStatus = "🔌 연결 확인 중..."; _tOk = null; StateHasChanged();
+        try { var (ok, msg) = await ConnectionTester.Telegram(_tgToken.Trim(), _tgChat.Trim()); _tOk = ok; _tStatus = (ok ? "✅ " : "❌ ") + msg; }
+        catch (System.Exception ex) { _tOk = false; _tStatus = "❌ " + ex.Message; }
+        _busyT = false;
+    }
+
+    private void Save()
+    {
+        // WinForms SetupWizard.SaveAll과 동일 — 키는 DPAPI(SetSecret), 나머지는 SetSetting
+        Db.SetSecret("Gemini.ApiKey", _gemini.Trim());
+        Db.SetSecret("KIS.AppKey", _kisKey.Trim());
+        Db.SetSecret("KIS.AppSecret", _kisSecret.Trim());
+        Db.SetSetting("KIS.AccountNo", _kisAcc.Trim());
+        Db.SetSetting("KIS.IsPaper", _kisPaper ? "true" : "false");
+        Db.SetSecret("Telegram.Token", _tgToken.Trim());
+        Db.SetSetting("Telegram.ChatId", _tgChat.Trim());
+        Db.SetSetting("Telegram.Enabled", !string.IsNullOrWhiteSpace(_tgToken) ? "true" : "false");
+        Db.SetSetting("Setup.Completed", "true");
+        Toasts.Success("설정 저장됨", "API 키가 DPAPI로 암호화되어 저장되었습니다. (Provider 반영은 재시작 후)");
+    }
+
+    private static string StatusColor(bool? ok) => ok == true ? "var(--ok)" : ok == false ? "var(--up)" : "var(--sub)";
+}
