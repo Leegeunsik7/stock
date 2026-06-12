@@ -28,11 +28,21 @@
         }
         @foreach (var m in _chat)
         {
-            <div style="align-self:@(m.Role=="user"?"flex-end":"flex-start");max-width:88%;
-                        background:@(m.Role=="user"?"var(--accent)":"var(--card)");
-                        color:@(m.Role=="user"?"#fff":"var(--ink)");
-                        border:1px solid @(m.Role=="user"?"var(--accent)":"var(--line)");
-                        border-radius:12px;padding:11px 14px;font-size:13.5px;line-height:1.65;white-space:pre-wrap">@m.Text</div>
+            <div style="align-self:@(m.Role=="user"?"flex-end":"flex-start");max-width:88%">
+                <div style="background:@(m.Role=="user"?"var(--accent)":"var(--card)");
+                            color:@(m.Role=="user"?"#fff":"var(--ink)");
+                            border:1px solid @(m.Role=="user"?"var(--accent)":"var(--line)");
+                            border-radius:12px;padding:11px 14px;font-size:13.5px;line-height:1.65;white-space:pre-wrap">@m.Text</div>
+                @if (m.Sources is { Count: > 0 })
+                {
+                    <details style="margin-top:5px;font-size:11.5px;color:var(--sub)">
+                        <summary style="cursor:pointer">📚 참조한 과거 기록 @(m.Sources.Count)건</summary>
+                        <div style="margin-top:5px;display:flex;flex-direction:column;gap:3px">
+                            @foreach (var s in m.Sources) { <div>· @s</div> }
+                        </div>
+                    </details>
+                }
+            </div>
         }
         @if (_busy)
         {
@@ -50,9 +60,13 @@
 
     @* 입력 *@
     <div style="display:flex;gap:8px">
-        <input class="srch" style="flex:1" placeholder="예: 내 포트폴리오에서 가장 위험한 종목은?" @bind="_q" @bind:event="oninput" @onkeydown="OnKey" />
+        <input class="srch" style="flex:1" placeholder="예: 비슷한 하락장에서 지난번 나는 어떻게 했지?" @bind="_q" @bind:event="oninput" @onkeydown="OnKey" />
         <button class="addbtn" disabled="@(_busy || string.IsNullOrWhiteSpace(_q))" @onclick="() => Ask(_q)">전송</button>
     </div>
+    <label style="display:flex;align-items:center;gap:7px;margin-top:9px;font-size:12.5px;color:var(--sub);cursor:pointer">
+        <input type="checkbox" checked="@_useMemory" @onchange="e => _useMemory = e.Value is true" />
+        📚 내 과거 이력 검색(RAG) — 거래·시그널·알림·뉴스에서 질문과 가까운 기록을 찾아 함께 근거로 사용
+    </label>
 
     @* 아침 브리핑 자동 전송(옵트인) *@
     <div style="margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px">
@@ -71,14 +85,15 @@
 <style>.ck input{width:16px;height:16px}</style>
 
 @code {
-    private record Msg(string Role, string Text);
+    private record Msg(string Role, string Text, System.Collections.Generic.List<string>? Sources = null);
     private readonly System.Collections.Generic.List<Msg> _chat = new();
     private readonly string[] _suggest =
     {
-        "내 수익률 어때?", "가장 위험한 종목은?", "리밸런싱 조언 줘", "최근 시그널 요약해줘"
+        "내 수익률 어때?", "가장 위험한 종목은?", "리밸런싱 조언 줘", "지난번 비슷한 상황에선 어땠어?"
     };
     private string _q = "";
     private bool _busy;
+    private bool _useMemory = true;
     private decimal _usdKrw = 1380m;
     private bool _briefEnabled;
     private int _briefHour = 8;
@@ -95,10 +110,18 @@
     private async Task Ask(string question)
     {
         if (_busy || string.IsNullOrWhiteSpace(question)) return;
-        _chat.Add(new Msg("user", question.Trim()));
+        var qt = question.Trim();
+        _chat.Add(new Msg("user", qt));
         _q = ""; _busy = true; StateHasChanged();
-        var answer = await Ai.AskAsync(question.Trim(), _usdKrw);
-        _chat.Add(new Msg("ai", answer));
+        if (_useMemory)
+        {
+            var r = await Ai.AskWithMemoryAsync(qt, _usdKrw);
+            _chat.Add(new Msg("ai", r.Answer, r.Snippets));
+        }
+        else
+        {
+            _chat.Add(new Msg("ai", await Ai.AskAsync(qt, _usdKrw)));
+        }
         _busy = false;
     }
 

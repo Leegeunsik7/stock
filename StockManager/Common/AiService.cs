@@ -43,6 +43,40 @@ namespace StockManager.Common
             return CompleteAsync(prompt, model);
         }
 
+        // ===== 이력-인지 질의 (로컬 RAG 🅗) — 현재 스냅샷 + 과거 기록 검색 근거 =====
+        //  CausalJournal 타임라인을 BM25로 검색해 질문과 가까운 내 과거 사건을 프롬프트에 주입.
+        //  여전히 grounded(제공 데이터만) — 과거를 '검색'해 붙일 뿐 환각은 차단.
+        public async Task<MemoryAnswer> AskWithMemoryAsync(string question, decimal usdKrw,
+            int lookbackDays = 365, int topK = 8, string model = "gemini-2.0-flash")
+        {
+            var to = DateTime.Now;
+            var from = to.AddDays(-Math.Max(1, lookbackDays));
+            var events = CausalJournal.BuildTimeline(_db, from, to);
+            var docs = events.Select((e, i) => new MemoryDoc
+            {
+                Id = i.ToString(), When = e.When, Kind = e.KindLabel, Symbol = e.Symbol,
+                Text = $"{e.KindLabel} {e.Symbol} {e.Name} {e.Title} {e.Detail}"
+            });
+            var hits = MemoryIndex.Build(docs).Search(question, topK);
+
+            var mem = new StringBuilder();
+            if (hits.Count == 0) mem.AppendLine("(질문과 관련된 과거 기록을 찾지 못함)");
+            else foreach (var h in hits)
+                mem.AppendLine($"- {h.Doc.When:yyyy-MM-dd HH:mm} [{h.Doc.Kind}] {h.Doc.Text.Trim()}");
+
+            var ctx = PortfolioContext.Build(_db, usdKrw);
+            var prompt =
+                "당신은 신중한 개인 투자 보조원입니다. 아래 [현재 포트폴리오]와 [관련 과거 기록]에 있는 사실만 근거로 한국어로 간결히 답하세요.\n" +
+                "[관련 과거 기록]은 질문과 의미가 가까운 내 과거 거래·시그널·알림·뉴스를 검색한 것입니다. 이를 활용해 '지난번엔 어땠는지'를 함께 짚으세요.\n" +
+                "데이터에 없는 값은 지어내지 말고 모르면 모른다고 하세요. 투자 권유가 아닌 정보 제공이며 마지막에 한 줄로 덧붙이세요.\n\n" +
+                $"[현재 포트폴리오]\n{ctx}\n\n[관련 과거 기록]\n{mem}\n\n[질문]\n{question}";
+
+            var answer = await CompleteAsync(prompt, model);
+            var snippets = hits.Select(h =>
+                $"{h.Doc.When:MM-dd} [{h.Doc.Kind}] {Trunc(h.Doc.Text.Trim(), 64)}").ToList();
+            return new MemoryAnswer(answer, hits.Count, snippets);
+        }
+
         // ===== 아침 브리핑 — 데이터 요약. pushTelegram이면 텔레그램 전송도 =====
         public async Task<string> MorningBriefAsync(decimal usdKrw, bool pushTelegram = false, string model = "gemini-2.0-flash")
         {
@@ -191,5 +225,9 @@ namespace StockManager.Common
             string.IsNullOrWhiteSpace(text) || text.StartsWith("⚠️") || text.StartsWith("분석 실패") || text.StartsWith("분석 오류") || text == "(응답 없음)";
 
         private static string Trunc(string s) => s.Length > 200 ? s[..200] : s;
+        private static string Trunc(string s, int max) => s.Length > max ? s[..max] + "…" : s;
     }
+
+    /// <summary>이력-인지 답변 + 참조한 과거 기록 수/스니펫(투명성 표시용).</summary>
+    public record MemoryAnswer(string Answer, int Sources, System.Collections.Generic.List<string> Snippets);
 }
