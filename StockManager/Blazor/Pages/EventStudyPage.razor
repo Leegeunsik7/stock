@@ -1,0 +1,145 @@
+@page "/eventstudy"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>🔬 개인 이벤트 스터디</h1><p>복합 패턴이 떴던 모든 과거 시점 이후의 미래수익 분포를 계산 — 규칙을 신뢰하기 전에 검증 (정보 제공용)</p></div>
+    <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <select class="srch" style="width:80px" @bind="_months"><option value="12">1년</option><option value="36">3년</option><option value="60">5년</option></select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"스캔 중…":"▶ 분석")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:920px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+        <span style="font-size:12.5px;color:var(--sub)">패턴</span>
+        <select class="srch" style="width:280px" @bind="_sel">
+            <optgroup label="프리셋">
+                @for (int i = 0; i < _presets.Length; i++) { <option value="@($"preset:{i}")">@_presets[i].label</option> }
+            </optgroup>
+            @if (_saved.Count > 0)
+            {
+                <optgroup label="내 복합 알림 규칙">
+                    @foreach (var r in _saved) { <option value="@($"saved:{r.Id}")">@r.Name</option> }
+                </optgroup>
+            }
+        </select>
+        <span style="font-size:11.5px;color:var(--sub)">@CurrentRuleDesc()</span>
+    </div>
+
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 패턴 발생 후 N일 미래수익을 모아 분포를 냅니다. <b>엣지 = 패턴 평균 − 전체(무조건) 평균</b> — 양(+)이면 그 패턴에 통계적 우위가 있었다는 뜻.
+        과거가 미래를 보장하지 않고 겹치는 신호를 포함합니다(투자 권유 아님).
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세 수집 + 전수 스캔 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_res is { IsValid: true })
+    {
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <div style="font-weight:800;font-size:15px">패턴 발생 @(_res.Occurrences)회</div>
+            <span style="color:var(--sub);font-size:12px">/ @(_res.Scanned)봉 스캔</span>
+            @if (_res.RecentDates.Count > 0) { <span style="color:var(--sub);font-size:11.5px">최근: @string.Join(", ", _res.RecentDates)</span> }
+        </div>
+
+        @if (_res.Occurrences == 0)
+        {
+            <div style="color:var(--sub);padding:8px 2px">@_res.Note</div>
+        }
+        else
+        {
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                        <th style="text-align:left;padding:8px 12px">기간</th>
+                        <th style="text-align:right;padding:8px 12px">표본</th>
+                        <th style="text-align:right;padding:8px 12px">평균</th>
+                        <th style="text-align:right;padding:8px 12px">중앙값</th>
+                        <th style="text-align:right;padding:8px 12px">승률</th>
+                        <th style="text-align:right;padding:8px 12px">엣지 vs 평소</th>
+                        <th style="text-align:right;padding:8px 12px">P5 ~ P95</th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var s in _res.Stats)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:7px 12px;font-weight:600">+@(s.Days)일</td>
+                            <td style="text-align:right;padding:7px 12px">@s.N</td>
+                            <td style="text-align:right;padding:7px 12px;font-weight:700" class="@(s.MeanPct>=0?"up":"down")">@s.MeanPct.ToString("+0.0;-0.0")%</td>
+                            <td style="text-align:right;padding:7px 12px" class="@(s.MedianPct>=0?"up":"down")">@s.MedianPct.ToString("+0.0;-0.0")%</td>
+                            <td style="text-align:right;padding:7px 12px">@s.WinRatePct.ToString("0")%</td>
+                            <td style="text-align:right;padding:7px 12px;font-weight:700" class="@(s.EdgePct>=0?"up":"down")">@s.EdgePct.ToString("+0.0;-0.0")%p</td>
+                            <td style="text-align:right;padding:7px 12px;color:var(--sub)">@s.P5.ToString("+0.0;-0.0") ~ @s.P95.ToString("+0.0;-0.0")%</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <div class="sub" style="font-size:11.5px;margin-top:8px">@_res.Note · 엣지가 일관되게 양(+)이고 승률이 높을수록 신뢰도가 큽니다(표본 수도 함께 보세요).</div>
+        }
+    }
+</div>
+
+@code {
+    private string _symbol = "", _sel = "preset:0";
+    private Market _market = Market.KRX_KOSPI;
+    private int _months = 36;
+    private bool _busy;
+    private string _msg = "";
+    private EventStudyResult? _res;
+    private List<CompositeRule> _saved = new();
+
+    private readonly (string label, CompositeRule rule)[] _presets =
+    {
+        ("RSI(14) < 30 (과매도)", One(CondMetric.Rsi, 14, CondOp.Lte, 30)),
+        ("RSI(14) > 70 (과매수)", One(CondMetric.Rsi, 14, CondOp.Gte, 70)),
+        ("MA20 이격 ≤ -7% (낙폭과대)", One(CondMetric.MaGapPct, 20, CondOp.Lte, -7)),
+        ("MA20 이격 ≥ +7% (과열)", One(CondMetric.MaGapPct, 20, CondOp.Gte, 7)),
+        ("거래량 급증 ≥ 100%", One(CondMetric.VolumeSurgePct, 20, CondOp.Gte, 100)),
+    };
+
+    private static CompositeRule One(CondMetric m, int param, CondOp op, decimal thr) => new()
+    {
+        Name = "프리셋", Logic = RuleLogic.And,
+        Conditions = new() { new CompositeCondition { Metric = m, Param = param, Op = op, Threshold = thr } }
+    };
+
+    protected override void OnInitialized() => _saved = CompositeAlertEngine.Load(Db);
+
+    private CompositeRule? Resolve()
+    {
+        if (_sel.StartsWith("preset:") && int.TryParse(_sel.AsSpan(7), out var i) && i >= 0 && i < _presets.Length)
+            return _presets[i].rule;
+        if (_sel.StartsWith("saved:"))
+            return _saved.FirstOrDefault(r => r.Id == _sel.Substring(6));
+        return null;
+    }
+
+    private string CurrentRuleDesc()
+    {
+        var r = Resolve();
+        if (r == null || r.Conditions.Count == 0) return "";
+        return string.Join(r.Logic == RuleLogic.And ? " 그리고 " : " 또는 ", r.Conditions.Select(c => c.Describe()));
+    }
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        var rule = Resolve();
+        if (rule == null) { _msg = "패턴을 선택하세요."; _res = null; return; }
+
+        _busy = true; _msg = ""; _res = null; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-Math.Max(6, _months)), DateTime.Now);
+            _res = EventStudy.Analyze(rule, candles, new[] { 5, 10, 20 });
+            if (!_res.IsValid) { _msg = _res.Note; _res = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}
