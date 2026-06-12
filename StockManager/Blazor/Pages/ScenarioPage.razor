@@ -1,0 +1,122 @@
+@page "/scenario"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+
+<div class="top">
+    <div class="hello"><h1>🌪 시나리오 스튜디오</h1><p>"시장 −10%·환율 +5%" 같은 충격을 정의하면 종목별 베타로 포트폴리오 영향을 전파 (스트레스 테스트)</p></div>
+    <button class="addbtn" style="margin-right:16px" disabled="@_busy" @onclick="RunAsync">@(_busy?"계산 중…":"🔄 베타 재계산")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:920px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 시장 팩터 = 보유 종목 가중 합성. 각 종목의 <b>베타</b>(시장 1% 변동당 민감도)로 충격을 전파합니다.
+        환율 충격은 USD 표시 종목에 직접 가산. <b>단일팩터 선형 근사·과거 베타 기반이며 보장이 아닙니다(투자 권유 아님).</b>
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세 수집 + 베타 추정 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_base is { IsValid: true })
+    {
+        <!-- 충격 입력 -->
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px">
+            <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px">시장 충격
+                    <input type="range" min="-30" max="30" step="1" @bind="_mkt" @bind:event="oninput" style="width:200px" />
+                    <b class="@(_mkt>=0?"up":"down")" style="width:52px;text-align:right">@_mkt.ToString("+0;-0")%</b>
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px">환율(USD/KRW) 충격
+                    <input type="range" min="-15" max="15" step="1" @bind="_fx" @bind:event="oninput" style="width:160px" />
+                    <b class="@(_fx>=0?"up":"down")" style="width:52px;text-align:right">@_fx.ToString("+0;-0")%</b>
+                </label>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="ghost" @onclick="@(() => Preset(-20, 0))">🐻 폭락 −20%</button>
+                <button class="ghost" @onclick="@(() => Preset(-10, 0))">조정 −10%</button>
+                <button class="ghost" @onclick="@(() => Preset(10, 0))">📈 랠리 +10%</button>
+                <button class="ghost" @onclick="@(() => Preset(0, 5))">💱 원화약세 +5%</button>
+                <button class="ghost" @onclick="@(() => Preset(-15, 8))">🌩 복합충격</button>
+                <button class="ghost" @onclick="@(() => Preset(0, 0))">초기화</button>
+            </div>
+        </div>
+
+        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(3,1fr)">
+            <div class="tile @(Total>=0?"u":"d")"><div class="lab">포트폴리오 예상 변동</div><div class="val num">@Total.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">시장 영향</div><div class="val num">@MktImpact.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">환율 영향 (USD @( (_usdW*100).ToString("0"))%)</div><div class="val num">@FxImpact.ToString("+0.0;-0.0")%</div></div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                    <th style="text-align:left;padding:8px 12px">종목</th>
+                    <th style="text-align:right;padding:8px 12px">비중</th>
+                    <th style="text-align:right;padding:8px 12px">베타</th>
+                    <th style="text-align:right;padding:8px 12px">R²</th>
+                    <th style="text-align:right;padding:8px 12px">예측 이동(시장)</th>
+                </tr></thead>
+                <tbody>
+                @foreach (var a in _base.Assets.OrderByDescending(x => Math.Abs(x.Beta)))
+                {
+                    var pred = a.Beta * _mkt;
+                    <tr style="border-top:1px solid var(--line)">
+                        <td style="padding:7px 12px">@a.Name</td>
+                        <td style="text-align:right;padding:7px 12px">@(( a.Weight*100).ToString("0.0"))%</td>
+                        <td style="text-align:right;padding:7px 12px;font-weight:700">@a.Beta.ToString("0.00")</td>
+                        <td style="text-align:right;padding:7px 12px;color:var(--sub)">@a.R2.ToString("0.00")</td>
+                        <td style="text-align:right;padding:7px 12px" class="@(pred>=0?"up":"down")">@pred.ToString("+0.0;-0.0")%</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:8px">@_base.Note · 베타 1회 추정 후 충격은 선형 스케일. R²가 낮은 종목은 시장과 동조성이 약해 예측 신뢰도가 낮습니다.</div>
+    }
+</div>
+
+@code {
+    private bool _busy;
+    private string _msg = "";
+    private ScenarioResult? _base;     // 시장충격 1% 기준(베타 보존) — UI에서 선형 스케일
+    private double _mkt = -10, _fx = 0, _usdW;
+
+    private double MktImpact => _base is { IsValid: true } ? _base.PortfolioMovePct * _mkt : 0;
+    private double FxImpact => _usdW * _fx;
+    private double Total => MktImpact + FxImpact;
+
+    private void Preset(double mkt, double fx) { _mkt = mkt; _fx = fx; }
+
+    protected override async Task OnInitializedAsync() => await RunAsync();
+
+    private async Task RunAsync()
+    {
+        _busy = true; _msg = ""; _base = null; StateHasChanged();
+        try
+        {
+            var holdings = Db.GetAllHoldings();
+            if (holdings.Count == 0) { _msg = "보유 종목이 없습니다. 포트폴리오에 종목을 추가하세요."; return; }
+
+            decimal usd = 1380m; try { usd = await Fx.GetUsdKrwAsync(); } catch { }
+            var returns = await CorrelationAnalyzer.CollectReturnsAsync(
+                Provider, holdings.Select(h => (h.Symbol, h.Market)), 180);
+
+            var used = holdings.Where(h => returns.ContainsKey(h.Symbol) && returns[h.Symbol].Count >= 2).ToList();
+            if (used.Count == 0) { _msg = "수익률 히스토리를 수집하지 못했습니다(시세 제공자 확인)."; return; }
+
+            var R = used.Select(h => returns[h.Symbol].Select(d => (double)d).ToArray()).ToArray();
+            var names = used.Select(h => string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name).ToArray();
+            var rawW = used.Select(h => (double)(h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? usd : 1m))).ToArray();
+            var sumW = rawW.Sum();
+            var weights = sumW > 0 ? rawW.Select(w => w / sumW).ToArray() : rawW.Select(_ => 1.0 / rawW.Length).ToArray();
+
+            // USD 비중 합 (환율 충격 대상)
+            _usdW = 0;
+            for (int i = 0; i < used.Count; i++) if (used[i].Currency == Currency.USD) _usdW += weights[i];
+
+            _base = ScenarioStudio.ApplyShock(R, names, weights, 1.0);   // 1% 기준 → UI에서 스케일
+            if (!_base.IsValid) { _msg = _base.Note; _base = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}
