@@ -1,0 +1,164 @@
+@page "/rebalance"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+
+<div class="top">
+    <div class="hello"><h1>⚖️ MPT 리밸런싱 옵티마이저</h1><p>목표 변동성에 맞춘 종목별 타겟 비중을 현대포트폴리오이론으로 역산 (정보 제공용)</p></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)">목표 변동성(연)
+        <input class="srch" style="width:80px" type="number" min="3" max="80" step="1" @bind="_targetVol" /> %
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub);margin:0 8px">종목 상한
+        <input class="srch" style="width:70px" type="number" min="10" max="100" step="5" @bind="_maxW" /> %
+    </label>
+    <select class="srch" style="width:90px" @bind="_days">
+        <option value="90">90일</option><option value="180">180일</option><option value="365">1년</option>
+    </select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"계산 중…":"▶ 최적화")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:960px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 과거 일수익률의 평균·공분산으로 효율 프론티어를 추적해 <b>목표 변동성 이하에서 기대수익이 가장 높은</b> 비중을 고릅니다.
+        MPT는 추정치(특히 기대수익)에 민감한 <b>처방이며 미래를 보장하지 않습니다(투자 권유 아님).</b>
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세 수집 + 최적화 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_res is { IsValid: true })
+    {
+        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(4,1fr)">
+            <div class="tile @(_res.ExpReturnPct>=0?"u":"d")"><div class="lab">기대 수익률(연)</div><div class="val num">@_res.ExpReturnPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">변동성(연)</div><div class="val num">@_res.VolPct.ToString("0.0")%</div></div>
+            <div class="tile k"><div class="lab">샤프(rf=0)</div><div class="val num">@_res.Sharpe.ToString("0.00")</div></div>
+            <div class="tile @(_curVol<=_res.VolPct?"u":"d")"><div class="lab">현재 변동성(연)</div><div class="val num">@_curVol.ToString("0.0")%</div></div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px">
+            <div style="font-weight:700;margin-bottom:8px">효율 프론티어 (변동성 ↔ 기대수익)</div>
+            @((MarkupString)FrontierSvg())
+            <div style="display:flex;gap:16px;font-size:11.5px;color:var(--sub);margin-top:6px">
+                <span>🟢 타겟</span><span>🔵 현재</span><span>· 회색선: 프론티어</span>
+            </div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px">
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                    <th style="text-align:left;padding:8px 12px">종목</th>
+                    <th style="text-align:right;padding:8px 12px">현재 비중</th>
+                    <th style="text-align:right;padding:8px 12px">타겟 비중</th>
+                    <th style="text-align:right;padding:8px 12px">차이</th>
+                    <th style="text-align:right;padding:8px 12px">조정 금액</th>
+                </tr></thead>
+                <tbody>
+                @for (int i = 0; i < _res.Names.Length; i++)
+                {
+                    var cur = i < _curW.Length ? _curW[i] : 0;
+                    var tgt = _res.Weights[i];
+                    var diff = tgt - cur;
+                    var amt = diff * _total;
+                    <tr style="border-top:1px solid var(--line)">
+                        <td style="padding:7px 12px">@_res.Names[i]</td>
+                        <td style="text-align:right;padding:7px 12px">@(( cur*100).ToString("0.0"))%</td>
+                        <td style="text-align:right;padding:7px 12px;font-weight:700">@(( tgt*100).ToString("0.0"))%</td>
+                        <td style="text-align:right;padding:7px 12px" class="@(diff>=0?"up":"down")">@(( diff*100).ToString("+0.0;-0.0"))%p</td>
+                        <td style="text-align:right;padding:7px 12px" class="@(amt>=0?"up":"down")">@(amt>=0?"매수 ":"매도 ")@(Math.Abs(amt).ToString("N0"))원</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-bottom:24px">총 평가액 @_total.ToString("N0")원 기준 · @_res.Note</div>
+    }
+</div>
+
+@code {
+    private int _targetVol = 15, _maxW = 40, _days = 180;
+    private bool _busy;
+    private string _msg = "";
+    private MpoResult? _res;
+    private double[] _curW = Array.Empty<double>();
+    private double _total, _curVol;
+
+    protected override async Task OnInitializedAsync() => await RunAsync();
+
+    private async Task RunAsync()
+    {
+        _busy = true; _msg = ""; _res = null; StateHasChanged();
+        try
+        {
+            var holdings = Db.GetAllHoldings();
+            if (holdings.Count == 0) { _msg = "보유 종목이 없습니다. 포트폴리오에 종목을 추가하세요."; return; }
+
+            decimal usd = 1380m; try { usd = await Fx.GetUsdKrwAsync(); } catch { }
+            var returns = await CorrelationAnalyzer.CollectReturnsAsync(
+                Provider, holdings.Select(h => (h.Symbol, h.Market)), Math.Max(30, _days));
+
+            var used = holdings.Where(h => returns.ContainsKey(h.Symbol) && returns[h.Symbol].Count >= 2).ToList();
+            if (used.Count == 0) { _msg = "수익률 히스토리를 수집하지 못했습니다(시세 제공자 확인)."; return; }
+
+            var R = used.Select(h => returns[h.Symbol].Select(d => (double)d).ToArray()).ToArray();
+            var names = used.Select(h => string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name).ToArray();
+            var rawW = used.Select(h => (double)(h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? usd : 1m))).ToArray();
+            _total = rawW.Sum();
+            _curW = _total > 0 ? rawW.Select(w => w / _total).ToArray() : rawW.Select(_ => 1.0 / rawW.Length).ToArray();
+
+            _res = MarkowitzOptimizer.Optimize(R, names, _targetVol, Math.Clamp(_maxW, 10, 100) / 100.0);
+            if (!_res.IsValid) { _msg = _res.Note; _res = null; return; }
+            _curVol = CurrentVol(R, _curW);
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    // 현재 비중 포트폴리오의 연환산 변동성 (프론티어 비교용)
+    private static double CurrentVol(double[][] R, double[] w)
+    {
+        int t = R.Min(a => a.Length);
+        var port = new double[t];
+        for (int k = 0; k < t; k++)
+        {
+            double s = 0;
+            for (int i = 0; i < R.Length; i++) s += w[i] * R[i][R[i].Length - t + k];
+            port[k] = s;
+        }
+        double m = port.Average(), ss = 0;
+        foreach (var x in port) ss += (x - m) * (x - m);
+        return Math.Sqrt(ss / Math.Max(1, t - 1)) * Math.Sqrt(252.0);
+    }
+
+    private string FrontierSvg()
+    {
+        if (_res is not { IsValid: true } r || r.Frontier.Count == 0) return "";
+        double w = 900, h = 240, padL = 44, padR = 12, padT = 12, padB = 28;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+
+        var xs = r.Frontier.Select(p => p.VolPct).Append(_curVol).ToList();
+        var ys = r.Frontier.Select(p => p.RetPct).Append(0.0).ToList();
+        double xMin = xs.Min(), xMax = xs.Max(), yMin = ys.Min(), yMax = ys.Max();
+        double xR = xMax - xMin; if (xR <= 0) xR = 1;
+        double yR = yMax - yMin; if (yR <= 0) yR = 1;
+        double X(double v) => padL + (v - xMin) / xR * plotW;
+        double Y(double v) => padT + plotH - (v - yMin) / yR * plotH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:240px;display:block'>");
+        // 프론티어 선
+        sb.Append("<polyline fill='none' stroke='var(--sub)' stroke-width='1.5' points='");
+        foreach (var p in r.Frontier) sb.Append($"{X(p.VolPct):F1},{Y(p.RetPct):F1} ");
+        sb.Append("'/>");
+        foreach (var p in r.Frontier)
+            sb.Append($"<circle cx='{X(p.VolPct):F1}' cy='{Y(p.RetPct):F1}' r='2' fill='var(--line)'/>");
+        // 현재 / 타겟
+        sb.Append($"<circle cx='{X(_curVol):F1}' cy='{Y(0):F1}' r='5' fill='#3b82f6'/>");
+        sb.Append($"<circle cx='{X(r.VolPct):F1}' cy='{Y(r.ExpReturnPct):F1}' r='5.5' fill='var(--up)'/>");
+        // 축 라벨
+        sb.Append($"<text x='{padL}' y='{h - 8}' fill='var(--sub)' font-size='10'>{xMin:0.0}%</text>");
+        sb.Append($"<text x='{padL + plotW - 30:F1}' y='{h - 8}' fill='var(--sub)' font-size='10'>{xMax:0.0}%</text>");
+        sb.Append($"<text x='6' y='{padT + 8}' fill='var(--sub)' font-size='10'>{yMax:0.0}%</text>");
+        sb.Append($"<text x='6' y='{padT + plotH:F1}' fill='var(--sub)' font-size='10'>{yMin:0.0}%</text>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}
