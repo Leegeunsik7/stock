@@ -82,7 +82,53 @@
                 </tbody>
             </table>
         </div>
-        <div class="sub" style="font-size:11.5px;margin-bottom:24px">@_one.Note · 캔들 @(_one.CandlesUsed)개</div>
+        <div class="sub" style="font-size:11.5px;margin-bottom:18px">@_one.Note · 캔들 @(_one.CandlesUsed)개</div>
+
+        <!-- 강건성 검증 (Walk-Forward) -->
+        <div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px">
+            <div style="font-weight:700">🧪 강건성 검증 (Walk-Forward)</div>
+            <button class="ghost" disabled="@_wfBusy" @onclick="RunWalkForwardAsync">@(_wfBusy?"검증 중…":"▶ 검증 실행")</button>
+            <span style="color:var(--sub);font-size:11.5px">학습창에서 뽑은 값이 <b>다음 구간(OOS)</b>에서도 통하는지 — 과최적화를 거른다.</span>
+        </div>
+        @if (_wfMsg.Length > 0) { <div style="color:var(--down);padding:2px 0 16px">@_wfMsg</div> }
+        @if (_wf is { IsValid: true })
+        {
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <span style="background:color-mix(in srgb,@WfColor() 16%,transparent);border:1px solid @WfColor();color:@WfColor();font-weight:800;border-radius:8px;padding:3px 12px">@_wf.Verdict</span>
+                <span style="color:var(--sub);font-size:12px">추천 @_wf.RecLabel · @(_wf.FoldCount)개 OOS 창</span>
+            </div>
+            <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
+                <div class="tile @(_wf.AvgInSample>=0?"u":"d")"><div class="lab">평균 IS 수익(학습)</div><div class="val num">@_wf.AvgInSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="tile @(_wf.AvgOutSample>=0?"u":"d")"><div class="lab">평균 OOS 수익(검증)</div><div class="val num">@_wf.AvgOutSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="tile k"><div class="lab">OOS 승률</div><div class="val num">@_wf.OosWinRate.ToString("0")%</div></div>
+                <div class="tile k"><div class="lab">효율 (OOS/IS)</div><div class="val num">@_wf.Efficiency.ToString("0")%</div></div>
+            </div>
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                        <th style="text-align:left;padding:8px 12px">창</th><th style="text-align:left;padding:8px 12px">학습 우승</th>
+                        <th style="text-align:right;padding:8px 12px">IS 수익</th><th style="text-align:right;padding:8px 12px">OOS 수익</th>
+                        <th style="text-align:right;padding:8px 12px">OOS 거래</th><th style="text-align:center;padding:8px 12px">판정</th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var f in _wf.Folds)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:7px 12px">#@(f.Index + 1)</td>
+                            <td style="padding:7px 12px">@f.Label</td>
+                            <td style="text-align:right;padding:7px 12px" class="@(f.InSampleReturn>=0?"up":"down")">@f.InSampleReturn.ToString("+0.0;-0.0")%</td>
+                            <td style="text-align:right;padding:7px 12px" class="@(f.OutSampleReturn>=0?"up":"down")">@f.OutSampleReturn.ToString("+0.0;-0.0")%</td>
+                            <td style="text-align:right;padding:7px 12px">@f.OosTradeCount</td>
+                            <td style="text-align:center;padding:7px 12px">@(f.OosWin ? "✅" : "❌")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <div class="sub" style="font-size:11.5px;margin-bottom:24px">
+                과최적화 갭(IS−OOS) @_wf.Degradation.ToString("+0.0;-0.0")%p · 갭이 크고 OOS가 음(−)이면 그 우승값은 과거에만 맞은 것입니다.
+            </div>
+        }
     }
 
     <!-- 밤사이 백그라운드 스냅샷 -->
@@ -124,11 +170,13 @@
 @code {
     private string _symbol = "";
     private Market _market = Market.KRX_KOSPI;
-    private bool _busy, _enabled;
+    private bool _busy, _enabled, _wfBusy;
     private int _intervalHours = 24;
-    private string _oneMsg = "", _lastRunLabel = "";
+    private string _oneMsg = "", _lastRunLabel = "", _wfMsg = "";
     private OptResult? _one;
     private OptSnapshot? _snap;
+    private List<Candle> _candles = new();   // 마지막 단일 분석 캔들(강건성 검증 재사용)
+    private WalkForwardResult? _wf;
 
     protected override void OnInitialized()
     {
@@ -170,15 +218,29 @@
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _oneMsg = "종목코드를 입력하세요."; return; }
-        _busy = true; _oneMsg = ""; _one = null; StateHasChanged();
+        _busy = true; _oneMsg = ""; _one = null; _wf = null; _wfMsg = ""; StateHasChanged();
         try
         {
-            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-18), DateTime.Now);
-            _one = StrategyOptimizer.Optimize(sym, sym, candles, _market);
+            _candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-18), DateTime.Now);
+            _one = StrategyOptimizer.Optimize(sym, sym, _candles, _market);
             if (!_one.IsValid) { _oneMsg = $"분석 불가: {_one.Note}"; _one = null; }
         }
         catch (Exception ex) { _oneMsg = "오류: " + ex.Message; }
         finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task RunWalkForwardAsync()
+    {
+        if (_one == null || _candles.Count == 0) return;
+        _wfBusy = true; _wfMsg = ""; _wf = null; StateHasChanged();
+        try
+        {
+            // 18개월 일봉(~370봉) 기준 train 120 / test 40 → 약 6 OOS 창
+            _wf = await Task.Run(() => WalkForward.Analyze(_one.Symbol, _one.Name, _candles, _market, 120, 40));
+            if (!_wf.IsValid) { _wfMsg = $"검증 불가: {_wf.Note}"; _wf = null; }
+        }
+        catch (Exception ex) { _wfMsg = "오류: " + ex.Message; }
+        finally { _wfBusy = false; StateHasChanged(); }
     }
 
     private async Task RunAllNowAsync()
@@ -230,6 +292,14 @@
         Toasts.Success("복합 알림 추가됨", $"{r.Name} MA{r.Best.LongP} 추세 필터 — 즉시 활성화",
             new() { ToastButton.Of("복합 알림 보기", () => Nav.NavigateTo("/composite"), true) });
     }
+
+    private string WfColor() => _wf?.Verdict switch
+    {
+        "강건" => "var(--up)",
+        "취약(과최적화)" => "var(--down)",
+        "보통" => "var(--warn)",
+        _ => "var(--sub)"
+    };
 
     private static string FmtTime(string iso) => DateTime.TryParse(iso, out var t) ? t.ToString("MM-dd HH:mm") : iso;
 }
