@@ -1,0 +1,176 @@
+@page "/forecast"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>📐 예측 스코어보드</h1><p>엔진의 정량 예측을 실현치와 대조해 보정도(과신/편향)를 채점 — "내 예측은 믿을 만한가?"</p></div>
+    <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunBacktest">@(_busy?"채점 중…":"▶ 보정도 백테스트")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:900px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+        <span style="font-size:12.5px;color:var(--sub)">예측 기간</span>
+        <select class="srch" style="width:90px" @bind="_horizon"><option value="5">+5일</option><option value="10">+10일</option><option value="21">+21일</option></select>
+        <span style="font-size:12.5px;color:var(--sub)">구간 신뢰</span>
+        <select class="srch" style="width:90px" @bind="_band"><option value="90">90%</option><option value="95">95%</option></select>
+        <span style="font-size:12.5px;color:var(--sub)">학습창</span>
+        <select class="srch" style="width:90px" @bind="_lookback"><option value="60">60일</option><option value="120">120일</option></select>
+    </div>
+
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 과거 각 시점에 '그때까지'의 추세 통계로 @(_band)% 구간 예측을 발행하고 미래 실현으로 즉시 채점합니다.
+        <b>커버리지가 명목(@(_band)%)보다 낮으면 과신(구간이 좁음)</b> — 꼬리위험 과소평가 신호. 정보 제공이며 투자 권유가 아닙니다.
+    </div>
+
+    <!-- A: 보정도 백테스트 -->
+    @if (_busy) { <div style="color:var(--sub);padding:16px">시세 수집 + 채점 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:16px">@_msg</div> }
+    else if (_score is { IsValid: true } && _score.Scores.Count > 0)
+    {
+        var s = _score.Scores[0];
+        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="tile @(Math.Abs(s.CoveragePct-s.NominalPct)<=7?"u":"d")"><div class="lab">커버리지 (명목 @s.NominalPct.ToString("0")%)</div><div class="val num">@s.CoveragePct.ToString("0")%</div></div>
+            <div class="tile @(Math.Abs(s.BiasPct)<0.7?"k":(s.BiasPct>=0?"u":"d"))"><div class="lab">편향 (실현−예측)</div><div class="val num">@s.BiasPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">평균 절대오차</div><div class="val num">@s.MaePct.ToString("0.0")%</div></div>
+            <div class="tile @(s.DirHitPct>=50?"u":"d")"><div class="lab">방향 적중</div><div class="val num">@s.DirHitPct.ToString("0")%</div></div>
+        </div>
+        <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:10px 13px;font-size:13px;font-weight:600;margin-bottom:6px">
+            판정: @s.Verdict · 하단 위반율 @s.LowBreachPct.ToString("0")% · 표본 @(s.N)건
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-bottom:24px">@_score.Note · 커버리지가 명목과 가까울수록 구간예측이 잘 보정된 것입니다.</div>
+    }
+
+    <!-- B: 라이브 예측 로그 -->
+    <div style="border-top:1px solid var(--line);padding-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <div style="font-weight:700">🗓 라이브 예측 로그</div>
+            <button class="ghost" disabled="@_busy" @onclick="IssueLive">＋ 이 종목 예측 발행</button>
+            <button class="ghost" disabled="@_busy" @onclick="ResolveLive">⏱ 만기 정산</button>
+            <span style="color:var(--sub);font-size:12px">미해결 @(_pending)건 · 해결 @(_liveScore?.Resolved ?? 0)건</span>
+            @if (_liveMsg.Length > 0) { <span style="color:var(--accent);font-size:12px">@_liveMsg</span> }
+        </div>
+        @if (_liveScore is { IsValid: true })
+        {
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                        <th style="text-align:left;padding:8px 12px">유형·기간</th><th style="text-align:right;padding:8px 12px">표본</th>
+                        <th style="text-align:right;padding:8px 12px">커버리지</th><th style="text-align:right;padding:8px 12px">편향</th>
+                        <th style="text-align:right;padding:8px 12px">방향</th><th style="text-align:left;padding:8px 12px">판정</th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var ks in _liveScore.Scores)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:7px 12px">@ks.Kind +@(ks.HorizonDays)일</td>
+                            <td style="text-align:right;padding:7px 12px">@ks.N</td>
+                            <td style="text-align:right;padding:7px 12px;font-weight:700">@ks.CoveragePct.ToString("0")% / @ks.NominalPct.ToString("0")%</td>
+                            <td style="text-align:right;padding:7px 12px" class="@(ks.BiasPct>=0?"up":"down")">@ks.BiasPct.ToString("+0.0;-0.0")%</td>
+                            <td style="text-align:right;padding:7px 12px">@ks.DirHitPct.ToString("0")%</td>
+                            <td style="padding:7px 12px">@ks.Verdict</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else { <div style="color:var(--sub);font-size:12px;padding:6px 2px">발행한 예측이 만기(기간 경과)되면 「만기 정산」 후 여기서 채점됩니다.</div> }
+    </div>
+</div>
+
+@code {
+    private string _symbol = "", _msg = "", _liveMsg = "";
+    private Market _market = Market.KRX_KOSPI;
+    private int _horizon = 10, _band = 90, _lookback = 120;
+    private bool _busy;
+    private ForecastScoreReport? _score, _liveScore;
+    private int _pending;
+
+    private double ZHalf => _band >= 95 ? 1.96 : 1.645;
+
+    protected override void OnInitialized() { _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
+
+    private async Task RunBacktest()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _score = null; return; }
+        _busy = true; _msg = ""; _score = null; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-36), DateTime.Now);
+            var closes = candles.Select(c => c.Close).ToList();
+            var resolved = ForecastScore.CalibrationBacktest(closes, _horizon, _lookback, ZHalf, _band / 100.0);
+            if (resolved.Count == 0) { _msg = "백테스트할 데이터가 부족합니다(장기 시세 필요)."; return; }
+            _score = ForecastScore.Score(resolved);
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task IssueLive()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _liveMsg = "종목코드 입력"; return; }
+        _busy = true; _liveMsg = ""; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddDays(-_lookback - 20), DateTime.Now);
+            var closes = candles.Select(c => c.Close).ToList();
+            if (closes.Count < 10) { _liveMsg = "시세 부족"; return; }
+            // 직전 lookback개 수익률 통계
+            int n = Math.Min(_lookback, closes.Count - 1);
+            var rets = new List<double>();
+            for (int i = closes.Count - n; i < closes.Count; i++)
+            {
+                var p = (double)closes[i - 1];
+                if (p != 0) rets.Add(((double)closes[i] - p) / p * 100.0);
+            }
+            double mean = rets.Average();
+            double std = Math.Sqrt(rets.Select(r => (r - mean) * (r - mean)).Sum() / Math.Max(1, rets.Count - 1));
+            double pred = mean * _horizon, hStd = std * Math.Sqrt(_horizon);
+            ForecastLog.Record(Db, new LiveForecast
+            {
+                IssuedAt = DateTime.Now.ToString("o"),
+                ResolveAt = DateTime.Now.AddDays(Math.Ceiling(_horizon * 1.45)).ToString("o"),  // 거래일→달력일 여유
+                Symbol = sym, Name = sym, Market = (int)_market, HorizonDays = _horizon,
+                BasePrice = (double)closes[^1], PredictedPct = pred,
+                LowPct = pred - ZHalf * hStd, HighPct = pred + ZHalf * hStd, NominalCoverage = _band / 100.0
+            });
+            _pending = ForecastLog.PendingCount(Db);
+            _liveMsg = $"발행됨 (기준가 {closes[^1]:N0}, {_horizon}일 후 정산)";
+        }
+        catch (Exception ex) { _liveMsg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task ResolveLive()
+    {
+        _busy = true; _liveMsg = ""; StateHasChanged();
+        try
+        {
+            var due = ForecastLog.Load(Db).Where(f => !f.Resolved && DateTime.TryParse(f.ResolveAt, out var ra) && ra <= DateTime.Now).ToList();
+            var px = new Dictionary<(string, int), decimal>();
+            foreach (var grp in due.GroupBy(f => (f.Symbol, f.Market)))
+            {
+                try
+                {
+                    var q = await Provider.GetQuotesAsync(new[] { grp.Key.Symbol }, (Market)grp.Key.Market);
+                    var pr = q.FirstOrDefault()?.Price ?? 0m;
+                    if (pr > 0) px[(grp.Key.Symbol, grp.Key.Market)] = pr;
+                }
+                catch { }
+            }
+            int resolved = ForecastLog.ResolveDue(Db, (s, m) => px.TryGetValue((s, (int)m), out var p) ? p : 0m, DateTime.Now);
+            _pending = ForecastLog.PendingCount(Db);
+            _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db));
+            _liveMsg = resolved > 0 ? $"{resolved}건 정산 완료" : "만기 도래·시세 확보된 예측이 없습니다.";
+        }
+        catch (Exception ex) { _liveMsg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}
