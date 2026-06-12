@@ -1,0 +1,128 @@
+@page "/calibrator"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@using System.Data
+
+<div class="top">
+    <div class="hello"><h1>🎯 알림 신뢰도 캘리브레이터</h1><p>각 알림 이후 실제 움직임을 캔들로 대조해 유형별 정보성을 채점 — 알림이 스스로를 평가 (정보 제공용)</p></div>
+    <select class="srch" style="width:100px" @bind="_days"><option value="90">90일</option><option value="180">180일</option><option value="365">1년</option></select>
+    <select class="srch" style="width:110px;margin:0 8px" @bind="_horizon"><option value="3">+3일</option><option value="5">+5일</option><option value="10">+10일</option></select>
+    <select class="srch" style="width:110px"  @bind="_thr"><option value="2">±2%</option><option value="3">±3%</option><option value="5">±5%</option></select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"채점 중…":"▶ 채점")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:940px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 적중 = 알림 발생 후 <b>@(_horizon)일 내 |가격 변동| ≥ @(_thr)%</b>. 노이즈가 많은 유형을 가려냅니다.
+        <b>정보성(움직임 유발)이지 수익성이 아니며</b>, 점수만 제시합니다(자동 음소거 없음).
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">알림·시세 수집 + 채점 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_rep is { IsValid: true })
+    {
+        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(3,1fr)">
+            <div class="tile k"><div class="lab">전체 알림</div><div class="val num">@_rep.Total</div></div>
+            <div class="tile k"><div class="lab">평가 가능</div><div class="val num">@_rep.Evaluable</div></div>
+            <div class="tile @(_rep.OverallHitRatePct>=50?"u":"d")"><div class="lab">전체 적중률</div><div class="val num">@_rep.OverallHitRatePct.ToString("0")%</div></div>
+        </div>
+
+        @if (_rep.Evaluable == 0)
+        {
+            <div style="color:var(--sub);padding:10px 2px">평가 가능한 알림이 없습니다. 알림이 더 쌓이거나(종목 포함), 기간을 넓혀 보세요.</div>
+        }
+        else
+        {
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                        <th style="text-align:left;padding:8px 12px">유형</th>
+                        <th style="text-align:right;padding:8px 12px">건수</th>
+                        <th style="text-align:right;padding:8px 12px">평가</th>
+                        <th style="text-align:right;padding:8px 12px">적중률</th>
+                        <th style="text-align:right;padding:8px 12px">평균 |이동|</th>
+                        <th style="text-align:right;padding:8px 12px">평균 이동</th>
+                        <th style="text-align:left;padding:8px 12px">권고</th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var g in _rep.Grades)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:7px 12px;font-weight:600">@g.Category</td>
+                            <td style="text-align:right;padding:7px 12px">@g.Count</td>
+                            <td style="text-align:right;padding:7px 12px">@g.Evaluable</td>
+                            <td style="text-align:right;padding:7px 12px;font-weight:700" class="@(g.HitRatePct>=50?"up":(g.Evaluable>=5 && g.HitRatePct<33?"down":""))">@(g.Evaluable>0?g.HitRatePct.ToString("0")+"%":"—")</td>
+                            <td style="text-align:right;padding:7px 12px">@(g.Evaluable>0?g.AvgAbsMovePct.ToString("0.0")+"%":"—")</td>
+                            <td style="text-align:right;padding:7px 12px" class="@(g.AvgSignedMovePct>=0?"up":"down")">@(g.Evaluable>0?g.AvgSignedMovePct.ToString("+0.0;-0.0")+"%":"—")</td>
+                            <td style="padding:7px 12px">@RecoBadge(g.Recommendation)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <div class="sub" style="font-size:11.5px;margin-top:8px">@_rep.Note · 적중률 낮은 유형은 알림 규칙을 조이거나 임계를 높여 노이즈를 줄여 보세요.</div>
+        }
+    }
+</div>
+
+@code {
+    private int _days = 180, _horizon = 5, _thr = 3;
+    private bool _busy;
+    private string _msg = "";
+    private CalibrationReport? _rep;
+
+    private static readonly string[] SourceKr = { "가격", "뉴스", "시그널", "배당", "시스템" };
+
+    private async Task RunAsync()
+    {
+        _busy = true; _msg = ""; _rep = null; StateHasChanged();
+        try
+        {
+            var to = DateTime.Now;
+            var from = to.AddDays(-Math.Max(7, _days));
+            var alerts = new List<AlertRecord>();
+            var symbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataRow r in Db.Query("SELECT Time,Source,Symbol FROM Alerts").Rows)
+            {
+                var when = Safe.DT(r["Time"]);
+                if (when < from || when > to) continue;
+                var sym = Safe.Str(r["Symbol"]);
+                int src = Safe.Int(r["Source"]);
+                var cat = src >= 0 && src < SourceKr.Length ? SourceKr[src] : "기타";
+                alerts.Add(new AlertRecord(when, cat, sym));
+                if (!string.IsNullOrWhiteSpace(sym)) symbols.Add(sym);
+            }
+            if (alerts.Count == 0) { _msg = "기간 내 알림이 없습니다. 알림이 쌓이면 여기서 신뢰도를 채점합니다."; return; }
+
+            // 종목별 캔들 수집 (alert 창 + horizon 여유)
+            var candleFrom = from.AddDays(-20); var candleTo = to;
+            var bySym = new Dictionary<string, List<Candle>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sym in symbols.Take(30))
+            {
+                try
+                {
+                    var mkt = sym.Length == 6 && char.IsDigit(sym[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+                    bySym[sym] = await Provider.GetHistoryAsync(sym, mkt, candleFrom, candleTo);
+                }
+                catch { }
+            }
+
+            _rep = AlertCalibrator.Score(alerts, bySym, _horizon, _thr);
+            if (!_rep.IsValid) { _msg = _rep.Note; _rep = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private MarkupString RecoBadge(string reco)
+    {
+        var (bg, col) = reco switch
+        {
+            "신뢰 높음" => ("color-mix(in srgb,var(--up) 16%,transparent)", "var(--up)"),
+            "강등 검토(노이즈↑)" => ("color-mix(in srgb,var(--down) 16%,transparent)", "var(--down)"),
+            "표본 부족" => ("transparent", "var(--sub)"),
+            _ => ("color-mix(in srgb,var(--warn) 14%,transparent)", "var(--warn)")
+        };
+        return (MarkupString)$"<span style='background:{bg};color:{col};border-radius:6px;padding:2px 9px;font-size:11.5px;font-weight:600'>{reco}</span>";
+    }
+}
