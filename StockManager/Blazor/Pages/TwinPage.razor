@@ -1,0 +1,144 @@
+@page "/twin"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@using System.Data
+
+<div class="top">
+    <div class="hello"><h1>🪞 반사실 디지털 트윈</h1><p>"내가 규칙을 지켰다면?" — 실제 거래 vs 시그널 추종 vs 단순 보유를 같은 창에서 비교 (사후 복기)</p></div>
+    <input class="srch" style="width:150px" placeholder="종목코드 (예 005930)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:130px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <select class="srch" style="width:90px" @bind="_months">
+        <option value="6">6개월</option><option value="12">1년</option><option value="24">2년</option>
+    </select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"복기 중…":"▶ 복기")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:920px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ <b>signal 트랙</b>은 이 종목에 대한 내 과거 시그널(매수/매도)을 그대로 전액 진입/청산했다고 가정한 가상 성과입니다.
+        수수료·세금·슬리피지를 반영한 <b>사후 복기이며 투자 권유가 아닙니다.</b>
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세·거래·시그널 수집 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_rep is { IsValid: true })
+    {
+        <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;font-weight:600">@_rep.Verdict</div>
+
+        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(3,1fr)">
+            <div class="tile @(_rep.HasActual && _rep.ActualReturnPct>=0?"u":(_rep.HasActual?"d":"k"))">
+                <div class="lab">실제 (내 거래)</div>
+                <div class="val num">@(_rep.HasActual ? _rep.ActualReturnPct.ToString("+0.0;-0.0")+"%" : "—")</div>
+            </div>
+            <div class="tile @(_rep.SignalEntered && _rep.SignalReturnPct>=0?"u":(_rep.SignalEntered?"d":"k"))">
+                <div class="lab">시그널 추종</div>
+                <div class="val num">@(_rep.SignalEntered ? _rep.SignalReturnPct.ToString("+0.0;-0.0")+"%" : "미진입")</div>
+            </div>
+            <div class="tile @(_rep.BuyHoldReturnPct>=0?"u":"d")"><div class="lab">단순 보유</div><div class="val num">@_rep.BuyHoldReturnPct.ToString("+0.0;-0.0")%</div></div>
+        </div>
+
+        @if (_rep.HasActual)
+        {
+            <div style="display:flex;gap:18px;font-size:12.5px;color:var(--sub);margin-bottom:12px">
+                <span>행동 격차 vs 시그널 <b class="@(_rep.GapVsSignal>=0?"up":"down")">@_rep.GapVsSignal.ToString("+0.0;-0.0")%p</b></span>
+                <span>vs 단순보유 <b class="@(_rep.GapVsHold>=0?"up":"down")">@_rep.GapVsHold.ToString("+0.0;-0.0")%p</b></span>
+                <span>· 실제 @(_rep.ActualTrades)거래 · 시그널 @(_rep.SignalTrades)거래</span>
+            </div>
+        }
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px">
+            <div style="font-weight:700;margin-bottom:6px">정규화 자산곡선 (시작 100)</div>
+            @((MarkupString)CurveSvg())
+            <div style="display:flex;gap:16px;font-size:11.5px;color:var(--sub);margin-top:6px">
+                <span style="color:var(--accent)">━ 시그널 추종</span><span style="color:var(--sub)">━ 단순 보유</span>
+            </div>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:8px">@_rep.Note</div>
+    }
+</div>
+
+@code {
+    private string _symbol = "";
+    private Market _market = Market.KRX_KOSPI;
+    private int _months = 12;
+    private bool _busy;
+    private string _msg = "";
+    private TwinReport? _rep;
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _rep = null; return; }
+        _busy = true; _msg = ""; _rep = null; StateHasChanged();
+        try
+        {
+            var to = DateTime.Now;
+            var from = to.AddMonths(-Math.Max(1, _months));
+            var candles = await Provider.GetHistoryAsync(sym, _market, from, to);
+            if (candles.Count < 2) { _msg = "히스토리가 부족합니다(시세 제공자 확인)."; return; }
+
+            var trades = new List<(DateTime, bool, decimal, decimal)>();
+            foreach (DataRow r in Db.Query("SELECT Type,Quantity,Price,ExecutedAt FROM Transactions WHERE Symbol=@s",
+                         new() { ["@s"] = sym }).Rows)
+            {
+                var type = (TransactionType)Safe.Int(r["Type"]);
+                if (type != TransactionType.Buy && type != TransactionType.Sell) continue;
+                var at = Safe.DT(r["ExecutedAt"]);
+                if (at < from || at > to) continue;
+                trades.Add((at, type == TransactionType.Buy, Safe.Int(r["Quantity"]), Safe.Dec(r["Price"])));
+            }
+
+            var sigs = new List<(DateTime, SignalType)>();
+            foreach (DataRow r in Db.Query("SELECT Signal,GeneratedAt FROM Signals WHERE Symbol=@s",
+                         new() { ["@s"] = sym }).Rows)
+            {
+                var at = Safe.DT(r["GeneratedAt"]);
+                if (at < from || at > to) continue;
+                sigs.Add((at, (SignalType)Safe.Int(r["Signal"])));
+            }
+
+            _rep = CounterfactualTwin.Compare(trades, sigs, candles, _market);
+            if (!_rep.IsValid) { _msg = _rep.Note; _rep = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private string CurveSvg()
+    {
+        if (_rep is not { IsValid: true } r || r.Curve.Count < 2) return "";
+        double w = 880, h = 240, padL = 44, padR = 12, padT = 12, padB = 24;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        int n = r.Curve.Count;
+        double max = (double)r.Curve.Max(p => Math.Max(p.Hold, p.Signal));
+        double min = (double)r.Curve.Min(p => Math.Min(p.Hold, p.Signal));
+        double rng = max - min; if (rng <= 0) rng = 1;
+        double X(int i) => padL + (double)i / (n - 1) * plotW;
+        double Y(decimal v) => padT + plotH - ((double)v - min) / rng * plotH;
+
+        string Line(Func<TwinPoint, decimal> sel, string color, double sw)
+        {
+            var pts = string.Join(" ", r.Curve.Select((p, i) => $"{X(i):F1},{Y(sel(p)):F1}"));
+            return $"<polyline fill='none' stroke='{color}' stroke-width='{sw}' points='{pts}'/>";
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:240px;display:block'>");
+        // 기준선 100
+        if (min < 100 && max > 100)
+        {
+            double y100 = Y(100m);
+            sb.Append($"<line x1='{padL}' y1='{y100:F1}' x2='{padL + plotW:F1}' y2='{y100:F1}' stroke='var(--line)' stroke-dasharray='3 3'/>");
+            sb.Append($"<text x='{padL + plotW - 24:F1}' y='{y100 - 3:F1}' fill='var(--sub)' font-size='10'>100</text>");
+        }
+        sb.Append(Line(p => p.Hold, "var(--sub)", 1.4));
+        sb.Append(Line(p => p.Signal, "var(--accent)", 2));
+        sb.Append($"<text x='6' y='{padT + 8}' fill='var(--sub)' font-size='10'>{max:0}</text>");
+        sb.Append($"<text x='6' y='{padT + plotH:F1}' fill='var(--sub)' font-size='10'>{min:0}</text>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}
