@@ -71,6 +71,7 @@ namespace StockManager.Common
                 await CheckDailyBriefAsync();
                 await CheckAutoDcaAsync();
                 await CheckOptimizerAsync();
+                await CheckRegimeAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -164,6 +165,87 @@ namespace StockManager.Common
                     $"{valid}/{snap.Rows.Count}종목 분석 완료 · 최고 {best.Name} {best.Label} ({best.TotalReturn:+0.0;-0.0}%)",
                     AlertLevel.Info);
             Log.Info($"[Optimizer] {valid}/{snap.Rows.Count}종목 격자탐색 완료");
+        }
+
+        // ===== 레짐 변화 이상탐지 🅘 (옵트인 · 읽기전용) =====
+        //  보유 주식의 "평소 성격" 이탈(수익률 이상치·변동성 급등·평균 레짐 이동)을 통계로 감지.
+        //  + 포트폴리오 평균 페어 상관이 급등하면 분산효과 붕괴 경고. 종목당 쿨다운으로 도배 방지.
+        private async Task CheckRegimeAsync()
+        {
+            if (_db!.GetSetting("Regime.Enabled") != "true" || _provider == null) return;
+            int hours = int.TryParse(_db.GetSetting("Regime.IntervalHours"), out var hh) && hh > 0 ? hh : 12;
+            if (DateTime.TryParse(_db.GetSetting("Regime.LastRun"), out var last) && (DateTime.Now - last).TotalHours < hours) return;
+
+            var holdings = _db.GetAllHoldings()
+                .Where(h => h.Market != Market.CRYPTO && !string.IsNullOrWhiteSpace(h.Symbol))
+                .GroupBy(h => h.Symbol, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+                .Take(25).ToList();
+            if (holdings.Count == 0) return;
+
+            _db.SetSetting("Regime.LastRun", DateTime.Now.ToString("o"));   // 먼저 마킹(중복 실행 방지)
+            var cooldown = LoadRegimeAlerts();
+            var retsBySym = new Dictionary<string, double[]>();
+            int alerted = 0;
+
+            foreach (var h in holdings)
+            {
+                try
+                {
+                    var candles = await _provider.GetHistoryAsync(h.Symbol, h.Market, DateTime.Now.AddMonths(-4), DateTime.Now);
+                    if (candles.Count < 25) continue;
+                    var closes = candles.Select(c => c.Close).ToList();
+                    retsBySym[h.Symbol] = RegimeDetector.ToReturns(closes);
+
+                    var sig = RegimeDetector.Analyze(closes);
+                    if (!sig.IsAnomaly) continue;
+
+                    // 종목당 쿨다운 20h — 같은 이상을 매 주기 반복 경보하지 않음
+                    if (cooldown.TryGetValue(h.Symbol, out var lastIso) &&
+                        DateTime.TryParse(lastIso, out var la) && (DateTime.Now - la).TotalHours < 20) continue;
+
+                    cooldown[h.Symbol] = DateTime.Now.ToString("o");
+                    alerted++;
+                    var name = string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name;
+                    AlertCenter.Instance.RaisePrice(h.Symbol,
+                        $"🛰 레짐 변화 · {name}", $"{name}({h.Symbol}) {sig.Describe()}", AlertLevel.Warning);
+                }
+                catch (Exception ex) { Log.Warn($"[Regime] {h.Symbol} 실패: {ex.Message}"); }
+                await Task.Delay(150);
+            }
+
+            // 분산효과 붕괴: 평균 페어 상관 급등
+            if (retsBySym.Count >= 3)
+            {
+                var avgCorr = RegimeDetector.AvgPairwiseCorrelation(retsBySym.Values.ToList());
+                if (avgCorr >= 0.85 &&
+                    !(cooldown.TryGetValue("__corr__", out var cIso) && DateTime.TryParse(cIso, out var cl) && (DateTime.Now - cl).TotalHours < 20))
+                {
+                    cooldown["__corr__"] = DateTime.Now.ToString("o");
+                    AlertCenter.Instance.RaiseSystem("🛰 분산효과 붕괴 경고",
+                        $"보유 {retsBySym.Count}종목 평균 상관이 {avgCorr:0.00}로 급등 — 함께 움직이는 중(분산 약화)", AlertLevel.Warning);
+                }
+            }
+
+            SaveRegimeAlerts(cooldown);
+            if (alerted > 0) Log.Info($"[Regime] {alerted}종목 레짐 이상 경보");
+        }
+
+        private Dictionary<string, string> LoadRegimeAlerts()
+        {
+            try
+            {
+                var j = _db!.GetSetting("Regime.Alerts");
+                if (!string.IsNullOrWhiteSpace(j))
+                    return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(j) ?? new();
+            }
+            catch { }
+            return new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private void SaveRegimeAlerts(Dictionary<string, string> d)
+        {
+            try { _db!.SetSetting("Regime.Alerts", System.Text.Json.JsonSerializer.Serialize(d)); }
+            catch (Exception ex) { Log.Warn($"[Regime] 쿨다운 저장 실패: {ex.Message}"); }
         }
 
         // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====
