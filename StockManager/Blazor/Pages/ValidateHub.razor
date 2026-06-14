@@ -1,0 +1,22 @@
+@page "/validate"
+@page "/validate/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "forecast": <ForecastPage /> break;
+    case "calibrator": <CalibratorPage /> break;
+    case "replay": <ReplayPage /> break;
+    default: <TwinPage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "twin" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs =
+    {
+        ("twin", "디지털 트윈"), ("forecast", "예측 스코어보드"), ("calibrator", "알림 신뢰도"), ("replay", "결정 리플레이")
+    };
+    private void Sel(string k) => Nav.NavigateTo(k == "twin" ? "/validate" : $"/validate/{k}");
+}

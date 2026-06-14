@@ -1,0 +1,17 @@
+@page "/live"
+@page "/live/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "coin": <CoinPage /> break;
+    default: <RealtimePage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "stock" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs = { ("stock", "주식 실시간"), ("coin", "코인 실시간") };
+    private void Sel(string k) => Nav.NavigateTo(k == "stock" ? "/live" : $"/live/{k}");
+}

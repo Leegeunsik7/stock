@@ -1,0 +1,22 @@
+@page "/folio"
+@page "/folio/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "rebalance": <RebalancePage /> break;
+    case "risk": <RiskPage /> break;
+    case "assets": <TotalAssetPage /> break;
+    default: <PortfolioPage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "holdings" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs =
+    {
+        ("holdings", "보유·배분"), ("rebalance", "리밸런싱(MPT)"), ("risk", "리스크 분해"), ("assets", "총자산")
+    };
+    private void Sel(string k) => Nav.NavigateTo(k == "holdings" ? "/folio" : $"/folio/{k}");
+}

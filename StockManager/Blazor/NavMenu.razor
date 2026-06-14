@@ -1,20 +1,40 @@
+@implements IDisposable
+@inject NavigationManager Nav
+
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.4</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.29</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
     </div>
-    <div class="sectlbl">WORKSPACE</div>
+
     <nav>
-        @foreach (var item in _items)
+        <NavLink class="nav" href="/" Match="NavLinkMatch.All"><span class="ic">🏠</span><span class="navtxt">홈</span></NavLink>
+
+        @foreach (var g in _groups)
         {
-            <NavLink class="nav" href="@item.Href" Match="@item.Match">
-                <span class="ic">@item.Icon</span><span class="navtxt">@item.Label</span>
-            </NavLink>
+            <div class="grphead @(_open == g.Id ? "open" : "")" @onclick="() => OnHead(g)">
+                <span class="ic">@g.Icon</span>
+                <span class="navtxt">@g.Label</span>
+                <span class="cap">@g.Caption</span>
+                <span class="chev">@(_open == g.Id ? "▾" : "▸")</span>
+            </div>
+            @if (_open == g.Id)
+            {
+                <div class="subwrap">
+                    @foreach (var it in g.Items)
+                    {
+                        <NavLink class="nav sub" href="@it.Href" Match="@it.Match">
+                            <span class="ic">@it.Icon</span><span class="navtxt">@it.Label</span>
+                        </NavLink>
+                    }
+                </div>
+            }
         }
     </nav>
+
     <div class="side-foot">
         <div class="ava">이</div>
         <div class="usermeta"><div class="n">이근식</div><div class="e">gslee@@angtec.com</div></div>
@@ -24,34 +44,103 @@
 @code {
     [Inject] private Microsoft.JSInterop.IJSRuntime JS { get; set; } = null!;
 
-    private readonly (string Icon, string Label, string Href, NavLinkMatch Match)[] _items = new[]
+    private record Item(string Icon, string Label, string Href, NavLinkMatch Match);
+    private record Group(string Id, string Icon, string Label, string Caption, string[] Roots, Item[] Items);
+
+    private string? _open;
+
+    private readonly Group[] _groups =
     {
-        ("🏠",  "홈",           "/",          NavLinkMatch.All),
-        ("📈",  "실시간 시세",   "/realtime",  NavLinkMatch.Prefix),
-        ("💼",  "포트폴리오",   "/portfolio", NavLinkMatch.Prefix),
-        ("🧠",  "AI 분석",      "/ai",        NavLinkMatch.Prefix),
-        ("🤖",  "AI 비서",      "/advisor",   NavLinkMatch.Prefix),
-        ("📰",  "뉴스 레이더",  "/news",      NavLinkMatch.Prefix),
-        ("⚡",  "시그널 엔진",  "/signals",   NavLinkMatch.Prefix),
-        ("🔬",  "이벤트 스터디", "/eventstudy", NavLinkMatch.Prefix),
-        ("🧬",  "가설 발굴",    "/miner",     NavLinkMatch.Prefix),
-        ("🔁",  "결정 리플레이", "/replay",    NavLinkMatch.Prefix),
-        ("🧭",  "인과 저널",    "/journal",   NavLinkMatch.Prefix),
-        ("🪞",  "디지털 트윈",  "/twin",      NavLinkMatch.Prefix),
-        ("🎲",  "몬테카를로",   "/montecarlo", NavLinkMatch.Prefix),
-        ("🌪",  "시나리오",     "/scenario",  NavLinkMatch.Prefix),
-        ("⚖️",  "리밸런싱",     "/rebalance", NavLinkMatch.Prefix),
-        ("🧯",  "리스크 분해",  "/risk",      NavLinkMatch.Prefix),
-        ("🌙",  "전략 옵티마이저", "/optimizer", NavLinkMatch.Prefix),
-        ("🔔",  "알림 센터",    "/alerts",    NavLinkMatch.Prefix),
-        ("🪙",  "코인 실시간",  "/coins",     NavLinkMatch.Prefix),
-        ("🧮",  "총자산",       "/assets",    NavLinkMatch.Prefix),
-        ("🎚",  "포지션 사이저", "/sizer",     NavLinkMatch.Prefix),
-        ("🧪",  "모의투자",     "/paper",     NavLinkMatch.Prefix),
-        ("🧠",  "복합 알림",    "/composite", NavLinkMatch.Prefix),
-        ("📜",  "알림 이력",    "/alert-history", NavLinkMatch.Prefix),
-        ("🎯",  "알림 신뢰도",  "/calibrator", NavLinkMatch.Prefix),
-        ("📐",  "예측 스코어보드", "/forecast", NavLinkMatch.Prefix),
-        ("⚙️",  "거래 설정",    "/settings",  NavLinkMatch.Prefix),
+        new("market", "📊", "마켓", "MARKET", new[] { "/live", "/news" }, new[]
+        {
+            new Item("📈", "실시간 시세", "/live", NavLinkMatch.Prefix),
+            new Item("📰", "뉴스 레이더", "/news", NavLinkMatch.Prefix),
+        }),
+        new("folio", "💼", "포트폴리오", "PORTFOLIO", new[] { "/folio" }, new[]
+        {
+            new Item("📋", "보유·배분", "/folio", NavLinkMatch.All),
+            new Item("⚖️", "리밸런싱(MPT)", "/folio/rebalance", NavLinkMatch.All),
+            new Item("🧯", "리스크 분해", "/folio/risk", NavLinkMatch.All),
+            new Item("🧮", "총자산", "/folio/assets", NavLinkMatch.All),
+        }),
+        new("lab", "🔬", "전략 연구소", "STRATEGY LAB", new[] { "/lab" }, new[]
+        {
+            new Item("⚡", "시그널 엔진", "/lab", NavLinkMatch.All),
+            new Item("🌙", "옵티마이저", "/lab/optimizer", NavLinkMatch.All),
+            new Item("🔬", "이벤트 스터디", "/lab/eventstudy", NavLinkMatch.All),
+            new Item("🧬", "가설 발굴", "/lab/miner", NavLinkMatch.All),
+            new Item("🎚", "포지션 사이저", "/lab/sizer", NavLinkMatch.All),
+        }),
+        new("risklab", "🎲", "리스크 시뮬", "RISK & SIM", new[] { "/risklab" }, new[]
+        {
+            new Item("🎲", "몬테카를로", "/risklab", NavLinkMatch.All),
+            new Item("🌪", "시나리오 스튜디오", "/risklab/scenario", NavLinkMatch.All),
+        }),
+        new("intel", "🤖", "AI & 저널", "INTELLIGENCE", new[] { "/intel" }, new[]
+        {
+            new Item("🤖", "AI 비서(RAG)", "/intel", NavLinkMatch.All),
+            new Item("🧠", "종목 분석", "/intel/analyze", NavLinkMatch.All),
+            new Item("🧭", "인과 저널", "/intel/journal", NavLinkMatch.All),
+        }),
+        new("validate", "🧪", "검증 센터", "VALIDATION", new[] { "/validate" }, new[]
+        {
+            new Item("🪞", "디지털 트윈", "/validate", NavLinkMatch.All),
+            new Item("📐", "예측 스코어보드", "/validate/forecast", NavLinkMatch.All),
+            new Item("🎯", "알림 신뢰도", "/validate/calibrator", NavLinkMatch.All),
+            new Item("🔁", "결정 리플레이", "/validate/replay", NavLinkMatch.All),
+        }),
+        new("alertcenter", "🔔", "알림", "ALERTS", new[] { "/alertcenter" }, new[]
+        {
+            new Item("🔔", "알림 센터", "/alertcenter", NavLinkMatch.All),
+            new Item("🧠", "복합 알림", "/alertcenter/composite", NavLinkMatch.All),
+            new Item("📜", "알림 이력", "/alertcenter/history", NavLinkMatch.All),
+        }),
+        new("tools", "🧰", "도구", "TOOLS", new[] { "/paper", "/settings" }, new[]
+        {
+            new Item("🧪", "모의투자", "/paper", NavLinkMatch.Prefix),
+            new Item("⚙️", "거래 설정", "/settings", NavLinkMatch.Prefix),
+        }),
     };
+
+    protected override void OnInitialized()
+    {
+        AutoOpen();
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        AutoOpen();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void AutoOpen()
+    {
+        var path = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].TrimEnd('/');
+        foreach (var g in _groups)
+            if (g.Roots.Any(r => path == r || path.StartsWith(r + "/", StringComparison.OrdinalIgnoreCase)))
+            { _open = g.Id; return; }
+        // 홈 등 미매칭 시 현재 펼침 유지(사용자가 접어둔 상태 존중)
+    }
+
+    private void OnHead(Group g)
+    {
+        if (_open == g.Id) { _open = null; }           // 이미 열린 그룹 → 접기
+        else Nav.NavigateTo(g.Items[0].Href);          // 첫 항목으로 이동(LocationChanged가 펼침)
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 }
+
+<style>
+    .grphead{display:flex;align-items:center;gap:12px;padding:9px 22px;color:var(--side-ink);cursor:pointer;font-size:13.5px;user-select:none}
+    .grphead:hover{background:#181f31}
+    .grphead.open{color:#fff;font-weight:600}
+    .grphead .ic{width:18px;text-align:center;opacity:.9}
+    .grphead .cap{margin-left:auto;font-size:9px;letter-spacing:.1em;color:var(--side-sub);font-weight:700}
+    .grphead .chev{font-size:10px;color:var(--side-sub);margin-left:8px}
+    .side.collapsed .grphead .cap,.side.collapsed .grphead .chev{display:none}
+    .subwrap{padding:2px 0 6px;background:rgba(0,0,0,.12)}
+    .nav.sub{padding-left:34px;font-size:13px}
+    .nav.sub .ic{opacity:.8}
+</style>

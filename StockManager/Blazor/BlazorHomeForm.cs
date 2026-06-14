@@ -27,6 +27,7 @@ namespace StockManager.Blazor
             services.AddSingleton<AiService>();
             services.AddSingleton<FxConverter>();   // ⚠️ Singleton 필수 — 10분 환율 캐시가 수명에 의존
             services.AddSingleton<ToastService>();  // 액션형 전역 토스트 (어느 페이지에서나 주입)
+            services.AddSingleton<SymbolContext>();  // 전역 활성 종목 (연구 도구 횡이동 시드)
 
             var view = new BlazorWebView
             {

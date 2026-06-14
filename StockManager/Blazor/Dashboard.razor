@@ -206,11 +206,11 @@
     // 위젯 헤더 ↗ 클릭 → 해당 모듈로 딥링크 (Saved-View 부재 → 모듈 라우트로 매핑)
     private static string? LinkOf(string k) => k switch
     {
-        "coins" => "/coins",
-        "pie" => "/assets",
-        "weekly" => "/assets",
+        "coins" => "/live/coin",
+        "pie" => "/folio/assets",
+        "weekly" => "/folio/assets",
         "paper" => "/paper",
-        "imminent" => "/signals",
+        "imminent" => "/lab",
         "activity" => "/paper",
         _ => null
     };

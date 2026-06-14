@@ -1,6 +1,7 @@
 @page "/eventstudy"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject SymbolContext Ctx
 
 <div class="top">
     <div class="hello"><h1>🔬 개인 이벤트 스터디</h1><p>복합 패턴이 떴던 모든 과거 시점 이후의 미래수익 분포를 계산 — 규칙을 신뢰하기 전에 검증 (정보 제공용)</p></div>
@@ -107,7 +108,11 @@
         Conditions = new() { new CompositeCondition { Metric = m, Param = param, Op = op, Threshold = thr } }
     };
 
-    protected override void OnInitialized() => _saved = CompositeAlertEngine.Load(Db);
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        _saved = CompositeAlertEngine.Load(Db);
+    }
 
     private CompositeRule? Resolve()
     {
@@ -129,6 +134,7 @@
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        Ctx.Set(sym, _market);
         var rule = Resolve();
         if (rule == null) { _msg = "패턴을 선택하세요."; _res = null; return; }
 

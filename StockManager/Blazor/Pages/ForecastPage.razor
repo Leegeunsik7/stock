@@ -1,6 +1,7 @@
 @page "/forecast"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject SymbolContext Ctx
 
 <div class="top">
     <div class="hello"><h1>📐 예측 스코어보드</h1><p>엔진의 정량 예측을 실현치와 대조해 보정도(과신/편향)를 채점 — "내 예측은 믿을 만한가?"</p></div>
@@ -93,12 +94,13 @@
 
     private double ZHalf => _band >= 95 ? 1.96 : 1.645;
 
-    protected override void OnInitialized() { _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
+    protected override void OnInitialized() { if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; } _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
 
     private async Task RunBacktest()
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _score = null; return; }
+        Ctx.Set(sym, _market);
         _busy = true; _msg = ""; _score = null; StateHasChanged();
         try
         {

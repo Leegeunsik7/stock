@@ -1,6 +1,7 @@
 @page "/sizer"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject SymbolContext Ctx
 
 <div class="top">
     <div class="hello"><h1>🎚 포지션 사이저</h1><p>엣지(승률·손익비)와 변동성을 결합해 "이번엔 얼마를 걸까"를 켈리+변동성 타깃으로 산출 (정보 제공용)</p></div>
@@ -68,10 +69,16 @@
     private bool _busy;
     private SizeResult? _res;
 
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+    }
+
     private async Task RunAsync()
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        Ctx.Set(sym, _market);
         _busy = true; _msg = ""; _res = null; StateHasChanged();
         try
         {

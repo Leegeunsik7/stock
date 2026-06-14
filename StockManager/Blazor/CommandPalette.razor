@@ -140,7 +140,7 @@
                 Svc.AddCoinAlert(market, amt.Value);
                 Toasts.Success("알림 등록", $"{market} {amt:N0}원 이상", new()
                 {
-                    new ToastButton("코인 화면", () => { Nav.NavigateTo("/coins"); return Task.CompletedTask; })
+                    new ToastButton("코인 화면", () => { Nav.NavigateTo("/live/coin"); return Task.CompletedTask; })
                 });
                 return Task.CompletedTask;
             });

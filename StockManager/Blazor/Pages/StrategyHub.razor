@@ -1,0 +1,23 @@
+@page "/lab"
+@page "/lab/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "optimizer": <OptimizerPage /> break;
+    case "eventstudy": <EventStudyPage /> break;
+    case "miner": <MinerPage /> break;
+    case "sizer": <SizerPage /> break;
+    default: <SignalPage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "signals" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs =
+    {
+        ("signals", "시그널"), ("optimizer", "옵티마이저"), ("eventstudy", "이벤트 스터디"), ("miner", "가설 발굴"), ("sizer", "포지션 사이저")
+    };
+    private void Sel(string k) => Nav.NavigateTo(k == "signals" ? "/lab" : $"/lab/{k}");
+}

@@ -1,6 +1,7 @@
 @page "/optimizer"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject SymbolContext Ctx
 @inject ToastService Toasts
 @inject NavigationManager Nav
 @using System.Text.Json
@@ -180,6 +181,7 @@
 
     protected override void OnInitialized()
     {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
         _enabled = Db.GetSetting("Optimizer.Enabled") == "true";
         if (int.TryParse(Db.GetSetting("Optimizer.IntervalHours"), out var h) && h > 0) _intervalHours = h;
         LoadSnapshot();
@@ -218,6 +220,7 @@
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _oneMsg = "종목코드를 입력하세요."; return; }
+        Ctx.Set(sym, _market);
         _busy = true; _oneMsg = ""; _one = null; _wf = null; _wfMsg = ""; StateHasChanged();
         try
         {

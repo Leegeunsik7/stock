@@ -1,0 +1,18 @@
+@page "/intel"
+@page "/intel/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "analyze": <AIPage /> break;
+    case "journal": <JournalPage /> break;
+    default: <AdvisorPage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "advisor" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs = { ("advisor", "AI 비서(RAG)"), ("analyze", "종목 분석"), ("journal", "인과 저널") };
+    private void Sel(string k) => Nav.NavigateTo(k == "advisor" ? "/intel" : $"/intel/{k}");
+}

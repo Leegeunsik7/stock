@@ -1,6 +1,7 @@
 @page "/miner"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
+@inject SymbolContext Ctx
 @inject ToastService Toasts
 @inject NavigationManager Nav
 
@@ -75,10 +76,16 @@
     private bool _busy;
     private MiningResult? _res;
 
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+    }
+
     private async Task RunAsync()
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        Ctx.Set(sym, _market);
         _busy = true; _msg = ""; _res = null; StateHasChanged();
         try
         {

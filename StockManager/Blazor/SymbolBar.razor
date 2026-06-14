@@ -1,0 +1,63 @@
+@* SymbolBar - 전역 활성 종목 바 (IA 개편, v3.29.0) *@
+@implements IDisposable
+@inject SymbolContext Ctx
+@inject NavigationManager Nav
+
+<div class="symbar">
+    <span class="sb-lbl">활성 종목</span>
+    <input class="sb-in" placeholder="005930" @bind="_sym" @bind:event="oninput" @onkeydown="OnKey" />
+    <select class="sb-in" style="width:104px" @bind="_mkt">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <button class="sb-btn" @onclick="Apply">설정</button>
+
+    @if (Ctx.HasSymbol)
+    {
+        <span class="sb-cur">▶ @Ctx.Symbol</span>
+        <span class="sb-links">연구로 이동:
+            <a @onclick='() => Nav.NavigateTo("/lab/optimizer")'>옵티마이저</a>
+            <a @onclick='() => Nav.NavigateTo("/lab/eventstudy")'>이벤트</a>
+            <a @onclick='() => Nav.NavigateTo("/lab/miner")'>발굴</a>
+            <a @onclick='() => Nav.NavigateTo("/lab/sizer")'>사이징</a>
+            <a @onclick='() => Nav.NavigateTo("/validate")'>트윈</a>
+            <a @onclick='() => Nav.NavigateTo("/validate/forecast")'>예측</a>
+        </span>
+    }
+    else { <span class="sb-hint">종목을 설정하면 연구 도구가 자동으로 그 종목으로 열립니다</span> }
+</div>
+
+@code {
+    private string _sym = "";
+    private Market _mkt = Market.KRX_KOSPI;
+
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _sym = Ctx.Symbol; _mkt = Ctx.Market; }
+        Ctx.Changed += OnCtx;
+    }
+
+    private void OnCtx() => InvokeAsync(StateHasChanged);
+
+    private void Apply()
+    {
+        if (string.IsNullOrWhiteSpace(_sym)) return;
+        Ctx.Set(_sym, _mkt);
+    }
+
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") Apply(); }
+
+    public void Dispose() => Ctx.Changed -= OnCtx;
+}
+
+<style>
+    .symbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 28px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--accent) 4%,var(--bg));font-size:12.5px}
+    .symbar .sb-lbl{color:var(--sub);font-weight:700}
+    .symbar .sb-in{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:12.5px;color:var(--ink);width:120px}
+    .symbar .sb-btn{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:5px 12px;font-size:12.5px;cursor:pointer;font-weight:600}
+    .symbar .sb-cur{font-weight:800;color:var(--accent)}
+    .symbar .sb-links{color:var(--sub)}
+    .symbar .sb-links a{color:var(--accent);cursor:pointer;margin:0 5px;text-decoration:none}
+    .symbar .sb-links a:hover{text-decoration:underline}
+    .symbar .sb-hint{color:var(--sub)}
+</style>

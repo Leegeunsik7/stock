@@ -1,0 +1,21 @@
+@* HubTabs - 허브 내부 횡이동 슬림 탭 스트립 (IA 개편, v3.29.0) *@
+<div class="hubtabs">
+    @foreach (var it in Items)
+    {
+        <span class="hubtab @(string.Equals(it.Key, Active, StringComparison.OrdinalIgnoreCase) ? "on" : "")"
+              @onclick="() => OnSelect.InvokeAsync(it.Key)">@it.Label</span>
+    }
+</div>
+
+@code {
+    [Parameter] public (string Key, string Label)[] Items { get; set; } = Array.Empty<(string, string)>();
+    [Parameter] public string Active { get; set; } = "";
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+}
+
+<style>
+    .hubtabs{display:flex;gap:4px;padding:12px 28px 0;flex-wrap:wrap;border-bottom:1px solid var(--line);background:var(--bg)}
+    .hubtab{padding:8px 16px;border-radius:9px 9px 0 0;font-size:13px;font-weight:600;color:var(--sub);cursor:pointer;border:1px solid transparent;border-bottom:none;margin-bottom:-1px;user-select:none}
+    .hubtab:hover{background:color-mix(in srgb,var(--accent) 8%,transparent);color:var(--ink)}
+    .hubtab.on{background:var(--card);color:var(--ink);border-color:var(--line);border-bottom-color:var(--card)}
+</style>

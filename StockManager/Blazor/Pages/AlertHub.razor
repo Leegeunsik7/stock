@@ -1,0 +1,18 @@
+@page "/alertcenter"
+@page "/alertcenter/{Tab}"
+@inject NavigationManager Nav
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+@switch (Cur)
+{
+    case "composite": <CompositeAlertsPage /> break;
+    case "history": <AlertHistoryPage /> break;
+    default: <AlertPage /> break;
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "alerts" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs = { ("alerts", "알림 센터"), ("composite", "복합 알림"), ("history", "알림 이력") };
+    private void Sel(string k) => Nav.NavigateTo(k == "alerts" ? "/alertcenter" : $"/alertcenter/{k}");
+}
