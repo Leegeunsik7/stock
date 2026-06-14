@@ -1,0 +1,133 @@
+@page "/copilot"
+@inject LocalDatabase Db
+@using System.Text.Json
+
+<div class="top">
+    <div class="hello"><h1>🧑‍✈️ 퀀트 코파일럿</h1><p>목표를 정하면 백그라운드가 포트 상태를 지속 평가해 행동을 제안 (제안만 · 자동 주문 없음)</p></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-right:16px">
+        <input type="checkbox" checked="@_enabled" @onchange="ToggleEnabled" /> 코파일럿 가동
+    </label>
+</div>
+
+<div style="padding:0 28px 40px;max-width:880px">
+    <div style="background:color-mix(in srgb,var(--warn) 10%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ⚠️ 코파일럿은 목표(변동성/낙폭/레짐) 위반 시 <b>알림으로 '제안'만</b> 합니다. <b>실주문은 절대 자동 집행하지 않습니다.</b>
+        상태는 일별 총자산 스냅샷에서 산출(네트워크 0). 정책당 24시간 쿨다운.
+    </div>
+
+    <!-- 목표 추가 -->
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:16px">
+        <div style="font-weight:700;margin-bottom:8px">목표 추가</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input class="srch" style="flex:1;min-width:220px" placeholder="자연어 예: 변동성 15% 이하 / 낙폭 10% 방어 / 레짐 급변 가드" @bind="_nl" @bind:event="oninput" @onkeydown="OnKey" />
+            <button class="addbtn" @onclick="AddFromNl">＋ 추가</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:10px">
+            <span style="font-size:12px;color:var(--sub)">또는 수동:</span>
+            <select class="srch" style="width:130px" @bind="_kind">
+                <option value="VolTarget">변동성 목표</option><option value="MaxDrawdown">낙폭 방어</option><option value="RegimeGuard">레짐 가드</option>
+            </select>
+            <input class="fin" style="width:80px" type="number" @bind="_thr" /> <span style="font-size:12px;color:var(--sub)">%</span>
+            <button class="ghost" @onclick="AddManual">추가</button>
+            @if (_msg.Length > 0) { <span style="font-size:12px;color:var(--accent)">@_msg</span> }
+        </div>
+    </div>
+
+    <!-- 정책 목록 -->
+    <div style="font-weight:700;margin:6px 0 8px">활성 목표 (@_policies.Count)</div>
+    @if (_policies.Count == 0) { <div style="color:var(--sub);padding:8px 2px">목표가 없습니다. 위에서 추가하세요.</div> }
+    else
+    {
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <tbody>
+                @foreach (var p in _policies)
+                {
+                    <tr style="border-top:1px solid var(--line)">
+                        <td style="padding:8px 12px"><input type="checkbox" checked="@p.Enabled" @onchange="e => Toggle(p, e)" /></td>
+                        <td style="padding:8px 12px;font-weight:600">@p.Name</td>
+                        <td style="padding:8px 12px;color:var(--sub)">@KindKr(p.Kind)</td>
+                        <td style="text-align:right;padding:8px 12px"><button class="ghost" style="padding:3px 9px;font-size:11.5px" @onclick="() => Remove(p)">삭제</button></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <!-- 즉시 평가 -->
+    <button class="addbtn" @onclick="EvaluateNow">▶ 지금 평가</button>
+    @if (_evaluated)
+    {
+        <div style="margin-top:12px">
+            @if (!_ctx.Valid) { <div style="color:var(--sub)">총자산 스냅샷이 부족합니다(3일+). 며칠 운영하면 채워집니다.</div> }
+            else
+            {
+                <div class="sub" style="font-size:12px;margin-bottom:8px">현재 상태 — 변동성 @_ctx.PortfolioVolPct.ToString("0.0")% · 낙폭 @_ctx.DrawdownPct.ToString("0.0")% · 레짐 @_ctx.Regime</div>
+                @if (_proposals.Count == 0) { <div style="color:var(--up)">✅ 모든 목표 충족 — 제안 없음</div> }
+                else
+                {
+                    @foreach (var pr in _proposals)
+                    {
+                        <div style="background:color-mix(in srgb,var(--warn) 10%,transparent);border-left:3px solid var(--warn);border-radius:8px;padding:10px 13px;margin-bottom:8px">
+                            <div style="font-weight:700">🧑‍✈️ @pr.Title</div>
+                            <div style="font-size:12.5px;color:var(--sub);margin-top:2px">@pr.Detail</div>
+                        </div>
+                    }
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private List<CopilotPolicy> _policies = new();
+    private bool _enabled, _evaluated;
+    private string _nl = "", _kind = "VolTarget", _msg = "";
+    private double _thr = 15;
+    private CopilotEngine.Ctx _ctx = new();
+    private List<CopilotProposal> _proposals = new();
+
+    protected override void OnInitialized()
+    {
+        _enabled = Db.GetSetting("Copilot.Enabled") == "true";
+        _policies = CopilotStore.Load(Db);
+    }
+
+    private void ToggleEnabled(ChangeEventArgs e) { _enabled = e.Value is true; Db.SetSetting("Copilot.Enabled", _enabled ? "true" : "false"); }
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") AddFromNl(); }
+
+    private void AddFromNl()
+    {
+        var p = CopilotEngine.ParseGoal(_nl);
+        if (p == null) { _msg = "인식 실패 — '변동성/낙폭/레짐' 키워드 + 숫자로."; return; }
+        _policies.Add(p); CopilotStore.Save(Db, _policies); _nl = ""; _msg = $"추가됨: {p.Name}";
+    }
+
+    private void AddManual()
+    {
+        var kind = Enum.TryParse<PolicyKind>(_kind, out var k) ? k : PolicyKind.VolTarget;
+        var name = kind switch { PolicyKind.VolTarget => $"변동성 {_thr:0}% 이하", PolicyKind.MaxDrawdown => $"낙폭 -{_thr:0}% 방어", _ => "레짐 변화 가드" };
+        _policies.Add(new CopilotPolicy { Kind = kind, Threshold = _thr, Name = name });
+        CopilotStore.Save(Db, _policies); _msg = $"추가됨: {name}";
+    }
+
+    private void Toggle(CopilotPolicy p, ChangeEventArgs e) { p.Enabled = e.Value is true; CopilotStore.Save(Db, _policies); }
+    private void Remove(CopilotPolicy p) { _policies.Remove(p); CopilotStore.Save(Db, _policies); }
+
+    private void EvaluateNow()
+    {
+        _evaluated = true;
+        try
+        {
+            var j = Db.GetSetting("Dashboard.Snapshots");
+            var snaps = string.IsNullOrWhiteSpace(j) ? null : JsonSerializer.Deserialize<Dictionary<string, decimal>>(j);
+            var equity = snaps?.OrderBy(k => k.Key, StringComparer.Ordinal).Select(k => k.Value).ToList() ?? new();
+            _ctx = CopilotEngine.BuildCtx(equity);
+            _proposals = CopilotEngine.Evaluate(_policies, _ctx);
+        }
+        catch { _ctx = new(); _proposals = new(); }
+    }
+
+    private static string KindKr(PolicyKind k) => k switch { PolicyKind.VolTarget => "변동성 목표", PolicyKind.MaxDrawdown => "낙폭 방어", _ => "레짐 가드" };
+}

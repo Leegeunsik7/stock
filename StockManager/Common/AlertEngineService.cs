@@ -74,6 +74,7 @@ namespace StockManager.Common
                 await CheckRegimeAsync();
                 await CheckDriftAsync();
                 await CheckNightlyAsync();
+                CheckCopilot();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -330,6 +331,40 @@ namespace StockManager.Common
             }
             catch { }
             Log.Info($"[Nightly] 리포트 생성 · 전송 {(sent ? "성공" : "채널 없음/실패")}");
+        }
+
+        // ===== 목표주도 코파일럿 🅰 (옵트인 · 게이팅: 제안/알림만) =====
+        //  Dashboard.Snapshots(일별 총자산)에서 변동성·낙폭·레짐을 산출해 정책을 평가,
+        //  목표 위반 시 행동을 '제안'(시스템 알림 → 인과 저널에 자동 적재). 주문 절대 미접촉.
+        private void CheckCopilot()
+        {
+            try
+            {
+                if (_db!.GetSetting("Copilot.Enabled") != "true") return;
+                var policies = CopilotStore.Load(_db);
+                if (policies.Count == 0) return;
+
+                var j = _db.GetSetting("Dashboard.Snapshots");
+                if (string.IsNullOrWhiteSpace(j)) return;
+                var snaps = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, decimal>>(j);
+                if (snaps == null || snaps.Count < 3) return;
+                var equity = snaps.OrderBy(k => k.Key, StringComparer.Ordinal).Select(k => k.Value).ToList();
+
+                var ctx = CopilotEngine.BuildCtx(equity);
+                var proposals = CopilotEngine.Evaluate(policies, ctx);
+                if (proposals.Count == 0) return;
+
+                bool changed = false;
+                foreach (var pr in proposals)
+                {
+                    var pol = policies.FirstOrDefault(x => x.Id == pr.PolicyId);
+                    if (pol != null && DateTime.TryParse(pol.LastFired, out var lf) && (DateTime.Now - lf).TotalHours < 24) continue;  // 정책당 24h 쿨다운
+                    if (pol != null) { pol.LastFired = DateTime.Now.ToString("o"); changed = true; }
+                    AlertCenter.Instance.RaiseSystem("🧑‍✈️ 코파일럿 제안: " + pr.Title, pr.Detail + "  (제안일 뿐 자동 주문 없음)", AlertLevel.Info);
+                }
+                if (changed) CopilotStore.Save(_db, policies);
+            }
+            catch (Exception ex) { Log.Warn($"[Copilot] {ex.Message}"); }
         }
 
         private Dictionary<string, double> LoadDriftTarget()
