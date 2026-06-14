@@ -1,0 +1,121 @@
+@page "/debate"
+@implements IDisposable
+@inject AiService Ai
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject SymbolContext Ctx
+@inject NavigationManager Nav
+@using System.Data
+
+<CrossLinks Current="" />
+<div class="top">
+    <div class="hello"><h1>🗣 멀티에이전트 토론</h1><p>강세론자·약세론자 AI가 결정론 데이터로 토론하고 심판이 승률 가중으로 판정 (정보 제공용)</p></div>
+    <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <button class="addbtn" style="margin-right:16px" disabled="@_busy" @onclick="RunAsync">@(_busy?"토론 중…":"⚔ 토론 시작")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:920px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:14px">
+        ℹ️ 활성 백엔드 <b>@Ai.ActiveLlm</b> · 강세/약세/심판 3회 호출(로컬 LLM이면 무료·프라이빗).
+        심판은 <b>과거 판정 적중률</b>을 보고 가중합니다. 과거가 미래를 보장하지 않습니다(투자 권유 아님).
+        <span style="margin-left:6px">미해결 @(_pending)건 · <a style="color:var(--accent);cursor:pointer" @onclick="ResolveAsync">⏱ 정산</a></span>
+    </div>
+
+    @if (!Ai.HasLlm)
+    {
+        <div style="background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12.5px">
+            ⚠️ LLM이 설정되지 않았습니다. 설정 → 「🧠 LLM 백엔드」에서 Gemini 키 또는 로컬 LLM(Ollama)을 켜세요.
+        </div>
+    }
+
+    @if (_busy) { <div style="color:var(--sub);padding:16px">시세 수집 + 3에이전트 토론 중…</div> }
+    else if (_err.Length > 0) { <div style="color:var(--down);padding:16px">@_err</div> }
+    else if (_res is { Ok: true })
+    {
+        <div style="background:color-mix(in srgb,@StanceColor() 14%,transparent);border-left:4px solid @StanceColor();border-radius:8px;padding:12px 15px;margin-bottom:14px">
+            <div style="font-weight:800;font-size:15px;color:@StanceColor()">⚖️ 심판 판정: @_res.StanceLabel</div>
+            <div style="font-size:13px;line-height:1.65;white-space:pre-wrap;margin-top:6px">@_res.JudgeText</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div style="background:color-mix(in srgb,var(--up) 8%,transparent);border:1px solid color-mix(in srgb,var(--up) 40%,transparent);border-radius:10px;padding:12px 14px">
+                <div style="font-weight:800;color:var(--up);margin-bottom:6px">🐂 강세론자</div>
+                <div style="font-size:12.5px;line-height:1.6;white-space:pre-wrap">@_res.BullText</div>
+            </div>
+            <div style="background:color-mix(in srgb,var(--down) 8%,transparent);border:1px solid color-mix(in srgb,var(--down) 40%,transparent);border-radius:10px;padding:12px 14px">
+                <div style="font-weight:800;color:var(--down);margin-bottom:6px">🐻 약세론자</div>
+                <div style="font-size:12.5px;line-height:1.6;white-space:pre-wrap">@_res.BearText</div>
+            </div>
+        </div>
+        <details style="font-size:11.5px;color:var(--sub)"><summary style="cursor:pointer">📊 그라운딩 데이터 · 심판 승률</summary>
+            <div style="white-space:pre-wrap;margin-top:6px">@_res.Context</div>
+            <div style="margin-top:6px">심판 과거 적중 — 강세 판정 @_rec.BullishHitPct.ToString("0")%(@_rec.BullishN) · 약세 판정 @_rec.BearishHitPct.ToString("0")%(@_rec.BearishN)</div>
+        </details>
+    }
+</div>
+
+@code {
+    private string _symbol = "", _err = "", _model = "gemini-2.0-flash";
+    private Market _market = Market.KRX_KOSPI;
+    private bool _busy;
+    private DebateResult? _res;
+    private BullBearRecord _rec = new();
+    private int _pending;
+
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
+        _pending = DebateLog.PendingCount(Db);
+        _rec = DebateLog.Stats(Db);
+    }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
+
+    private string StanceColor() => _res?.Stance switch { > 0 => "var(--up)", < 0 => "var(--down)", _ => "var(--sub)" };
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _err = "종목코드를 입력하세요."; _res = null; return; }
+        Ctx.Set(sym, _market);
+        _busy = true; _err = ""; _res = null; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-6), DateTime.Now);
+            if (candles.Count < 21) { _err = "히스토리가 부족합니다(시세 제공자 확인)."; return; }
+            _rec = DebateLog.Stats(Db);
+            _res = await DebateService.RunAsync(Ai, sym, candles, _rec, _model);
+            if (!_res.Ok) { _err = _res.Error; _res = null; return; }
+
+            // 판정 기록(10일 후 정산) → 승률 채점 누적
+            DebateLog.Record(Db, new LiveDebate
+            {
+                IssuedAt = DateTime.Now.ToString("o"),
+                ResolveAt = DateTime.Now.AddDays(14).ToString("o"),
+                Symbol = sym, Market = (int)_market, Stance = _res.Stance,
+                BasePrice = (double)candles[^1].Close
+            });
+            _pending = DebateLog.PendingCount(Db);
+        }
+        catch (Exception ex) { _err = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task ResolveAsync()
+    {
+        var due = DebateLog.Load(Db).Where(d => !d.Resolved && DateTime.TryParse(d.ResolveAt, out var ra) && ra <= DateTime.Now).ToList();
+        var px = new Dictionary<(string, int), decimal>();
+        foreach (var grp in due.GroupBy(d => (d.Symbol, d.Market)))
+        {
+            try { var q = await Provider.GetQuotesAsync(new[] { grp.Key.Symbol }, (Market)grp.Key.Market); var pr = q.FirstOrDefault()?.Price ?? 0m; if (pr > 0) px[(grp.Key.Symbol, grp.Key.Market)] = pr; }
+            catch { }
+        }
+        DebateLog.ResolveDue(Db, (s, m) => px.TryGetValue((s, (int)m), out var p) ? p : 0m, DateTime.Now);
+        _pending = DebateLog.PendingCount(Db); _rec = DebateLog.Stats(Db); StateHasChanged();
+    }
+}
