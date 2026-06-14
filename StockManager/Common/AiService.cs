@@ -19,7 +19,22 @@ namespace StockManager.Common
         private readonly LocalDatabase _db;
         public AiService(LocalDatabase db) { _db = db; }
 
-        public bool HasKey => !string.IsNullOrWhiteSpace(_db.GetSecret("Gemini.ApiKey"));
+        // 어느 백엔드든 사용 가능하면 LLM 기능 활성(페이지 호환 위해 HasKey 이름 유지)
+        public bool HasKey => HasLlm;
+        public bool HasLlm => GeminiKeyPresent || OllamaEnabled;
+        private bool GeminiKeyPresent => !string.IsNullOrWhiteSpace(_db.GetSecret("Gemini.ApiKey"));
+        private bool OllamaEnabled => _db.GetSetting("Ollama.Enabled") == "true";
+
+        /// <summary>현재 활성 백엔드 라벨("Gemini" | "로컬(Ollama)" | "미설정").</summary>
+        public string ActiveLlm => LlmRouter.Resolve(_db.GetSetting("Llm.Provider"), GeminiKeyPresent, OllamaEnabled) switch
+        {
+            "gemini" => "Gemini",
+            "ollama" => $"로컬(Ollama:{OllamaModel})",
+            _ => "미설정"
+        };
+
+        private string OllamaUrl => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Url")) ? OllamaProvider.DefaultUrl : _db.GetSetting("Ollama.Url")!;
+        private string OllamaModel => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Model")) ? OllamaProvider.DefaultModel : _db.GetSetting("Ollama.Model")!;
 
         // ===== 단일 종목 분석 (기존) =====
         public Task<string> AnalyzeAsync(string symbol, string market, string model = "gemini-2.0-flash")
@@ -107,13 +122,16 @@ namespace StockManager.Common
             return CompleteAsync(prompt, model);
         }
 
-        // ===== 공용 Gemini 완성 호출 (grounded prompt → text) =====
+        // ===== 공용 완성 호출 (grounded prompt → text) — 라우터가 백엔드 선택 =====
         public async Task<string> CompleteAsync(string prompt, string model = "gemini-2.0-flash")
         {
-            var apiKey = _db.GetSecret("Gemini.ApiKey");
-            if (string.IsNullOrWhiteSpace(apiKey))
-                return "⚠️ Gemini API 키가 설정되지 않았습니다.\n설정 마법사(/setup) 또는 거래 설정에서 키를 입력하세요.";
+            var route = LlmRouter.Resolve(_db.GetSetting("Llm.Provider"), GeminiKeyPresent, OllamaEnabled);
+            if (route == "none")
+                return "⚠️ LLM이 설정되지 않았습니다.\nGemini 키를 입력하거나(설정 마법사/거래 설정), 설정에서 로컬 LLM(Ollama)을 켜세요.";
+            if (route == "ollama")
+                return await OllamaProvider.GenerateAsync(Http, OllamaUrl, OllamaModel, prompt);
 
+            var apiKey = _db.GetSecret("Gemini.ApiKey");
             try
             {
                 var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";

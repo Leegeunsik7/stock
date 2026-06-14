@@ -48,6 +48,32 @@
     </div>
 
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">🧠 LLM 백엔드 (프라이버시)</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+            <b>로컬(Ollama)</b>를 켜면 AI 비서·토론·브리핑이 <b>오프라인·무제한·완전 프라이빗</b>으로 동작합니다(데이터가 기기를 떠나지 않음, API 한도 없음).
+            먼저 <code>ollama serve</code> 실행 + <code>ollama pull @_ollamaModel</code> 필요.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:8px">
+            <div><label class="flbl">제공자</label>
+                <select class="fin" style="width:130px" @bind="_llmProvider">
+                    <option value="auto">auto (키 있으면 Gemini)</option>
+                    <option value="gemini">Gemini (클라우드)</option>
+                    <option value="ollama">로컬 (Ollama)</option>
+                </select>
+            </div>
+            <label class="ck" style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                <input type="checkbox" @bind="_ollamaEnabled" /> 로컬 LLM 사용
+            </label>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <div><label class="flbl">Ollama URL</label><input class="fin" style="width:200px" @bind="_ollamaUrl" /></div>
+            <div><label class="flbl">모델</label><input class="fin" style="width:130px" @bind="_ollamaModel" /></div>
+            <button class="addbtn" @onclick="ApplyLlm">적용</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">현재 활성: <b>@_llmActive</b> @if (_llmMsg.Length > 0) { <span>· @_llmMsg</span> }</div>
+    </div>
+
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
         <div style="font-weight:700;margin-bottom:6px">🛰 레짐 변화 감시 (이상탐지)</div>
         <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
             고정 임계값을 넘어, 보유 종목이 <b>평소 성격에서 벗어나는 순간</b>(수익률 이상치·변동성 급등·추세 레짐 이동)과
@@ -101,6 +127,8 @@
     private bool _driftEnabled;
     private int _driftBand = 5, _driftHours = 24;
     private string _driftMsg = "";
+    private string _llmProvider = "auto", _ollamaUrl = "http://localhost:11434", _ollamaModel = "llama3.1", _llmMsg = "", _llmActive = "";
+    private bool _ollamaEnabled;
 
     protected override void OnInitialized()
     {
@@ -115,6 +143,21 @@
         _driftEnabled = Db.GetSetting("Drift.Enabled") == "true";
         if (double.TryParse(Db.GetSetting("Drift.BandPct"), out var bb) && bb > 0) _driftBand = (int)bb;
         if (int.TryParse(Db.GetSetting("Drift.IntervalHours"), out var dh) && dh > 0) _driftHours = dh;
+        var lp = Db.GetSetting("Llm.Provider"); if (!string.IsNullOrWhiteSpace(lp)) _llmProvider = lp;
+        _ollamaEnabled = Db.GetSetting("Ollama.Enabled") == "true";
+        var ou = Db.GetSetting("Ollama.Url"); if (!string.IsNullOrWhiteSpace(ou)) _ollamaUrl = ou;
+        var om = Db.GetSetting("Ollama.Model"); if (!string.IsNullOrWhiteSpace(om)) _ollamaModel = om;
+        _llmActive = new AiService(Db).ActiveLlm;
+    }
+
+    private void ApplyLlm()
+    {
+        Db.SetSetting("Llm.Provider", _llmProvider);
+        Db.SetSetting("Ollama.Enabled", _ollamaEnabled ? "true" : "false");
+        Db.SetSetting("Ollama.Url", _ollamaUrl.Trim());
+        Db.SetSetting("Ollama.Model", _ollamaModel.Trim());
+        _llmActive = new AiService(Db).ActiveLlm;
+        _llmMsg = "적용됨 — AI 비서/브리핑/토론에 반영";
     }
 
     private void ApplyDrift()
