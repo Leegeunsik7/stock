@@ -72,6 +72,7 @@ namespace StockManager.Common
                 await CheckAutoDcaAsync();
                 await CheckOptimizerAsync();
                 await CheckRegimeAsync();
+                await CheckDriftAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -246,6 +247,73 @@ namespace StockManager.Common
         {
             try { _db!.SetSetting("Regime.Alerts", System.Text.Json.JsonSerializer.Serialize(d)); }
             catch (Exception ex) { Log.Warn($"[Regime] 쿨다운 저장 실패: {ex.Message}"); }
+        }
+
+        // ===== MPT 리밸런싱 드리프트 트리거 🄸 (옵트인 · 읽기전용) =====
+        //  /portfolio 리밸런싱 탭에서 저장한 타겟 비중(Rebalance.Target) 대비 현재 비중 괴리가
+        //  밴드(기본 ±5%p)를 넘으면 "리밸런싱 시점" 알림. 종목당이 아닌 포트 1건, 20h 쿨다운.
+        private async Task CheckDriftAsync()
+        {
+            if (_db!.GetSetting("Drift.Enabled") != "true" || _provider == null) return;
+            int hours = int.TryParse(_db.GetSetting("Drift.IntervalHours"), out var hh) && hh > 0 ? hh : 24;
+            if (DateTime.TryParse(_db.GetSetting("Drift.LastRun"), out var last) && (DateTime.Now - last).TotalHours < hours) return;
+            double band = double.TryParse(_db.GetSetting("Drift.BandPct"), out var b) && b > 0 ? b : 5.0;
+
+            var target = LoadDriftTarget();
+            if (target.Count == 0) return;                                  // 저장된 타겟 없으면 skip
+            _db.SetSetting("Drift.LastRun", DateTime.Now.ToString("o"));    // 먼저 마킹
+
+            var holdings = _db.GetAllHoldings()
+                .Where(h => h.Market != Market.CRYPTO && !string.IsNullOrWhiteSpace(h.Symbol)).ToList();
+            if (holdings.Count == 0) return;
+            try { _usdKrw = await _fx.GetUsdKrwAsync(); } catch { }
+
+            // 현재 비중: 보유 주식 시세 수집(USD→KRW). 실패 종목은 보유 CurrentPrice로 폴백.
+            var priceKrw = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var grp in holdings.GroupBy(h => h.Market))
+            {
+                try
+                {
+                    var quotes = await _provider.GetQuotesAsync(grp.Select(h => h.Symbol), grp.Key);
+                    bool usd = grp.Key is Market.US_NYSE or Market.US_NASDAQ or Market.US_AMEX;
+                    foreach (var q in quotes) if (q.Price > 0) priceKrw[q.Symbol] = q.Price * (usd ? _usdKrw : 1m);
+                }
+                catch { }
+            }
+            double tot = 0; var vals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in holdings)
+            {
+                decimal px = priceKrw.TryGetValue(h.Symbol, out var p) ? p
+                           : h.CurrentPrice * (h.Currency == Currency.USD ? _usdKrw : 1m);
+                double v = (double)(px * h.Quantity);
+                vals[h.Symbol] = vals.TryGetValue(h.Symbol, out var ex) ? ex + v : v;
+                tot += v;
+            }
+            if (tot <= 0) return;
+            var current = vals.ToDictionary(kv => kv.Key, kv => kv.Value / tot, StringComparer.OrdinalIgnoreCase);
+
+            var rep = RebalanceDrift.Compute(current, target);
+            if (!RebalanceDrift.Breached(rep, band)) return;
+            if (DateTime.TryParse(_db.GetSetting("Drift.LastAlert"), out var la) && (DateTime.Now - la).TotalHours < 20) return;
+
+            _db.SetSetting("Drift.LastAlert", DateTime.Now.ToString("o"));
+            AlertCenter.Instance.RaiseSystem("⚖️ 리밸런싱 시점",
+                $"타겟 대비 최대 {rep.MaxDriftPct:0.0}%p 이탈({rep.MaxSymbol}) · 회전율 {rep.TurnoverPct:0.0}% — 포트폴리오 허브에서 조정 검토",
+                AlertLevel.Info);
+            Log.Info($"[Drift] 최대 {rep.MaxDriftPct:0.0}%p (band {band})");
+        }
+
+        private Dictionary<string, double> LoadDriftTarget()
+        {
+            try
+            {
+                var j = _db!.GetSetting("Rebalance.Target");
+                if (!string.IsNullOrWhiteSpace(j))
+                    return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(j)
+                           ?? new(StringComparer.OrdinalIgnoreCase);
+            }
+            catch { }
+            return new(StringComparer.OrdinalIgnoreCase);
         }
 
         // ===== ① 코인 지정가 알림 (재무장 정책 — 원본 CryptoWatcher.CheckAlerts와 동일) =====

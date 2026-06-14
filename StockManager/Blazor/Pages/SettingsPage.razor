@@ -63,6 +63,23 @@
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">보유 주식(최대 25)을 4개월 일봉으로 점검 · 종목당 20시간 쿨다운. @if (_regimeMsg.Length > 0) { <span>@_regimeMsg</span> }</div>
     </div>
 
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">⚖️ 리밸런싱 드리프트 알림</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+            포트폴리오 허브 → 리밸런싱 탭에서 <b>「🎯 타겟으로 저장」</b> 한 비중 대비, 현재 비중이 밴드(%p)를 벗어나면
+            백그라운드에서 <b>"리밸런싱 시점"</b> 알림. 읽기전용 — 주문은 하지 않습니다.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" @bind="_driftEnabled" /> 드리프트 감시 사용
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <div><label class="flbl">이탈 밴드(%p)</label><input class="fin" style="width:80px" type="number" min="1" max="50" @bind="_driftBand" /></div>
+            <div><label class="flbl">점검 간격(시간)</label><input class="fin" style="width:90px" type="number" min="1" max="168" @bind="_driftHours" /></div>
+            <button class="addbtn" @onclick="ApplyDrift">적용</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_driftMsg.Length > 0) { <span>@_driftMsg</span> } else { <span>저장된 타겟이 없으면 알림은 발생하지 않습니다. 종목당 20시간 쿨다운.</span> }</div>
+    </div>
+
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px">
         <div style="font-weight:700;margin-bottom:14px">빠른 설정</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -81,6 +98,9 @@
     private bool _regimeEnabled;
     private int _regimeHours = 12;
     private string _regimeMsg = "";
+    private bool _driftEnabled;
+    private int _driftBand = 5, _driftHours = 24;
+    private string _driftMsg = "";
 
     protected override void OnInitialized()
     {
@@ -92,6 +112,20 @@
         _lanPin = Db.GetSetting("Lan.Pin") ?? "";
         _regimeEnabled = Db.GetSetting("Regime.Enabled") == "true";
         if (int.TryParse(Db.GetSetting("Regime.IntervalHours"), out var rh) && rh > 0) _regimeHours = rh;
+        _driftEnabled = Db.GetSetting("Drift.Enabled") == "true";
+        if (double.TryParse(Db.GetSetting("Drift.BandPct"), out var bb) && bb > 0) _driftBand = (int)bb;
+        if (int.TryParse(Db.GetSetting("Drift.IntervalHours"), out var dh) && dh > 0) _driftHours = dh;
+    }
+
+    private void ApplyDrift()
+    {
+        Db.SetSetting("Drift.Enabled", _driftEnabled ? "true" : "false");
+        Db.SetSetting("Drift.BandPct", Math.Clamp(_driftBand, 1, 50).ToString());
+        Db.SetSetting("Drift.IntervalHours", Math.Clamp(_driftHours, 1, 168).ToString());
+        var hasTarget = !string.IsNullOrWhiteSpace(Db.GetSetting("Rebalance.Target"));
+        _driftMsg = _driftEnabled
+            ? (hasTarget ? "✅ 감시 켜짐 — 다음 점검부터 적용" : "⚠️ 켜졌지만 저장된 타겟이 없습니다(리밸런싱 탭에서 저장).")
+            : "감시를 껐습니다.";
     }
 
     private void ApplyRegime()
