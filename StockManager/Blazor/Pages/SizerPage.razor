@@ -1,0 +1,98 @@
+@page "/sizer"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>🎚 포지션 사이저</h1><p>엣지(승률·손익비)와 변동성을 결합해 "이번엔 얼마를 걸까"를 켈리+변동성 타깃으로 산출 (정보 제공용)</p></div>
+    <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <select class="srch" style="width:90px" @bind="_horizon"><option value="5">+5일</option><option value="10">+10일</option><option value="20">+20일</option></select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"계산 중…":"▶ 사이징")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:880px">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px">
+        <label style="font-size:12.5px;color:var(--sub)">투자 가능 금액 <input class="fin" style="width:130px" type="number" @bind="_capital" /> 원</label>
+        <label style="font-size:12.5px;color:var(--sub)">목표 변동성 <input class="fin" style="width:60px" type="number" @bind="_targetVol" />%</label>
+        <label style="font-size:12.5px;color:var(--sub)">켈리 분할 <input class="fin" style="width:55px" type="number" step="0.1" min="0.1" max="1" @bind="_kellyFrac" /></label>
+        <label style="font-size:12.5px;color:var(--sub)">상한 <input class="fin" style="width:55px" type="number" step="5" @bind="_maxW" />%</label>
+    </div>
+
+    <div style="background:color-mix(in srgb,var(--warn) 10%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ⚠️ 켈리는 정상성·독립성을 가정합니다 — <b>분할 켈리(≤0.5)</b>를 권장하고, 권장은 켈리·변동성 중 <b>보수적</b> 쪽입니다.
+        엣지는 이 종목의 +@(_horizon)일 과거 수익 분포에서 추정 — 정보 제공이며 투자 권유가 아닙니다.
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:20px">시세 수집 + 엣지 추정 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
+    else if (_res is { IsValid: true })
+    {
+        <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;font-weight:600">
+            @_res.Verdict
+            @if (_res.RecommendedWeight > 0)
+            {
+                <span style="color:var(--sub);font-weight:400"> · 금액 ≈ @(( _res.RecommendedWeight * (double)_capital).ToString("N0"))원</span>
+            }
+        </div>
+
+        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="tile @(_res.WinProbPct>=50?"u":"d")"><div class="lab">승률</div><div class="val num">@_res.WinProbPct.ToString("0")%</div></div>
+            <div class="tile k"><div class="lab">손익비</div><div class="val num">@_res.PayoffRatio.ToString("0.00")</div></div>
+            <div class="tile @(_res.ExpectancyPct>=0?"u":"d")"><div class="lab">기대값(@(_horizon)일)</div><div class="val num">@_res.ExpectancyPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">연 변동성</div><div class="val num">@_res.AssetVolAnnualPct.ToString("0")%</div></div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <tbody>
+                <tr style="border-bottom:1px solid var(--line)"><td style="padding:9px 14px;color:var(--sub)">전체 켈리 f*</td><td style="padding:9px 14px;text-align:right;font-weight:700">@(( _res.KellyFull*100).ToString("0.0"))%</td></tr>
+                <tr style="border-bottom:1px solid var(--line)"><td style="padding:9px 14px;color:var(--sub)">분할 켈리 비중 (×@_res.KellyFraction, 상한 @(_maxW)%)</td><td style="padding:9px 14px;text-align:right;font-weight:700">@(( _res.KellyWeight*100).ToString("0.0"))%</td></tr>
+                <tr style="border-bottom:1px solid var(--line)"><td style="padding:9px 14px;color:var(--sub)">변동성 타깃 비중 (@(_targetVol)% / @_res.AssetVolAnnualPct.ToString("0")%)</td><td style="padding:9px 14px;text-align:right;font-weight:700">@(( _res.VolWeight*100).ToString("0.0"))%</td></tr>
+                <tr style="background:color-mix(in srgb,var(--accent) 8%,transparent)"><td style="padding:11px 14px;font-weight:800">✅ 권장 비중 (보수적)</td><td style="padding:11px 14px;text-align:right;font-weight:800;font-size:15px" class="@(_res.RecommendedWeight>0?"up":"")">@(( _res.RecommendedWeight*100).ToString("0.0"))%</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:8px">@_res.Note</div>
+    }
+</div>
+
+@code {
+    private string _symbol = "", _msg = "";
+    private Market _market = Market.KRX_KOSPI;
+    private int _horizon = 10, _targetVol = 15, _maxW = 25;
+    private decimal _capital = 10_000_000m;
+    private double _kellyFrac = 0.5;
+    private bool _busy;
+    private SizeResult? _res;
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        _busy = true; _msg = ""; _res = null; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-24), DateTime.Now);
+            var closes = candles.Select(c => (double)c.Close).ToList();
+            if (closes.Count < _horizon + 10) { _msg = "히스토리가 부족합니다(시세 제공자 확인)."; return; }
+
+            // horizon 미래수익 표본 + 일수익률 변동성(연환산)
+            var fwd = new List<double>();
+            for (int i = 0; i + _horizon < closes.Count; i++)
+                if (closes[i] > 0) fwd.Add((closes[i + _horizon] - closes[i]) / closes[i] * 100.0);
+            var daily = new List<double>();
+            for (int i = 1; i < closes.Count; i++)
+                if (closes[i - 1] > 0) daily.Add((closes[i] - closes[i - 1]) / closes[i - 1] * 100.0);
+            double mean = daily.Average();
+            double vol = Math.Sqrt(daily.Select(r => (r - mean) * (r - mean)).Sum() / Math.Max(1, daily.Count - 1)) * Math.Sqrt(252.0);
+
+            _res = PositionSizer.Suggest(fwd, vol, _targetVol, Math.Clamp(_kellyFrac, 0.1, 1.0), Math.Clamp(_maxW, 5, 100) / 100.0);
+            if (!_res.IsValid) { _msg = _res.Note; _res = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}
