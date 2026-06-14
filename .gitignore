@@ -11,6 +11,7 @@
 [Dd]ebug/
 [Rr]elease/
 publish/
+installer/Output/
 *.dll
 *.pdb
 
