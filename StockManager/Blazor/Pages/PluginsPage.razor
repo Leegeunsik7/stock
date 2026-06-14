@@ -1,0 +1,182 @@
+@page "/plugins"
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>🧩 플러그인</h1><p>plugins/ 폴더의 매니페스트를 런타임에 스캔 — 지표·알림 규칙·프롬프트 템플릿을 다시 빌드 없이 편입</p></div>
+    <div style="margin-right:16px;display:flex;gap:8px">
+        <button class="ghost" @onclick="OpenFolder">📂 폴더 열기</button>
+        <button class="addbtn" @onclick="Rebuild">🔄 다시 스캔</button>
+    </div>
+</div>
+
+<div style="padding:0 28px 40px;max-width:900px">
+    <div class="sub" style="font-size:12px;margin-bottom:12px">
+        스캔 위치: <code>@_dir</code> · 발견 <b>@(_cat.Count)</b>개 · 활성 <b>@(_cat.Active.Count())</b>개
+    </div>
+
+    @if (!string.IsNullOrEmpty(_msg))
+    {
+        <div style="background:color-mix(in srgb,var(--accent) 8%,transparent);border:1px solid var(--line);border-radius:10px;padding:9px 13px;font-size:12.5px;margin-bottom:12px">@_msg</div>
+    }
+
+    <!-- 어셈블리 허용 게이트 -->
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap">
+            <input type="checkbox" checked="@_allowAsm" @onchange="@(e => ToggleAllow(e.Value is true))" />
+            🔒 어셈블리(.dll) 플러그인 허용
+        </label>
+        <div class="sub" style="font-size:11.5px;line-height:1.7">
+            ⚠️ <b>.dll 플러그인은 앱 권한으로 임의 코드를 실행</b>합니다. 신뢰하는 제작자의 것만 켜세요.
+            기본은 차단이며, 선언적(지표·알림·프롬프트) 플러그인은 이 설정과 무관하게 안전하게 동작합니다.
+        </div>
+    </div>
+
+    <!-- 카탈로그 -->
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:18px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                <th style="text-align:left;padding:9px 14px;width:64px">사용</th>
+                <th style="text-align:left;padding:9px 14px">플러그인</th>
+                <th style="text-align:left;padding:9px 14px;width:96px">종류</th>
+                <th style="text-align:left;padding:9px 14px;width:72px">버전</th>
+                <th style="text-align:left;padding:9px 14px;width:150px">상태</th>
+            </tr></thead>
+            <tbody>
+            @if (_cat.Count == 0)
+            {
+                <tr><td colspan="5" style="padding:18px 14px;color:var(--sub);text-align:center">
+                    발견된 플러그인이 없습니다. <b>📂 폴더 열기</b> → <code>*.plugin.json</code> 매니페스트를 넣고 <b>🔄 다시 스캔</b>.
+                </td></tr>
+            }
+            @foreach (var d in _cat.Items)
+            {
+                <tr style="border-top:1px solid var(--line)">
+                    <td style="padding:8px 14px">
+                        <input type="checkbox" checked="@(d.Status == PluginStatus.Ok)"
+                               @onchange="@(e => Toggle(d.Manifest.Id, e.Value is true))" />
+                    </td>
+                    <td style="padding:8px 14px">
+                        <div style="font-weight:600">@d.Manifest.Name</div>
+                        <div class="sub" style="font-size:11px">@d.Manifest.Id @(string.IsNullOrWhiteSpace(d.Manifest.Author) ? "" : "· " + d.Manifest.Author)</div>
+                        @if (!string.IsNullOrWhiteSpace(d.Manifest.Description))
+                        {
+                            <div class="sub" style="font-size:11px;opacity:.85">@d.Manifest.Description</div>
+                        }
+                    </td>
+                    <td style="padding:8px 14px">@KindLabel(d.Manifest.Kind)</td>
+                    <td style="padding:8px 14px;color:var(--sub)">@d.Manifest.Version</td>
+                    <td style="padding:8px 14px" class="@StatusClass(d.Status)">
+                        @StatusLabel(d.Status)
+                        <div class="sub" style="font-size:10.5px">@d.Detail</div>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    @if (_cat.Errors.Count > 0)
+    {
+        <div style="font-weight:700;margin-bottom:8px;color:var(--down,#e34d4d)">⚠️ 매니페스트 경고 @(_cat.Errors.Count)건</div>
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;font-size:12px;line-height:1.8;margin-bottom:18px">
+            @foreach (var e in _cat.Errors) { <div>· @e</div> }
+        </div>
+    }
+
+    <!-- 매니페스트 작성 가이드 -->
+    <details style="margin-top:6px">
+        <summary style="cursor:pointer;font-weight:700;padding:6px 0">📝 매니페스트 작성법 (샘플)</summary>
+        <div class="sub" style="font-size:11.5px;margin:6px 0 8px">
+            파일명은 <code>이름.plugin.json</code>. 폴더에 넣고 다시 스캔하면 자동 편입됩니다.
+        </div>
+        <pre style="background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:11.5px;overflow:auto;white-space:pre">@_sample</pre>
+    </details>
+</div>
+
+@code {
+    private PluginCatalog _cat = new(new List<PluginDescriptor>(), new List<string>());
+    private HashSet<string> _enabled = new(StringComparer.OrdinalIgnoreCase);
+    private bool _allowAsm;
+    private string _dir = PluginLoader.PluginsDir;
+    private string _msg = "";
+
+    protected override void OnInitialized()
+    {
+        _allowAsm = string.Equals(Db.GetSetting("Plugins.AllowAssemblies"), "true", StringComparison.OrdinalIgnoreCase);
+        var csv = Db.GetSetting("Plugins.Enabled");
+        _cat = PluginLoader.BuildCatalog(Db);
+        // 편집용 활성 집합: 설정이 있으면 그대로, 없으면 매니페스트 기본(enabled=true)에서 시드
+        _enabled = !string.IsNullOrWhiteSpace(csv)
+            ? new HashSet<string>(csv!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(_cat.Items.Where(i => i.Manifest.Enabled).Select(i => i.Manifest.Id), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void Rebuild()
+    {
+        _cat = PluginLoader.BuildCatalog(Db);
+        _msg = $"다시 스캔: {_cat.Count}개 발견 ({DateTime.Now:HH:mm:ss})";
+    }
+
+    private void Toggle(string id, bool on)
+    {
+        if (on) _enabled.Add(id); else _enabled.Remove(id);
+        Db.SetSetting("Plugins.Enabled", string.Join(",", _enabled));
+        _cat = PluginLoader.BuildCatalog(Db);
+    }
+
+    private void ToggleAllow(bool on)
+    {
+        _allowAsm = on;
+        Db.SetSetting("Plugins.AllowAssemblies", on ? "true" : "false");
+        _cat = PluginLoader.BuildCatalog(Db);
+    }
+
+    private void OpenFolder()
+    {
+        try
+        {
+            PluginLoader.EnsureDir();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = _dir, UseShellExecute = true });
+        }
+        catch (Exception ex) { _msg = "폴더 열기 실패: " + ex.Message; }
+    }
+
+    private static string KindLabel(PluginKind k) => k switch
+    {
+        PluginKind.Indicator => "지표",
+        PluginKind.AlertRule => "알림규칙",
+        PluginKind.PromptTemplate => "프롬프트",
+        PluginKind.Assembly => "어셈블리",
+        _ => "기타",
+    };
+
+    private static string StatusLabel(PluginStatus s) => s switch
+    {
+        PluginStatus.Ok => "✅ 활성",
+        PluginStatus.Disabled => "⚪ 비활성",
+        PluginStatus.Blocked => "🔒 차단",
+        _ => "⚠️ 오류",
+    };
+
+    private static string StatusClass(PluginStatus s) =>
+        s == PluginStatus.Ok ? "up" : s == PluginStatus.Blocked || s == PluginStatus.Error ? "down" : "";
+
+    private const string _sample = @"// 지표 — emaCross / smaCross
+{ ""id"": ""ema-5-20"", ""name"": ""EMA Cross 5/20"", ""version"": ""1.0.0"",
+  ""kind"": ""indicator"", ""author"": ""you"",
+  ""spec"": { ""op"": ""emaCross"", ""fast"": 5, ""slow"": 20 } }
+
+// 프롬프트 템플릿 — {{key}} 자리표시자
+{ ""id"": ""deep-dive"", ""name"": ""심층 분석 프롬프트"", ""version"": ""1.0.0"",
+  ""kind"": ""prompt"",
+  ""template"": ""{{symbol}} 를 RSI={{rsi}}, 레짐={{regime}} 관점에서 분석하라."" }
+
+// 복합 알림 규칙 — metric op value
+{ ""id"": ""rsi-oversold"", ""name"": ""RSI 과매도"", ""version"": ""1.0.0"",
+  ""kind"": ""alertRule"",
+  ""rule"": { ""metric"": ""rsi"", ""op"": ""<"", ""value"": 30 } }
+
+// 어셈블리(.dll) — 기본 차단, 설정에서 명시적 허용 필요(임의 코드 실행)
+{ ""id"": ""my-ext"", ""name"": ""커스텀 확장"", ""version"": ""1.0.0"",
+  ""kind"": ""assembly"", ""entry"": ""MyExtension.dll"" }";
+}

@@ -11,10 +11,10 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **334건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `f3177b7` v3.40.0 (진단 대시보드) |
-| 커밋 대기 | ⏳ **v3.41.0 Inno Setup 설치 파일** (`installer/`) (빌드 0/0·테스트 334) |
-| 다음 예정 | **사용자 런타임 검증**(`/diagnostics`로 가시화) + GitHub remote 연결 시 CI 자동 릴리스 |
+| 단위 테스트 | ✅ **357건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `a377b7b` (오픈소스 쇼케이스 README/CONTRIBUTING) · 태그 `v3.41.0`→`c90d356` |
+| 커밋 대기 | ⏳ **v3.42.0 동적 플러그인 아키텍처** (`Common/PluginSystem.cs`·`/plugins`) (빌드 0/0·테스트 357) |
+| 다음 예정 | **사용자 런타임 검증**(`/diagnostics`·`/plugins`) + GitHub remote 연결 시 CI 자동 릴리스 · (선택) P2P 동기화 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
@@ -67,7 +67,9 @@
 | v3.38.0 | **Season 4 🅱 타임머신 샌드박스** — 시점 고정(무누수) 재현+채점 |
 | v3.39.0 | **운영화** — DB 유지보수(VACUUM 주1회) · Ollama 타임아웃 · CI 릴리스 패키징 |
 | v3.40.0 | **진단 대시보드** `/diagnostics` — 백그라운드 훅·LLM/시세·DB 상태 가시화(도그푸딩) |
-| **v3.41.0** | **Inno Setup 설치 파일** `installer/` — 더블클릭 설치·WebView2 점검·빌드 가이드 — ⏳ 커밋 대기 |
+| v3.41.0 | **Inno Setup 설치 파일** `installer/` — 더블클릭 설치·WebView2 점검·빌드 가이드 |
+| (docs) | **오픈소스 쇼케이스** — 영문/한글 README·Mermaid 아키텍처 다이어그램·CONTRIBUTING (`a377b7b`, 무버전) |
+| **v3.42.0** | **동적 플러그인 아키텍처(Season 5)** — `plugins/*.plugin.json` 런타임 스캔(지표·알림규칙·프롬프트·어셈블리), 선언적 평가 순수+테스트, 어셈블리 `.dll` 게이팅·`/plugins` UI — ⏳ 커밋 대기 |
 
 ---
 
@@ -421,3 +423,27 @@ OOS에서도 살아남는 전략만 "승격". 승격된 전략은 모의(Paper)�
 `Common/TimeMachine.cs`(AsOfSlice look-ahead 차단 + Replay 시점재현·빨리감기 채점, 순수). "그 날짜에 터미널은 뭐라 했나"(레짐·RSI·옵티마이저 우승) → +N봉 실현으로 적중 채점. `/timemachine`. 모든 모듈이 순수라 as-of 슬라이스만 먹이면 동작. 테스트 6건.
 
 **→ Season 4까지 누적: 순수 모듈 ~22종, 단위테스트 170→329, 빌드 항상 0/0, v3.4.2→v3.38.0. 로컬 LLM/메일/SMTP/Ollama 실호출은 런타임 검증 영역.**
+
+---
+
+## 12. 운영화 + Season 5 — 배포·생태계
+
+> 기능 개발 이후 단계: 실사용 가시화 → 배포 자동화 → 확장 생태계. 순수 코어/어댑터 분리·정직한 검증 경계 유지.
+
+### 운영화 (v3.39.0~v3.41.0) — ✅
+- **v3.39.0** DB 유지보수(`DbMaintenance` 주1회 VACUUM/ANALYZE) · Ollama 타임아웃 하드닝 · CI 릴리스 패키징(`v*` 태그→publish→zip→Release)
+- **v3.40.0** 진단 대시보드 `/diagnostics`(`Diagnostics` 순수) — 백그라운드 훅·LLM/시세·DB 상태 가시화(도그푸딩 도구)
+- **v3.41.0** Inno Setup 설치 파일 `installer/`(사용자단위·WebView2 점검·한/영) + 빌드 가이드
+
+### 오픈소스 쇼케이스 (docs, `a377b7b`) — ✅
+영문 `README.md`/한글 `README.ko.md`(Mermaid 아키텍처 다이어그램·기능 매트릭스·설계 원칙·버전 궤적·검증 경계) + `CONTRIBUTING.md`(한/영). 낡은 `StockManager/README.md`(v2.3)는 현재 구조 안내로 교체. **바이너리 무변경 → 버전 미부여.**
+
+### 🅐 동적 플러그인 아키텍처 — *확장성 · ✅ v3.42.0*
+다시 빌드 없이 `plugins/` 폴더의 매니페스트를 런타임 편입.
+- `Common/PluginSystem.cs` **(순수)**: `PluginManifest.TryParse`(JSON 검증) · `PluginCatalog.Build`(중복제거=고버전 채택, 어셈블리 게이팅, 활성/비활성 판정) · 선언적 평가기 — `PromptTemplatePlugin`(`{{key}}` 치환), `DeclarativeIndicator`(emaCross/smaCross 스탠스), `DeclarativeAlertRule`(metric op value).
+- `Common/PluginLoader.cs` **(어댑터·런타임)**: `%LOCALAPPDATA%\StockManager\plugins\**\*.plugin.json` 스캔 + `AssemblyLoadContext`(수거 가능·의존성 해석) 격리 로드. `IStockPlugin`/`IPluginHost` 인터페이스.
+- **보안 게이팅**: 어셈블리(.dll)는 임의 코드 실행 → **기본 차단**, `Plugins.AllowAssemblies=true` 명시 허용 필요. 선언적 플러그인은 코드 실행 없이 안전.
+- UI `/plugins`(도구 그룹 🧩): 카탈로그 표·항목별 사용 토글(`Plugins.Enabled` csv)·어셈블리 허용 토글·폴더 열기·매니페스트 경고·작성 가이드.
+- 테스트 `PluginSystemTests` **23건**(파싱 유효/무효, 중복제거, 어셈블리 게이팅, 활성 오버라이드, 버전 비교, 템플릿 렌더/자리표시자, 지표 스탠스/데이터부족, 알림규칙 평가).
+
+**→ 누적: 단위테스트 334→357, 빌드 항상 0/0, v3.41.0→v3.42.0. 폴더 스캔·.dll 로드·`/plugins` 렌더는 런타임 검증 영역.**
