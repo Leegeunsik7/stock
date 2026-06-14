@@ -106,6 +106,33 @@
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_driftMsg.Length > 0) { <span>@_driftMsg</span> } else { <span>저장된 타겟이 없으면 알림은 발생하지 않습니다. 종목당 20시간 쿨다운.</span> }</div>
     </div>
 
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">🌙 야간 자동 퍼블리싱</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+            앱(또는 <code>--headless</code> 상주)이 켜져 있으면 매일 설정 시각 이후 손익·옵티마이저·예측보정·토론 승률을 종합해
+            <b>텔레그램</b>(본문)·<b>메일</b>(PDF 첨부)로 1회 발송합니다.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" @bind="_nightlyEnabled" /> 야간 리포트 사용
+        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:8px">
+            <div><label class="flbl">발송 시각(시)</label><input class="fin" style="width:80px" type="number" min="0" max="23" @bind="_nightlyHour" /></div>
+            <button class="addbtn" @onclick="ApplyNightly">적용</button>
+        </div>
+        <div style="font-weight:600;font-size:12.5px;margin:6px 0 4px">메일(SMTP, 선택)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+            <div><label class="flbl">SMTP</label><input class="fin" style="width:150px" placeholder="smtp.gmail.com" @bind="_smtp" /></div>
+            <div><label class="flbl">포트</label><input class="fin" style="width:64px" type="number" @bind="_smtpPort" /></div>
+            <div><label class="flbl">받는 메일</label><input class="fin" style="width:170px" @bind="_emailTo" /></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:6px">
+            <div><label class="flbl">계정</label><input class="fin" style="width:170px" @bind="_emailUser" /></div>
+            <div><label class="flbl">앱 비밀번호</label><input class="fin" style="width:150px" type="password" @bind="_emailPass" /></div>
+            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ApplyEmail">메일 저장</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_nightlyMsg.Length > 0) { <span>@_nightlyMsg</span> } else { <span>텔레그램 키(거래 설정)·SMTP 중 설정된 채널로만 발송. 비밀번호는 DPAPI 암호화 저장.</span> }</div>
+    </div>
+
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px">
         <div style="font-weight:700;margin-bottom:14px">빠른 설정</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -129,6 +156,9 @@
     private string _driftMsg = "";
     private string _llmProvider = "auto", _ollamaUrl = "http://localhost:11434", _ollamaModel = "llama3.1", _llmMsg = "", _llmActive = "";
     private bool _ollamaEnabled;
+    private bool _nightlyEnabled;
+    private int _nightlyHour = 6, _smtpPort = 587;
+    private string _smtp = "", _emailTo = "", _emailUser = "", _emailPass = "", _nightlyMsg = "";
 
     protected override void OnInitialized()
     {
@@ -148,6 +178,28 @@
         var ou = Db.GetSetting("Ollama.Url"); if (!string.IsNullOrWhiteSpace(ou)) _ollamaUrl = ou;
         var om = Db.GetSetting("Ollama.Model"); if (!string.IsNullOrWhiteSpace(om)) _ollamaModel = om;
         _llmActive = new AiService(Db).ActiveLlm;
+        _nightlyEnabled = Db.GetSetting("Nightly.Enabled") == "true";
+        if (int.TryParse(Db.GetSetting("Nightly.Hour"), out var nh)) _nightlyHour = Math.Clamp(nh, 0, 23);
+        _smtp = Db.GetSetting("Email.Smtp") ?? ""; _emailTo = Db.GetSetting("Email.To") ?? "";
+        _emailUser = Db.GetSetting("Email.User") ?? "";
+        if (int.TryParse(Db.GetSetting("Email.Port"), out var ep) && ep > 0) _smtpPort = ep;
+    }
+
+    private void ApplyNightly()
+    {
+        Db.SetSetting("Nightly.Enabled", _nightlyEnabled ? "true" : "false");
+        Db.SetSetting("Nightly.Hour", Math.Clamp(_nightlyHour, 0, 23).ToString());
+        _nightlyMsg = _nightlyEnabled ? $"✅ 매일 {_nightlyHour}시 이후 1회 발송" : "야간 리포트를 껐습니다.";
+    }
+
+    private void ApplyEmail()
+    {
+        Db.SetSetting("Email.Smtp", _smtp.Trim());
+        Db.SetSetting("Email.Port", Math.Clamp(_smtpPort, 1, 65535).ToString());
+        Db.SetSetting("Email.To", _emailTo.Trim());
+        Db.SetSetting("Email.User", _emailUser.Trim());
+        if (!string.IsNullOrWhiteSpace(_emailPass)) { Db.SetSecret("Email.Pass", _emailPass.Trim()); _emailPass = ""; }
+        _nightlyMsg = "✅ 메일 설정 저장(비밀번호 DPAPI 암호화)";
     }
 
     private void ApplyLlm()

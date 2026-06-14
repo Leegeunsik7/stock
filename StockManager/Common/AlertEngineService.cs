@@ -73,6 +73,7 @@ namespace StockManager.Common
                 await CheckOptimizerAsync();
                 await CheckRegimeAsync();
                 await CheckDriftAsync();
+                await CheckNightlyAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -301,6 +302,34 @@ namespace StockManager.Common
                 $"타겟 대비 최대 {rep.MaxDriftPct:0.0}%p 이탈({rep.MaxSymbol}) · 회전율 {rep.TurnoverPct:0.0}% — 포트폴리오 허브에서 조정 검토",
                 AlertLevel.Info);
             Log.Info($"[Drift] 최대 {rep.MaxDriftPct:0.0}%p (band {band})");
+        }
+
+        // ===== 야간 자동 퍼블리싱 ③ (옵트인) — 새벽에 종합 리포트 PDF/텍스트 → 텔레그램/메일 =====
+        private async Task CheckNightlyAsync()
+        {
+            if (_db!.GetSetting("Nightly.Enabled") != "true") return;
+            int hour = int.TryParse(_db.GetSetting("Nightly.Hour"), out var h) ? Math.Clamp(h, 0, 23) : 6;
+            if (DateTime.Now.Hour < hour) return;
+            var today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (_db.GetSetting("Nightly.LastSent") == today) return;   // 오늘 이미 전송
+
+            _db.SetSetting("Nightly.LastSent", today);                  // 먼저 마킹(중복 방지)
+            decimal usd = 1380m; try { usd = await _fx.GetUsdKrwAsync(); } catch { }
+            var data = NightlyReport.Gather(_db, usd);
+            var text = NightlyReport.ComposeText(data);
+
+            bool sent = false;
+            try { if (await TelegramNotifier.SendAsync(_db, "🌙 <b>야간 리포트</b>\n" + text)) sent = true; } catch { }
+            try
+            {
+                if (EmailSender.Configured(_db))
+                {
+                    byte[]? pdf = null; try { pdf = NightlyReport.BuildPdf(data); } catch (Exception ex) { Log.Warn($"[Nightly] PDF 실패: {ex.Message}"); }
+                    if (await EmailSender.SendAsync(_db, $"[MS2-E] 야간 리포트 {today}", text, pdf, $"ms2e_{today}.pdf")) sent = true;
+                }
+            }
+            catch { }
+            Log.Info($"[Nightly] 리포트 생성 · 전송 {(sent ? "성공" : "채널 없음/실패")}");
         }
 
         private Dictionary<string, double> LoadDriftTarget()
