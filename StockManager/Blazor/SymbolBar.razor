@@ -34,7 +34,7 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _sym = Ctx.Symbol; _mkt = Ctx.Market; }
-        Ctx.Changed += OnCtx;
+        Ctx.OnChange += OnCtx;
     }
 
     private void OnCtx() => InvokeAsync(StateHasChanged);
@@ -47,7 +47,7 @@
 
     private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") Apply(); }
 
-    public void Dispose() => Ctx.Changed -= OnCtx;
+    public void Dispose() => Ctx.OnChange -= OnCtx;
 }
 
 <style>

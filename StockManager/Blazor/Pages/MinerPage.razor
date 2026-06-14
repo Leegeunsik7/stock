@@ -2,9 +2,11 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 @inject ToastService Toasts
 @inject NavigationManager Nav
 
+<CrossLinks Current="miner" />
 <div class="top">
     <div class="hello"><h1>🧬 자동 가설 발굴 (유전자 풀)</h1><p>조건 조합을 자동 생성해 train/OOS로 검증 — 보류표본에서도 살아남는 패턴만 발굴 (정보 제공용)</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
@@ -79,7 +81,11 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
     }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunAsync()
     {

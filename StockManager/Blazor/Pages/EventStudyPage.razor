@@ -2,7 +2,9 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 
+<CrossLinks Current="eventstudy" />
 <div class="top">
     <div class="hello"><h1>🔬 개인 이벤트 스터디</h1><p>복합 패턴이 떴던 모든 과거 시점 이후의 미래수익 분포를 계산 — 규칙을 신뢰하기 전에 검증 (정보 제공용)</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
@@ -111,6 +113,7 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
         _saved = CompositeAlertEngine.Load(Db);
     }
 
@@ -129,6 +132,9 @@
         if (r == null || r.Conditions.Count == 0) return "";
         return string.Join(r.Logic == RuleLogic.And ? " 그리고 " : " 또는 ", r.Conditions.Select(c => c.Describe()));
     }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunAsync()
     {

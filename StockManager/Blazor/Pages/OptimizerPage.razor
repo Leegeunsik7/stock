@@ -2,10 +2,12 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 @inject ToastService Toasts
 @inject NavigationManager Nav
 @using System.Text.Json
 
+<CrossLinks Current="optimizer" />
 <div class="top">
     <div class="hello"><h1>🌙 오버나잇 전략 옵티마이저</h1><p>종목별 MA 골든/데드크로스 기간을 격자 전수 백테스트해 "그 종목에 맞았던" 값 발굴 (정보 제공용)</p></div>
     <input class="srch" style="width:150px" placeholder="종목코드 (예 005930)" @bind="_symbol" @bind:event="oninput" />
@@ -182,6 +184,7 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
         _enabled = Db.GetSetting("Optimizer.Enabled") == "true";
         if (int.TryParse(Db.GetSetting("Optimizer.IntervalHours"), out var h) && h > 0) _intervalHours = h;
         LoadSnapshot();
@@ -215,6 +218,10 @@
     private void SaveInterval() => Db.SetSetting("Optimizer.IntervalHours", _intervalHours.ToString());
 
     private void Probe(string sym) { _symbol = sym; _ = RunOneAsync(); }
+
+    // 전역 활성 종목 변경 → 이 페이지를 새 종목으로 즉시 재실행
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunOneAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunOneAsync()
     {

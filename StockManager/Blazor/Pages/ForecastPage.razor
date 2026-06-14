@@ -2,7 +2,9 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 
+<CrossLinks Current="forecast" />
 <div class="top">
     <div class="hello"><h1>📐 예측 스코어보드</h1><p>엔진의 정량 예측을 실현치와 대조해 보정도(과신/편향)를 채점 — "내 예측은 믿을 만한가?"</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
@@ -94,7 +96,10 @@
 
     private double ZHalf => _band >= 95 ? 1.96 : 1.645;
 
-    protected override void OnInitialized() { if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; } _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
+    protected override void OnInitialized() { if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; } Ctx.OnChange += OnSym; _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunBacktest); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunBacktest()
     {

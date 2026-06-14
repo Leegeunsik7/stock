@@ -1,0 +1,40 @@
+@* CrossLinks - 횡이동 딥링크 바 (IA 개편 3단계, v3.32.0)
+   분석 페이지에 두면 활성 종목 그대로 다른 연구 도구로 사이드바 없이 점프. *@
+@inject SymbolContext Ctx
+@inject NavigationManager Nav
+
+@if (Ctx.HasSymbol)
+{
+    <div class="xlinks">
+        <span class="xl-sym">▶ @Ctx.Symbol 으로</span>
+        @foreach (var t in _tools)
+        {
+            @if (!string.Equals(t.Key, Current, StringComparison.OrdinalIgnoreCase))
+            {
+                <button class="xl-btn" @onclick="() => Nav.NavigateTo(t.Href)">@t.Label</button>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string Current { get; set; } = "";   // 자기 자신은 버튼에서 제외
+
+    private record Tool(string Key, string Label, string Href);
+    private readonly Tool[] _tools =
+    {
+        new("optimizer",  "🌙 옵티마이저", "/lab/optimizer"),
+        new("eventstudy", "🔬 이벤트",     "/lab/eventstudy"),
+        new("miner",      "🧬 발굴",       "/lab/miner"),
+        new("sizer",      "🎚 사이징",     "/lab/sizer"),
+        new("twin",       "🪞 트윈",       "/validate"),
+        new("forecast",   "📐 예측",       "/validate/forecast"),
+    };
+}
+
+<style>
+    .xlinks{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 28px;background:color-mix(in srgb,var(--accent) 5%,transparent);border-bottom:1px solid var(--line);font-size:12px}
+    .xlinks .xl-sym{color:var(--accent);font-weight:800;margin-right:4px}
+    .xlinks .xl-btn{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:12px;color:var(--ink);cursor:pointer}
+    .xlinks .xl-btn:hover{border-color:var(--accent);color:var(--accent)}
+</style>

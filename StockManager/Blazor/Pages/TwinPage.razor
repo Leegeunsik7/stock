@@ -2,8 +2,10 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 @using System.Data
 
+<CrossLinks Current="twin" />
 <div class="top">
     <div class="hello"><h1>🪞 반사실 디지털 트윈</h1><p>"내가 규칙을 지켰다면?" — 실제 거래 vs 시그널 추종 vs 단순 보유를 같은 창에서 비교 (사후 복기)</p></div>
     <input class="srch" style="width:150px" placeholder="종목코드 (예 005930)" @bind="_symbol" @bind:event="oninput" />
@@ -72,7 +74,11 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
     }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunAsync()
     {

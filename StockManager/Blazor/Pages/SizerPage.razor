@@ -2,7 +2,9 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@implements IDisposable
 
+<CrossLinks Current="sizer" />
 <div class="top">
     <div class="hello"><h1>🎚 포지션 사이저</h1><p>엣지(승률·손익비)와 변동성을 결합해 "이번엔 얼마를 걸까"를 켈리+변동성 타깃으로 산출 (정보 제공용)</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
@@ -72,7 +74,11 @@
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
     }
+
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
 
     private async Task RunAsync()
     {
