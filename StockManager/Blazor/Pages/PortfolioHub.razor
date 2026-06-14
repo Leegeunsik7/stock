@@ -1,0 +1,122 @@
+@* ============================================================================
+   PortfolioHub - 💼 포트폴리오 허브 (IA 개편 1단계, v3.29.0)
+    가이드라인:
+     ① 딥링크   : @page "/portfolio/{Tab?}" — /portfolio/risk 식 직접 진입
+     ② 1회 로드 : 보유·환율·수익률을 허브에서 한 번만 수집(상태 호이스팅).
+                  소비 탭(리밸런싱/리스크) 첫 진입 시 지연 로드, 이후 탭 전환은 재수집 0
+     ③ Cascade  : 로드한 PortfolioData를 <CascadingValue>로 자식에 내려 중복 쿼리 제거
+     ④ 부드러운 전환: URL만 바꾸고(NavigationManager) switch로 자식만 교체(전체 새로고침 X)
+    기존 /portfolio·/assets·/rebalance·/risk 페이지는 @page를 떼고 이 허브의 탭(자식)으로 강등.
+   ============================================================================ *@
+@page "/portfolio"
+@page "/portfolio/{Tab?}"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@inject NavigationManager Nav
+
+<div class="hubhead">
+    <div class="hubtitle">💼 포트폴리오 허브</div>
+    <span class="hubsub">한 번 수집한 보유·수익률을 모든 탭이 공유</span>
+    @if (Cur is "rebalance" or "risk")
+    {
+        <label class="hubwin">분석 창
+            <select class="srch" style="width:84px" @bind="_days" @bind:after="ReloadAsync">
+                <option value="90">90일</option><option value="180">180일</option><option value="365">1년</option>
+            </select>
+        </label>
+        <button class="ghost" disabled="@_busy" @onclick="ReloadAsync">@(_busy ? "수집 중…" : "🔄 새로고침")</button>
+    }
+</div>
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+
+@if (_busy && Cur is "rebalance" or "risk")
+{
+    <div style="color:var(--sub);padding:22px 28px">📡 보유 종목 시세·수익률 수집 중… (1회 로드 후 모든 탭이 공유합니다)</div>
+}
+else
+{
+    <CascadingValue Value="_data">
+        @switch (Cur)
+        {
+            case "rebalance":
+                <RebalancePage />
+                break;
+            case "risk":
+                <RiskPage />
+                break;
+            case "assets":
+                <TotalAssetPage />
+                break;
+            default:
+                <PortfolioPage />
+                break;
+        }
+    </CascadingValue>
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "holdings" : Tab!.ToLowerInvariant();
+
+    private readonly (string, string)[] _tabs =
+    {
+        ("holdings", "보유·배분"), ("rebalance", "리밸런싱(MPT)"), ("risk", "리스크 분해"), ("assets", "총자산")
+    };
+
+    private PortfolioData _data = new();
+    private bool _busy;
+    private int _days = 180;
+
+    private void Sel(string k) => Nav.NavigateTo(k == "holdings" ? "/portfolio" : $"/portfolio/{k}");
+
+    // ② 지연 1회 로드: 수익률을 쓰는 탭(리밸런싱/리스크)에 처음 들어올 때만 수집, 이후 캐시 공유.
+    //   (보유·총자산 탭은 자체 DB 로드 — 수익률 불필요)
+    protected override async Task OnParametersSetAsync()
+    {
+        if ((Cur is "rebalance" or "risk") && !_data.Loaded && !_busy)
+            await ReloadAsync();
+    }
+
+    // 상태 호이스팅 — 새 인스턴스 할당으로 CascadingValue가 자식에 전파(변경 감지).
+    private async Task ReloadAsync()
+    {
+        _busy = true; StateHasChanged();
+        var d = new PortfolioData { Days = _days };
+        try
+        {
+            var holdings = Db.GetAllHoldings();
+            if (holdings.Count == 0) { d.Error = "보유 종목이 없습니다. 포트폴리오에 종목을 추가하세요."; }
+            else
+            {
+                decimal usd = 1380m; try { usd = await Fx.GetUsdKrwAsync(); } catch { }
+                d.UsdKrw = usd;
+                var returns = await CorrelationAnalyzer.CollectReturnsAsync(
+                    Provider, holdings.Select(h => (h.Symbol, h.Market)), Math.Max(30, _days));
+                var used = holdings.Where(h => returns.ContainsKey(h.Symbol) && returns[h.Symbol].Count >= 2).ToList();
+                if (used.Count == 0) d.Error = "수익률 히스토리를 수집하지 못했습니다(시세 제공자 확인).";
+                else
+                {
+                    d.Used = used;
+                    d.R = used.Select(h => returns[h.Symbol].Select(x => (double)x).ToArray()).ToArray();
+                    d.Names = used.Select(h => string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name).ToArray();
+                    var rawW = used.Select(h => (double)(h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? usd : 1m))).ToArray();
+                    var sum = rawW.Sum();
+                    d.Total = sum;
+                    d.Weights = sum > 0 ? rawW.Select(w => w / sum).ToArray() : rawW.Select(_ => 1.0 / rawW.Length).ToArray();
+                    d.Loaded = true;
+                }
+            }
+        }
+        catch (Exception ex) { d.Error = "오류: " + ex.Message; }
+        finally { _data = d; _busy = false; StateHasChanged(); }
+    }
+}
+
+<style>
+    .hubhead{display:flex;align-items:center;gap:12px;padding:18px 28px 2px;flex-wrap:wrap}
+    .hubhead .hubtitle{font-weight:800;font-size:18px}
+    .hubhead .hubsub{color:var(--sub);font-size:12px}
+    .hubhead .hubwin{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)}
+</style>
