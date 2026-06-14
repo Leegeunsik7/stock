@@ -7,6 +7,8 @@
 //  네트워크 호출만 어댑터로 분리. 외부 SDK 0(HTTP-JSON).
 // ============================================================================
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -53,6 +55,25 @@ namespace StockManager.Common
                 return doc.RootElement.TryGetProperty("response", out var r) ? (r.GetString() ?? "") : "";
             }
             catch { return ""; }
+        }
+
+        /// <summary>연결 점검 — /api/tags로 설치 모델 목록 조회(진단용). 실패 시 ⚠️ 메시지.</summary>
+        public static async Task<string> PingAsync(string baseUrl)
+        {
+            var url = (string.IsNullOrWhiteSpace(baseUrl) ? DefaultUrl : baseUrl).TrimEnd('/') + "/api/tags";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                var json = await Http.GetStringAsync(url, cts.Token);
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("models", out var models)) return "✅ 연결됨 (모델 정보 없음)";
+                var names = new List<string>();
+                foreach (var m in models.EnumerateArray())
+                    if (m.TryGetProperty("name", out var n)) names.Add(n.GetString() ?? "");
+                return names.Count > 0 ? "✅ 연결됨 · 모델: " + string.Join(", ", names) : "✅ 연결됨 (설치된 모델 없음 — ollama pull 필요)";
+            }
+            catch (OperationCanceledException) { return "⚠️ 응답 없음(5초) — ollama serve 확인"; }
+            catch (Exception ex) { return "⚠️ 연결 실패: " + ex.Message; }
         }
 
         public static async Task<string> GenerateAsync(string baseUrl, string model, string prompt, int timeoutSec = DefaultTimeoutSec)

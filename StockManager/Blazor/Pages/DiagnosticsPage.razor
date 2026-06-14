@@ -1,0 +1,84 @@
+@page "/diagnostics"
+@inject LocalDatabase Db
+@inject IQuoteProvider Provider
+@inject AiService Ai
+
+<div class="top">
+    <div class="hello"><h1>🩺 진단 대시보드</h1><p>도그푸딩용 — 백그라운드 훅 실행·LLM/시세 연결·DB 상태를 한 화면에서 점검</p></div>
+    <button class="addbtn" style="margin-right:16px" @onclick="Refresh">🔄 새로고침</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:820px">
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:18px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                <th style="text-align:left;padding:9px 14px">항목</th>
+                <th style="text-align:left;padding:9px 14px;width:120px">상태</th>
+                <th style="text-align:left;padding:9px 14px">상세</th>
+            </tr></thead>
+            <tbody>
+            @foreach (var r in _rows)
+            {
+                <tr style="border-top:1px solid var(--line)">
+                    <td style="padding:8px 14px;font-weight:600">@r.Area</td>
+                    <td style="padding:8px 14px" class="@StatusClass(r.Status)">@r.Status</td>
+                    <td style="padding:8px 14px;color:var(--sub)">@r.Detail</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    <div style="font-weight:700;margin-bottom:8px">라이브 연결 점검</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="ghost" disabled="@_busy" @onclick="CheckQuote">📈 시세 점검(005930)</button>
+        <button class="ghost" disabled="@_busy" @onclick="CheckOllama">🧠 Ollama 점검</button>
+    </div>
+    @if (_live.Count > 0)
+    {
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;font-size:12.5px;line-height:1.8">
+            @foreach (var l in _live) { <div>@l</div> }
+        </div>
+    }
+    <div class="sub" style="font-size:11.5px;margin-top:10px">
+        ℹ️ "지연"은 해당 훅이 켜졌지만 예상 주기 내 실행 기록이 없다는 뜻입니다(앱을 막 켰거나 시각 미도래일 수 있음). 옵트인 항목은 설정에서 켜야 동작합니다.
+    </div>
+</div>
+
+@code {
+    private List<DiagRow> _rows = new();
+    private readonly List<string> _live = new();
+    private bool _busy;
+
+    protected override void OnInitialized() => Refresh();
+
+    private void Refresh() => _rows = Diagnostics.BuildRows(Db, AlertEngineService.Instance.LastRun, DateTime.Now);
+
+    private async Task CheckQuote()
+    {
+        _busy = true; StateHasChanged();
+        try
+        {
+            var q = await Provider.GetQuotesAsync(new[] { "005930" }, Market.KRX_KOSPI);
+            var p = q.FirstOrDefault()?.Price ?? 0m;
+            _live.Insert(0, p > 0 ? $"✅ 시세 OK — 삼성전자 {p:N0}원 ({DateTime.Now:HH:mm:ss})" : $"⚠️ 시세 응답 비정상(가격 0) ({DateTime.Now:HH:mm:ss})");
+        }
+        catch (Exception ex) { _live.Insert(0, "⚠️ 시세 점검 실패: " + ex.Message); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task CheckOllama()
+    {
+        _busy = true; StateHasChanged();
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(Db.GetSetting("Ollama.Url")) ? OllamaProvider.DefaultUrl : Db.GetSetting("Ollama.Url")!;
+            _live.Insert(0, $"🧠 Ollama({url}): " + await OllamaProvider.PingAsync(url) + $" ({DateTime.Now:HH:mm:ss})");
+        }
+        catch (Exception ex) { _live.Insert(0, "⚠️ Ollama 점검 실패: " + ex.Message); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static string StatusClass(string s) =>
+        s.StartsWith("✅") ? "up" : s.StartsWith("⚠️") || s.StartsWith("🔔") ? "down" : "";
+}
