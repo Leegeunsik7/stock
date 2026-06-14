@@ -1,0 +1,75 @@
+@* ============================================================================
+   RiskHub - 🎲 리스크 시뮬 허브 (IA 개편 1단계, v3.31.0)
+    몬테카를로·시나리오 모두 보유 종목 수익률을 쓰므로 PortfolioHub와 동일한
+    상태 호이스팅 + CascadingValue 패턴 적용 → 탭 전환 시 재수집 0.
+   ============================================================================ *@
+@page "/risklab"
+@page "/risklab/{Tab}"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@inject NavigationManager Nav
+
+<div class="hubhead">
+    <div class="hubtitle">🎲 리스크 시뮬 허브</div>
+    <span class="hubsub">보유·수익률 1회 수집 → 몬테카를로·시나리오가 공유</span>
+    <label class="hubwin">분석 창
+        <select class="srch" style="width:84px" @bind="_days" @bind:after="ReloadAsync">
+            <option value="90">90일</option><option value="180">180일</option><option value="365">1년</option>
+        </select>
+    </label>
+    <button class="ghost" disabled="@_busy" @onclick="ReloadAsync">@(_busy ? "수집 중…" : "🔄 새로고침")</button>
+</div>
+
+<HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
+
+@if (_busy)
+{
+    <div style="color:var(--sub);padding:22px 28px">📡 보유 종목 시세·수익률 수집 중… (1회 로드 후 두 탭이 공유합니다)</div>
+}
+else
+{
+    <CascadingValue Value="_data">
+        @switch (Cur)
+        {
+            case "scenario":
+                <ScenarioPage />
+                break;
+            default:
+                <MonteCarloPage />
+                break;
+        }
+    </CascadingValue>
+}
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+    private string Cur => string.IsNullOrWhiteSpace(Tab) ? "montecarlo" : Tab!.ToLowerInvariant();
+    private readonly (string, string)[] _tabs = { ("montecarlo", "몬테카를로"), ("scenario", "시나리오 스튜디오") };
+
+    private PortfolioData _data = new();
+    private bool _busy;
+    private int _days = 180;
+
+    private void Sel(string k) => Nav.NavigateTo(k == "montecarlo" ? "/risklab" : $"/risklab/{k}");
+
+    // 두 탭 모두 수익률 소비 → 진입 시 1회 로드, 이후 캐시 공유.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_data.Loaded && !_busy) await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _busy = true; StateHasChanged();
+        _data = await PortfolioData.LoadAsync(Provider, Db, Fx, _days);   // 새 인스턴스 → CascadingValue 전파
+        _busy = false; StateHasChanged();
+    }
+}
+
+<style>
+    .hubhead{display:flex;align-items:center;gap:12px;padding:18px 28px 2px;flex-wrap:wrap}
+    .hubhead .hubtitle{font-weight:800;font-size:18px}
+    .hubhead .hubsub{color:var(--sub);font-size:12px}
+    .hubhead .hubwin{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--sub)}
+</style>

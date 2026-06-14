@@ -1,10 +1,11 @@
 @implements IDisposable
 @inject NavigationManager Nav
+@inject LocalDatabase Db
 
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.30</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.31</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
@@ -18,6 +19,10 @@
             <div class="grphead @(_open == g.Id ? "open" : "")" @onclick="() => OnHead(g)">
                 <span class="ic">@g.Icon</span>
                 <span class="navtxt">@g.Label</span>
+                @if (BadgeFor(g.Id) is int n && n > 0)
+                {
+                    <span class="navbadge" title="미확인">@(n > 99 ? "99+" : n.ToString())</span>
+                }
                 <span class="cap">@g.Caption</span>
                 <span class="chev">@(_open == g.Id ? "▾" : "▸")</span>
             </div>
@@ -102,17 +107,34 @@
         }),
     };
 
+    private int _alertUnread;
+
     protected override void OnInitialized()
     {
         AutoOpen();
+        RefreshBadges();
         Nav.LocationChanged += OnLocationChanged;
     }
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
         AutoOpen();
+        RefreshBadges();
         InvokeAsync(StateHasChanged);
     }
+
+    // 상태 배지 데이터(현재: 미확인 알림 수). 다른 그룹 배지는 여기에 확장.
+    private void RefreshBadges()
+    {
+        try
+        {
+            var dt = Db.Query("SELECT COUNT(*) AS c FROM Alerts WHERE IsRead=0");
+            _alertUnread = dt.Rows.Count > 0 ? Safe.Int(dt.Rows[0]["c"]) : 0;
+        }
+        catch { _alertUnread = 0; }
+    }
+
+    private int BadgeFor(string groupId) => groupId == "alertcenter" ? _alertUnread : 0;
 
     private void AutoOpen()
     {
@@ -139,6 +161,8 @@
     .grphead .ic{width:18px;text-align:center;opacity:.9}
     .grphead .cap{margin-left:auto;font-size:9px;letter-spacing:.1em;color:var(--side-sub);font-weight:700}
     .grphead .chev{font-size:10px;color:var(--side-sub);margin-left:8px}
+    .navbadge{background:var(--down,#e34d4d);color:#fff;font-size:10px;font-weight:800;line-height:1;border-radius:9px;padding:3px 6px;margin-left:7px;min-width:16px;text-align:center}
+    .side.collapsed .navbadge{position:absolute;margin:0;transform:translate(14px,-8px)}
     .side.collapsed .grphead .cap,.side.collapsed .grphead .chev{display:none}
     .subwrap{padding:2px 0 6px;background:rgba(0,0,0,.12)}
     .nav.sub{padding-left:34px;font-size:13px}
