@@ -3,11 +3,12 @@ name: CI
 on:
   push:
     branches: [ "**" ]
+    tags: [ "v*" ]      # v3.39.0 식 태그 → 릴리스 패키징
   pull_request:
 
 jobs:
   build-test:
-    # net8.0-windows + WinForms → 반드시 Windows 러너 (ubuntu 불가)
+    # net8.0-windows + WinForms/BlazorWebView → 반드시 Windows 러너 (ubuntu 불가)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,8 +21,41 @@ jobs:
       - name: Restore
         run: dotnet restore StockManager.sln
 
-      - name: Build (Release)
-        run: dotnet build StockManager.sln -c Release --no-restore
+      - name: Build (Release, single-node)
+        run: dotnet build StockManager.sln -c Release -m:1 --no-restore
 
-      - name: Test (105 cases)
+      - name: Test (전체 단위 테스트)
         run: dotnet test StockManager.Tests/StockManager.Tests.csproj -c Release --no-build
+
+  release:
+    # 태그(v*) 푸시에서만 실행 — Release EXE 패키징 + GitHub Release 업로드
+    needs: build-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (Release)
+        run: dotnet publish StockManager/StockManager.csproj -c Release -o publish --self-contained false
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath "MS2E.StockSuite-${{ github.ref_name }}.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MS2E.StockSuite-${{ github.ref_name }}
+          path: "MS2E.StockSuite-${{ github.ref_name }}.zip"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "MS2E.StockSuite-${{ github.ref_name }}.zip"
+          generate_release_notes: true

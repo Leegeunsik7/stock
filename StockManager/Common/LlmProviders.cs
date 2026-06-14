@@ -10,6 +10,7 @@ using System;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace StockManager.Common
@@ -35,6 +36,10 @@ namespace StockManager.Common
     {
         public static string DefaultUrl => "http://localhost:11434";
         public static string DefaultModel => "llama3.1";
+        public const int DefaultTimeoutSec = 180;   // 로컬 생성은 느릴 수 있어 넉넉히(설정 가능)
+
+        // 자체 HttpClient — 무한 타임아웃 + 호출마다 CTS로 제어(긴 로컬 생성/대용량 모델 대응)
+        private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
         public static string BuildRequest(string model, string prompt) =>
             JsonSerializer.Serialize(new { model, prompt, stream = false });
@@ -50,18 +55,23 @@ namespace StockManager.Common
             catch { return ""; }
         }
 
-        public static async Task<string> GenerateAsync(HttpClient http, string baseUrl, string model, string prompt)
+        public static async Task<string> GenerateAsync(string baseUrl, string model, string prompt, int timeoutSec = DefaultTimeoutSec)
         {
             var url = (string.IsNullOrWhiteSpace(baseUrl) ? DefaultUrl : baseUrl).TrimEnd('/') + "/api/generate";
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Clamp(timeoutSec, 10, 1200)));
             try
             {
-                using var res = await http.PostAsync(url,
-                    new StringContent(BuildRequest(model, prompt), Encoding.UTF8, "application/json"));
-                var json = await res.Content.ReadAsStringAsync();
+                using var res = await Http.PostAsync(url,
+                    new StringContent(BuildRequest(model, prompt), Encoding.UTF8, "application/json"), cts.Token);
+                var json = await res.Content.ReadAsStringAsync(cts.Token);
                 if (!res.IsSuccessStatusCode)
                     return $"⚠️ 로컬 LLM 호출 실패({(int)res.StatusCode}). Ollama 실행(ollama serve)·모델(ollama pull {model}) 확인.";
                 var text = ParseResponse(json);
                 return string.IsNullOrWhiteSpace(text) ? "(응답 없음)" : text;
+            }
+            catch (OperationCanceledException)
+            {
+                return $"⚠️ 로컬 LLM 타임아웃({timeoutSec}초 초과) — 더 작은 모델을 쓰거나 설정에서 타임아웃을 늘리세요.";
             }
             catch (Exception ex)
             {

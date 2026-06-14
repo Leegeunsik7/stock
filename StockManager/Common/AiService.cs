@@ -35,6 +35,7 @@ namespace StockManager.Common
 
         private string OllamaUrl => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Url")) ? OllamaProvider.DefaultUrl : _db.GetSetting("Ollama.Url")!;
         private string OllamaModel => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Model")) ? OllamaProvider.DefaultModel : _db.GetSetting("Ollama.Model")!;
+        private int OllamaTimeoutSec => int.TryParse(_db.GetSetting("Ollama.TimeoutSec"), out var t) && t > 0 ? t : OllamaProvider.DefaultTimeoutSec;
 
         // ===== 단일 종목 분석 (기존) =====
         public Task<string> AnalyzeAsync(string symbol, string market, string model = "gemini-2.0-flash")
@@ -129,7 +130,7 @@ namespace StockManager.Common
             if (route == "none")
                 return "⚠️ LLM이 설정되지 않았습니다.\nGemini 키를 입력하거나(설정 마법사/거래 설정), 설정에서 로컬 LLM(Ollama)을 켜세요.";
             if (route == "ollama")
-                return await OllamaProvider.GenerateAsync(Http, OllamaUrl, OllamaModel, prompt);
+                return await OllamaProvider.GenerateAsync(OllamaUrl, OllamaModel, prompt, OllamaTimeoutSec);
 
             var apiKey = _db.GetSecret("Gemini.ApiKey");
             try

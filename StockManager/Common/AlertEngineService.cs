@@ -75,6 +75,7 @@ namespace StockManager.Common
                 await CheckDriftAsync();
                 await CheckNightlyAsync();
                 CheckCopilot();
+                await CheckMaintenanceAsync();
                 LastRun = DateTime.Now;
             }
             catch (Exception ex) { Log.Warn($"[AlertEngine] {ex.Message}"); }
@@ -331,6 +332,20 @@ namespace StockManager.Common
             }
             catch { }
             Log.Info($"[Nightly] 리포트 생성 · 전송 {(sent ? "성공" : "채널 없음/실패")}");
+        }
+
+        // ===== DB 유지보수 (주 1회 자동, 안전 housekeeping) =====
+        //  WAL 비대·파편화 정리. VACUUM은 잠금이 길 수 있어 Task.Run으로 타이머에서 오프로드.
+        private async Task CheckMaintenanceAsync()
+        {
+            try
+            {
+                if (DateTime.TryParse(_db!.GetSetting("Maint.LastRun"), out var last) && (DateTime.Now - last).TotalDays < 7) return;
+                _db.SetSetting("Maint.LastRun", DateTime.Now.ToString("o"));   // 먼저 마킹
+                var (before, after) = await Task.Run(() => DbMaintenance.Run(_db));
+                Log.Info($"[Maint] VACUUM/ANALYZE 완료 · {before}KB → {after}KB");
+            }
+            catch (Exception ex) { Log.Warn($"[Maint] {ex.Message}"); }
         }
 
         // ===== 목표주도 코파일럿 🅰 (옵트인 · 게이팅: 제안/알림만) =====

@@ -66,8 +66,9 @@
             </label>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
-            <div><label class="flbl">Ollama URL</label><input class="fin" style="width:200px" @bind="_ollamaUrl" /></div>
-            <div><label class="flbl">모델</label><input class="fin" style="width:130px" @bind="_ollamaModel" /></div>
+            <div><label class="flbl">Ollama URL</label><input class="fin" style="width:180px" @bind="_ollamaUrl" /></div>
+            <div><label class="flbl">모델</label><input class="fin" style="width:120px" @bind="_ollamaModel" /></div>
+            <div><label class="flbl">타임아웃(초)</label><input class="fin" style="width:80px" type="number" min="10" max="1200" @bind="_ollamaTimeout" /></div>
             <button class="addbtn" @onclick="ApplyLlm">적용</button>
         </div>
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">현재 활성: <b>@_llmActive</b> @if (_llmMsg.Length > 0) { <span>· @_llmMsg</span> }</div>
@@ -156,6 +157,7 @@
     private string _driftMsg = "";
     private string _llmProvider = "auto", _ollamaUrl = "http://localhost:11434", _ollamaModel = "llama3.1", _llmMsg = "", _llmActive = "";
     private bool _ollamaEnabled;
+    private int _ollamaTimeout = 180;
     private bool _nightlyEnabled;
     private int _nightlyHour = 6, _smtpPort = 587;
     private string _smtp = "", _emailTo = "", _emailUser = "", _emailPass = "", _nightlyMsg = "";
@@ -177,6 +179,7 @@
         _ollamaEnabled = Db.GetSetting("Ollama.Enabled") == "true";
         var ou = Db.GetSetting("Ollama.Url"); if (!string.IsNullOrWhiteSpace(ou)) _ollamaUrl = ou;
         var om = Db.GetSetting("Ollama.Model"); if (!string.IsNullOrWhiteSpace(om)) _ollamaModel = om;
+        if (int.TryParse(Db.GetSetting("Ollama.TimeoutSec"), out var ot) && ot > 0) _ollamaTimeout = ot;
         _llmActive = new AiService(Db).ActiveLlm;
         _nightlyEnabled = Db.GetSetting("Nightly.Enabled") == "true";
         if (int.TryParse(Db.GetSetting("Nightly.Hour"), out var nh)) _nightlyHour = Math.Clamp(nh, 0, 23);
@@ -208,6 +211,7 @@
         Db.SetSetting("Ollama.Enabled", _ollamaEnabled ? "true" : "false");
         Db.SetSetting("Ollama.Url", _ollamaUrl.Trim());
         Db.SetSetting("Ollama.Model", _ollamaModel.Trim());
+        Db.SetSetting("Ollama.TimeoutSec", Math.Clamp(_ollamaTimeout, 10, 1200).ToString());
         _llmActive = new AiService(Db).ActiveLlm;
         _llmMsg = "적용됨 — AI 비서/브리핑/토론에 반영";
     }
