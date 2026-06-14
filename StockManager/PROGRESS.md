@@ -1,6 +1,6 @@
 # 📈 MS2-E Stock Suite — 진행 현황 (Progress)
 
-> 작성일 2026-06-12 · 기준 버전 **v3.33.0** (4차 로드맵 + 🄷 사이저 + **IA 개편 1~3단계** + **🄸 드리프트 트리거**까지 완료 — 제안된 모든 항목 구현)
+> 작성일 2026-06-12 · 기준 버전 **v3.38.0** (… IA 개편 + 🄸 드리프트 + **Season 4 ①②③🅰🅱**(로컬LLM·토론·야간퍼블리싱·코파일럿·타임머신)까지 완료)
 > 이 문서는 WinForms→Blazor Hybrid 이식 이후 누적된 기능 개발의 진행 상태를 정리한다.
 > (제품 개요/빌드 방법은 `README.md`, 소수 모듈은 `Common/Primes_Guide.md` 참고)
 
@@ -11,10 +11,10 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **291건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `15bc524` v3.32.0 (전역 종목 실시간 + 횡이동) |
-| 커밋 대기 | ⏳ **v3.33.0 🄸 MPT 드리프트 트리거** (빌드 0/0·부팅 OK) |
-| 다음 예정 | **제안된 전체 로드맵·UX·보류항목 모두 구현 완료** → 사용자 런타임 집중 검증 |
+| 단위 테스트 | ✅ **329건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `2481d33` v3.37.0 (목표주도 코파일럿) |
+| 커밋 대기 | ⏳ **v3.38.0 타임머신 샌드박스** (Season 4 완결) (빌드 0/0·부팅 OK) |
+| 다음 예정 | **Season 4까지 전부 구현 완료** → 사용자 런타임 집중 검증(로컬 LLM·메일·SMTP 포함) |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
@@ -59,7 +59,12 @@
 | v3.30.0 | **PortfolioHub 상태 호이스팅** (1회 로드 + CascadingValue로 탭 공유) |
 | v3.31.0 | **RiskHub cascade**(몬테카를로+시나리오 1회 로드 공유) + **NavMenu 상태 배지**(미확인 알림) |
 | v3.32.0 | **전역 종목 컨텍스트**(Common·OnChange) 실시간 연동 + **횡이동 딥링크** CrossLinks |
-| **v3.33.0** | **🄸 MPT 드리프트 트리거** (타겟 비중 대비 이탈 → 백그라운드 리밸런싱 알림) — ⏳ 커밋 대기 |
+| v3.33.0 | **🄸 MPT 드리프트 트리거** (타겟 비중 대비 이탈 → 백그라운드 리밸런싱 알림) |
+| v3.34.0 | **Season 4 ① 로컬 LLM(Ollama)** — 오프라인·무한·프라이빗 두뇌(LlmRouter 추상화) |
+| v3.35.0 | **Season 4 ② 멀티에이전트 토론** — 강세·약세·심판(승률 가중) |
+| v3.36.0 | **Season 4 ③ 야간 자동 퍼블리싱** — 종합 PDF+텔레그램/메일(SMTP) |
+| v3.37.0 | **Season 4 🅰 목표주도 코파일럿** — NL 목표→상시 평가·제안(게이팅) |
+| **v3.38.0** | **Season 4 🅱 타임머신 샌드박스** — 시점 고정(무누수) 재현+채점 — ⏳ 커밋 대기 |
 
 ---
 
@@ -390,3 +395,26 @@ OOS에서도 살아남는 전략만 "승격". 승격된 전략은 모의(Paper)�
 - **설정 카드**: 설정 페이지 「⚖️ 리밸런싱 드리프트 알림」(토글·밴드·간격). 설정 키: `Drift.Enabled`·`Drift.BandPct`·`Drift.IntervalHours`·`Drift.LastRun`·`Drift.LastAlert`.
 
 **→ 이로써 제안·논의된 모든 로드맵·UX·보류 항목 구현 완료.** 누적 테스트 170→**291건**, 빌드 항상 0/0.
+
+---
+
+## 11. Season 4 — 퀀트 터미널 끝판왕 진화 (자동화·다각화·프라이버시) — ✅ 전부 구현
+
+> 분석/계산은 완료. Season 4는 자동화·다각화·프라이버시 축. 순수 코어 + 어댑터 분리·게이팅 원칙 유지.
+
+### ① 로컬 LLM(Ollama) — *프라이버시 · ✅ v3.34.0*
+`Common/LlmProviders.cs`(순수 LlmRouter + OllamaProvider). `AiService` 펀넬을 라우터로 분기(auto/gemini/ollama) → **오프라인·무한·완전 프라이빗**(데이터가 기기를 안 떠남, 429 없음). 설정 「🧠 LLM 백엔드」. 외부 SDK 0. 테스트 4건.
+
+### ② 멀티에이전트 토론 — *다각화 · ✅ v3.35.0*
+`Common/DebateService.cs`(BuildContext 순수 + RunAsync 3에이전트) + `DebateLog/DebateScore`(판정 14일 후 정산→강세/약세 적중률 채점). 심판이 **자기 과거 승률로 가중**(자기보정 앙상블). `/intel/debate`. 로컬 LLM이면 무료·프라이빗. 테스트 5건.
+
+### ③ 야간 자동 퍼블리싱 — *자동화 · ✅ v3.36.0*
+`Common/NightlyReport.cs`(Gather DB집계 + ComposeText 순수 + BuildPdf QuestPDF) + `EmailSender.cs`(BCL SMTP, PDF첨부, DPAPI 비번). `AlertEngineService.CheckNightlyAsync` 옵트인(시각 후 1회/일)→텔레그램+메일. "앱을 안 켜도 일하는" 서비스화. 테스트 2건.
+
+### 🅰 목표주도 코파일럿 — *자동화→자율 · ✅ v3.37.0*
+`Common/CopilotEngine.cs`(BuildCtx 자산곡선→변동성·낙폭·레짐 + Evaluate 정책→제안 + ParseGoal NL→정책, 모두 순수). `CheckCopilot` 옵트인 훅 → 목표 위반 시 "🧑‍✈️ 제안" 알림(인과 저널 자동 적재)·정책당 24h 쿨다운. **⚠️ 실주문 절대 미접촉(제안만)**. `/copilot`. 테스트 8건.
+
+### 🅱 타임머신 샌드박스 — *검증 캡스톤 · ✅ v3.38.0*
+`Common/TimeMachine.cs`(AsOfSlice look-ahead 차단 + Replay 시점재현·빨리감기 채점, 순수). "그 날짜에 터미널은 뭐라 했나"(레짐·RSI·옵티마이저 우승) → +N봉 실현으로 적중 채점. `/timemachine`. 모든 모듈이 순수라 as-of 슬라이스만 먹이면 동작. 테스트 6건.
+
+**→ Season 4까지 누적: 순수 모듈 ~22종, 단위테스트 170→329, 빌드 항상 0/0, v3.4.2→v3.38.0. 로컬 LLM/메일/SMTP/Ollama 실호출은 런타임 검증 영역.**

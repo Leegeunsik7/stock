@@ -1,0 +1,86 @@
+@page "/timemachine"
+@implements IDisposable
+@inject IQuoteProvider Provider
+@inject SymbolContext Ctx
+
+<CrossLinks Current="" />
+<div class="top">
+    <div class="hello"><h1>🕰 타임머신 샌드박스</h1><p>"그 시점에 터미널은 뭐라 했을까?" — 시점 고정(무누수) 재현 + 빨리감기 채점 (정보 제공용)</p></div>
+    <input class="srch" style="width:130px" placeholder="종목코드" @bind="_symbol" @bind:event="oninput" />
+    <select class="srch" style="width:110px;margin:0 8px" @bind="_market">
+        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
+        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+    </select>
+    <input class="srch" style="width:140px" type="date" @bind="_asOf" />
+    <select class="srch" style="width:90px;margin-left:8px" @bind="_horizon"><option value="5">+5봉</option><option value="10">+10봉</option><option value="20">+20봉</option></select>
+    <button class="addbtn" style="margin:0 16px 0 8px" disabled="@_busy" @onclick="RunAsync">@(_busy?"되감는 중…":"⏪ 되감기")</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:880px">
+    <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
+        ℹ️ 선택한 날짜 <b>이하의 데이터만</b> 사용해(look-ahead 금지) 레짐·RSI·옵티마이저 우승값을 재현하고,
+        <b>+N봉 뒤 실제 결과</b>로 그 시점 판단이 맞았는지 채점합니다. 사후 검증용이며 투자 권유가 아닙니다.
+    </div>
+
+    @if (_busy) { <div style="color:var(--sub);padding:16px">장기 시세 수집 + 시점 재현 중…</div> }
+    else if (_msg.Length > 0) { <div style="color:var(--sub);padding:16px">@_msg</div> }
+    else if (_res is { Valid: true })
+    {
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <div style="font-weight:800;font-size:15px">@_res.AsOf.ToString("yyyy-MM-dd") 시점 재현</div>
+            <span class="@(_res.Stance>0?"up":(_res.Stance<0?"down":""))" style="font-weight:700">@_res.StanceLabel</span>
+            @if (_res.Graded)
+            {
+                <span style="margin-left:auto;font-weight:800" class="@(_res.Hit?"up":"down")">@(_res.Hit ? "✅ 적중" : "❌ 빗나감") · +@(_res.FwdBars)봉 @_res.RealizedPct.ToString("+0.0;-0.0")%</span>
+            }
+            else { <span style="margin-left:auto;color:var(--sub);font-size:12px">아직 채점 불가(미래 부족)</span> }
+        </div>
+
+        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="tile k"><div class="lab">그 시점 종가</div><div class="val num">@_res.AsOfClose.ToString("N0")</div></div>
+            <div class="tile @(_res.RsiAsOf<35?"u":(_res.RsiAsOf>65?"d":"k"))"><div class="lab">RSI(14)</div><div class="val num">@_res.RsiAsOf.ToString("0")</div></div>
+            <div class="tile @(_res.MaGapPct>=0?"u":"d")"><div class="lab">MA20 이격</div><div class="val num">@_res.MaGapPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="tile k"><div class="lab">옵티마이저 우승</div><div class="val num" style="font-size:14px">@(string.IsNullOrEmpty(_res.OptimizerWinner)?"—":_res.OptimizerWinner)</div></div>
+        </div>
+
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;font-size:13px;line-height:1.7">
+            <div>🛰 레짐(그 시점까지): <b>@_res.Regime</b></div>
+            @if (!string.IsNullOrEmpty(_res.OptimizerWinner)) { <div>🌙 옵티마이저: <b>@_res.OptimizerWinner</b> (그 시점 IS 수익 @_res.OptimizerReturnPct.ToString("+0.0;-0.0")%)</div> }
+            <div style="color:var(--sub);font-size:11.5px;margin-top:6px">@_res.Note · 데이터 @(_res.AsOfBars)봉</div>
+        </div>
+    }
+</div>
+
+@code {
+    private string _symbol = "", _msg = "";
+    private Market _market = Market.KRX_KOSPI;
+    private DateTime _asOf = DateTime.Today.AddMonths(-6);
+    private int _horizon = 10;
+    private bool _busy;
+    private TimeMachineResult? _res;
+
+    protected override void OnInitialized()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
+    }
+    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
+    public void Dispose() => Ctx.OnChange -= OnSym;
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
+        Ctx.Set(sym, _market);
+        _busy = true; _msg = ""; _res = null; StateHasChanged();
+        try
+        {
+            // as-of 이전 충분한 히스토리 + 이후 채점용 미래 확보 위해 넓게 수집
+            var candles = await Provider.GetHistoryAsync(sym, _market, _asOf.AddYears(-3), DateTime.Now);
+            _res = TimeMachine.Replay(candles, _asOf, _market, _horizon, sym);
+            if (!_res.Valid) { _msg = _res.Note; _res = null; }
+        }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}
