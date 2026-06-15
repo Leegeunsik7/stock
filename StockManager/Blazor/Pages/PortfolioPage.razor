@@ -66,11 +66,27 @@
     </div>
 }
 
-<div class="tiles" style="padding:0 28px 16px">
-    <div class="tile g"><div class="lab">총 평가 (KRW)</div><div class="val num">@_totalValue.ToString("N0")</div></div>
-    <div class="tile u"><div class="lab">평가손익</div><div class="val num @(_totalPnl>=0?"up":"down")">@_totalPnl.ToString("+#,##0;-#,##0;0")</div></div>
-    <div class="tile @(_totalRet>=0?"u":"d")"><div class="lab">수익률</div><div class="val num">@_totalRet.ToString("+0.0;-0.0")%</div></div>
-    <div class="tile k"><div class="lab">종목수</div><div class="val num">@_holdings.Count</div></div>
+<div class="kpis">
+    <div class="kpi">
+        <div class="k-lab">총 평가 (KRW)</div>
+        <div class="k-val">₩@_totalValue.ToString("N0")</div>
+        <div class="k-row"><span class="delta @(_totalRet>=0?"pos":"neg")">@_totalRet.ToString("+0.0;-0.0")%</span><span class="sub" style="font-size:11px">실시간 환산</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">평가손익</div>
+        <div class="k-val @(_totalPnl>=0?"up":"down")">@_totalPnl.ToString("+#,##0;-#,##0;0")</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">미실현 손익</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">수익률</div>
+        <div class="k-val @(_totalRet>=0?"up":"down")">@_totalRet.ToString("+0.0;-0.0")%</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">원가 대비</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">보유 종목</div>
+        <div class="k-val">@_holdings.Count</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">종목수</span></div>
+    </div>
 </div>
 
 <div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap">
@@ -82,12 +98,16 @@
 
 @if (_tab == "hold")
 {
-<div style="overflow:auto;padding:0 28px 40px">
-    <table class="ctbl">
+<div style="padding:0 28px 40px">
+  <div class="panel">
+    <div class="panel-h">📊 보유 종목 <span class="sub" style="font-weight:400">· @_holdings.Count 종목</span><span class="tag">HOLDINGS</span></div>
+    <div style="overflow:auto;max-height:calc(100vh - 360px)">
+    <table class="ctbl dense">
         <thead><tr>
             <th>종목</th><th>시장</th><th style="text-align:right">수량</th>
             <th style="text-align:right">평균단가</th><th style="text-align:right">현재가</th>
-            <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th><th>관리</th>
+            <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th>
+            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:88px">관리</th>
         </tr></thead>
         <tbody>
             @foreach (var h in _holdings)
@@ -104,7 +124,8 @@
                     <td class="num" style="text-align:right">@((h.CurrentPrice * h.Quantity * fxr).ToString("N0"))</td>
                     <td class="num @(pnl>=0?"up":"down")" style="text-align:right">@pnl.ToString("+#,##0;-#,##0;0")</td>
                     <td class="num @(ret>=0?"up":"down")" style="text-align:right">@ret.ToString("+0.0;-0.0")%</td>
-                    <td>
+                    <td style="text-align:center">@SparkSvg(h.Symbol)</td>
+                    <td style="text-align:center;white-space:nowrap">
                         <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px" @onclick="() => Edit(h)">수정</button>
                         <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Delete(h)">삭제</button>
                     </td>
@@ -112,7 +133,9 @@
             }
         </tbody>
     </table>
+    </div>
     @if (_holdings.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">보유 종목이 없습니다. '➕ 매수 기록' 또는 '✎ 직접 등록'으로 시작하세요.</div> }
+  </div>
 </div>
 }
 else if (_tab == "tx")
@@ -301,6 +324,37 @@ else if (_tab == "corr")
     {
         await LoadAsync();
         LoadTransactions();
+        _ = LoadSparksAsync();   // 백그라운드 — 표는 즉시, 스파크라인은 점진적으로 채워짐
+    }
+
+    // ===== 인라인 스파크라인 — 보유 종목별 최근 30 거래일 종가 추세 (백그라운드 수집) =====
+    private readonly Dictionary<string, double[]> _spark = new(StringComparer.OrdinalIgnoreCase);
+
+    private async Task LoadSparksAsync()
+    {
+        foreach (var h in _holdings.ToList())
+        {
+            try
+            {
+                var cs = await Provider.GetHistoryAsync(h.Symbol, h.Market, DateTime.Now.AddDays(-50), DateTime.Now);
+                if (cs.Count >= 2)
+                {
+                    _spark[h.Symbol] = cs.TakeLast(30).Select(c => (double)c.Close).ToArray();
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch { }
+            try { await Task.Delay(60); } catch { }   // API 한도 보호
+        }
+    }
+
+    private MarkupString SparkSvg(string sym)
+    {
+        if (!_spark.TryGetValue(sym, out var d) || d.Length < 2) return (MarkupString)"";
+        double w = 100, h = 26, mn = d.Min(), mx = d.Max(); var r = (mx - mn) == 0 ? 1 : (mx - mn);
+        var pts = string.Join(" ", d.Select((v, i) => $"{(i / (double)(d.Length - 1) * w):F1},{(h - (v - mn) / r * h):F1}"));
+        var color = d[^1] >= d[0] ? "var(--up)" : "var(--down)";
+        return (MarkupString)$"<svg class='spark' viewBox='0 0 {w} {h}' preserveAspectRatio='none' style='width:100px;height:26px;vertical-align:middle'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.6'/></svg>";
     }
 
     private async Task LoadAsync()
