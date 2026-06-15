@@ -1,0 +1,87 @@
+@* ============================================================================
+   MarketTicker - 전역 시장 티커 바 (블룸버그/트레이딩뷰 톤, v3.47.0)
+    상단에 주요 종목 시세를 고정폭 마퀴로 흘려보낸다. 20초 폴링·실패 무시(직전 유지).
+    데이터 없으면 바 자체를 렌더하지 않음(레이아웃 안정).
+   ============================================================================ *@
+@inject IQuoteProvider Provider
+@implements IDisposable
+@using System.Threading
+
+@if (_items.Count > 0)
+{
+    <div class="ticker" title="주요 종목 시세 (20초 갱신)">
+        <div class="ticker-track">
+            @foreach (var it in _loop)
+            {
+                <span class="tk">
+                    <span class="tk-sym">@it.Name</span>
+                    <span class="tk-px num">@it.Px</span>
+                    <span class="tk-dl num @(it.Up ? "up" : "down")">@(it.Up ? "▲" : "▼") @it.Rate</span>
+                </span>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private record Row(string Name, string Px, string Rate, bool Up);
+
+    // 대표 종목(국내 + 미국) — 필요 시 조정. 6자리 숫자=KRX, 그 외=US.
+    private static readonly (string sym, Market mkt)[] _watch =
+    {
+        ("005930", Market.KRX_KOSPI), ("000660", Market.KRX_KOSPI), ("035420", Market.KRX_KOSPI),
+        ("AAPL", Market.US_NASDAQ), ("NVDA", Market.US_NASDAQ), ("TSLA", Market.US_NASDAQ), ("MSFT", Market.US_NASDAQ),
+    };
+
+    private List<Row> _items = new();
+    private List<Row> _loop = new();     // 끊김 없는 마퀴를 위해 2회 이어붙임
+    private CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await RefreshAsync(ct);
+            await InvokeAsync(StateHasChanged);
+            try { await Task.Delay(20_000, ct); } catch { return; }
+        }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        var rows = new List<Row>();
+        foreach (var grp in _watch.GroupBy(w => w.mkt))
+        {
+            try
+            {
+                var qs = await Provider.GetQuotesAsync(grp.Select(x => x.sym), grp.Key, ct);
+                // 입력 순서 유지
+                foreach (var (sym, _) in grp)
+                {
+                    var q = qs.FirstOrDefault(x => string.Equals(x.Symbol, sym, StringComparison.OrdinalIgnoreCase));
+                    if (q == null || q.Price <= 0) continue;
+                    var rate = q.PreviousClose > 0 ? (q.Price - q.PreviousClose) / q.PreviousClose * 100m : 0m;
+                    rows.Add(new Row(
+                        string.IsNullOrEmpty(q.Name) ? q.Symbol : q.Name,
+                        Formatter.Money(q.Price, q.Currency),
+                        Math.Abs(rate).ToString("0.00") + "%",
+                        rate >= 0));
+                }
+            }
+            catch { /* 실패 시 직전 데이터 유지 */ }
+        }
+        if (rows.Count > 0)
+        {
+            _items = rows;
+            _loop = rows.Concat(rows).ToList();
+        }
+    }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

@@ -228,3 +228,16 @@
 
   /* 7) 인라인 스파크라인 — 비균일 스케일에도 선 굵기 유지 */
   .spark,.k-spark polyline,.spark polyline{vector-effect:non-scaling-stroke}
+
+  /* 8) 전역 시장 티커 바 (마퀴) */
+  .ticker{height:34px;overflow:hidden;border-bottom:1px solid var(--hairline);
+          background:color-mix(in srgb,var(--card) 75%,transparent);display:flex;align-items:center;position:relative}
+  .ticker::after{content:"";position:absolute;right:0;top:0;bottom:0;width:60px;pointer-events:none;
+                 background:linear-gradient(90deg,transparent,var(--canvas))}
+  .ticker:hover .ticker-track{animation-play-state:paused}
+  .ticker-track{display:inline-flex;align-items:center;white-space:nowrap;animation:tickerScroll 55s linear infinite;will-change:transform}
+  .tk{display:inline-flex;align-items:center;gap:8px;padding:0 18px;border-right:1px solid var(--hairline);font-size:12.5px}
+  .tk-sym{color:var(--sub);font-weight:600}
+  .tk-px{font-weight:700}
+  .tk-dl{font-size:11.5px}
+  @keyframes tickerScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}

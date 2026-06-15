@@ -15,49 +15,43 @@
     {
         <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;font-weight:600">@_rep.Insight</div>
 
-        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(3,1fr)">
-            <div class="tile k"><div class="lab">포트폴리오 변동성(연)</div><div class="val num">@_rep.PortfolioVolPct.ToString("0.0")%</div></div>
-            <div class="tile d"><div class="lab">최대 위험 집중</div><div class="val num">@_rep.TopConcentrationPct.ToString("0")%</div></div>
-            <div class="tile k"><div class="lab">집중 종목</div><div class="val num" style="font-size:15px">@_rep.TopName</div></div>
+        <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin:0 0 16px">
+            <div class="kpi"><div class="k-lab">포트폴리오 변동성(연)</div><div class="k-val">@_rep.PortfolioVolPct.ToString("0.0")%</div></div>
+            <div class="kpi"><div class="k-lab">최대 위험 집중</div><div class="k-val @(_rep.TopConcentrationPct>=40?"down":"")">@_rep.TopConcentrationPct.ToString("0")%</div></div>
+            <div class="kpi"><div class="k-lab">집중 종목</div><div class="k-val" style="font-size:17px">@_rep.TopName</div></div>
         </div>
 
-        <div style="font-weight:700;margin:6px 0 8px">비중 vs 위험 비중</div>
-        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
-            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-                <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
-                    <th style="text-align:left;padding:8px 12px">종목</th>
-                    <th style="text-align:right;padding:8px 12px">비중</th>
-                    <th style="text-align:right;padding:8px 12px">위험 비중</th>
-                    <th style="text-align:left;padding:8px 12px;width:42%">위험 비중 막대</th>
-                    <th style="text-align:right;padding:8px 12px">배율</th>
+        <div class="panel" style="margin-bottom:16px">
+            <div class="panel-h">⚖️ 비중 vs 위험 비중 <span class="tag">EULER</span></div>
+            <table class="ctbl dense">
+                <thead><tr>
+                    <th>종목</th><th style="text-align:right">비중</th><th style="text-align:right">위험 비중</th>
+                    <th style="width:42%">위험 비중 막대</th><th style="text-align:right">배율</th>
                 </tr></thead>
                 <tbody>
                 @foreach (var c in _rep.Contributions)
                 {
-                    <tr style="border-top:1px solid var(--line)">
-                        <td style="padding:7px 12px">@c.Name</td>
-                        <td style="text-align:right;padding:7px 12px;color:var(--sub)">@c.WeightPct.ToString("0.0")%</td>
-                        <td style="text-align:right;padding:7px 12px;font-weight:700">@c.RiskContribPct.ToString("0.0")%</td>
-                        <td style="padding:7px 12px">
-                            <div style="background:var(--line);border-radius:5px;height:10px;position:relative;overflow:hidden">
-                                <div style="position:absolute;left:0;top:0;height:100%;width:@(Math.Min(100,c.RiskContribPct).ToString("0.0"))%;background:@(c.Ratio>1.2?"var(--down)":"var(--accent)")"></div>
+                    <tr>
+                        <td>@c.Name</td>
+                        <td class="num" style="text-align:right;color:var(--sub)">@c.WeightPct.ToString("0.0")%</td>
+                        <td class="num" style="text-align:right;font-weight:700">@c.RiskContribPct.ToString("0.0")%</td>
+                        <td>
+                            <div style="background:var(--line);border-radius:5px;height:9px;overflow:hidden">
+                                <div style="height:100%;width:@(Math.Min(100,c.RiskContribPct).ToString("0.0"))%;background:@(c.Ratio>1.2?"var(--down)":"var(--accent)")"></div>
                             </div>
                         </td>
-                        <td style="text-align:right;padding:7px 12px" class="@(c.Ratio>1.2?"down":(c.Ratio<0.85?"up":""))">@c.Ratio.ToString("0.00")×</td>
+                        <td class="num @(c.Ratio>1.2?"down":(c.Ratio<0.85?"up":""))" style="text-align:right">@c.Ratio.ToString("0.00")×</td>
                     </tr>
                 }
                 </tbody>
             </table>
         </div>
 
-        <div style="font-weight:700;margin:6px 0 8px">리스크 패리티 제안 (동일 위험 분담)</div>
-        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
-            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-                <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
-                    <th style="text-align:left;padding:8px 12px">종목</th>
-                    <th style="text-align:right;padding:8px 12px">현재 비중</th>
-                    <th style="text-align:right;padding:8px 12px">패리티 비중</th>
-                    <th style="text-align:right;padding:8px 12px">차이</th>
+        <div class="panel">
+            <div class="panel-h">🎯 리스크 패리티 제안 (동일 위험 분담) <span class="tag">RISK PARITY</span></div>
+            <table class="ctbl dense">
+                <thead><tr>
+                    <th>종목</th><th style="text-align:right">현재 비중</th><th style="text-align:right">패리티 비중</th><th style="text-align:right">차이</th>
                 </tr></thead>
                 <tbody>
                 @for (int i = 0; i < _rep.Names.Length; i++)
@@ -65,11 +59,11 @@
                     var cur = i < _rep.CurrentWeights.Length ? _rep.CurrentWeights[i] : 0;
                     var rp = i < _rep.RiskParityWeights.Length ? _rep.RiskParityWeights[i] : 0;
                     var diff = rp - cur;
-                    <tr style="border-top:1px solid var(--line)">
-                        <td style="padding:7px 12px">@_rep.Names[i]</td>
-                        <td style="text-align:right;padding:7px 12px;color:var(--sub)">@(( cur*100).ToString("0.0"))%</td>
-                        <td style="text-align:right;padding:7px 12px;font-weight:700">@(( rp*100).ToString("0.0"))%</td>
-                        <td style="text-align:right;padding:7px 12px" class="@(diff>=0?"up":"down")">@(( diff*100).ToString("+0.0;-0.0"))%p</td>
+                    <tr>
+                        <td>@_rep.Names[i]</td>
+                        <td class="num" style="text-align:right;color:var(--sub)">@((cur*100).ToString("0.0"))%</td>
+                        <td class="num" style="text-align:right;font-weight:700">@((rp*100).ToString("0.0"))%</td>
+                        <td class="num @(diff>=0?"up":"down")" style="text-align:right">@((diff*100).ToString("+0.0;-0.0"))%p</td>
                     </tr>
                 }
                 </tbody>
