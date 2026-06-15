@@ -2,6 +2,7 @@
 @inject LocalDatabase Db
 @inject IQuoteProvider Provider
 @inject FxConverter Fx
+@inject AsOfContext AsOfCtx
 @implements IDisposable
 @using System.Threading
 @using System.Data
@@ -98,6 +99,34 @@
 
 @if (_tab == "hold")
 {
+@if (!AsOfCtx.IsLive)
+{
+<div style="padding:0 28px 40px">
+  <div style="background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:14px">⏳ <b>AS-OF @AsOfCtx.AsOf!.Value.ToString("yyyy-MM-dd")</b> · 거래내역으로 재구성한 <b>그 시점의 보유 포지션</b>입니다(현재가·평가액 아님). 상단 시점 바에서 LIVE 복귀.</div>
+  <div class="panel">
+    <div class="panel-h">📦 그 시점 보유 <span class="tag">AS-OF</span></div>
+    <div style="overflow:auto;max-height:calc(100vh - 380px)">
+    <table class="ctbl dense">
+        <thead><tr><th>종목</th><th style="text-align:right">수량</th><th style="text-align:right">평균단가(당시)</th><th style="text-align:right">매입원가</th></tr></thead>
+        <tbody>
+            @foreach (var a in _asof)
+            {
+                <tr>
+                    <td><b>@a.Symbol</b></td>
+                    <td class="num" style="text-align:right">@a.Quantity.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@a.AvgCost.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@a.CostBasis.ToString("N0")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+    @if (_asof.Count == 0) { <div style="padding:34px;color:var(--sub);text-align:center">해당 시점에 보유 포지션이 없습니다.</div> }
+  </div>
+</div>
+}
+else
+{
 <div style="padding:0 28px 40px">
   <div class="panel">
     <div class="panel-h">📊 보유 종목 <span class="sub" style="font-weight:400">· @_holdings.Count 종목</span><span class="tag">HOLDINGS</span></div>
@@ -137,6 +166,7 @@
     @if (_holdings.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">보유 종목이 없습니다. '➕ 매수 기록' 또는 '✎ 직접 등록'으로 시작하세요.</div> }
   </div>
 </div>
+}
 }
 else if (_tab == "tx")
 {
@@ -300,9 +330,27 @@ else if (_tab == "corr")
     protected override async Task OnInitializedAsync()
     {
         await LoadAllAsync();
+        LoadAsOf();
+        AsOfCtx.OnChange += OnAsOf;
         _cts = new CancellationTokenSource();
         _ = Loop(_cts.Token);
     }
+
+    // ===== 전역 시점(As-Of) — 거래내역으로 그 시점 보유 재구성 (순수 엔진) =====
+    private List<AsOfHolding> _asof = new();
+    private void LoadAsOf()
+    {
+        if (AsOfCtx.IsLive) { _asof = new(); return; }
+        try
+        {
+            var txs = Db.Query("SELECT * FROM Transactions").Rows.Cast<DataRow>()
+                .Select(r => new AsOfTx(Safe.Str(r["Symbol"]), (TransactionType)Safe.Int(r["Type"]),
+                    Safe.Int(r["Quantity"]), Safe.Dec(r["Price"]), Safe.DT(r["ExecutedAt"]))).ToList();
+            _asof = AsOfPortfolio.Reconstruct(txs, AsOfCtx.AsOf!.Value);
+        }
+        catch { _asof = new(); }
+    }
+    private void OnAsOf() { LoadAsOf(); InvokeAsync(StateHasChanged); }
 
     private async Task Loop(CancellationToken ct)
     {
@@ -501,5 +549,5 @@ else if (_tab == "corr")
         try { Db.DeleteHolding(h.Symbol, h.BrokerAccount); await LoadAsync(); } catch { }
     }
 
-    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+    public void Dispose() { AsOfCtx.OnChange -= OnAsOf; _cts?.Cancel(); _cts?.Dispose(); }
 }

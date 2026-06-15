@@ -2,6 +2,7 @@
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject IJSRuntime JS
+@inject AsOfContext AsOfCtx
 @implements IDisposable
 @using System.Threading
 @using System.Data
@@ -85,6 +86,10 @@
                 <div style="min-width:120px">
                     <div class="sub" style="font-size:11px;letter-spacing:.05em">@(_sel.sym) · @MarketLabel(_sel.mkt)</div>
                     <div style="font-size:17px;font-weight:800;line-height:1.2">@(_sel.name)</div>
+                    @if (!AsOfCtx.IsLive)
+                    {
+                        <div style="font-size:11px;font-weight:800;color:var(--warn);margin-top:2px">⏳ AS-OF @AsOfCtx.AsOf!.Value.ToString("yyyy-MM-dd")</div>
+                    }
                 </div>
                 <div style="margin-left:auto;text-align:right;line-height:1.15">
                     <div style="font-size:23px;font-weight:800;color:@_titleColor">@_priceBig</div>
@@ -198,6 +203,7 @@
         await ReloadGroupAsync();
         await SelectFirstAsync();
         RestartLoop();
+        AsOfCtx.OnChange += OnAsOf;   // 전역 시점 변경 → 차트 슬라이스
     }
 
     private void RestartLoop()
@@ -434,21 +440,34 @@
     }
 
     // ⚠️ 원본 룰: 기간 변경/종목 선택 = 데이터 재로드 + 줌 리셋 (지표 변경은 이 경로를 타지 않음)
+    private List<Candle> _candlesAll = new();   // 전체 히스토리(슬라이스 전 원본)
+
     private async Task LoadChartAsync()
     {
         if (string.IsNullOrEmpty(_sel.sym)) return;
         _loadingChart = true; StateHasChanged();
         try
         {
-            _candles = await Provider.GetHistoryAsync(_sel.sym, _sel.mkt,
+            _candlesAll = await Provider.GetHistoryAsync(_sel.sym, _sel.mkt,
                 DateTime.Now.AddMonths(-_periods[_periodIdx].months), DateTime.Now);
         }
-        catch { _candles = new(); }
-        _visibleCount = Math.Min(100, Math.Max(2, _candles.Count));   // 줌 리셋 (원본)
-        UpdateTitle();
-        _tvDirty = true;                                              // 고급차트 재렌더 대상
+        catch { _candlesAll = new(); }
+        ApplyAsOf();
         _loadingChart = false; StateHasChanged();
     }
+
+    // 전역 시점(As-Of) 적용 — LIVE면 전체, 과거면 그 날짜 이하로 슬라이스(룩어헤드 차단).
+    private void ApplyAsOf()
+    {
+        _candles = AsOfCtx.IsLive
+            ? _candlesAll
+            : _candlesAll.Where(c => c.Date.Date <= AsOfCtx.AsOf!.Value.Date).ToList();
+        _visibleCount = Math.Min(100, Math.Max(2, _candles.Count));   // 줌 리셋
+        UpdateTitle();
+        _tvDirty = true;                                              // 고급차트 재렌더 대상
+    }
+
+    private void OnAsOf() { ApplyAsOf(); InvokeAsync(StateHasChanged); }
 
     // 헤더 가격/등락 = 마지막 종가 + 직전 캔들 대비 등락률 (prev.Close==0 가드 — 원본 룰)
     private void UpdateTitle()
@@ -780,5 +799,5 @@
         }
     }
 
-    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+    public void Dispose() { AsOfCtx.OnChange -= OnAsOf; _cts?.Cancel(); _cts?.Dispose(); }
 }
