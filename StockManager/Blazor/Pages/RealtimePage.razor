@@ -132,7 +132,7 @@
                 }
                 else if (_advChart)
                 {
-                    <div id="tvchart" style="height:360px"></div>
+                    <div id="tvchart" style="height:400px"></div>
                 }
                 else
                 {
@@ -753,12 +753,20 @@
 
     protected override async Task OnAfterRenderAsync(bool first)
     {
+        // lib가 배치돼 있으면 첫 렌더에서 '고급차트'를 기본 활성화(없으면 기존 SVG 유지).
+        if (first)
+        {
+            bool avail = false;
+            try { avail = await JS.InvokeAsync<bool>("tvchart.available"); } catch { }
+            if (avail && !_advChart && _candles.Count >= 2) { _advChart = true; _tvDirty = true; await InvokeAsync(StateHasChanged); return; }
+        }
         if (!_advChart || !_tvDirty || _candles.Count < 2) return;
         _tvDirty = false;
         var data = _candles.TakeLast(180).Select(c => new
         {
             time = c.Date.ToString("yyyy-MM-dd"),
-            open = (double)c.Open, high = (double)c.High, low = (double)c.Low, close = (double)c.Close
+            open = (double)c.Open, high = (double)c.High, low = (double)c.Low, close = (double)c.Close,
+            volume = (double)c.Volume
         }).ToArray();
         bool dark = Db.GetSetting("UI.Theme") != "light";   // 기본 dark
         bool ok;
@@ -768,7 +776,7 @@
         {
             _advChart = false;
             _advNotice = "TradingView 라이브러리가 없어 기본 차트로 표시합니다. (wwwroot/lib/ 에 lightweight-charts 배치 시 활성화)";
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
