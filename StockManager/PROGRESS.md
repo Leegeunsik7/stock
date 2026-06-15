@@ -11,10 +11,10 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **357건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `a377b7b` (오픈소스 쇼케이스 README/CONTRIBUTING) · 태그 `v3.41.0`→`c90d356` |
-| 커밋 대기 | ⏳ **v3.42.0 동적 플러그인 아키텍처** (`Common/PluginSystem.cs`·`/plugins`) (빌드 0/0·테스트 357) |
-| 다음 예정 | **사용자 런타임 검증**(`/diagnostics`·`/plugins`) + GitHub remote 연결 시 CI 자동 릴리스 · (선택) P2P 동기화 |
+| 단위 테스트 | ✅ **365건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `ff6d931` v3.42.0 (동적 플러그인 아키텍처) · 태그 `v3.41.0`·`v3.42.0` |
+| 커밋 대기 | ⏳ **v3.43.0 다기기 동기화(P2P)** (`SyncEngine`·`SyncCrypto`·`SyncService`·`/sync`) (빌드 0/0·테스트 365) |
+| 다음 예정 | **사용자 런타임 검증**(`/diagnostics`·`/plugins`·`/sync`) + GitHub remote 연결 시 CI 자동 릴리스 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
@@ -69,7 +69,8 @@
 | v3.40.0 | **진단 대시보드** `/diagnostics` — 백그라운드 훅·LLM/시세·DB 상태 가시화(도그푸딩) |
 | v3.41.0 | **Inno Setup 설치 파일** `installer/` — 더블클릭 설치·WebView2 점검·빌드 가이드 |
 | (docs) | **오픈소스 쇼케이스** — 영문/한글 README·Mermaid 아키텍처 다이어그램·CONTRIBUTING (`a377b7b`, 무버전) |
-| **v3.42.0** | **동적 플러그인 아키텍처(Season 5)** — `plugins/*.plugin.json` 런타임 스캔(지표·알림규칙·프롬프트·어셈블리), 선언적 평가 순수+테스트, 어셈블리 `.dll` 게이팅·`/plugins` UI — ⏳ 커밋 대기 |
+| v3.42.0 | **동적 플러그인 아키텍처(Season 5 🅐)** — `plugins/*.plugin.json` 런타임 스캔(지표·알림규칙·프롬프트·어셈블리), 선언적 평가 순수+테스트, 어셈블리 `.dll` 게이팅·`/plugins` UI |
+| **v3.43.0** | **다기기 동기화(Season 5 🅑)** — E2EE(AES-256-GCM+PBKDF2) 암호화 번들 파일 교환·결정론적 가산 머지(거래=합집합·보유=신규만)·`VACUUM INTO` 백업·미리보기·**허용목록 fail-closed 비밀 차단** — ⏳ 커밋 대기 |
 
 ---
 
@@ -447,3 +448,14 @@ OOS에서도 살아남는 전략만 "승격". 승격된 전략은 모의(Paper)�
 - 테스트 `PluginSystemTests` **23건**(파싱 유효/무효, 중복제거, 어셈블리 게이팅, 활성 오버라이드, 버전 비교, 템플릿 렌더/자리표시자, 지표 스탠스/데이터부족, 알림규칙 평가).
 
 **→ 누적: 단위테스트 334→357, 빌드 항상 0/0, v3.41.0→v3.42.0. 폴더 스캔·.dll 로드·`/plugins` 렌더는 런타임 검증 영역.**
+
+### 🅑 다기기 동기화(P2P, 위험하지 않은 범위) — *연결성 · ✅ v3.43.0*
+중앙 서버 없이 데스크톱↔노트북 데이터를 안전하게 병합. **라이브 소켓 대신 암호화 번들 파일 교환**(공유폴더/Tailscale/USB).
+- `Common/SyncEngine.cs` **(순수)**: `Fingerprint`(SHA-256), `Plan`(결정론적 dry-run) — 거래=UnionDistinct(내용해시 합집합), 보유=AddMissingOnly(기존 절대 미덮어쓰기), 설정=PreferIncoming(충돌은 확정 시만). per-record 타임스탬프 없는 스키마라 LWW 대신 **가산 머지 → 데이터 손실 불가**.
+- `Common/SyncCrypto.cs` **(E2EE)**: AES-256-GCM + PBKDF2-SHA256(200k), BCL 전용. 매직헤더+salt+nonce+tag 포맷, GCM 태그로 변조 탐지(오암호/손상 거부).
+- `Common/SyncService.cs` **(어댑터)**: 수집·번들·`.ms2sync` 파일 입출력·`PlanAgainstLocal`·`VACUUM INTO` 자동 백업·`ApplyPlan`(백업 실패 시 적용 중단). 설정은 **fail-closed 허용목록**으로만 내보냄.
+- UI `/sync`(도구 🔄): 내보내기(암호 2회·항목 선택)·가져오기(목록 선택·미리보기 표·백업 후 적용·충돌 덮어쓰기 옵트인).
+- 테스트 `SyncEngineTests` **8건**(지문 결정성·머지 분류·union 무충돌·암호 라운드트립/오암호/변조·비번들 거부·허용목록 비밀차단·서비스 라운드트립 멱등·보유 미덮어쓰기).
+- **적대적 리뷰 반영**: 초기 거부목록(fail-open)이 `Lan.Pin`·`Email.*`·`KIS.AccountNo`·`Telegram.ChatId`를 누출 → **허용목록(fail-closed)으로 전환** + 비밀/식별자 토큰 이중 차단. (crypto/merge 렌즈는 "견고함" 교차확인; data-safety/edge 렌즈는 세션 한도로 미완 → 자체 점검: VACUUM INTO 경로 escape·백업실패 중단·decimal/double 라운드트립·빈 번들 처리 확인.)
+
+**→ 누적: 단위테스트 357→365, 빌드 항상 0/0, v3.42.0→v3.43.0. 파일 IO·DB 적용·`/sync` 렌더는 런타임 검증 영역.**
