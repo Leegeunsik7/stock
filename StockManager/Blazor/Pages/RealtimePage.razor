@@ -79,50 +79,79 @@
         @if (_watch.Count == 0) { <div style="padding:30px;text-align:center;color:var(--sub)">종목을 추가하세요.</div> }
     </div>
     <div>
-        <div class="wh" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="h" style="color:@_titleColor">📊 @_sel.name @_titleSuffix</span>
-            <span style="flex:1"></span>
-            <select class="srch" style="width:88px" value="@_periodIdx" @onchange="OnPeriodChanged">
-                @for (int i = 0; i < _periods.Length; i++) { var ii = i; <option value="@ii">@_periods[ii].label</option> }
-            </select>
-            <select class="srch" style="width:118px" @bind="_indicator">
-                @foreach (var ind in _indicatorNames) { <option value="@ind">@ind</option> }
-            </select>
-            <button class="pill @(_advChart?"r":"b")" style="border:0;cursor:pointer;padding:6px 12px;font-size:12px" @onclick="ToggleAdv"
-                    title="TradingView 고급차트 (lib 미배치 시 기본 차트)">@(_advChart ? "고급차트 ✓" : "고급차트")</button>
-        </div>
-        @if (!string.IsNullOrEmpty(_advNotice)) { <div class="sub" style="font-size:11.5px;padding:4px 0">@_advNotice</div> }
-        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px"
-             @onwheel="OnWheel" @onwheel:preventDefault>
-            @if (_loadingChart)
-            {
-                <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">차트 로딩 중…</div>
-            }
-            else if (_candles.Count < 2)
-            {
-                <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">왼쪽에서 종목을 선택하세요.</div>
-            }
-            else if (_advChart)
-            {
-                <div id="tvchart" style="height:360px"></div>
-            }
-            else
-            {
-                @((MarkupString)MainChartSvg())
-                @((MarkupString)VolumeSvg())
-                @if (_candles.Count >= 30)
+        <div style="border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.16);background:var(--card)">
+            @* ── 헤더 밴드: 종목 · 큰 가격 · 등락 pill ── *@
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--line);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 12%,transparent),transparent)">
+                <div style="min-width:120px">
+                    <div class="sub" style="font-size:11px;letter-spacing:.05em">@(_sel.sym) · @MarketLabel(_sel.mkt)</div>
+                    <div style="font-size:17px;font-weight:800;line-height:1.2">@(_sel.name)</div>
+                </div>
+                <div style="margin-left:auto;text-align:right;line-height:1.15">
+                    <div style="font-size:23px;font-weight:800;color:@_titleColor">@_priceBig</div>
+                    @if (!string.IsNullOrEmpty(_changeBig))
+                    {
+                        <span style="display:inline-block;margin-top:3px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:@_titleColor">@_changeBig</span>
+                    }
+                </div>
+            </div>
+            @* ── 컨트롤 ── *@
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 16px 0">
+                <span class="sub" style="font-size:11.5px">기간</span>
+                <select class="srch" style="width:84px" value="@_periodIdx" @onchange="OnPeriodChanged">
+                    @for (int i = 0; i < _periods.Length; i++) { var ii = i; <option value="@ii">@_periods[ii].label</option> }
+                </select>
+                <span class="sub" style="font-size:11.5px;margin-left:4px">지표</span>
+                <select class="srch" style="width:116px" @bind="_indicator">
+                    @foreach (var ind in _indicatorNames) { <option value="@ind">@ind</option> }
+                </select>
+                <span style="flex:1"></span>
+                <button class="pill @(_advChart?"r":"b")" style="border:0;cursor:pointer;padding:6px 12px;font-size:12px" @onclick="ToggleAdv"
+                        title="TradingView 고급차트 (lib 미배치 시 기본 차트)">@(_advChart ? "고급차트 ✓" : "고급차트")</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_advNotice)) { <div class="sub" style="font-size:11.5px;padding:2px 16px">@_advNotice</div> }
+            @* ── 차트 본문 ── *@
+            <div style="padding:12px 16px 16px" @onwheel="OnWheel" @onwheel:preventDefault>
+                @if (_loadingChart)
                 {
-                    @((MarkupString)IndicatorSvg())
+                    <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">차트 로딩 중…</div>
+                }
+                else if (_candles.Count < 2)
+                {
+                    @if (string.IsNullOrEmpty(_sel.sym))
+                    {
+                        <div style="height:460px;display:flex;align-items:center;justify-content:center;color:var(--sub)">왼쪽에서 종목을 선택하세요.</div>
+                    }
+                    else
+                    {
+                        <div style="height:460px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;color:var(--sub)">
+                            <div style="font-size:34px">📉</div>
+                            <div style="font-size:13px">⚠️ <b>@(_sel.name)</b> 차트 데이터를 불러오지 못했습니다.<br/>네트워크 또는 시세 제공자(Naver/Yahoo) 응답 문제일 수 있습니다.</div>
+                            <button class="addbtn" @onclick="LoadChartAsync">🔄 다시 시도</button>
+                        </div>
+                    }
+                }
+                else if (_advChart)
+                {
+                    <div id="tvchart" style="height:360px"></div>
                 }
                 else
                 {
-                    <div style="padding:10px 0;color:var(--sub);font-size:12px;text-align:center">보조지표는 캔들 30개 이상부터 표시됩니다.</div>
+                    @((MarkupString)MainChartSvg())
+                    @((MarkupString)VolumeSvg())
+                    @if (_candles.Count >= 30)
+                    {
+                        @((MarkupString)IndicatorSvg())
+                    }
+                    else
+                    {
+                        <div style="padding:10px 0;color:var(--sub);font-size:12px;text-align:center">보조지표는 캔들 30개 이상부터 표시됩니다.</div>
+                    }
+                    <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--sub)">
+                        <span>휠로 확대/축소 · 표시 @Visible.Count/@_candles.Count 캔들</span>
+                        <span>저 @_candles.Min(c=>c.Low).ToString("N0") · 고 @_candles.Max(c=>c.High).ToString("N0")</span>
+                    </div>
                 }
-                <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:11.5px;color:var(--sub)">
-                    <span>휠로 확대/축소 · 표시 @Visible.Count/@_candles.Count 캔들</span>
-                    <span>저 @_candles.Min(c=>c.Low).ToString("N0") · 고 @_candles.Max(c=>c.High).ToString("N0")</span>
-                </div>
-            }
+            </div>
         </div>
     </div>
 </div>
@@ -160,7 +189,7 @@
     private readonly string[] _indicatorNames = { "RSI", "MACD", "Stochastic", "볼린저밴드" };
     private string _indicator = "RSI";   // ⚠️ 지표 변경 = 다시 그리기만, 재로드 없음 (원본 비대칭 룰)
     private int _visibleCount = 100;
-    private string _titleSuffix = "", _titleColor = "var(--ink)";
+    private string _priceBig = "—", _changeBig = "", _titleColor = "var(--ink)";
     private bool _advChart, _tvDirty;     // TradingView 고급차트 토글 / 재렌더 필요 플래그
     private string _advNotice = "";
 
@@ -287,7 +316,7 @@
     private string RowStyle(string sym, int ver)
     {
         var s = "cursor:pointer;";
-        if (sym == _sel.sym) s += "background:var(--card-2);";
+        if (sym == _sel.sym) s += "background:var(--card-2);box-shadow:inset 3px 0 0 var(--accent);";
         if (ver > 0) s += $"animation:{_flashAnim.GetValueOrDefault(sym, "flashU")} .8s ease-out;";
         return s;
     }
@@ -421,16 +450,26 @@
         _loadingChart = false; StateHasChanged();
     }
 
-    // 타이틀 = 마지막 종가 + 직전 캔들 대비 등락률 (prev.Close==0 가드 — 원본 룰)
+    // 헤더 가격/등락 = 마지막 종가 + 직전 캔들 대비 등락률 (prev.Close==0 가드 — 원본 룰)
     private void UpdateTitle()
     {
-        if (_candles.Count == 0) { _titleSuffix = ""; _titleColor = "var(--ink)"; return; }
+        if (_candles.Count == 0) { _priceBig = "—"; _changeBig = ""; _titleColor = "var(--sub)"; return; }
         var last = _candles[^1];
         var prev = _candles.Count > 1 ? _candles[^2] : last;
         var rate = prev.Close == 0 ? 0 : (last.Close - prev.Close) / prev.Close * 100m;
-        _titleSuffix = $"{last.Close:N0}  {Formatter.Pct(rate)}";
+        _priceBig = last.Close.ToString("N0");
+        _changeBig = (rate >= 0 ? "▲ " : "▼ ") + Math.Abs(rate).ToString("0.00") + "%";
         _titleColor = rate > 0 ? "var(--up)" : rate < 0 ? "var(--down)" : "var(--sub)";
     }
+
+    private static string MarketLabel(Market m) => m switch
+    {
+        Market.KRX_KOSPI => "KOSPI",
+        Market.KRX_KOSDAQ => "KOSDAQ",
+        Market.US_NYSE => "NYSE",
+        Market.US_NASDAQ => "NASDAQ",
+        _ => m.ToString()
+    };
 
     private async Task OnPeriodChanged(ChangeEventArgs e)
     {
@@ -474,12 +513,27 @@
 
         var sb = new System.Text.StringBuilder();
         sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:300px;display:block'>");
+        sb.Append("<defs><linearGradient id='cArea' x1='0' y1='0' x2='0' y2='1'>" +
+                  "<stop offset='0%' stop-color='var(--accent)' stop-opacity='0.20'/>" +
+                  "<stop offset='100%' stop-color='var(--accent)' stop-opacity='0'/></linearGradient></defs>");
         for (int g = 0; g <= 4; g++)
         {
             double gy = padT + plotH * g / 4.0;
             decimal pv = maxP - (decimal)(range * g / 4.0);
             sb.Append($"<line x1='{padL}' y1='{gy:F1}' x2='{padL + plotW:F1}' y2='{gy:F1}' stroke='var(--line)' stroke-width='1'/>");
             sb.Append($"<text x='{padL + plotW + 4:F1}' y='{gy + 4:F1}' fill='var(--sub)' font-size='10'>{pv:N0}</text>");
+        }
+        // 종가 영역(프리미엄 sheen) — 캔들 뒤에 깔리는 그라데이션 + 종가 라인
+        {
+            double bottomY = padT + plotH;
+            var ap = new System.Text.StringBuilder();
+            ap.Append($"{padL + slot * 0 + slot / 2:F1},{bottomY:F1} ");
+            for (int i = 0; i < cs.Count; i++) { double x = padL + slot * i + slot / 2; ap.Append($"{x:F1},{Y(cs[i].Close):F1} "); }
+            ap.Append($"{padL + slot * (cs.Count - 1) + slot / 2:F1},{bottomY:F1}");
+            sb.Append($"<polygon points='{ap}' fill='url(#cArea)' stroke='none'/>");
+            var lp = new System.Text.StringBuilder();
+            for (int i = 0; i < cs.Count; i++) { double x = padL + slot * i + slot / 2; lp.Append($"{x:F1},{Y(cs[i].Close):F1} "); }
+            sb.Append($"<polyline points='{lp}' fill='none' stroke='var(--accent)' stroke-width='1' opacity='0.5'/>");
         }
         // 캔들 (한국식: 상승=빨강 --up, 하락=파랑 --down)
         for (int i = 0; i < cs.Count; i++)

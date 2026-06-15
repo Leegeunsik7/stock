@@ -113,25 +113,35 @@ namespace StockManager.Common
         {
             var url = $"https://api.finance.naver.com/siseJson.naver?symbol={symbol}&requestType=1" +
                       $"&startTime={from:yyyyMMdd}&endTime={to:yyyyMMdd}&timeframe=day";
-            var candles = new List<Candle>();
             try
             {
                 var text = await _http.GetStringAsync(url, ct);
-                var matches = Regex.Matches(text, @"\[""(\d{8})"",([\d.]+),([\d.]+),([\d.]+),([\d.]+),(\d+)");
-                foreach (Match m in matches)
-                {
-                    candles.Add(new Candle
-                    {
-                        Date = DateTime.ParseExact(m.Groups[1].Value, "yyyyMMdd", CultureInfo.InvariantCulture),
-                        Open = decimal.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
-                        High = decimal.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
-                        Low = decimal.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
-                        Close = decimal.Parse(m.Groups[5].Value, CultureInfo.InvariantCulture),
-                        Volume = long.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture)
-                    });
-                }
+                return ParseSiseJson(text);
             }
-            catch (Exception ex) { Log.Warn($"[Naver] {symbol} 히스토리 실패: {ex.Message}"); }
+            catch (Exception ex) { Log.Warn($"[Naver] {symbol} 히스토리 실패: {ex.Message}"); return new List<Candle>(); }
+        }
+
+        // 네이버 siseJson 텍스트 → 캔들 (순수·테스트 대상).
+        //  실제 응답은 값 사이에 공백이 있음: ["20240102", 78200, 79800, ...] → \s* 허용 필수.
+        //  (헤더 행 ['날짜',...]은 8자리 날짜가 아니라 매치되지 않음)
+        public static List<Candle> ParseSiseJson(string text)
+        {
+            var candles = new List<Candle>();
+            if (string.IsNullOrEmpty(text)) return candles;
+            var matches = Regex.Matches(text,
+                @"\[\s*""(\d{8})""\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*(\d+)");
+            foreach (Match m in matches)
+            {
+                candles.Add(new Candle
+                {
+                    Date = DateTime.ParseExact(m.Groups[1].Value, "yyyyMMdd", CultureInfo.InvariantCulture),
+                    Open = decimal.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
+                    High = decimal.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
+                    Low = decimal.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
+                    Close = decimal.Parse(m.Groups[5].Value, CultureInfo.InvariantCulture),
+                    Volume = long.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture)
+                });
+            }
             return candles;
         }
 
@@ -302,8 +312,24 @@ namespace StockManager.Common
         public Task<List<Quote>> GetQuotesAsync(IEnumerable<string> symbols, Market market, CancellationToken ct = default)
             => ResolveProvider(market)?.GetQuotesAsync(symbols, market, ct) ?? Task.FromResult(new List<Quote>());
 
-        public Task<List<Candle>> GetHistoryAsync(string symbol, Market market, DateTime from, DateTime to, CancellationToken ct = default)
-            => ResolveProvider(market)?.GetHistoryAsync(symbol, market, from, to, ct) ?? Task.FromResult(new List<Candle>());
+        // 히스토리는 폴백 체인 — 시장 지원 프로바이더를 순서대로 시도, 첫 성공(≥2캔들) 채택.
+        //  예: KRX는 Naver(siseJson) 실패/차단 시 Yahoo(005930.KS)로 자동 폴백 → 차트 공백 방지.
+        public async Task<List<Candle>> GetHistoryAsync(string symbol, Market market, DateTime from, DateTime to, CancellationToken ct = default)
+        {
+            List<Candle>? best = null;
+            foreach (var p in _providers)
+            {
+                if (Array.IndexOf(p.SupportedMarkets, market) < 0) continue;
+                try
+                {
+                    var cs = await p.GetHistoryAsync(symbol, market, from, to, ct);
+                    if (cs != null && cs.Count >= 2) return cs;                      // 첫 유효 결과 채택
+                    if (cs != null && (best == null || cs.Count > best.Count)) best = cs;
+                }
+                catch (Exception ex) { Log.Warn($"[Agg] {p.Source} {symbol} 히스토리 실패: {ex.Message}"); }
+            }
+            return best ?? new List<Candle>();
+        }
 
         public async Task SubscribeAsync(string symbol, Market market)
         {
