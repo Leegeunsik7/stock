@@ -245,3 +245,12 @@
   /* 9) 위젯/패널 통일 — 적대적 리뷰 반영: .w 스코프 대신 '베이스 클래스'를 직접 승격해
         위젯과 비-위젯(.wh/.row/.prog/.qa 단독 사용 페이지)이 동일한 엔터프라이즈 룩을 갖도록 함.
         (실제 규칙은 위쪽 .w/.wh/.wb/.row/.prog/.qa/.tile/.panel-h 정의에 통합되어 있음) */
+
+  /* 10) 레거시 .tiles/.tile(검증·전략·총자산·모의 등 13개 페이지) → KPI 카드 톤으로 통일.
+         ※ 마크업/그리드/페이지 패딩은 건드리지 않음(인라인 정렬 보존) — CSS만으로 일괄 일치. */
+  .tiles{gap:12px}
+  .tile{padding:14px 16px}
+  .tile::before{width:3px}                                  /* 상태 액센트 바(상승/하락/경고) 유지 */
+  .tile .lab{font-size:10.5px;letter-spacing:.1em;font-weight:700;color:var(--sub)}
+  .tile .val{font-size:24px;font-weight:700;letter-spacing:-.4px;margin-top:7px}  /* .num이 고정폭 적용 */
+  .tile .sub{font-size:11px;margin-top:3px}
