@@ -65,13 +65,13 @@
 
   /* ===== Widget grid ===== */
   .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px;padding:6px 28px 40px;align-content:start}
-  .w{grid-column:span 4;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .w{grid-column:span 4;background:var(--card);border:1px solid var(--hairline);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
   .w.col6{grid-column:span 6}.w.col8{grid-column:span 8}.w.col12{grid-column:span 12}
   /* HTML5 네이티브 DnD: 드롭 대상 하이라이트 (SortableJS ghost/chosen 대체) */
   .w.drag-over{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 45%,transparent),var(--shadow)}
   .w.drag-over::after{content:"";position:absolute;inset:0;background:color-mix(in srgb,var(--accent) 7%,transparent);pointer-events:none}
   .w{position:relative}
-  .wh{display:flex;align-items:center;gap:9px;padding:14px 16px 10px}
+  .wh{display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--hairline);background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,transparent),transparent)}
   .wh[draggable="true"]{cursor:grab}
   .wh[draggable="true"]:active{cursor:grabbing}
   .wh .h{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px}
@@ -82,18 +82,18 @@
   .wh .open + .x{margin-left:0}
   .wh .x{margin-left:auto;color:var(--sub);cursor:pointer;border:0;background:transparent;font-size:15px;opacity:.55;border-radius:6px;width:24px;height:24px}
   .wh .x:hover{opacity:1;background:var(--card-2);color:var(--up)}
-  .wb{padding:6px 16px 18px}
+  .wb{padding:12px 16px 16px}
 
   /* stat tiles */
   .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:2px 28px 4px}
-  .tile{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;position:relative;overflow:hidden}
+  .tile{background:var(--card);border:1px solid var(--hairline);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;position:relative;overflow:hidden}
   .tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent)}
   .tile.u::before{background:var(--up)}.tile.d::before{background:var(--down)}.tile.k::before{background:var(--warn)}.tile.g::before{background:var(--ok)}
   .tile .lab{color:var(--sub);font-size:12px}
   .tile .val{font-size:26px;font-weight:800;letter-spacing:-.6px;margin-top:6px;font-variant-numeric:tabular-nums}
   .tile .sub{font-size:11.5px;color:var(--sub);margin-top:3px}
 
-  .row{display:flex;align-items:center;justify-content:space-between;padding:9px 2px;border-bottom:1px solid var(--line)}
+  .row{display:flex;align-items:center;justify-content:space-between;padding:8px 2px;border-bottom:1px solid var(--hairline)}
   .row:last-child{border-bottom:0}
   .row .nm{font-weight:600}.row .nm small{color:var(--sub);font-weight:400;margin-left:6px}
   .num{font-variant-numeric:tabular-nums;font-weight:700}
@@ -110,7 +110,7 @@
   .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:flex-end;height:100%}
   .bars .b .bar{width:60%;border-radius:6px 6px 0 0;background:linear-gradient(var(--accent-2),var(--accent));transition:height .4s}
   .bars .b .lab{font-size:11px;color:var(--sub)}.bars .b .vv{font-size:11px;font-weight:700}
-  .prog{height:7px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:7px}
+  .prog{height:7px;background:var(--hairline);border-radius:99px;overflow:hidden;margin-top:7px}
   .prog i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
   .pill{font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px}
   .pill.b{background:color-mix(in srgb,var(--down) 14%,transparent);color:var(--down)}
@@ -122,7 +122,7 @@
   .order button{flex:1;border:0;border-radius:9px;padding:11px;font-weight:700;cursor:pointer;color:#fff}
   .order .buy{background:var(--up)}.order .sell{background:var(--down)}
   .qa{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .qa span{background:var(--card-2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .qa span{background:var(--card-2);border:1px solid var(--hairline);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer}
   .qa span:hover{border-color:var(--accent);color:var(--accent)}
 
   /* gallery modal */
@@ -208,7 +208,7 @@
 
   /* 4) 패널 — 반투명 하어라인으로 분할 */
   .panel{background:var(--card);border:1px solid var(--hairline);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
-  .panel-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--hairline);font-size:12.5px;font-weight:700}
+  .panel-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--hairline);font-size:12.5px;font-weight:700;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 4%,transparent),transparent)}
   .panel-h .tag{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--sub)}
   .panel-b{padding:12px 16px}
 
@@ -241,3 +241,7 @@
   .tk-px{font-weight:700}
   .tk-dl{font-size:11.5px}
   @keyframes tickerScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+
+  /* 9) 위젯/패널 통일 — 적대적 리뷰 반영: .w 스코프 대신 '베이스 클래스'를 직접 승격해
+        위젯과 비-위젯(.wh/.row/.prog/.qa 단독 사용 페이지)이 동일한 엔터프라이즈 룩을 갖도록 함.
+        (실제 규칙은 위쪽 .w/.wh/.wb/.row/.prog/.qa/.tile/.panel-h 정의에 통합되어 있음) */
