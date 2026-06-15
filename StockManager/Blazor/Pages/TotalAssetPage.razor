@@ -6,11 +6,11 @@
 <div class="top"><div class="hello"><h1>🧮 총자산</h1><p>전체 자산 구성 · @_ts</p></div>
 <button class="addbtn" @onclick="LoadAsync" style="margin:0 16px">🔄 새로고침</button></div>
 
-<div class="tiles" style="padding:0 28px 16px">
-    <div class="tile g"><div class="lab">총자산</div><div class="val num">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
-    <div class="tile u"><div class="lab">주식(원화)</div><div class="val num">@Svc.AllocKrwStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocKrwStock)%</div></div>
-    <div class="tile k"><div class="lab">주식(외화·KRW)</div><div class="val num">@Svc.AllocUsdStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocUsdStock)%  (USD@Svc.UsdKrw.ToString("N0"))</div></div>
-    <div class="tile d"><div class="lab">코인</div><div class="val num">@Svc.CoinValue.ToString("N0")</div><div class="sub">@Pct(Svc.AllocCoin)%</div></div>
+<div class="kpis" style="margin:0 28px 16px">
+    <div class="kpi g"><div class="k-lab">총자산</div><div class="k-val">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
+    <div class="kpi u"><div class="k-lab">주식(원화)</div><div class="k-val">@Svc.AllocKrwStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocKrwStock)%</div></div>
+    <div class="kpi k"><div class="k-lab">주식(외화·KRW)</div><div class="k-val">@Svc.AllocUsdStock.ToString("N0")</div><div class="sub">@Pct(Svc.AllocUsdStock)%  (USD@Svc.UsdKrw.ToString("N0"))</div></div>
+    <div class="kpi d"><div class="k-lab">코인</div><div class="k-val">@Svc.CoinValue.ToString("N0")</div><div class="sub">@Pct(Svc.AllocCoin)%</div></div>
 </div>
 
 <div style="display:flex;gap:20px;padding:0 28px 40px;flex-wrap:wrap">
@@ -25,7 +25,8 @@
             <div class="li"><i style="background:var(--warn)"></i>코인 · @Pct(Svc.AllocCoin)%</div>
         </div>
     </div>
-    <div style="flex:1;min-width:320px">
+    <div class="panel" style="flex:1;min-width:320px">
+        <div class="panel-h">코인 보유 <span class="tag">NET WORTH</span></div>
         <div class="wh"><span class="h">코인 보유</span></div>
         <table class="ctbl" style="font-size:13px">
             <thead><tr><th>코인</th><th style="text-align:right">현재가</th><th style="text-align:right">24h</th><th style="text-align:right">스파크</th></tr></thead>

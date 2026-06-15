@@ -1,6 +1,6 @@
   :root{
     --bg:#f4f6fb; --canvas:#eef1f7; --card:#ffffff; --card-2:#f8fafc;
-    --ink:#1b2330; --sub:#697586; --line:#e4e8f0; --hairline:#e8ebf2;
+    --ink:#1b2330; --sub:#697586; --line:#e4e8f0; --hairline:#dde2ec;   /* 라이트 대비 보정(하어라인 가시성) */
     --side:#141a2a; --side-ink:#cdd5e4; --side-sub:#7b8499; --side-active:#1f2940;
     --accent:#4f5bd5; --accent-2:#6d78e6;
     --up:#0f9d6b; --down:#e0524d; --warn:#e0992b; --ok:#1aa06d;   /* 서구식: 상승=초록 / 하락=빨강 */
@@ -254,3 +254,9 @@
   .tile .lab{font-size:10.5px;letter-spacing:.1em;font-weight:700;color:var(--sub)}
   .tile .val{font-size:24px;font-weight:700;letter-spacing:-.4px;margin-top:7px}  /* .num이 고정폭 적용 */
   .tile .sub{font-size:11px;margin-top:3px}
+
+  /* 11) KPI 셀 상태 액센트 바 — .tile→.kpi 마크업 이관 시 색 의미(상승/하락/경고/양호) 보존 */
+  .kpi.u::before,.kpi.d::before,.kpi.k::before,.kpi.g::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .kpi.u::before{background:var(--up)} .kpi.d::before{background:var(--down)}
+  .kpi.k::before{background:var(--warn)} .kpi.g::before{background:var(--ok)}
+  .kpi .sub{font-size:11px;margin-top:2px;color:var(--sub)}   /* 이관된 셀의 보조설명 */

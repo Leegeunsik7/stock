@@ -41,15 +41,16 @@
             }
         </div>
 
-        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
-            <div class="tile @(_res.WinProbPct>=50?"u":"d")"><div class="lab">승률</div><div class="val num">@_res.WinProbPct.ToString("0")%</div></div>
-            <div class="tile k"><div class="lab">손익비</div><div class="val num">@_res.PayoffRatio.ToString("0.00")</div></div>
-            <div class="tile @(_res.ExpectancyPct>=0?"u":"d")"><div class="lab">기대값(@(_horizon)일)</div><div class="val num">@_res.ExpectancyPct.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile k"><div class="lab">연 변동성</div><div class="val num">@_res.AssetVolAnnualPct.ToString("0")%</div></div>
+        <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="kpi @(_res.WinProbPct>=50?"u":"d")"><div class="k-lab">승률</div><div class="k-val">@_res.WinProbPct.ToString("0")%</div></div>
+            <div class="kpi k"><div class="k-lab">손익비</div><div class="k-val">@_res.PayoffRatio.ToString("0.00")</div></div>
+            <div class="kpi @(_res.ExpectancyPct>=0?"u":"d")"><div class="k-lab">기대값(@(_horizon)일)</div><div class="k-val">@_res.ExpectancyPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">연 변동성</div><div class="k-val">@_res.AssetVolAnnualPct.ToString("0")%</div></div>
         </div>
 
+        <div class="panel"><div class="panel-h">권장 비중 <span class="tag">POSITION SIZING</span></div>
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
-            <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:13px">
                 <tbody>
                 <tr style="border-bottom:1px solid var(--line)"><td style="padding:9px 14px;color:var(--sub)">전체 켈리 f*</td><td style="padding:9px 14px;text-align:right;font-weight:700">@(( _res.KellyFull*100).ToString("0.0"))%</td></tr>
                 <tr style="border-bottom:1px solid var(--line)"><td style="padding:9px 14px;color:var(--sub)">분할 켈리 비중 (×@_res.KellyFraction, 상한 @(_maxW)%)</td><td style="padding:9px 14px;text-align:right;font-weight:700">@(( _res.KellyWeight*100).ToString("0.0"))%</td></tr>
@@ -57,6 +58,7 @@
                 <tr style="background:color-mix(in srgb,var(--accent) 8%,transparent)"><td style="padding:11px 14px;font-weight:800">✅ 권장 비중 (보수적)</td><td style="padding:11px 14px;text-align:right;font-weight:800;font-size:15px" class="@(_res.RecommendedWeight>0?"up":"")">@(( _res.RecommendedWeight*100).ToString("0.0"))%</td></tr>
                 </tbody>
             </table>
+        </div>
         </div>
         <div class="sub" style="font-size:11.5px;margin-top:8px">@_res.Note</div>
     }

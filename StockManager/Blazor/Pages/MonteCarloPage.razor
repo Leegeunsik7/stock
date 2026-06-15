@@ -23,11 +23,11 @@
     @if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
     else if (_res is { Sims: > 0 })
     {
-        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(4,1fr)">
-            <div class="tile @(_res.ExpReturnPct>=0?"u":"d")"><div class="lab">기대 수익률 (@HzLabel)</div><div class="val num">@_res.ExpReturnPct.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile k"><div class="lab">중앙값 (P50)</div><div class="val num">@_res.P50.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile d"><div class="lab">VaR 95% (최대손실)</div><div class="val num">-@_res.Var95Pct.ToString("0.0")%</div></div>
-            <div class="tile @(_res.ProbLossPct<50?"u":"d")"><div class="lab">손실 확률</div><div class="val num">@_res.ProbLossPct.ToString("0.0")%</div></div>
+        <div class="kpis" style="margin:0 0 16px;grid-template-columns:repeat(4,1fr)">
+            <div class="kpi @(_res.ExpReturnPct>=0?"u":"d")"><div class="k-lab">기대 수익률 (@HzLabel)</div><div class="k-val">@_res.ExpReturnPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">중앙값 (P50)</div><div class="k-val">@_res.P50.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi d"><div class="k-lab">VaR 95% (최대손실)</div><div class="k-val">-@_res.Var95Pct.ToString("0.0")%</div></div>
+            <div class="kpi @(_res.ProbLossPct<50?"u":"d")"><div class="k-lab">손실 확률</div><div class="k-val">@_res.ProbLossPct.ToString("0.0")%</div></div>
         </div>
 
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px">

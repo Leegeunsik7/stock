@@ -51,19 +51,20 @@
     @if (_one is { IsValid: true })
     {
         <div style="font-weight:700;margin:6px 0 10px">🎯 @_one.Name (@_one.Symbol) — 우승 @_one.Best!.Label</div>
-        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
-            <div class="tile @(_one.Best.TotalReturn>=0?"u":"d")"><div class="lab">총 수익률</div><div class="val num">@_one.Best.TotalReturn.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile d"><div class="lab">최대 낙폭 (MDD)</div><div class="val num">@_one.Best.MaxDrawdown.ToString("0.0")%</div></div>
-            <div class="tile k"><div class="lab">승률 · 거래</div><div class="val num">@_one.Best.WinRate.ToString("0")% · @_one.Best.TradeCount</div></div>
-            <div class="tile k"><div class="lab">Sharpe</div><div class="val num">@_one.Best.Sharpe.ToString("0.00")</div></div>
+        <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="kpi @(_one.Best.TotalReturn>=0?"u":"d")"><div class="k-lab">총 수익률</div><div class="k-val">@_one.Best.TotalReturn.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi d"><div class="k-lab">최대 낙폭 (MDD)</div><div class="k-val">@_one.Best.MaxDrawdown.ToString("0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">승률 · 거래</div><div class="k-val">@_one.Best.WinRate.ToString("0")% · @_one.Best.TradeCount</div></div>
+            <div class="kpi k"><div class="k-lab">Sharpe</div><div class="k-val">@_one.Best.Sharpe.ToString("0.00")</div></div>
         </div>
         <div style="margin:2px 0 14px">
             <button class="addbtn" @onclick="() => InjectComposite(_one)">🔔 복합 알림으로 추가</button>
             <span style="color:var(--sub);font-size:11.5px;margin-left:10px">우승 장기선(MA@(_one.Best.LongP)) 복귀 시 알림 — 표준화된 추세 필터(정확한 교차 아님).</span>
         </div>
 
+        <div class="panel"><div class="panel-h">최적 조합 격자 <span class="tag">OPTIMIZER</span></div>
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px">
-            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:12.5px">
                 <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
                     <th style="text-align:left;padding:8px 12px">조합</th><th style="text-align:right;padding:8px 12px">수익률</th>
                     <th style="text-align:right;padding:8px 12px">MDD</th><th style="text-align:right;padding:8px 12px">승률</th>
@@ -85,6 +86,7 @@
                 </tbody>
             </table>
         </div>
+        </div>
         <div class="sub" style="font-size:11.5px;margin-bottom:18px">@_one.Note · 캔들 @(_one.CandlesUsed)개</div>
 
         <!-- 강건성 검증 (Walk-Forward) -->
@@ -100,11 +102,11 @@
                 <span style="background:color-mix(in srgb,@WfColor() 16%,transparent);border:1px solid @WfColor();color:@WfColor();font-weight:800;border-radius:8px;padding:3px 12px">@_wf.Verdict</span>
                 <span style="color:var(--sub);font-size:12px">추천 @_wf.RecLabel · @(_wf.FoldCount)개 OOS 창</span>
             </div>
-            <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
-                <div class="tile @(_wf.AvgInSample>=0?"u":"d")"><div class="lab">평균 IS 수익(학습)</div><div class="val num">@_wf.AvgInSample.ToString("+0.0;-0.0")%</div></div>
-                <div class="tile @(_wf.AvgOutSample>=0?"u":"d")"><div class="lab">평균 OOS 수익(검증)</div><div class="val num">@_wf.AvgOutSample.ToString("+0.0;-0.0")%</div></div>
-                <div class="tile k"><div class="lab">OOS 승률</div><div class="val num">@_wf.OosWinRate.ToString("0")%</div></div>
-                <div class="tile k"><div class="lab">효율 (OOS/IS)</div><div class="val num">@_wf.Efficiency.ToString("0")%</div></div>
+            <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+                <div class="kpi @(_wf.AvgInSample>=0?"u":"d")"><div class="k-lab">평균 IS 수익(학습)</div><div class="k-val">@_wf.AvgInSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="kpi @(_wf.AvgOutSample>=0?"u":"d")"><div class="k-lab">평균 OOS 수익(검증)</div><div class="k-val">@_wf.AvgOutSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="kpi k"><div class="k-lab">OOS 승률</div><div class="k-val">@_wf.OosWinRate.ToString("0")%</div></div>
+                <div class="kpi k"><div class="k-lab">효율 (OOS/IS)</div><div class="k-val">@_wf.Efficiency.ToString("0")%</div></div>
             </div>
             <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px">
                 <table style="width:100%;border-collapse:collapse;font-size:12.5px">

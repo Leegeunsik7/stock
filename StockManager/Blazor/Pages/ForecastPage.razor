@@ -36,11 +36,11 @@
     else if (_score is { IsValid: true } && _score.Scores.Count > 0)
     {
         var s = _score.Scores[0];
-        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
-            <div class="tile @(Math.Abs(s.CoveragePct-s.NominalPct)<=7?"u":"d")"><div class="lab">커버리지 (명목 @s.NominalPct.ToString("0")%)</div><div class="val num">@s.CoveragePct.ToString("0")%</div></div>
-            <div class="tile @(Math.Abs(s.BiasPct)<0.7?"k":(s.BiasPct>=0?"u":"d"))"><div class="lab">편향 (실현−예측)</div><div class="val num">@s.BiasPct.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile k"><div class="lab">평균 절대오차</div><div class="val num">@s.MaePct.ToString("0.0")%</div></div>
-            <div class="tile @(s.DirHitPct>=50?"u":"d")"><div class="lab">방향 적중</div><div class="val num">@s.DirHitPct.ToString("0")%</div></div>
+        <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="kpi @(Math.Abs(s.CoveragePct-s.NominalPct)<=7?"u":"d")"><div class="k-lab">커버리지 (명목 @s.NominalPct.ToString("0")%)</div><div class="k-val">@s.CoveragePct.ToString("0")%</div></div>
+            <div class="kpi @(Math.Abs(s.BiasPct)<0.7?"k":(s.BiasPct>=0?"u":"d"))"><div class="k-lab">편향 (실현−예측)</div><div class="k-val">@s.BiasPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">평균 절대오차</div><div class="k-val">@s.MaePct.ToString("0.0")%</div></div>
+            <div class="kpi @(s.DirHitPct>=50?"u":"d")"><div class="k-lab">방향 적중</div><div class="k-val">@s.DirHitPct.ToString("0")%</div></div>
         </div>
         <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:10px 13px;font-size:13px;font-weight:600;margin-bottom:6px">
             판정: @s.Verdict · 하단 위반율 @s.LowBreachPct.ToString("0")% · 표본 @(s.N)건
@@ -59,8 +59,9 @@
         </div>
         @if (_liveScore is { IsValid: true })
         {
+            <div class="panel"><div class="panel-h">라이브 예측 로그 <span class="tag">FORECAST</span></div>
             <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
-                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:12.5px">
                     <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
                         <th style="text-align:left;padding:8px 12px">유형·기간</th><th style="text-align:right;padding:8px 12px">표본</th>
                         <th style="text-align:right;padding:8px 12px">커버리지</th><th style="text-align:right;padding:8px 12px">편향</th>
@@ -80,6 +81,7 @@
                     }
                     </tbody>
                 </table>
+            </div>
             </div>
         }
         else { <div style="color:var(--sub);font-size:12px;padding:6px 2px">발행한 예측이 만기(기간 경과)되면 「만기 정산」 후 여기서 채점됩니다.</div> }

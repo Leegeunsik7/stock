@@ -29,10 +29,10 @@
     else if (_msg.Length > 0) { <div style="color:var(--sub);padding:20px">@_msg</div> }
     else if (_res is { IsValid: true })
     {
-        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(3,1fr)">
-            <div class="tile k"><div class="lab">검정한 가설</div><div class="val num">@_res.Tested</div></div>
-            <div class="tile @(_res.Survivors>0?"u":"d")"><div class="lab">OOS 생존</div><div class="val num">@_res.Survivors</div></div>
-            <div class="tile k"><div class="lab">효과크기 바</div><div class="val num">@_res.SignificanceBar.ToString("0.0")%p</div></div>
+        <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(3,1fr)">
+            <div class="kpi k"><div class="k-lab">검정한 가설</div><div class="k-val">@_res.Tested</div></div>
+            <div class="kpi @(_res.Survivors>0?"u":"d")"><div class="k-lab">OOS 생존</div><div class="k-val">@_res.Survivors</div></div>
+            <div class="kpi k"><div class="k-lab">효과크기 바</div><div class="k-val">@_res.SignificanceBar.ToString("0.0")%p</div></div>
         </div>
 
         @if (_res.Survivors == 0)
@@ -41,8 +41,9 @@
         }
         else
         {
+            <div class="panel"><div class="panel-h">생존 가설 <span class="tag">HYPOTHESIS</span></div>
             <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
-                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:12.5px">
                     <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
                         <th style="text-align:left;padding:8px 12px">가설 패턴</th>
                         <th style="text-align:right;padding:8px 12px">Train 엣지</th>
@@ -65,6 +66,7 @@
                     }
                     </tbody>
                 </table>
+            </div>
             </div>
             <div class="sub" style="font-size:11.5px;margin-top:8px">@_res.Note · 엣지 = 패턴 발생 후 평균수익 − 무조건 평균. 「＋알림」으로 복합 알림에 채택하면 /eventstudy·/composite에서도 보입니다.</div>
         }

@@ -36,11 +36,11 @@
             else { <span style="margin-left:auto;color:var(--sub);font-size:12px">아직 채점 불가(미래 부족)</span> }
         </div>
 
-        <div class="tiles" style="padding:0 0 14px;grid-template-columns:repeat(4,1fr)">
-            <div class="tile k"><div class="lab">그 시점 종가</div><div class="val num">@_res.AsOfClose.ToString("N0")</div></div>
-            <div class="tile @(_res.RsiAsOf<35?"u":(_res.RsiAsOf>65?"d":"k"))"><div class="lab">RSI(14)</div><div class="val num">@_res.RsiAsOf.ToString("0")</div></div>
-            <div class="tile @(_res.MaGapPct>=0?"u":"d")"><div class="lab">MA20 이격</div><div class="val num">@_res.MaGapPct.ToString("+0.0;-0.0")%</div></div>
-            <div class="tile k"><div class="lab">옵티마이저 우승</div><div class="val num" style="font-size:14px">@(string.IsNullOrEmpty(_res.OptimizerWinner)?"—":_res.OptimizerWinner)</div></div>
+        <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+            <div class="kpi k"><div class="k-lab">그 시점 종가</div><div class="k-val">@_res.AsOfClose.ToString("N0")</div></div>
+            <div class="kpi @(_res.RsiAsOf<35?"u":(_res.RsiAsOf>65?"d":"k"))"><div class="k-lab">RSI(14)</div><div class="k-val">@_res.RsiAsOf.ToString("0")</div></div>
+            <div class="kpi @(_res.MaGapPct>=0?"u":"d")"><div class="k-lab">MA20 이격</div><div class="k-val">@_res.MaGapPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">옵티마이저 우승</div><div class="k-val" style="font-size:14px">@(string.IsNullOrEmpty(_res.OptimizerWinner)?"—":_res.OptimizerWinner)</div></div>
         </div>
 
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;font-size:13px;line-height:1.7">

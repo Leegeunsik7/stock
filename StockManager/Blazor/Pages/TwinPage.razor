@@ -31,16 +31,16 @@
     {
         <div style="background:color-mix(in srgb,var(--accent) 7%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:13.5px;font-weight:600">@_rep.Verdict</div>
 
-        <div class="tiles" style="padding:0 0 16px;grid-template-columns:repeat(3,1fr)">
-            <div class="tile @(_rep.HasActual && _rep.ActualReturnPct>=0?"u":(_rep.HasActual?"d":"k"))">
-                <div class="lab">실제 (내 거래)</div>
-                <div class="val num">@(_rep.HasActual ? _rep.ActualReturnPct.ToString("+0.0;-0.0")+"%" : "—")</div>
+        <div class="kpis" style="margin:0 0 16px;grid-template-columns:repeat(3,1fr)">
+            <div class="kpi @(_rep.HasActual && _rep.ActualReturnPct>=0?"u":(_rep.HasActual?"d":"k"))">
+                <div class="k-lab">실제 (내 거래)</div>
+                <div class="k-val">@(_rep.HasActual ? _rep.ActualReturnPct.ToString("+0.0;-0.0")+"%" : "—")</div>
             </div>
-            <div class="tile @(_rep.SignalEntered && _rep.SignalReturnPct>=0?"u":(_rep.SignalEntered?"d":"k"))">
-                <div class="lab">시그널 추종</div>
-                <div class="val num">@(_rep.SignalEntered ? _rep.SignalReturnPct.ToString("+0.0;-0.0")+"%" : "미진입")</div>
+            <div class="kpi @(_rep.SignalEntered && _rep.SignalReturnPct>=0?"u":(_rep.SignalEntered?"d":"k"))">
+                <div class="k-lab">시그널 추종</div>
+                <div class="k-val">@(_rep.SignalEntered ? _rep.SignalReturnPct.ToString("+0.0;-0.0")+"%" : "미진입")</div>
             </div>
-            <div class="tile @(_rep.BuyHoldReturnPct>=0?"u":"d")"><div class="lab">단순 보유</div><div class="val num">@_rep.BuyHoldReturnPct.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi @(_rep.BuyHoldReturnPct>=0?"u":"d")"><div class="k-lab">단순 보유</div><div class="k-val">@_rep.BuyHoldReturnPct.ToString("+0.0;-0.0")%</div></div>
         </div>
 
         @if (_rep.HasActual)
