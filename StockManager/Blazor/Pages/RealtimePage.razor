@@ -760,7 +760,7 @@
             time = c.Date.ToString("yyyy-MM-dd"),
             open = (double)c.Open, high = (double)c.High, low = (double)c.Low, close = (double)c.Close
         }).ToArray();
-        bool dark = Db.GetSetting("UI.Theme") == "dark";
+        bool dark = Db.GetSetting("UI.Theme") != "light";   // 기본 dark
         bool ok;
         try { ok = await JS.InvokeAsync<bool>("tvchart.render", "tvchart", data, dark); }
         catch { ok = false; }

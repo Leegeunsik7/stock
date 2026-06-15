@@ -411,7 +411,7 @@ namespace StockManager.Blazor
 
         public string Theme
         {
-            get => _db.GetSetting("UI.Theme") == "dark" ? "dark" : "light";
+            get => _db.GetSetting("UI.Theme") == "light" ? "light" : "dark";   // 기본 dark(엔터프라이즈) — 명시적 light만 라이트
             set
             {
                 // ⚠️ 이원화 방지: 설정 키만 쓰지 않고 ThemeManager.Set으로 일원화 —

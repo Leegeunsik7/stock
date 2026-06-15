@@ -19,11 +19,37 @@
     <button class="iconbtn" @onclick="ToggleTheme" title="테마 전환">@(_theme == "dark" ? "☀️" : "🌙")</button>
 </div>
 
-<div class="tiles">
-    <div class="tile g"><div class="lab">총자산</div><div class="val num">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
-    <div class="tile u"><div class="lab">평가손익(주식)</div><div class="val num">@Svc.Pnl.ToString("N0")</div><div class="sub">수익률 @Svc.Ret.ToString("+0.0;-0.0;0.0")%</div></div>
-    <div class="tile k"><div class="lab">코인 평가</div><div class="val num">@Svc.CoinValue.ToString("N0")</div><div class="sub">업비트</div></div>
-    <div class="tile d"><div class="lab">모의 계좌</div><div class="val num">@((Svc.PaperCash + Svc.PaperPosVal).ToString("N0"))</div><div class="sub">@Svc.PaperRet.ToString("+0.0;-0.0;0.0")% 누적</div></div>
+<div class="kpis">
+    <div class="kpi">
+        <div class="k-lab">총자산</div>
+        <div class="k-val">₩@Svc.Total.ToString("N0")</div>
+        <div class="k-row">
+            <span class="delta @(Svc.Ret >= 0 ? "pos" : "neg")">@Svc.Ret.ToString("+0.0;-0.0;0.0")%</span>
+            <span class="sub" style="font-size:11px">실시간 합산</span>
+        </div>
+        @WeeklySpark()
+    </div>
+    <div class="kpi">
+        <div class="k-lab">평가손익 · 주식</div>
+        <div class="k-val @(Svc.Pnl >= 0 ? "up" : "down")">@Svc.Pnl.ToString("+#,##0;-#,##0;0")</div>
+        <div class="k-row">
+            <span class="delta @(Svc.Ret >= 0 ? "pos" : "neg")">@Svc.Ret.ToString("+0.0;-0.0;0.0")%</span>
+            <span class="sub" style="font-size:11px">누적 수익률</span>
+        </div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">코인 평가</div>
+        <div class="k-val">₩@Svc.CoinValue.ToString("N0")</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">업비트 실시간</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">모의 계좌</div>
+        <div class="k-val">₩@((Svc.PaperCash + Svc.PaperPosVal).ToString("N0"))</div>
+        <div class="k-row">
+            <span class="delta @(Svc.PaperRet >= 0 ? "pos" : "neg")">@Svc.PaperRet.ToString("+0.0;-0.0;0.0")%</span>
+            <span class="sub" style="font-size:11px">누적</span>
+        </div>
+    </div>
 </div>
 
 <div class="hint">⠿ 끌어서, 또는 ✕ 로 위젯을 정리할 수 있어요
@@ -256,6 +282,17 @@
         double w = 240, h = 26, mn = d.Min(), mx = d.Max(); var r = (mx - mn) == 0 ? 1 : (mx - mn);
         var pts = string.Join(" ", d.Select((v, i) => $"{(i / (double)(d.Length - 1) * w):F1},{(h - (v - mn) / r * h):F1}"));
         return (MarkupString)$"<svg class='spark' viewBox='0 0 {w} {h}' preserveAspectRatio='none' style='width:100%'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='2'/></svg>";
+    }
+
+    // KPI 인라인 스파크라인 — 주간 스냅샷 추세 (데이터 2개 미만이면 미표시)
+    private MarkupString WeeklySpark()
+    {
+        if (Svc.Weekly == null || Svc.Weekly.Count < 2) return (MarkupString)"";
+        var d = Svc.Weekly.Select(x => (double)x.Value).ToArray();
+        double w = 88, h = 24, mn = d.Min(), mx = d.Max(); var r = (mx - mn) == 0 ? 1 : (mx - mn);
+        var pts = string.Join(" ", d.Select((v, i) => $"{(i / (double)(d.Length - 1) * w):F1},{(h - (v - mn) / r * h):F1}"));
+        var color = d[^1] >= d[0] ? "var(--up)" : "var(--down)";
+        return (MarkupString)$"<svg class='k-spark' viewBox='0 0 {w} {h}' preserveAspectRatio='none'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.6'/></svg>";
     }
 
     private decimal Tot => Svc.AllocKrwStock + Svc.AllocUsdStock + Svc.AllocCoin;

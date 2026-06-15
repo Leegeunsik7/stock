@@ -1,20 +1,22 @@
   :root{
     --bg:#f4f6fb; --canvas:#eef1f7; --card:#ffffff; --card-2:#f8fafc;
-    --ink:#1b2330; --sub:#697586; --line:#e4e8f0;
+    --ink:#1b2330; --sub:#697586; --line:#e4e8f0; --hairline:#e8ebf2;
     --side:#141a2a; --side-ink:#cdd5e4; --side-sub:#7b8499; --side-active:#1f2940;
     --accent:#4f5bd5; --accent-2:#6d78e6;
-    --up:#e0344b; --down:#2563eb; --warn:#e0992b; --ok:#1aa06d;
+    --up:#0f9d6b; --down:#e0524d; --warn:#e0992b; --ok:#1aa06d;   /* 서구식: 상승=초록 / 하락=빨강 */
     --shadow:0 1px 2px rgba(20,26,42,.04), 0 8px 24px rgba(20,26,42,.06);
     --radius:14px;
+    --mono:"Roboto Mono","JetBrains Mono","Fira Code",ui-monospace,"Cascadia Mono",Consolas,"D2Coding",monospace;
     font-family:"Pretendard Variable",Pretendard,system-ui,sans-serif;
   }
+  /* ===== 엔터프라이즈 다크 (차콜 + 하어라인 + 파스텔 그린/레드) ===== */
   [data-theme="dark"]{
-    --bg:#10141d; --canvas:#0c0f17; --card:#161b27; --card-2:#1b2230;
-    --ink:#e8edf6; --sub:#8b95a8; --line:#262d3c;
-    --side:#0a0d15; --side-ink:#c4cdde; --side-sub:#6b7488; --side-active:#1a2233;
-    --accent:#6d78e6; --accent-2:#8b95f0;
-    --up:#ff5a6e; --down:#5b8cff;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    --bg:#121212; --canvas:#0b0b0d; --card:#161618; --card-2:#1d1d21;
+    --ink:#e8e9ec; --sub:#8a8d96; --line:rgba(255,255,255,.07); --hairline:rgba(255,255,255,.05);
+    --side:#0d0d0f; --side-ink:#c7cad2; --side-sub:#6e7280; --side-active:#1a1a1f;
+    --accent:#7c8aff; --accent-2:#9aa6ff;
+    --up:#34d399; --down:#f87171; --warn:#fbbf24; --ok:#34d399;   /* 네온 그린 / 뮤트 레드 (파스텔) */
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 14px 36px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box;margin:0;padding:0}
   .app-shell{display:flex;min-height:100vh}
@@ -183,3 +185,46 @@
   .toast-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .toast-btn.primary:hover{background:var(--accent-2);color:#fff}
   @keyframes toastIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+
+  /* ============================================================ */
+  /* ===== 엔터프라이즈 UI 레이어 — Bloomberg/TradingView 톤 (v3.45) ===== */
+  /* ============================================================ */
+
+  /* 1) 고정폭 금융 숫자 — 소수점 자리 칼정렬(tabular) + 슬래시 제로 */
+  .num,.mono,.k-val{font-family:var(--mono);font-variant-numeric:tabular-nums slashed-zero;font-feature-settings:"tnum" 1,"zero" 1;letter-spacing:-.2px}
+
+  /* 2) 얇은 커스텀 스크롤바 (FinTech 느낌) */
+  *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--ink) 24%,transparent) transparent}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink) 20%,transparent);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--ink) 36%,transparent);background-clip:content-box}
+
+  /* 3) Sticky 테이블 헤더 + 밀도 옵션 + 정밀 호버 */
+  .ctbl thead th{position:sticky;top:0;z-index:2;background:var(--card)}
+  .ctbl.dense td{padding:6px 12px}
+  .ctbl.dense th{padding:7px 12px;font-size:11px}
+  .ctbl tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+
+  /* 4) 패널 — 반투명 하어라인으로 분할 */
+  .panel{background:var(--card);border:1px solid var(--hairline);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .panel-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--hairline);font-size:12.5px;font-weight:700}
+  .panel-h .tag{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--sub)}
+  .panel-b{padding:12px 16px}
+
+  /* 5) KPI 커맨드 스트립 — 1px 하어라인 셀 그리드 */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--hairline);
+        border:1px solid var(--hairline);border-radius:14px;overflow:hidden;margin:2px 28px 8px;box-shadow:var(--shadow)}
+  .kpi{background:var(--card);padding:14px 16px 16px;display:flex;flex-direction:column;gap:7px;position:relative;min-height:96px}
+  .kpi .k-lab{font-size:10.5px;letter-spacing:.1em;color:var(--sub);font-weight:700}
+  .kpi .k-val{font-size:24px;font-weight:700;letter-spacing:-.4px;line-height:1.1}
+  .kpi .k-row{display:flex;align-items:center;gap:8px}
+  .k-spark{position:absolute;right:14px;bottom:13px;width:88px;height:24px;opacity:.9;pointer-events:none}
+
+  /* 6) 델타 pill (상승/하락) */
+  .delta{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .delta.pos{color:var(--up);background:color-mix(in srgb,var(--up) 16%,transparent)}
+  .delta.neg{color:var(--down);background:color-mix(in srgb,var(--down) 16%,transparent)}
+
+  /* 7) 인라인 스파크라인 — 비균일 스케일에도 선 굵기 유지 */
+  .spark,.k-spark polyline,.spark polyline{vector-effect:non-scaling-stroke}
