@@ -260,3 +260,25 @@
   .kpi.u::before{background:var(--up)} .kpi.d::before{background:var(--down)}
   .kpi.k::before{background:var(--warn)} .kpi.g::before{background:var(--ok)}
   .kpi .sub{font-size:11px;margin-top:2px;color:var(--sub)}   /* 이관된 셀의 보조설명 */
+
+  /* 12) 반응형 — 좁은 창/모바일에서 우아한 스태킹 (Season 6 #2)
+        ※ 페이지가 .kpis/.tiles에 인라인 grid-template-columns를 걸어둔 곳이 많아
+          미디어쿼리는 !important로 인라인을 덮어쓴다(반응형 표준 패턴). */
+  @media (max-width: 1180px){
+    .kpis{grid-template-columns:repeat(2,1fr)!important}
+    .tiles{grid-template-columns:repeat(2,1fr)!important}
+    .grid>.w{grid-column:span 12!important}                 /* 홈 위젯 12열 → 풀폭 스태킹 */
+  }
+  @media (max-width: 820px){
+    .kpis,.tiles{grid-template-columns:1fr!important}
+    .split-lr{grid-template-columns:1fr!important}           /* 좌우 2열(목록+차트) → 세로 스택 */
+    .top{flex-wrap:wrap;gap:10px;padding:14px 16px}
+    .grid{padding:6px 16px 32px}
+  }
+  @media (max-width: 640px){
+    .side{width:64px}                                        /* 사이드바 → 아이콘 레일 */
+    .side .navtxt,.side .cap,.side .chev,.side .meta,.side .usermeta,.side .sectlbl,.side .kbar{display:none}
+    .grphead{justify-content:center;padding:10px 8px}
+    .navbadge{transform:translate(10px,-8px)}
+    .ticker{display:none}                                    /* 협소 화면에선 티커 숨김 */
+  }
