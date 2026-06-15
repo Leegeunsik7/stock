@@ -1,0 +1,195 @@
+@page "/future"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject AsOfContext AsOfCtx
+@implements IDisposable
+
+<div class="top">
+    <div class="hello"><h1>🔮 확률 미래</h1><p>과거 분포를 블록 부트스트랩으로 펼친 확률 콘 · @(_originLabel) 기준 투영 — 정보 제공이며 예언이 아닙니다</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 12px;flex-wrap:wrap;align-items:center">
+    <input class="srch" style="width:140px" placeholder="종목코드 (005930/AAPL)" @bind="_sym" @onkeydown="OnKey" />
+    <span class="sub" style="font-size:12px">기간</span>
+    <select class="srch" style="width:96px" @bind="_horizonIdx" @bind:after="ProjectAsync">
+        @for (int i = 0; i < _horizons.Length; i++) { var ii = i; <option value="@ii">@_horizons[ii].label</option> }
+    </select>
+    <span class="sub" style="font-size:12px">목표</span>
+    <input class="srch" style="width:84px" type="number" step="1" @bind="_goal" @bind:after="ProjectAsync" /> <span class="sub" style="font-size:12px">%</span>
+    <button class="addbtn" disabled="@_busy" @onclick="ProjectAsync">@(_busy ? "투영 중…" : "🔮 투영")</button>
+    @if (!AsOfCtx.IsLive) { <span style="font-size:12px;font-weight:800;color:var(--warn)">⏳ AS-OF @AsOfCtx.AsOf!.Value.ToString("yyyy-MM-dd") — 그 시점에서 본 미래 vs 실제</span> }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg))
+{
+    <div style="padding:0 28px 20px;color:var(--sub)">@_msg</div>
+}
+else if (_res is { IsValid: true })
+{
+    <div class="kpis" style="grid-template-columns:repeat(6,1fr)">
+        <div class="kpi"><div class="k-lab">기대 수익률</div><div class="k-val @(_res.ExpReturnPct>=0?"up":"down")">@_res.ExpReturnPct.ToString("+0.0;-0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">중앙값 (P50)</div><div class="k-val">@_res.MedianReturnPct.ToString("+0.0;-0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">하위 5% (P5)</div><div class="k-val down">@_res.P5ReturnPct.ToString("+0.0;-0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">상위 5% (P95)</div><div class="k-val up">@_res.P95ReturnPct.ToString("+0.0;-0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">손실 확률</div><div class="k-val @(_res.ProbLossPct<50?"":"down")">@_res.ProbLossPct.ToString("0.0")%</div></div>
+        <div class="kpi @(Math.Abs(_goal)>0.0001?"g":"")"><div class="k-lab">목표 @(_goal.ToString("+0;-0"))% 달성</div><div class="k-val">@(Math.Abs(_goal)>0.0001 ? _res.GoalHitPct.ToString("0.0")+"%" : "—")</div></div>
+    </div>
+
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🔮 @_sym 확률 콘 · @_horizons[_horizonIdx].label <span class="tag">@(AsOfCtx.IsLive ? "FORECAST" : "AS-OF vs ACTUAL")</span></div>
+            <div class="panel-b" style="padding:14px 16px">
+                @((MarkupString)ConeSvg())
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--sub)">
+                    <span><span style="display:inline-block;width:12px;height:8px;background:color-mix(in srgb,var(--accent) 16%,transparent);vertical-align:middle"></span> P5–P95</span>
+                    <span><span style="display:inline-block;width:12px;height:8px;background:color-mix(in srgb,var(--accent) 34%,transparent);vertical-align:middle"></span> P25–P75</span>
+                    <span><span style="display:inline-block;width:14px;height:2px;background:var(--accent);vertical-align:middle"></span> 중앙값(P50)</span>
+                    @if (_actual.Count > 0) { <span><span style="display:inline-block;width:14px;height:2px;background:var(--warn);vertical-align:middle"></span> 실제 경로</span> }
+                    <span style="margin-left:auto">@_res.Note · 예상 중앙 최대낙폭 @_res.MedianMaxDrawdownPct.ToString("0.0")%</span>
+                </div>
+            </div>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:10px">
+            ℹ️ 블록 부트스트랩은 과거의 연속 구간을 재표집해 자기상관·급락 구간을 보존합니다(레짐 암묵 반영). 과거 분포가 미래를 보장하지 않으며, 본 화면은 <b>확률 추정·정보 제공</b>입니다.
+        </div>
+    </div>
+}
+
+@code {
+    private string _sym = "";
+    private Market _mkt = Market.KRX_KOSPI;
+    private int _horizonIdx = 1;
+    private double _goal = 10;
+    private bool _busy;
+    private string _msg = "", _originLabel = "현재";
+    private FutureConeResult? _res;
+    private readonly List<(int day, double retPct)> _actual = new();
+
+    private readonly (string label, int days)[] _horizons = { ("1개월", 21), ("3개월", 63), ("6개월", 126) };
+    private const int Seed = 12345;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (SymCtx.HasSymbol) { _sym = SymCtx.Symbol; _mkt = SymCtx.Market; }
+        SymCtx.OnChange += OnSym;
+        AsOfCtx.OnChange += OnAsOf;
+        if (!string.IsNullOrWhiteSpace(_sym)) await ProjectAsync();
+    }
+
+    private void OnSym() { _sym = SymCtx.Symbol; _mkt = SymCtx.Market; InvokeAsync(ProjectAsync); }
+    private void OnAsOf() => InvokeAsync(ProjectAsync);
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") _ = ProjectAsync(); }
+
+    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private async Task ProjectAsync()
+    {
+        _msg = ""; _res = null; _actual.Clear();
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _mkt = Detect(sym);
+        _busy = true; StateHasChanged();
+        try
+        {
+            var all = await Provider.GetHistoryAsync(sym, _mkt, DateTime.Now.AddYears(-2), DateTime.Now);
+            all = all.OrderBy(c => c.Date).ToList();
+            if (all.Count < 40) { _msg = $"{sym}: 히스토리가 부족합니다."; return; }
+
+            // as-of 분리: 그 시점 이하로 투영, 이후 실제 경로를 오버레이
+            List<Candle> hist; List<Candle> after;
+            if (!AsOfCtx.IsLive)
+            {
+                var asof = AsOfCtx.AsOf!.Value.Date;
+                hist = all.Where(c => c.Date.Date <= asof).ToList();
+                after = all.Where(c => c.Date.Date > asof).ToList();
+                _originLabel = asof.ToString("yyyy-MM-dd");
+            }
+            else { hist = all; after = new(); _originLabel = "현재"; }
+
+            if (hist.Count < 30) { _msg = "그 시점 이전 표본이 부족합니다."; return; }
+
+            var rets = new List<double>(hist.Count);
+            for (int i = 1; i < hist.Count; i++)
+            {
+                var p = (double)hist[i - 1].Close;
+                if (p > 0) rets.Add((double)(hist[i].Close - hist[i - 1].Close) / p);
+            }
+
+            int horizon = _horizons[_horizonIdx].days;
+            _res = FutureCone.Project(rets, horizon, 2000, Seed, _goal);
+
+            // 실제 경로(있으면) — as-of 종가 기준 누적수익률
+            if (after.Count > 0)
+            {
+                double baseClose = (double)hist[^1].Close;
+                if (baseClose > 0)
+                    for (int i = 0; i < Math.Min(after.Count, horizon); i++)
+                        _actual.Add((i + 1, ((double)after[i].Close / baseClose - 1.0) * 100.0));
+            }
+        }
+        catch (Exception ex) { _msg = "투영 실패: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    // ===== 확률 콘 SVG =====
+    private string ConeSvg()
+    {
+        if (_res is not { IsValid: true } || _res.Bands.Count < 2) return "";
+        var b = _res.Bands;
+        double w = 720, h = 320, padL = 6, padR = 52, padT = 10, padB = 18;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        int H = b.Count;
+
+        double minR = b.Min(x => x.P5), maxR = b.Max(x => x.P95);
+        if (_actual.Count > 0) { minR = Math.Min(minR, _actual.Min(a => a.retPct)); maxR = Math.Max(maxR, _actual.Max(a => a.retPct)); }
+        minR = Math.Min(minR, 0); maxR = Math.Max(maxR, 0);
+        double range = maxR - minR; if (range < 1e-6) range = 1;
+        double margin = range * 0.06; minR -= margin; maxR += margin; range = maxR - minR;
+
+        double X(int day) => padL + (day - 1) / (double)Math.Max(1, H - 1) * plotW;
+        double Y(double r) => padT + plotH - (r - minR) / range * plotH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:320px;display:block'>");
+
+        // 가로 그리드 + 라벨 (5등분)
+        for (int g = 0; g <= 4; g++)
+        {
+            double rv = maxR - range * g / 4.0;
+            double gy = padT + plotH * g / 4.0;
+            string col = Math.Abs(rv) < 1e-9 ? "var(--sub)" : "var(--line)";
+            sb.Append($"<line x1='{padL:F1}' y1='{gy:F1}' x2='{padL + plotW:F1}' y2='{gy:F1}' stroke='{col}' stroke-width='1' opacity='0.6'/>");
+            sb.Append($"<text x='{padL + plotW + 4:F1}' y='{gy + 3:F1}' fill='var(--sub)' font-size='10' font-family='var(--mono)'>{rv:+0.0;-0.0}%</text>");
+        }
+        // 0 기준선 강조
+        sb.Append($"<line x1='{padL:F1}' y1='{Y(0):F1}' x2='{padL + plotW:F1}' y2='{Y(0):F1}' stroke='var(--sub)' stroke-dasharray='3 3' opacity='0.7'/>");
+
+        // 밴드 폴리곤 (P5–P95 바깥, P25–P75 안쪽)
+        sb.Append($"<polygon points='{BandPoly(b, X, Y, x => x.P95, x => x.P5)}' fill='color-mix(in srgb,var(--accent) 15%,transparent)' stroke='none'/>");
+        sb.Append($"<polygon points='{BandPoly(b, X, Y, x => x.P75, x => x.P25)}' fill='color-mix(in srgb,var(--accent) 30%,transparent)' stroke='none'/>");
+        // 중앙값(P50)
+        sb.Append($"<polyline points='{Line(b, X, Y, x => x.P50)}' fill='none' stroke='var(--accent)' stroke-width='2'/>");
+
+        // 실제 경로 오버레이
+        if (_actual.Count > 0)
+        {
+            var pts = string.Join(" ", _actual.Select(a => $"{X(a.day):F1},{Y(a.retPct):F1}"));
+            sb.Append($"<polyline points='{pts}' fill='none' stroke='var(--warn)' stroke-width='2.2'/>");
+        }
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private static string BandPoly(IReadOnlyList<ConeBand> b, Func<int, double> X, Func<double, double> Y, Func<ConeBand, double> upper, Func<ConeBand, double> lower)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var x in b) sb.Append($"{X(x.Day):F1},{Y(upper(x)):F1} ");
+        for (int i = b.Count - 1; i >= 0; i--) sb.Append($"{X(b[i].Day):F1},{Y(lower(b[i])):F1} ");
+        return sb.ToString();
+    }
+    private static string Line(IReadOnlyList<ConeBand> b, Func<int, double> X, Func<double, double> Y, Func<ConeBand, double> sel)
+        => string.Join(" ", b.Select(x => $"{X(x.Day):F1},{Y(sel(x)):F1}"));
+
+    public void Dispose() { SymCtx.OnChange -= OnSym; AsOfCtx.OnChange -= OnAsOf; }
+}
