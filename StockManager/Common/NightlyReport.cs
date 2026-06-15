@@ -113,46 +113,67 @@ namespace StockManager.Common
             return d;
         }
 
+        // 엔터프라이즈 브랜드 토큰과 동기화한 PDF (인쇄용 라이트 + accent/상승그린·하락레드/고정폭 숫자).
         public static byte[] BuildPdf(NightlyData d)
         {
+            const string Accent = "#4f5bd5", Up = "#0f9d6b", Down = "#e0524d",
+                         Ink = "#1b2330", Sub = "#6b7280", Line = "#e4e8f0", Panel = "#f4f6fb";
+            const string Mono = "Consolas";
+
             var doc = Document.Create(container =>
             {
                 container.Page(page =>
                 {
-                    page.Margin(32); page.Size(PageSizes.A4);
-                    page.DefaultTextStyle(x => x.FontFamily("Malgun Gothic").FontSize(10));
+                    page.Margin(34); page.Size(PageSizes.A4);
+                    page.DefaultTextStyle(x => x.FontFamily("Malgun Gothic").FontSize(10).FontColor(Ink));
                     page.Header().Column(col =>
                     {
-                        col.Item().Text("MS2-E 야간 리포트").FontSize(20).Bold();
-                        col.Item().Text(d.Date).FontSize(10).FontColor(Colors.Grey.Darken1);
-                        col.Item().PaddingBottom(8).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
-                    });
-                    page.Content().Column(col =>
-                    {
-                        col.Spacing(12);
-                        col.Item().Background(Colors.Blue.Lighten5).Padding(12).Column(c =>
+                        col.Item().Row(r =>
                         {
-                            c.Item().Text("■ 포트폴리오").FontSize(13).Bold().FontColor(Colors.Blue.Darken2);
-                            c.Item().PaddingTop(4).Text($"총자산 {d.Total:N0}원");
-                            var rc = d.Pnl >= 0 ? Colors.Red.Darken1 : Colors.Blue.Darken2;
-                            c.Item().Text($"평가손익 {d.Pnl:+#,##0;-#,##0;0}원 ({d.RetPct:+0.0;-0.0}%) · {d.Holdings}종목").Bold().FontColor(rc);
+                            r.RelativeItem().Text(t => { t.Span("MS2-E").FontSize(20).Bold().FontColor(Accent); t.Span(" 야간 리포트").FontSize(20).Bold(); });
+                            r.ConstantItem(170).AlignRight().Text(d.Date).FontSize(10).FontColor(Sub);
                         });
-                        void Section(string title, string body)
+                        col.Item().PaddingTop(6).LineHorizontal(2).LineColor(Accent);
+                    });
+                    page.Content().PaddingTop(12).Column(col =>
+                    {
+                        col.Spacing(11);
+                        col.Item().Background(Panel).Border(1).BorderColor(Line).Padding(14).Column(c =>
+                        {
+                            c.Item().Text("포트폴리오").FontSize(12).Bold().FontColor(Accent);
+                            c.Item().PaddingTop(6).Text(t => { t.Span("총자산  ").FontColor(Sub); t.Span($"₩{d.Total:N0}").FontFamily(Mono).Bold(); });
+                            var rc = d.Pnl >= 0 ? Up : Down;
+                            c.Item().PaddingTop(2).Text(t =>
+                            {
+                                t.Span("평가손익  ").FontColor(Sub);
+                                t.Span($"{d.Pnl:+#,##0;-#,##0;0}원 ({d.RetPct:+0.0;-0.0}%)").FontFamily(Mono).Bold().FontColor(rc);
+                                t.Span($"   ·   {d.Holdings}종목").FontColor(Sub);
+                            });
+                        });
+
+                        void Rows(string title, List<(string name, double ret)> rows, string color)
+                        {
+                            if (rows.Count == 0) return;
+                            col.Item().PaddingTop(2).Text(t => { t.Span("▍ ").FontColor(Accent); t.Span(title).FontSize(11).Bold(); });
+                            foreach (var g in rows)
+                                col.Item().PaddingLeft(12).Text(t => { t.Span(g.name + "   ").FontColor(Sub); t.Span($"{g.ret:+0.0;-0.0}%").FontFamily(Mono).FontColor(color); });
+                        }
+                        void Note(string title, string body)
                         {
                             if (string.IsNullOrWhiteSpace(body)) return;
-                            col.Item().Text("■ " + title).FontSize(12).Bold().FontColor(Colors.Grey.Darken3);
-                            col.Item().Text(body).FontSize(10);
+                            col.Item().PaddingTop(2).Text(t => { t.Span("▍ ").FontColor(Accent); t.Span(title).FontSize(11).Bold(); });
+                            col.Item().PaddingLeft(12).Text(body).FontSize(10);
                         }
-                        Section("상승", string.Join("\n", d.Gainers.Select(g => $"  {g.name} {g.ret:+0.0;-0.0}%")));
-                        Section("하락", string.Join("\n", d.Losers.Select(g => $"  {g.name} {g.ret:+0.0;-0.0}%")));
-                        Section("옵티마이저", d.OptimizerNote);
-                        Section("리밸런싱", d.DriftNote);
-                        Section("예측 보정도", d.ForecastNote);
-                        Section("토론 승률", d.DebateNote);
-                        col.Item().PaddingTop(8).Text("정보 제공이며 투자 권유가 아닙니다.").FontSize(8).FontColor(Colors.Grey.Medium);
+                        Rows("상승", d.Gainers, Up);
+                        Rows("하락", d.Losers, Down);
+                        Note("옵티마이저", d.OptimizerNote);
+                        Note("리밸런싱", d.DriftNote);
+                        Note("예측 보정도", d.ForecastNote);
+                        Note("토론 승률", d.DebateNote);
+                        col.Item().PaddingTop(10).Text("정보 제공이며 투자 권유가 아닙니다.").FontSize(8).FontColor(Sub);
                     });
                     page.Footer().AlignCenter().Text($"MS2-E Stock Suite · {DateTime.Now:yyyy-MM-dd HH:mm}")
-                        .FontSize(8).FontColor(Colors.Grey.Medium);
+                        .FontSize(8).FontColor(Sub);
                 });
             });
             return doc.GeneratePdf();

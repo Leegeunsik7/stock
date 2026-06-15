@@ -2,13 +2,15 @@
 @inject IJSRuntime JS
 @inject ToastService Toasts
 @inject NavigationManager Nav
+@inject SymbolContext SymCtx
+@inject AsOfContext AsOfCtx
 @implements IDisposable
 
 @if (_open)
 {
     <div class="cmdk-mask" @onclick="Close">
         <div class="cmdk" @onclick:stopPropagation="true">
-            <input @ref="_input" placeholder="명령 검색… (모듈 이동 · 테마 · BTC 100만 매수)"
+            <input @ref="_input" placeholder="명령 · 종목+기능(005930 RISK · AAPL TM 2024-03) · 모듈 이동 · BTC 100만 매수"
                    value="@_query" @oninput="OnInput" @onkeydown="OnKey" />
             <div class="cmdk-list">
                 @if (Filtered.Count == 0)
@@ -87,6 +89,7 @@
         {
             // 퀵 액션(매크로)은 항상 맨 위 — 원본 Launcher.ParseQuickAction 순서 유지
             var quick = new List<Cmd>();
+            if (TryParseFunction(_query) is { } fnc) quick.Add(fnc);   // 블룸버그식 <종목> <기능[ 날짜]>
             if (TryParseAlertsOff(_query) is { } off) quick.Add(off);
             if (TryParseCoinAlert(_query) is { } ca) quick.Add(ca);
             if (TryParsePaper(_query) is { } paper) quick.Add(paper);
@@ -160,6 +163,59 @@
                 Toasts.Info("알림 끄기 완료", "텔레그램 자동 전송 OFF · 코인 지정가 알림 모두 제거");
                 return Task.CompletedTask;
             });
+    }
+
+    // ===== 블룸버그식 함수 문법: "<종목> <기능코드> [날짜]" → 종목 컨텍스트 설정 + 해당 모듈로 딥링크 =====
+    //  예) "005930 RISK"  ·  "AAPL TM 2024-03"  ·  "NVDA OPT"
+    private static readonly Dictionary<string, (string route, string label)> _fn = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["RISK"] = ("/portfolio/risk", "리스크 분해"),
+        ["TM"] = ("/timemachine", "타임머신"),
+        ["OPT"] = ("/lab/optimizer", "옵티마이저"),
+        ["EV"] = ("/lab/eventstudy", "이벤트 스터디"),
+        ["MINE"] = ("/lab/miner", "가설 발굴"),
+        ["SIZE"] = ("/lab/sizer", "포지션 사이저"),
+        ["TWIN"] = ("/validate", "디지털 트윈"),
+        ["FC"] = ("/validate/forecast", "예측 스코어보드"),
+        ["MC"] = ("/risklab", "몬테카를로"),
+        ["SCN"] = ("/risklab/scenario", "시나리오"),
+        ["AI"] = ("/intel/analyze", "AI 분석"),
+        ["DEBATE"] = ("/intel/debate", "멀티 토론"),
+        ["Q"] = ("/live", "실시간 차트"),
+        ["CHART"] = ("/live", "실시간 차트"),
+    };
+
+    private Cmd? TryParseFunction(string q)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return null;
+        var parts = q.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !_fn.TryGetValue(parts[1], out var fn)) return null;
+
+        var sym = parts[0].ToUpperInvariant();
+        bool looksSym = (sym.Length == 6 && sym.All(char.IsDigit)) || (sym.Length is >= 1 and <= 5 && sym.All(char.IsLetter));
+        if (!looksSym) return null;
+        var mkt = (sym.Length == 6 && char.IsDigit(sym[0])) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+        DateTime? asof = null; string dlabel = "";
+        if (parts.Length >= 3 && TryParseAsOf(parts[2], out var dt)) { asof = dt; dlabel = $" · ⏳ {dt:yyyy-MM-dd}"; }
+
+        return new Cmd("🔎", $"{sym} → {fn.label}{dlabel}", "함수",
+            () =>
+            {
+                SymCtx.Set(sym, mkt);
+                if (asof.HasValue) AsOfCtx.Set(asof.Value);   // 날짜 지정 시에만 시점 변경(없으면 현재 LIVE 유지)
+                Nav.NavigateTo(fn.route);
+                return Task.CompletedTask;
+            });
+    }
+
+    private static bool TryParseAsOf(string s, out DateTime dt)
+    {
+        s = (s ?? "").Trim();
+        if (DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dt)) return true;
+        if (System.Text.RegularExpressions.Regex.IsMatch(s, @"^\d{4}-\d{1,2}$") &&
+            DateTime.TryParse(s + "-01", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dt)) return true;
+        dt = default; return false;
     }
 
     private static decimal? ParseAmt(string s)
