@@ -83,7 +83,7 @@
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
                 <label style="display:flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" @bind="_applyConflicts" /> 설정 충돌도 덮어쓰기(수신값 우선)</label>
-                <button class="addbtn" disabled="@(_plan.Inserts == 0 && !(_applyConflicts && _plan.ConflictsOf(SyncKind.Setting) > 0))" @onclick="Apply">💾 백업 후 적용</button>
+                <button class="addbtn" disabled="@(_applying || (_plan.Inserts == 0 && !(_applyConflicts && _plan.ConflictsOf(SyncKind.Setting) > 0)))" @onclick="Apply">💾 백업 후 적용</button>
             </div>
         }
     </div>
@@ -103,6 +103,7 @@
     private string _sel = "", _impPass = "", _impMsg = "", _bundleInfo = "";
     private MergePlan? _plan;
     private bool _applyConflicts;
+    private bool _applying;
 
     protected override void OnInitialized()
     {
@@ -154,15 +155,24 @@
 
     private void Apply()
     {
-        if (_plan is null) return;
+        if (_plan is null || _applying) return;
+        _applying = true;
         try
         {
             var res = SyncService.ApplyPlan(Db, _plan, _applyConflicts, backup: true);
-            _impMsg = $"✅ 적용 완료 — 추가 {res.Inserted} · 충돌적용 {res.ConflictsApplied} · 스킵 {res.Skipped}" +
-                      (string.IsNullOrEmpty(res.BackupPath) ? "" : $" · 백업: {System.IO.Path.GetFileName(res.BackupPath)}");
-            Preview();  // 적용 후 재계획(이제 동일로 표시)
+            if (!res.Ok)
+            {
+                _impMsg = "❌ 적용 중단 — " + res.Error;   // 백업 실패 등 → 아무것도 적용되지 않음
+            }
+            else
+            {
+                _impMsg = $"✅ 적용 완료 — 추가 {res.Inserted} · 충돌적용 {res.ConflictsApplied} · 스킵 {res.Skipped}" +
+                          (string.IsNullOrEmpty(res.BackupPath) ? "" : $" · 백업: {System.IO.Path.GetFileName(res.BackupPath)}");
+                Preview();  // 적용 후 재계획(이제 동일로 표시)
+            }
         }
         catch (Exception ex) { _impMsg = "적용 실패: " + ex.Message; }
+        finally { _applying = false; }
     }
 
     private void OpenFolder()

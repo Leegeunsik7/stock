@@ -11,9 +11,9 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **365건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `ff6d931` v3.42.0 (동적 플러그인 아키텍처) · 태그 `v3.41.0`·`v3.42.0` |
-| 커밋 대기 | ⏳ **v3.43.0 다기기 동기화(P2P)** (`SyncEngine`·`SyncCrypto`·`SyncService`·`/sync`) (빌드 0/0·테스트 365) |
+| 단위 테스트 | ✅ **371건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `493c8a1` v3.43.0 (다기기 동기화) · 태그 `v3.41.0`·`v3.42.0`·`v3.43.0` |
+| 커밋 대기 | ⏳ **v3.43.1 동기화 하드닝**(적대적 리뷰: TZ 불변 거래해시·백업 고유명·enum/설정 재검증) (빌드 0/0·테스트 371) |
 | 다음 예정 | **사용자 런타임 검증**(`/diagnostics`·`/plugins`·`/sync`) + GitHub remote 연결 시 CI 자동 릴리스 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
@@ -70,7 +70,8 @@
 | v3.41.0 | **Inno Setup 설치 파일** `installer/` — 더블클릭 설치·WebView2 점검·빌드 가이드 |
 | (docs) | **오픈소스 쇼케이스** — 영문/한글 README·Mermaid 아키텍처 다이어그램·CONTRIBUTING (`a377b7b`, 무버전) |
 | v3.42.0 | **동적 플러그인 아키텍처(Season 5 🅐)** — `plugins/*.plugin.json` 런타임 스캔(지표·알림규칙·프롬프트·어셈블리), 선언적 평가 순수+테스트, 어셈블리 `.dll` 게이팅·`/plugins` UI |
-| **v3.43.0** | **다기기 동기화(Season 5 🅑)** — E2EE(AES-256-GCM+PBKDF2) 암호화 번들 파일 교환·결정론적 가산 머지(거래=합집합·보유=신규만)·`VACUUM INTO` 백업·미리보기·**허용목록 fail-closed 비밀 차단** — ⏳ 커밋 대기 |
+| v3.43.0 | **다기기 동기화(Season 5 🅑)** — E2EE(AES-256-GCM+PBKDF2) 암호화 번들 파일 교환·결정론적 가산 머지(거래=합집합·보유=신규만)·`VACUUM INTO` 백업·미리보기·**허용목록 fail-closed 비밀 차단** |
+| **v3.43.1** | **동기화 하드닝(적대적 리뷰)** — TZ 불변 거래 지문(교차 TZ 중복 방지)·AvgPrice 정규화·백업 고유 파일명·`ApplyResult.Ok`·enum/설정 적용시 재검증·NaN/null 방어 — ⏳ 커밋 대기 |
 
 ---
 

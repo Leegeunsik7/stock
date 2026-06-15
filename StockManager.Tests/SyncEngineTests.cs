@@ -138,6 +138,7 @@ namespace StockManager.Tests
                     Assert.Equal(0, plan.Conflicts);
 
                     var res = SyncService.ApplyPlan(dst, plan, applyConflicts: false, backup: false);
+                    Assert.True(res.Ok);
                     Assert.Equal(3, res.Inserted);
 
                     // 두 행이 실제로 들어갔는지
@@ -179,6 +180,80 @@ namespace StockManager.Tests
                 Assert.Equal(1, qty);                // 덮어쓰이지 않음
             }
             finally { Cleanup(p1); Cleanup(p2); }
+        }
+
+        // ── 적대적 리뷰 수정 검증 ──────────────────────────────────────────
+        [Fact]
+        public void CanonicalInstant_IsOffsetInvariant_ForAbsoluteTimes()
+        {
+            Assert.Equal(
+                SyncService.CanonicalInstant("2026-01-02T09:30:00.0000000+09:00"),
+                SyncService.CanonicalInstant("2026-01-02T00:30:00.0000000Z"));   // 같은 절대시각
+            Assert.NotEqual(
+                SyncService.CanonicalInstant("2026-01-02T09:30:00.0000000+09:00"),
+                SyncService.CanonicalInstant("2026-01-02T09:30:00.0000000+00:00")); // 다른 절대시각
+        }
+
+        [Fact]
+        public void TxFingerprint_IsTimezoneInvariant()
+        {
+            var a = new TxDto("005930", 0, 10, 70000, 0, 0, "2026-01-02T09:30:00.0000000+09:00", "KIS", "");
+            var b = a with { ExecutedAt = "2026-01-02T00:30:00.0000000Z" };   // 동일 instant, UTC 표기
+            Assert.Equal(SyncService.TxFingerprint(a), SyncService.TxFingerprint(b));   // 교차 TZ 중복 방지
+        }
+
+        [Fact]
+        public void HoldingFingerprint_StableAcrossDoubleDecimalRoundTrip()
+        {
+            var h = new HoldingDto("005930", "S", 0, 0, 3, 1.0 / 3.0, 0, "2026-01-02T00:00:00.0000000", "KIS", "", "");
+            var h2 = h with { AvgPrice = (double)(decimal)(1.0 / 3.0) };   // 적용 후 재수집 값
+            Assert.Equal(SyncService.HoldingFingerprint(h), SyncService.HoldingFingerprint(h2));  // 유령 충돌 없음
+        }
+
+        [Fact]
+        public void Apply_ReValidatesSettingAllowlist_BlocksNonPortable()
+        {
+            string p = TempDb();
+            try
+            {
+                using var db = new LocalDatabase(p);
+                var rec = new SyncRecord(SyncKind.Setting, "Broker.LiveArmed", "h",
+                    System.Text.Json.JsonSerializer.Serialize(new SettingDto("Broker.LiveArmed", "1")));
+                var plan = SyncEngine.Plan(new List<SyncRecord>(), new List<SyncRecord> { rec });
+                Assert.Equal(1, plan.Inserts);
+                var res = SyncService.ApplyPlan(db, plan, applyConflicts: false, backup: false);
+                Assert.True(res.Ok);
+                Assert.Equal(1, res.Skipped);                      // 비허용 → 스킵
+                Assert.Null(db.GetSetting("Broker.LiveArmed"));    // 기록되지 않음
+            }
+            finally { Cleanup(p); }
+        }
+
+        [Fact]
+        public void Apply_SkipsTransaction_WithOutOfRangeEnum()
+        {
+            string p = TempDb();
+            try
+            {
+                using var db = new LocalDatabase(p);
+                var rec = new SyncRecord(SyncKind.Transaction, "h1", "h1",
+                    System.Text.Json.JsonSerializer.Serialize(new TxDto("005930", 99, 1, 100, 0, 0, "2026-01-02T09:00:00.0000000", "", "")));
+                var plan = SyncEngine.Plan(new List<SyncRecord>(), new List<SyncRecord> { rec });
+                var res = SyncService.ApplyPlan(db, plan, applyConflicts: false, backup: false);
+                Assert.Equal(1, res.Skipped);                      // 알 수 없는 거래유형 → 스킵
+                Assert.Equal(0, db.Query("SELECT * FROM Transactions").Rows.Count);
+            }
+            finally { Cleanup(p); }
+        }
+
+        [Fact]
+        public void Import_NullRecords_YieldsEmptyBundle()
+        {
+            var raw = Encoding.UTF8.GetBytes("{\"Version\":1,\"DeviceId\":\"x\",\"ExportedAtIso\":\"\",\"Records\":null}");
+            var blob = SyncCrypto.Encrypt(raw, "pw");
+            Assert.True(SyncService.TryImportBytes(blob, "pw", out var bundle, out _));
+            Assert.NotNull(bundle);
+            Assert.Empty(bundle!.Records);
         }
 
         private static string TempDb() => Path.Combine(Path.GetTempPath(), "smsync_" + Guid.NewGuid().ToString("N") + ".db");
