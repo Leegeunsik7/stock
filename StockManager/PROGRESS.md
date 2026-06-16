@@ -12,9 +12,9 @@
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
 | 단위 테스트 | ✅ **485건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `141b60d` v3.64.0 (Season 9 #3 에이전트 워크벤치) · 태그 `v3.41~64.0` |
-| 커밋 대기 | ⏳ **v3.65.0 Season 9 #4 — 전략 신호 모니터**(`StrategyCompiler.CurrentSignal`/`FromMaCross` + `StrategySignalService` + `/signals` · 저장 전략의 현재 신호 상태 · 테스트 6건) (빌드 0 에러·테스트 485) |
-| 다음 예정 | **Season 9 진행** · 사용자 런타임 검증 |
+| 최신 커밋 | `aca61b0` v3.65.0 (Season 9 #4 전략 신호 모니터) · 태그 `v3.41~65.0` |
+| 커밋 대기 | (없음) |
+| 다음 예정 | **런타임 도그푸딩 검증** ([RUNTIME_CHECKLIST.md](RUNTIME_CHECKLIST.md)) — Season 8·9 8개 페이지 실제 앱 점검 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
