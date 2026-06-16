@@ -5,7 +5,7 @@
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.56</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.57</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
@@ -68,13 +68,14 @@
             new Item("🧯", "리스크 분해", "/portfolio/risk", NavLinkMatch.All),
             new Item("🧮", "총자산", "/portfolio/assets", NavLinkMatch.All),
         }),
-        new("lab", "🔬", "전략 연구소", "STRATEGY LAB", new[] { "/lab" }, new[]
+        new("lab", "🔬", "전략 연구소", "STRATEGY LAB", new[] { "/lab", "/forge" }, new[]
         {
             new Item("⚡", "시그널 엔진", "/lab", NavLinkMatch.All),
             new Item("🌙", "옵티마이저", "/lab/optimizer", NavLinkMatch.All),
             new Item("🔬", "이벤트 스터디", "/lab/eventstudy", NavLinkMatch.All),
             new Item("🧬", "가설 발굴", "/lab/miner", NavLinkMatch.All),
             new Item("🎚", "포지션 사이저", "/lab/sizer", NavLinkMatch.All),
+            new Item("🛠", "전략 단조소", "/forge", NavLinkMatch.Prefix),
         }),
         new("risklab", "🎲", "리스크 시뮬", "RISK & SIM", new[] { "/risklab", "/future" }, new[]
         {

@@ -1,0 +1,125 @@
+@page "/forge"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject LocalDatabase Db
+@implements IDisposable
+
+<div class="top">
+    <div class="hello"><h1>🛠 전략 단조소 (Forge)</h1><p>MA 격자를 워크포워드 OOS로 평가해 <b>강건한 전략을 자가 발굴</b> → 서명된 카트리지로 포장 — 정보 제공이며 투자 권유 아님</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 12px;flex-wrap:wrap;align-items:center">
+    <input class="srch" style="width:150px" placeholder="종목코드 (005930/AAPL)" @bind="_sym" @onkeydown="OnKey" />
+    <span class="sub" style="font-size:12px">폴드</span>
+    <select class="srch" style="width:72px" @bind="_folds" @bind:after="RunAsync">
+        @foreach (var f in new[] { 3, 4, 5, 6 }) { <option value="@f">@f</option> }
+    </select>
+    <button class="addbtn" disabled="@_busy" @onclick="RunAsync">@(_busy ? "발굴 중…" : "🛠 발굴")</button>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 20px;color:var(--sub)">@_msg</div> }
+else if (_res is { IsValid: true })
+{
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="k-lab">평가 조합</div><div class="k-val">@_res.Tested</div></div>
+        <div class="kpi"><div class="k-lab">OOS 폴드</div><div class="k-val">@_res.Folds</div></div>
+        <div class="kpi g"><div class="k-lab">최고 강건 점수</div><div class="k-val @(_res.Ranked[0].Score>=0?"up":"down")">@_res.Ranked[0].Score.ToString("+0.0;-0.0")</div></div>
+        <div class="kpi"><div class="k-lab">선택</div><div class="k-val">@(_picked.Count)</div></div>
+    </div>
+
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🛠 @_sym 강건 전략 순위 <span class="tag">WALK-FORWARD OOS</span></div>
+            <div style="overflow:auto;max-height:calc(100vh - 420px)">
+            <table class="ctbl dense">
+                <thead><tr>
+                    <th style="width:42px"></th><th>전략</th>
+                    <th style="text-align:right">OOS 평균</th><th style="text-align:right">OOS 표준편차</th>
+                    <th style="text-align:right">강건 점수</th><th style="text-align:right">거래</th><th style="text-align:right">전체구간</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var c in _res.Ranked)
+                    {
+                        var key = (c.Short, c.Long);
+                        <tr>
+                            <td style="text-align:center"><input type="checkbox" checked="@_picked.Contains(key)" @onchange="@(e => Toggle(key, e.Value is true))" /></td>
+                            <td><b>MA @c.Short/@c.Long</b></td>
+                            <td class="num @(c.OosMeanPct>=0?"up":"down")" style="text-align:right">@c.OosMeanPct.ToString("+0.0;-0.0")%</td>
+                            <td class="num sub" style="text-align:right">@c.OosStdPct.ToString("0.0")</td>
+                            <td class="num" style="text-align:right;font-weight:700">@c.Score.ToString("+0.0;-0.0")</td>
+                            <td class="num sub" style="text-align:right">@c.Trades</td>
+                            <td class="num @(c.FullReturnPct>=0?"up":"down")" style="text-align:right">@c.FullReturnPct.ToString("+0.0;-0.0")%</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            </div>
+            <div class="panel-b" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid var(--hairline)">
+                <input class="srch" style="width:180px" placeholder="카트리지 이름" @bind="_cartName" />
+                <button class="addbtn" disabled="@(_picked.Count == 0)" @onclick="ExportCartridge">🧬 선택 @(_picked.Count)개 → 카트리지 서명·내보내기</button>
+                @if (!string.IsNullOrEmpty(_exportMsg)) { <span class="sub" style="font-size:12px">@_exportMsg</span> }
+            </div>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:10px">
+            ℹ️ <b>강건 점수 = OOS 폴드 평균수익 − 0.5·표준편차</b>(일관성 패널티). 거래가 빈약한 조합은 제외됩니다. 발굴된 전략은 <a href="/cartridges" style="color:var(--accent)">카트리지</a>로 서명·증명서 포장되어 교환 가능합니다. 과거 기반 정보 제공이며 미래 보장 아님.
+        </div>
+    </div>
+}
+
+@code {
+    private string _sym = "", _msg = "", _cartName = "", _exportMsg = "";
+    private int _folds = 4;
+    private bool _busy;
+    private ForgeResult? _res;
+    private readonly HashSet<(int s, int l)> _picked = new();
+    private const int AttestSeed = 7;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+        if (!string.IsNullOrWhiteSpace(_sym)) await RunAsync();
+    }
+
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(RunAsync); }
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") _ = RunAsync(); }
+    private void Toggle((int s, int l) key, bool on) { if (on) _picked.Add(key); else _picked.Remove(key); }
+
+    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private async Task RunAsync()
+    {
+        _msg = ""; _res = null; _exportMsg = ""; _picked.Clear();
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym;
+        _busy = true; StateHasChanged();
+        try
+        {
+            var candles = await Provider.GetHistoryAsync(sym, Detect(sym), DateTime.Now.AddYears(-2), DateTime.Now);
+            candles = candles.OrderBy(c => c.Date).ToList();
+            _res = StrategyForge.Run(candles, _folds);
+            if (!_res.IsValid) _msg = $"{sym}: {_res.Note}";
+            if (string.IsNullOrWhiteSpace(_cartName)) _cartName = $"{sym} 강건 전략";
+        }
+        catch (Exception ex) { _msg = "발굴 실패: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private void ExportCartridge()
+    {
+        if (_res is null || _picked.Count == 0) return;
+        try
+        {
+            var strategies = _picked
+                .Select(k => CartridgeEngine.Attest($"MA {k.s}/{k.l}", k.s, k.l, AttestSeed))
+                .ToList();
+            var cart = CartridgeService.BuildSigned(Db, _cartName, $"Forge 발굴 · {_sym} · {_res.Folds}폴드 OOS", strategies);
+            var path = CartridgeService.ExportToFile(cart);
+            _exportMsg = $"✅ 서명·내보내기: {System.IO.Path.GetFileName(path)} (카트리지 화면에서 확인/교환)";
+        }
+        catch (Exception ex) { _exportMsg = "내보내기 실패: " + ex.Message; }
+    }
+
+    public void Dispose() => SymCtx.OnChange -= OnSym;
+}

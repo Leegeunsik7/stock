@@ -11,10 +11,10 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **391건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `a2bd48b` v3.55.0 (Season 7 #1 확률 미래) · 태그 `v3.41~55.0` |
-| 커밋 대기 | ⏳ **v3.56.0 Season 7 #2 — 전략 카트리지 생태계**(ECDsa 서명 + 결정론 백테스트 증명서 + `/cartridges` 갤러리 + 매크로 적용 · 적대적 리뷰 하드닝) (빌드 0/0·테스트 391) |
-| 다음 예정 | **Season 7 #3 Strategy Forge**(자가 발견 → 카트리지) |
+| 단위 테스트 | ✅ **395건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `0a71994` v3.56.0 (Season 7 #2 카트리지) · 태그 `v3.41~56.0` |
+| 커밋 대기 | ⏳ **v3.57.0 Season 7 #3(마지막) — Strategy Forge**(`StrategyForge` 워크포워드 OOS 격자 발굴 + `/forge` 순위표 + 선택→카트리지 서명·내보내기) (빌드 0/0·테스트 395) |
+| 다음 예정 | **Season 7 전체 완료** · 사용자 런타임 검증 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
@@ -85,7 +85,9 @@
 | **v3.54.0** | **Season 6 #4(마지막) — 리포트 브랜드 동기화 + 커맨드라인 함수 문법** — 야간 PDF(`NightlyReport.BuildPdf`)를 엔터프라이즈 토큰(accent·상승그린/하락레드·고정폭 숫자·패널 밴드·accent 헤더 룰)으로 재튜닝 · 커맨드 팔레트(Ctrl+K)에 **블룸버그식 `<종목> <기능[ 날짜]>` 문법**(RISK/TM/OPT/EV/MINE/SIZE/TWIN/FC/MC/SCN/AI/DEBATE/Q) → SymbolContext 설정 + 모듈 딥링크 + (날짜 시 AsOfContext) — ⏳ 커밋 대기 |
 | — | **🎬 Season 6 완료** (#1 인터랙티브 차트 · #2 반응형 · #3 타임-스크러버 · #4 리포트/커맨드라인) |
 | v3.55.0 | **Season 7 #1 — 확률 미래 엔진** — `FutureCone` 블록 부트스트랩 확률 콘 + `/future`(SVG 콘+KPI) + as-of 예측 vs 실제 오버레이(타임-스크러버 결합) |
-| **v3.56.0** | **Season 7 #2 — 전략 카트리지 생태계** — `.ms2cart` 서명 카트리지 P2P 교환. **CartridgeCrypto**(BCL ECDsa P-256 서명/검증) + **CartridgeEngine**(결정론 PRNG 기준시계열 + 백테스트 **증명서** 재실행 대조 = 무신뢰 "verify-by-recompute" + 불변 canonical 문자열 서명) + `/cartridges` 갤러리(신원키·빌드/서명·검증 배지·매크로 적용) + 커맨드라인 매크로 해석. 테스트 6건(거짓 성과 적발 포함). **적대적 리뷰(2렌즈) 반영**: 자체 PRNG로 교차기기 결정성·canonical 비결정성 제거·자가서명 경고·덮어쓰기 안내 — ⏳ 커밋 대기 |
+| v3.56.0 | **Season 7 #2 — 전략 카트리지 생태계** — `.ms2cart` 서명 카트리지 P2P 교환(ECDsa + 결정론 백테스트 증명서 verify-by-recompute + canonical 서명 + 갤러리 + 매크로). 적대적 리뷰 하드닝 |
+| **v3.57.0** | **Season 7 #3(마지막) — Strategy Forge** — `StrategyForge`(MA 격자 × **워크포워드 OOS 폴드** 평가·강건 점수=OOS평균−0.5·표준편차·거래빈약 컷·결정론, 테스트 4건) + `/forge`(순위표 + KPI) + **선택 전략을 #2 카트리지로 서명·증명서 포장**(발견→검증→교환 흐름 완결) — ⏳ 커밋 대기 |
+| — | **🌌 Season 7 완료** (#1 확률 미래 · #2 카트리지 생태계 · #3 Strategy Forge) |
 
 ---
 
