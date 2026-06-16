@@ -1,0 +1,96 @@
+@page "/tournament"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject LocalDatabase Db
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>🏆 전략 토너먼트 <span class="tag">WALK-FORWARD LEAGUE</span></h1><p>저장된 카트리지 전략·컴파일러 스펙·내장 벤치마크를 한 종목 히스토리에서 <b>동일 조건 OOS 폴드로 맞붙여 랭킹</b> — 강건성 점수(OOS평균−0.5·표준편차). 과거 비교이며 투자 권유 아님</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "대결 중…" : "🏆 토너먼트 실행")</button>
+    @if (_view is { } v && !string.IsNullOrEmpty(v.Note)) { <span class="sub" style="font-size:11.5px">@v.Note</span> }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 16px;color:var(--sub)">@_msg</div> }
+
+@if (_view is { League: { IsValid: true } lg })
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🏆 리그 순위 · @_sym <span class="tag">@lg.Note</span></div>
+            <table class="ctbl dense">
+                <thead><tr>
+                    <th style="text-align:right">#</th><th>전략</th><th>출처</th>
+                    <th style="text-align:right">OOS 평균±σ</th><th style="text-align:right">강건 점수</th>
+                    <th style="text-align:right">전구간</th><th style="text-align:right">폴드</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var r in lg.Rows)
+                    {
+                        <tr style="@(r.Valid && r.Rank == 1 ? "background:color-mix(in srgb,var(--up) 9%,transparent)" : "")">
+                            <td class="num" style="text-align:right">@(r.Valid ? r.Rank.ToString() : "—")</td>
+                            <td><b>@r.Name</b></td>
+                            <td class="sub" style="font-size:11.5px">@r.Source</td>
+                            @if (r.Valid)
+                            {
+                                <td class="num" style="text-align:right"><span class="@Cls(r.OosMeanPct)">@r.OosMeanPct.ToString("+0.0;-0.0")%</span> <small class="sub">±@r.OosStdPct.ToString("0.0")</small></td>
+                                <td class="num" style="text-align:right"><b class="@Cls(r.Score)">@r.Score.ToString("0.0")</b></td>
+                                <td class="num sub" style="text-align:right">@r.FullReturnPct.ToString("+0.0;-0.0")%</td>
+                                <td class="num sub" style="text-align:right">@(r.ValidFolds)/@(lg.Folds)</td>
+                            }
+                            else
+                            {
+                                <td class="num sub" style="text-align:right" colspan="4">@r.Note</td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 각 전략을 동일한 연속 OOS 폴드에서 백테스트해 평균·표준편차로 강건성 점수를 매깁니다(StrategyForge와 동일 철학). 카트리지 MA크로스/스펙은 그대로 재실행하고, 내장 벤치마크는 비교 기준입니다. <b>과거 성과이며 미래를 보장하지 않습니다.</b>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _busy, _disposed;
+    private string _sym = "", _msg = "";
+    private TournamentView? _view;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+    }
+
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(StateHasChanged); }
+    public void Dispose() { SymCtx.OnChange -= OnSym; _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+    private static string Cls(double v) => v >= 0 ? "up" : "down";
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _busy = true; _msg = "출전 전략을 모아 OOS 폴드에서 대결하는 중…"; _view = null;
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var view = await StrategyTournamentService.BuildAsync(Db, Provider, sym, Detect(sym), _cts.Token);
+            if (_disposed) return;
+            _view = view;
+            _msg = view.League.IsValid ? "" : view.League.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "실행 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+}

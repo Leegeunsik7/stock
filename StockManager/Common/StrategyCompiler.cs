@@ -191,6 +191,72 @@ namespace StockManager.Common
             return sb.ToString();
         }
 
+        // 정준 문자열의 FNV-1a 해시(머신 독립) → 동일 스펙 동일 8-hex Id (파서·디코더 공용)
+        public static string Id(StrategySpec s)
+        {
+            string canon = Canonical(s);
+            ulong h = 1469598103934665603UL;
+            foreach (char c in canon) { h ^= c; h *= 1099511628211UL; }
+            return h.ToString("x16").Substring(8, 8);   // 하위 8자리(소형 해시도 엔트로피 유지)
+        }
+
+        /// <summary>스펙 백테스트의 유효 워밍업(최대 지표기간+1). 토너먼트가 폴드 길이 일관 검사에 사용.</summary>
+        public static int Warmup(StrategySpec s) => MaxParam(s) + 1;
+
+        // 정준 문자열 → StrategySpec 역파싱(Canonical의 역). 검증 통과분만 반환 → 임의 스펙도 재실행 검증 가능.
+        public static bool TryParseCanonical(string canon, out StrategySpec? spec)
+        {
+            spec = null;
+            if (string.IsNullOrWhiteSpace(canon) || !canon.StartsWith("SPEC1;", StringComparison.Ordinal)) return false;
+            try
+            {
+                SpecLogic enLogic = SpecLogic.And, exLogic = SpecLogic.Or;
+                var entry = new List<SpecCond>(); var exit = new List<SpecCond>();
+                double sl = 0, tp = 0;
+                foreach (var p in canon.Split(';'))
+                {
+                    if (p.Length >= 4 && p.StartsWith("EN", StringComparison.Ordinal) && p[3] == '=')
+                    { enLogic = (SpecLogic)(p[2] - '0'); ParseConds(p.Substring(4), entry); }
+                    else if (p.Length >= 4 && p.StartsWith("EX", StringComparison.Ordinal) && p[3] == '=')
+                    { exLogic = (SpecLogic)(p[2] - '0'); ParseConds(p.Substring(4), exit); }
+                    else if (p.StartsWith("SL=", StringComparison.Ordinal)) double.TryParse(p.Substring(3), NumberStyles.Any, CultureInfo.InvariantCulture, out sl);
+                    else if (p.StartsWith("TP=", StringComparison.Ordinal)) double.TryParse(p.Substring(3), NumberStyles.Any, CultureInfo.InvariantCulture, out tp);
+                }
+                var tmp = new StrategySpec("", "복원된 스펙", entry, enLogic, exit, exLogic, sl, tp);
+                var (ok, _) = Validate(tmp);
+                if (!ok) return false;
+                spec = tmp with { Id = Id(tmp) };
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static void ParseConds(string body, List<SpecCond> into)
+        {
+            if (string.IsNullOrEmpty(body)) return;
+            foreach (var c in body.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var seg = c.Split('|');
+                if (seg.Length != 3) continue;
+                var left = ParseTerm(seg[0]);
+                if (!int.TryParse(seg[1], out var opi)) continue;
+                var op = (SpecOp)opi;
+                var r = seg[2];
+                if (r.Length >= 1 && r[0] == 'K')
+                { if (double.TryParse(r.Substring(1), NumberStyles.Any, CultureInfo.InvariantCulture, out var k)) into.Add(new SpecCond(left, op, true, k, null)); }
+                else if (r.Length >= 1 && r[0] == 'T')
+                    into.Add(new SpecCond(left, op, false, 0, ParseTerm(r.Substring(1))));
+            }
+        }
+
+        private static SpecTerm ParseTerm(string t)
+        {
+            var kv = t.Split(':');
+            int kind = int.TryParse(kv[0], out var k) ? k : 0;
+            int param = kv.Length > 1 && int.TryParse(kv[1], out var p) ? p : 0;
+            return new SpecTerm((SpecKind)kind, param);
+        }
+
         // 스펙이 순수 MA 골든/데드크로스로 환원되면 (short,long) 반환 → CartStrategy 증명 가능
         public static bool ReducesToMaCross(StrategySpec s, out int shortP, out int longP)
         {

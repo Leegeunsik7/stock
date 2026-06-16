@@ -229,14 +229,8 @@ JSON:";
 
         private static string Trunc(string s, int n) { s = (s ?? "").Trim(); return s.Length <= n ? s : s.Substring(0, n); }
 
-        // 정준 문자열의 FNV-1a 해시(머신 독립) → 동일 스펙 동일 Id. 실제 logic을 반영해야 Id↔정준 일치.
+        // 동일 스펙 동일 Id(공용 StrategyCompiler.Id — 파서·디코더가 같은 해시 사용). 실제 logic 반영.
         private static string MakeId(List<SpecCond> en, List<SpecCond> ex, SpecLogic enLogic, SpecLogic exLogic, double sl, double tp)
-        {
-            var tmp = new StrategySpec("", "", en, enLogic, ex, exLogic, sl, tp);
-            string canon = StrategyCompiler.Canonical(tmp);
-            ulong h = 1469598103934665603UL;
-            foreach (char c in canon) { h ^= c; h *= 1099511628211UL; }
-            return h.ToString("x8").Substring(0, 8);
-        }
+            => StrategyCompiler.Id(new StrategySpec("", "", en, enLogic, ex, exLogic, sl, tp));
     }
 }

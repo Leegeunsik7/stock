@@ -11,9 +11,9 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **445건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `081a636` v3.61.0 (Season 8 완결 — 회고 코치) · 태그 `v3.41~61.0` |
-| 커밋 대기 | ⏳ **v3.62.0 Season 9 #1 — 종합 건강검진 대시보드**(`HealthCheck` 4축 점수·등급·권고, `HealthCheckService` 기존 엔진 합성 + `/health` + 테스트 7건) (빌드 0 에러·테스트 445) |
+| 단위 테스트 | ✅ **456건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `84cde1e` v3.62.0 (Season 9 #1 종합 건강검진) · 태그 `v3.41~62.0` |
+| 커밋 대기 | ⏳ **v3.63.0 Season 9 #2 — 전략 토너먼트**(`StrategyTournament` 워크포워드 리그 + 스펙 디코더 `TryParseCanonical`, `StrategyTournamentService` 카트리지 출전자 수집 + `/tournament` + 테스트 8건) (빌드 0 에러·테스트 456) |
 | 다음 예정 | **Season 9 진행** · 사용자 런타임 검증 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
@@ -93,7 +93,8 @@
 | **v3.60.0** | **Season 8 #3 — LLM 전략 컴파일러** — `StrategyCompiler`(선언적 `StrategySpec`: 지표항 Price/SMA/EMA/RSI/MACD/%B × 연산 상향·하향돌파/>/< + 손절·익절 · **결정론 백테스트**: TradingCost 재현·역슬리피지·강제청산·룩어헤드 없음 · 정준 직렬화 · MA크로스 환원) + `StrategyParser`(오프라인 **규칙 NL 파서** + LLM **JSON 검증 파서**=환각 방화벽) + `StrategyCompilerService`(LLM 우선→C# 검증→실패 시 규칙 폴백 · 검증 통과분만 실행/서명 · CartPrompt 정준+MA크로스면 CartStrategy 증명) + `/compiler`(자연어→스펙→KPI·자본곡선→카트리지) · 테스트 11건 · 적대적 리뷰 11건 반영(로직 id 반영·진입 날조 금지·상수 상한·승률 비용반영·정직성) |
 | **v3.61.0** | **Season 8 #4(마지막) — 회고 코치** — `RetroCoach`(실제 거래 이력 **이동평균 라운드트립 페어링**: AsOfPortfolio 규약 정합·부분매도 원가비례 차감·수수료 비례 · 행동편향 탐지: 처분효과·손익비 열위·과매매·추격매수·패닉매도·물타기 · 통화 혼합 회피 위해 **퍼센트 기반** 통계·손익비 999 센티넬 · 결정론·외부의존 0 · 테스트 10건) + `RetroCoachService`(직전5일수익률·반사실 '보유했다면' FX정규화·`ExplainDayAsync` 패턴 LLM 서술=환각 방화벽) + `/coach`(KPI·편향 카드·반사실·닫힌거래표·AI 코칭) · **게이팅: 읽기전용 사후 복기, 주문 없음** · 적대적 리뷰 10건 반영(과매매 연환산 거품·통화 오분류·수수료 대칭·반사실 시점·자동실행 제거) |
 | — | **🌌 Season 8 완결** (#1 블랙스완 · #2 자율 야간 루프 · #3 LLM 전략 컴파일러 · #4 회고 코치) |
-| **v3.62.0** | **Season 9 #1 — 종합 건강검진 대시보드** — `HealthCheck`(4축 0~100 점수·등급·권고: 분산[상관·집중·종목수]·위기방어[블랙스완 최악 낙폭]·미래전망[확률미래 손실확률]·행동규율[회고 편향 수] · 데이터 부족 축 중립 표기 · 순수·결정론 · 테스트 7건) + `HealthCheckService`(보유 일봉 1회 수집 → RegimeDetector 상관·RiskAttribution 기여·BlackSwan 4종 최악·FutureCone 포트 투영·RetroCoach 편향 합성 · 각 엔진 독립 try) + `/health`(종합점수·축 막대·권고·리스크기여표·최악위기·행동) · **게이팅: 읽기전용, 주문 없음** — ⏳ 커밋 대기 |
+| **v3.62.0** | **Season 9 #1 — 종합 건강검진 대시보드** — `HealthCheck`(4축 0~100 점수·등급·권고: 분산[상관·집중·종목수]·위기방어[블랙스완 최악 낙폭]·미래전망[확률미래 손실확률]·행동규율[회고 편향 수] · 데이터 부족 축 중립 표기 · 순수·결정론 · 테스트 7건) + `HealthCheckService`(보유 일봉 1회 수집 → RegimeDetector 상관·RiskAttribution 기여·BlackSwan 4종 최악·FutureCone 포트 투영·RetroCoach 편향 합성 · 각 엔진 독립 try) + `/health`(종합점수·축 막대·권고·리스크기여표·최악위기·행동) · **게이팅: 읽기전용, 주문 없음** · 적대적 리뷰 9건 반영(다계좌 합산·거짓 고득점→중립·실측축만 평균·날짜정렬) |
+| **v3.63.0** | **Season 9 #2 — 전략 토너먼트** — `StrategyTournament`(저장 카트리지 MA크로스·컴파일러 스펙·내장 벤치마크를 한 종목 **워크포워드 OOS 폴드**로 맞붙여 강건성 점수=OOS평균−λ·표준편차로 랭킹 · 결정론·외부의존 0) + `StrategyCompiler.TryParseCanonical`(정준→스펙 역파싱=임의 스펙 재실행 검증 가능, 컴파일러 리뷰 #6 후속) + 공용 `StrategyCompiler.Id` + `StrategyTournamentService`(카트리지 출전자 수집·중복제거) + `/tournament`(리그 순위표) · 테스트 8건 · **게이팅: 읽기전용, 주문 없음** — ⏳ 커밋 대기 |
 
 ---
 
