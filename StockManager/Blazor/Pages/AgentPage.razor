@@ -1,0 +1,118 @@
+@page "/agent"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@inject AiService Ai
+@inject NavigationManager Nav
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>🤖 에이전트 워크벤치 <span class="tag">NL → TOOL</span></h1><p>자연어로 물어보면 알맞은 <b>결정론 도구</b>로 실행하거나 안내합니다 — LLM은 의도 라우팅·서술만, <b>실행·수치는 C# 엔진</b>(환각 방화벽). LLM 없이도 동작</p></div>
+</div>
+
+<div style="padding:0 28px 8px;display:flex;gap:6px;flex-wrap:wrap">
+    @foreach (var ex in _examples) { <button class="chip" @onclick="() => { _input = ex; }">@ex</button> }
+</div>
+
+<div style="padding:0 28px 14px;display:flex;gap:8px;align-items:center">
+    <input class="srch" style="flex:1;min-width:200px" placeholder="예: 005930 미래 전망 / 포트 위기 시뮬 / 5일선 20일선 골든크로스 매수 손절 8%"
+           @bind="_input" @bind:event="oninput" @onkeydown="OnKey" />
+    <button class="addbtn" disabled="@_busy" @onclick="Send">@(_busy ? "…" : "보내기")</button>
+    <span class="sub" style="font-size:11.5px">@(Ai.HasLlm ? Ai.ActiveLlm : "규칙 모드")</span>
+</div>
+
+<div style="padding:0 28px 40px;display:flex;flex-direction:column;gap:10px">
+    @foreach (var m in _log)
+    {
+        @if (m.IsUser)
+        {
+            <div style="align-self:flex-end;max-width:80%;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:8px 12px;font-size:13px">@m.Text</div>
+        }
+        else
+        {
+            <div class="panel" style="max-width:88%">
+                <div class="panel-h">@(m.Reply!.Ok ? "🤖" : "⚠️") @m.Reply.Title <span class="tag">@ToolKr(m.Reply.Tool)</span></div>
+                <div class="panel-b">
+                    <div style="font-size:13px;line-height:1.6;white-space:pre-wrap">@m.Reply.Summary</div>
+                    @if (!string.IsNullOrEmpty(m.Narration))
+                    {
+                        <div style="font-size:@(m.NarrationError ? "11.5px" : "13px");line-height:1.6;margin-top:8px;padding-top:8px;border-top:1px solid var(--hairline);color:@(m.NarrationError ? "var(--sub)" : "var(--ink)")">@(m.NarrationError ? "" : "💬 ")@m.Narration</div>
+                    }
+                    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        @if (!string.IsNullOrEmpty(m.Reply.Link)) { <button class="chip" @onclick="() => Nav.NavigateTo(m.Reply.Link)">@m.Reply.Link 열기 →</button> }
+                        @if (m.Reply.Ok && Ai.HasLlm && string.IsNullOrEmpty(m.Narration)) { <button class="chip" disabled="@m.NarrateBusy" @onclick="() => Narrate(m)">@(m.NarrateBusy ? "설명 중…" : "💬 AI 설명")</button> }
+                    </div>
+                    @if (!string.IsNullOrEmpty(m.Reply.Hint)) { <div class="sub" style="font-size:11px;margin-top:6px">ℹ️ @m.Reply.Hint</div> }
+                </div>
+            </div>
+        }
+    }
+    @if (_log.Count == 0) { <div class="sub" style="padding:8px 0">무엇이든 물어보세요. 위 예시를 눌러도 됩니다.</div> }
+</div>
+
+<style>
+    .chip { background:var(--card); border:1px solid var(--hairline); color:var(--sub); border-radius:14px; padding:4px 10px; font-size:11.5px; cursor:pointer; }
+    .chip:hover { color:var(--ink); border-color:var(--accent); }
+</style>
+
+@code {
+    private string _input = "";
+    private bool _busy, _disposed;
+    private readonly List<Msg> _log = new();
+    private System.Threading.CancellationTokenSource? _cts;
+
+    private readonly string[] _examples =
+    {
+        "포트폴리오 위기 시뮬레이션", "005930 미래 전망", "5일선 20일선 골든크로스 매수, 손절 8%", "종합 건강검진", "도움말",
+    };
+
+    private sealed class Msg { public bool IsUser; public string Text = ""; public AgentReply? Reply; public string Narration = ""; public bool NarrationError; public bool NarrateBusy; }
+
+    public void Dispose() { _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private async Task OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") await Send(); }
+
+    private async Task Send()
+    {
+        if (_busy) return;
+        var text = (_input ?? "").Trim();
+        if (text.Length == 0) return;
+        _log.Add(new Msg { IsUser = true, Text = text });
+        _input = ""; _busy = true;
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var intent = AgentRouter.Route(text);
+            var reply = await AgentService.RespondAsync(Db, Provider, Fx, Ai, intent, SymCtx.HasSymbol ? SymCtx.Symbol : "", _cts.Token);
+            if (_disposed) return;
+            _log.Add(new Msg { IsUser = false, Reply = reply });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _log.Add(new Msg { IsUser = false, Reply = new AgentReply(false, AgentTool.Unknown, "오류", ex.Message, "", "") }); }
+        finally { _busy = false; }
+    }
+
+    private async Task Narrate(Msg m)
+    {
+        if (m.Reply is null || m.NarrateBusy) return;
+        m.NarrateBusy = true;   // 서술 전용 플래그 — 메인 입력(_busy)을 막지 않음
+        try
+        {
+            var t = await AgentService.NarrateAsync(Ai, m.Reply);
+            if (_disposed) return;
+            m.NarrationError = AiService.IsError(t);   // LLM 오류 문자열은 서술이 아니라 경고로 표기
+            m.Narration = t;
+        }
+        catch (Exception ex) { if (!_disposed) { m.NarrationError = true; m.Narration = "설명 실패: " + ex.Message; } }
+        finally { m.NarrateBusy = false; }
+    }
+
+    private static string ToolKr(AgentTool t) => t switch
+    {
+        AgentTool.Compile => "전략 컴파일", AgentTool.Future => "확률 미래", AgentTool.BlackSwan => "블랙스완",
+        AgentTool.Health => "건강검진", AgentTool.Coach => "회고", AgentTool.Tournament => "토너먼트",
+        AgentTool.Risk => "리스크", AgentTool.Help => "도움말", _ => "—"
+    };
+}
