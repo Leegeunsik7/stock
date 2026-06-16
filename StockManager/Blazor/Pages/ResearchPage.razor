@@ -1,0 +1,179 @@
+@page "/research"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@using StockManager.Common
+@implements IDisposable
+
+<style>
+    .chk { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--ink); cursor:pointer; user-select:none; }
+    .chk input { accent-color:var(--accent); width:15px; height:15px; }
+</style>
+
+<div class="top">
+    <div class="hello"><h1>🌙 야간 연구 일지 <span class="tag">TERMINAL DREAMS</span></h1><p>당신이 잠든 새벽, 터미널이 스스로 한 바퀴 — 전략 발굴 → 카트리지 자가서명 → 확률 미래 투영 → 코파일럿 리스크 평가 → 인과 저널 기록. <b>전부 제안·읽기전용</b>(자동 주문 없음)</p></div>
+</div>
+
+<div style="display:flex;gap:14px;padding:0 28px 14px;flex-wrap:wrap;align-items:center">
+    <label class="chk"><input type="checkbox" @bind="_enabled" @bind:after="SaveToggles" /> 야간 자동 실행</label>
+    <span class="sub" style="font-size:12px">실행 시각</span>
+    <input class="srch" style="width:64px" type="number" min="0" max="23" @bind="_hour" @bind:after="SaveToggles" /><span class="sub" style="font-size:12px">시</span>
+    <span class="sub" style="font-size:12px;margin-left:6px">목표 수익</span>
+    <input class="srch" style="width:64px" type="number" step="1" @bind="_goal" @bind:after="SaveToggles" /><span class="sub" style="font-size:12px">%</span>
+    <label class="chk"><input type="checkbox" @bind="_telegram" @bind:after="SaveToggles" /> 텔레그램 브리핑</label>
+    <button class="addbtn" disabled="@_running" @onclick="RunNow">@(_running ? "연구 중…" : "🌙 지금 실행")</button>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 14px;color:var(--sub)">@_msg</div> }
+
+@if (_brief is { } b)
+{
+    var ts = DateTime.TryParse(b.GeneratedIso, out var dt) ? dt.ToString("yyyy-MM-dd HH:mm") : b.GeneratedIso;
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="k-lab">스캔 종목</div><div class="k-val">@(b.Scanned)</div></div>
+        <div class="kpi"><div class="k-lab">발굴 전략</div><div class="k-val">@(b.Found)</div></div>
+        <div class="kpi"><div class="k-lab">자가서명 카트리지</div><div class="k-val">@(string.IsNullOrEmpty(b.CartridgeFile) ? "—" : "1")</div></div>
+        <div class="kpi"><div class="k-lab">생성</div><div class="k-val" style="font-size:15px">@ts</div></div>
+    </div>
+
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🌙 밤사이 요약</div>
+            <div class="panel-b"><div style="font-size:14px;line-height:1.6">@b.Headline</div></div>
+        </div>
+
+        @if (b.Findings.Count > 0)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">⚒ 발굴 전략 <span class="tag">SELF-DISCOVERED · 목표 @(b.GoalPct.ToString("0"))%</span></div>
+                <table class="ctbl dense">
+                    <thead><tr>
+                        <th>종목</th><th style="text-align:right">MA</th><th style="text-align:right">OOS 평균±σ</th>
+                        <th style="text-align:right">점수</th><th style="text-align:right">거래</th>
+                        <th style="text-align:right">1개월 기대</th><th style="text-align:right">손실확률</th><th style="text-align:right">목표달성</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var f in b.Findings)
+                        {
+                            <tr>
+                                <td><b>@f.Name</b> <small class="sub">@f.Symbol</small></td>
+                                <td class="num" style="text-align:right">@f.Short/@f.Long</td>
+                                <td class="num" style="text-align:right"><span class="@Cls(f.OosMeanPct)">@f.OosMeanPct.ToString("+0.0;-0.0")%</span> <small class="sub">±@f.OosStdPct.ToString("0.0")</small></td>
+                                <td class="num" style="text-align:right">@f.Score.ToString("0.0")</td>
+                                <td class="num sub" style="text-align:right">@f.Trades</td>
+                                @if (f.HasCone)
+                                {
+                                    <td class="num" style="text-align:right"><span class="@Cls(f.ProjExpPct)">@f.ProjExpPct.ToString("+0.0;-0.0")%</span></td>
+                                    <td class="num sub" style="text-align:right">@f.ProbLossPct.ToString("0")%</td>
+                                    <td class="num sub" style="text-align:right">@f.GoalHitPct.ToString("0")%</td>
+                                }
+                                else { <td class="num sub" style="text-align:right">—</td><td class="num sub" style="text-align:right">—</td><td class="num sub" style="text-align:right">—</td> }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (b.Proposals.Count > 0)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">🧑‍✈️ 코파일럿 제안 <span class="tag">PROPOSAL ONLY</span></div>
+                <div class="panel-b">
+                    @foreach (var p in b.Proposals) { <div style="padding:6px 0;border-bottom:1px solid var(--hairline)">⚠️ @p</div> }
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(b.CartridgeFile))
+        {
+            <div class="sub" style="font-size:12px;margin-top:12px">🧬 자가서명 카트리지 생성: <span class="num">@System.IO.Path.GetFileName(b.CartridgeFile)</span> — /cartridges 에서 검증/공유 가능</div>
+        }
+
+        @if (_history.Count > 1)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">📜 지난 연구 (@(_history.Count - 1))</div>
+                <div class="panel-b">
+                    @foreach (var hb in _history.Skip(1).Take(14))
+                    {
+                        var hts = DateTime.TryParse(hb.GeneratedIso, out var hd) ? hd.ToString("MM-dd HH:mm") : hb.GeneratedIso;
+                        <div style="padding:6px 0;border-bottom:1px solid var(--hairline);display:flex;gap:10px">
+                            <span class="num sub" style="min-width:84px">@hts</span><span style="font-size:13px">@hb.Headline</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 발굴은 워크포워드 OOS 백테스트, 투영은 블록 부트스트랩 확률 추정입니다. 카트리지 서명·검증 수치는 결정론 기준 시리즈에 대한 자가증명(자가서명)이며 실종목 OOS 성과가 아닙니다. <b>모든 결과는 정보 제공·제안이며 투자 권유나 자동 주문이 아닙니다.</b>
+        </div>
+    </div>
+}
+else if (!_running)
+{
+    <div style="padding:0 28px 40px"><div class="panel"><div class="panel-b sub" style="padding:24px;text-align:center">
+        아직 연구 기록이 없습니다. <b>야간 자동 실행</b>을 켜두면 새벽에 자동으로 한 바퀴 돌며, 위 <b>지금 실행</b>으로 즉시 시작할 수도 있습니다.<br/>
+        <small>(보유 주식 종목이 있어야 하며, 종목당 18개월 일봉이 필요합니다.)</small>
+    </div></div></div>
+}
+
+@code {
+    private bool _enabled, _telegram, _running;
+    private int _hour = 5;
+    private double _goal = 10;
+    private string _msg = "";
+    private ResearchBrief? _brief;
+    private List<ResearchBrief> _history = new();
+
+    protected override void OnInitialized()
+    {
+        _enabled = Db.GetSetting("Research.Enabled") == "true";
+        _telegram = Db.GetSetting("Research.Telegram") == "true";
+        _hour = int.TryParse(Db.GetSetting("Research.Hour"), out var h) ? Math.Clamp(h, 0, 23) : 5;
+        _goal = double.TryParse(Db.GetSetting("Research.GoalPct"), out var g) && g != 0 ? g : 10;
+        Load();
+    }
+
+    private void Load()
+    {
+        _brief = NightlyResearch.LoadLatest(Db);
+        _history = NightlyResearch.LoadHistory(Db);
+    }
+
+    private void SaveToggles()
+    {
+        _hour = Math.Clamp(_hour, 0, 23);
+        Db.SetSetting("Research.Enabled", _enabled ? "true" : "false");
+        Db.SetSetting("Research.Telegram", _telegram ? "true" : "false");
+        Db.SetSetting("Research.Hour", _hour.ToString());
+        Db.SetSetting("Research.GoalPct", _goal.ToString("0.###"));
+    }
+
+    private System.Threading.CancellationTokenSource? _cts;
+
+    private async Task RunNow()
+    {
+        if (_running) return;
+        if (NightlyResearch.IsRunning) { _msg = "이미 야간 연구가 진행 중입니다(스케줄러 또는 직전 실행). 잠시 후 다시 시도하세요."; return; }
+        _running = true; _msg = "보유 종목을 스캔하며 전략을 발굴·투영하는 중입니다… (종목 수에 따라 수십 초 소요)";
+        _cts?.Cancel(); _cts?.Dispose(); _cts = new();
+        try
+        {
+            var b = await NightlyResearch.RunAsync(Db, Provider, _goal, ct: _cts.Token);
+            if (b == null) { _msg = "이미 야간 연구가 진행 중입니다. 잠시 후 다시 시도하세요."; }
+            else
+            {
+                _brief = b; Load();
+                _msg = b.Found > 0 ? $"완료 — {b.Scanned}종목에서 {b.Found}개 전략 발굴." : $"완료 — {b.Scanned}종목 스캔, 유효한 신규 전략은 없었습니다.";
+            }
+        }
+        catch (OperationCanceledException) { _msg = "실행이 취소되었습니다."; }
+        catch (Exception ex) { _msg = "실행 실패: " + ex.Message; }
+        finally { _running = false; }
+    }
+
+    private static string Cls(double v) => v >= 0 ? "up" : "down";
+
+    public void Dispose() { try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+}

@@ -74,6 +74,7 @@ namespace StockManager.Common
                 await CheckRegimeAsync();
                 await CheckDriftAsync();
                 await CheckNightlyAsync();
+                await CheckNightlyResearchAsync();
                 CheckCopilot();
                 await CheckMaintenanceAsync();
                 LastRun = DateTime.Now;
@@ -332,6 +333,35 @@ namespace StockManager.Common
             }
             catch { }
             Log.Info($"[Nightly] 리포트 생성 · 전송 {(sent ? "성공" : "채널 없음/실패")}");
+        }
+
+        // ===== 자율 야간 연구 루프 🅰 (Season 8 #2, 옵트인 · 읽기전용 · 게이팅) =====
+        //  새벽 설정 시각(Research.Hour, 기본 5시)에 하루 1회 한 바퀴:
+        //   보유종목 전략 발굴(Forge) → 카트리지 자가서명 → 미래 투영(FutureCone) → 코파일럿 리스크 평가
+        //   → 인과 저널 적재(시스템 알림) → /research 일지 + (옵트인)텔레그램 브리핑.
+        //  주문/DCA 절대 미접촉. LastRun 선마킹·25종목 상한·API 보호는 옵티마이저와 동일 규약.
+        private async Task CheckNightlyResearchAsync()
+        {
+            if (_db!.GetSetting("Research.Enabled") != "true" || _provider == null) return;
+            int hour = int.TryParse(_db.GetSetting("Research.Hour"), out var h) ? Math.Clamp(h, 0, 23) : 5;
+            if (DateTime.Now.Hour < hour) return;
+            var today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (_db.GetSetting("Research.LastRun") == today) return;     // 오늘 이미 실행(수동 포함)
+            // 선마킹하지 않음: RunCore가 성공 시 Research.LastRun을 마킹하고, 동시 진입은 RunAsync 내부 게이트가 차단.
+            // 실행 중(수동 '지금 실행' 등)이면 RunAsync가 null 반환 → 마킹 없이 다음 틱에서 재평가.
+
+            double goal = double.TryParse(_db.GetSetting("Research.GoalPct"), out var g) && g != 0 ? g : 10.0;
+            ResearchBrief? brief;
+            try { brief = await NightlyResearch.RunAsync(_db, _provider, goal); }
+            catch (Exception ex) { Log.Warn($"[Research] 실행 실패: {ex.Message}"); return; }
+            if (brief == null) return;                                   // 이미 진행 중 — 다음 틱에서 재시도
+
+            if (_db.GetSetting("Research.Telegram") == "true")
+            {
+                try { await TelegramNotifier.SendAsync(_db, "🌙 <b>밤사이 연구</b>\n" + NightlyResearch.ComposeText(brief)); }
+                catch (Exception ex) { Log.Warn($"[Research] 텔레그램 전송 실패: {ex.Message}"); }
+            }
+            Log.Info($"[Research] {brief.Scanned}종목 · {brief.Found}개 발굴 · 카트리지 {(string.IsNullOrEmpty(brief.CartridgeFile) ? "없음" : "서명")}");
         }
 
         // ===== DB 유지보수 (주 1회 자동, 안전 housekeeping) =====
