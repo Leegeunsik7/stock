@@ -1,0 +1,138 @@
+@page "/blackswan"
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@implements IDisposable
+
+<div class="top">
+    <div class="hello"><h1>🦢 블랙스완 시뮬레이터</h1><p>과거 실제 위기의 일별 충격 경로를 현재 포트폴리오에 주입 — 상관 붕괴(전 종목 동반 하락) 가정 생존 테스트</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 12px;flex-wrap:wrap;align-items:center">
+    <span class="sub" style="font-size:12px">위기 시나리오</span>
+    <select class="srch" style="width:220px" @bind="_crisisId" @bind:after="Run">
+        @foreach (var c in BlackSwan.Library) { <option value="@c.Id">@c.Name</option> }
+    </select>
+    <span class="sub" style="font-size:12px;margin-left:6px">베타 가정</span>
+    <input class="srch" style="width:74px" type="number" step="0.1" @bind="_beta" @bind:after="Run" />
+    <button class="addbtn" @onclick="Run">🦢 주입</button>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 20px;color:var(--sub)">@_msg</div> }
+else if (_res is { IsValid: true })
+{
+    var prof = BlackSwan.ById(_crisisId);
+    <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi @(_res.TerminalPct>=0?"":"d")"><div class="k-lab">최종 손익</div><div class="k-val down">@_res.TerminalPct.ToString("+0.0;-0.0")%</div></div>
+        <div class="kpi d"><div class="k-lab">최대 낙폭</div><div class="k-val down">@_res.MaxDrawdownPct.ToString("0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">저점 도달</div><div class="k-val">@(_res.TroughDay)일차</div></div>
+        <div class="kpi"><div class="k-lab">포트폴리오 β</div><div class="k-val">@_res.PortfolioBeta.ToString("0.00")</div></div>
+    </div>
+
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🦢 @_res.CrisisName 주입 · @(_res.Days)거래일 <span class="tag">CRISIS</span></div>
+            <div class="panel-b">
+                @if (prof is not null) { <div class="sub" style="font-size:11.5px;margin-bottom:8px">@prof.Note · 대표(양식화) 경로</div> }
+                @((MarkupString)CurveSvg())
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top:16px">
+            <div class="panel-h">⚠️ 손실 기여 최악 종목 <span class="tag">CORRELATION BREAK</span></div>
+            <table class="ctbl dense">
+                <thead><tr><th>종목</th><th style="text-align:right">비중</th><th style="text-align:right">β</th><th style="text-align:right">자체 수익</th><th style="text-align:right">포트 기여</th></tr></thead>
+                <tbody>
+                    @foreach (var w in _res.Worst)
+                    {
+                        <tr>
+                            <td><b>@w.Name</b> <small class="sub">@w.Symbol</small></td>
+                            <td class="num sub" style="text-align:right">@((w.Weight*100).ToString("0.0"))%</td>
+                            <td class="num sub" style="text-align:right">@w.Beta.ToString("0.0")</td>
+                            <td class="num down" style="text-align:right">@w.OwnReturnPct.ToString("+0.0;-0.0")%</td>
+                            <td class="num down" style="text-align:right">@w.ContribPct.ToString("+0.0;-0.0")%p</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:10px">
+            ℹ️ 위기 시 분산은 깨지고 상관이 1로 수렴한다는 가정(전 종목이 β×시장충격으로 동반 하락)입니다. β는 전 종목 동일 가정(기본 1.0, 위에서 조정). <b>대표 경로</b>는 형태·낙폭을 재현하며 실제 일별과 정확히 일치하지 않습니다. 정보 제공·스트레스 테스트이며 예측이 아닙니다.
+        </div>
+    </div>
+}
+
+@code {
+    private string _crisisId = "covid20";
+    private double _beta = 1.0;
+    private string _msg = "";
+    private decimal _usdKrw = 1380m;
+    private List<BlackSwanHolding> _holdings = new();
+    private BlackSwanResult? _res;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadHoldings();
+        Run();
+    }
+
+    private async Task LoadHoldings()
+    {
+        try { _usdKrw = await Fx.GetUsdKrwAsync(); } catch { }
+        try
+        {
+            var hs = Db.GetAllHoldings();
+            decimal Mv(Holding h) => h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? _usdKrw : 1m);
+            double total = (double)hs.Sum(Mv);
+            _holdings = hs.Select(h => new BlackSwanHolding(
+                h.Symbol, string.IsNullOrEmpty(h.Name) ? h.Symbol : h.Name,
+                total > 0 ? (double)Mv(h) / total : (hs.Count > 0 ? 1.0 / hs.Count : 0),
+                _beta)).ToList();
+        }
+        catch { _holdings = new(); }
+    }
+
+    private void Run()
+    {
+        _msg = "";
+        if (_holdings.Count == 0) { _msg = "보유 종목이 없습니다. 포트폴리오에 종목을 추가한 뒤 다시 시도하세요."; _res = null; return; }
+        // 베타 가정 반영
+        var hs = _holdings.Select(h => h with { Beta = _beta }).ToList();
+        var prof = BlackSwan.ById(_crisisId);
+        if (prof is null) { _msg = "위기 시나리오를 선택하세요."; _res = null; return; }
+        _res = BlackSwan.Inject(prof, hs);
+        if (!_res.IsValid) _msg = _res.Note;
+    }
+
+    private string CurveSvg()
+    {
+        if (_res is not { IsValid: true } || _res.EquityCurve.Count < 2) return "";
+        var e = _res.EquityCurve;
+        double w = 720, h = 280, padL = 6, padR = 52, padT = 10, padB = 18;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double mn = e.Min(), mx = e.Max(); var range = mx - mn; if (range < 1e-9) range = 1;
+        double margin = range * 0.06; mn -= margin; mx += margin; range = mx - mn;
+        double X(int i) => padL + i / (double)(e.Count - 1) * plotW;
+        double Y(double v) => padT + plotH - (v - mn) / range * plotH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:280px;display:block'>");
+        // 기준선(1.0 = 시작 자본)
+        if (1.0 >= mn && 1.0 <= mx)
+            sb.Append($"<line x1='{padL:F1}' y1='{Y(1.0):F1}' x2='{padL + plotW:F1}' y2='{Y(1.0):F1}' stroke='var(--sub)' stroke-dasharray='3 3' opacity='0.6'/><text x='{padL + plotW + 4:F1}' y='{Y(1.0) + 3:F1}' fill='var(--sub)' font-size='10' font-family='var(--mono)'>0%</text>");
+        // 면적 + 라인 (하락=레드)
+        var area = new System.Text.StringBuilder();
+        area.Append($"{X(0):F1},{Y(mn):F1} ");
+        for (int i = 0; i < e.Count; i++) area.Append($"{X(i):F1},{Y(e[i]):F1} ");
+        area.Append($"{X(e.Count - 1):F1},{Y(mn):F1}");
+        sb.Append($"<polygon points='{area}' fill='color-mix(in srgb,var(--down) 16%,transparent)' stroke='none'/>");
+        var line = string.Join(" ", e.Select((v, i) => $"{X(i):F1},{Y(v):F1}"));
+        sb.Append($"<polyline points='{line}' fill='none' stroke='var(--down)' stroke-width='2'/>");
+        // 저점 마커
+        if (_res.TroughDay > 0 && _res.TroughDay < e.Count)
+            sb.Append($"<circle cx='{X(_res.TroughDay):F1}' cy='{Y(e[_res.TroughDay]):F1}' r='3.5' fill='var(--down)'/>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    public void Dispose() { }
+}
