@@ -1,0 +1,170 @@
+@page "/compiler"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject LocalDatabase Db
+@inject AiService Ai
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>🧱 LLM 전략 컴파일러 <span class="tag">NL → SPEC → BACKTEST</span></h1><p>자연어로 규칙을 쓰면 <b>선언적 전략 스펙</b>으로 컴파일 → 결정론 백테스트 → 서명 카트리지. LLM은 스펙만 제안하고 <b>검증·실행은 C#</b>(환각 방화벽), LLM 없이도 규칙 파서로 동작</p></div>
+</div>
+
+<div style="padding:0 28px 12px">
+    <textarea class="srch" style="width:100%;min-height:62px;resize:vertical;font-family:inherit"
+              placeholder="예: 5일선이 20일선을 골든크로스하면 매수, 데드크로스하면 매도, 손절 8% / 또는: RSI 30 이하면 매수, 70 이상이면 매도"
+              @bind="_nl" @bind:event="oninput"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <input class="srch" style="width:120px" placeholder="종목코드" @bind="_sym" />
+        <button class="addbtn" disabled="@_busy" @onclick="() => CompileAndRun(false)">⚙ 컴파일(규칙)</button>
+        <button class="addbtn" disabled="@(_busy || !Ai.HasLlm)" @onclick="() => CompileAndRun(true)" title="@(Ai.HasLlm ? Ai.ActiveLlm : "LLM 미설정 — /settings에서 Gemini 키 또는 Ollama 활성화")">🤖 AI 컴파일</button>
+        <span class="sub" style="font-size:11.5px">LLM: @(Ai.HasLlm ? Ai.ActiveLlm : "미설정(규칙만)")</span>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        @foreach (var ex in _examples)
+        {
+            <button class="chip" @onclick="() => { _nl = ex; }">@ex</button>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 16px;color:var(--sub)">@_msg</div> }
+
+@if (_spec is not null)
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">📐 컴파일된 스펙 <span class="tag">@_source</span></div>
+            <div class="panel-b">
+                <div style="font-size:14px;line-height:1.6">@StrategyCompiler.Describe(_spec)</div>
+                <div class="sub" style="font-size:11.5px;margin-top:8px">id <span class="num">@_spec.Id</span> · 지표는 차트 RSI/EMA/MACD/%B 기준</div>
+            </div>
+        </div>
+
+        @if (_bt is { } bt)
+        {
+            <div class="kpis" style="grid-template-columns:repeat(5,1fr);margin-top:16px">
+                <div class="kpi"><div class="k-lab">총 수익</div><div class="k-val @Cls(bt.TotalReturn)">@bt.TotalReturn.ToString("+0.0;-0.0")%</div></div>
+                <div class="kpi"><div class="k-lab">최대 낙폭</div><div class="k-val down">-@bt.MaxDrawdown.ToString("0.0")%</div></div>
+                <div class="kpi"><div class="k-lab">승률</div><div class="k-val">@bt.WinRate.ToString("0.0")%</div></div>
+                <div class="kpi"><div class="k-lab">매매</div><div class="k-val">@(bt.TradeCount)회</div></div>
+                <div class="kpi"><div class="k-lab">샤프</div><div class="k-val">@bt.Sharpe.ToString("0.00")</div></div>
+            </div>
+
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">📈 자본 곡선 · @_sym <span class="tag">BACKTEST</span></div>
+                <div class="panel-b">@((MarkupString)CurveSvg(bt))</div>
+            </div>
+
+            <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button class="addbtn" disabled="@_busy" @onclick="ExportCart">🧬 카트리지로 서명·내보내기</button>
+                @if (StrategyCompiler.ReducesToMaCross(_spec, out _, out _)) { <span class="sub" style="font-size:11.5px">MA크로스로 환원 → 재실행 검증 가능한 증명서 첨부</span> }
+                else { <span class="sub" style="font-size:11.5px">스펙은 정준 직렬화되어 서명에 포함(받는 쪽 재실행 검증 가능)</span> }
+            </div>
+        }
+
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 백테스트는 슬리피지·수수료·매도세를 반영한 과거 시뮬레이션이며 미래 성과를 보장하지 않습니다. LLM이 만든 스펙도 이 C# 컴파일러의 검증을 통과한 것만 실행됩니다. <b>정보 제공이며 투자 권유가 아닙니다.</b>
+        </div>
+    </div>
+}
+
+<style>
+    .chip { background:var(--card); border:1px solid var(--hairline); color:var(--sub); border-radius:14px; padding:4px 10px; font-size:11.5px; cursor:pointer; }
+    .chip:hover { color:var(--ink); border-color:var(--accent); }
+</style>
+
+@code {
+    private string _nl = "", _sym = "", _msg = "", _source = "";
+    private bool _busy;
+    private StrategySpec? _spec;
+    private BacktestSummary? _bt;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    private readonly string[] _examples =
+    {
+        "5일선이 20일선을 골든크로스하면 매수, 데드크로스하면 매도, 손절 8%",
+        "RSI 30 이하면 매수, 70 이상이면 매도",
+        "10일선과 60일선 골든크로스 매수, 손절 5% 익절 15%",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+        await Task.CompletedTask;
+    }
+
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(StateHasChanged); }
+    public void Dispose() { SymCtx.OnChange -= OnSym; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+    private static string Cls(decimal v) => v >= 0 ? "up" : "down";
+
+    private async Task CompileAndRun(bool useLlm)
+    {
+        if (_busy) return;
+        _busy = true; _msg = useLlm ? "LLM이 스펙을 제안하는 중… (C#이 검증합니다)" : "규칙 파서로 컴파일 중…";
+        _spec = null; _bt = null;
+        _cts?.Cancel(); _cts?.Dispose(); _cts = new();
+        try
+        {
+            var r = await StrategyCompilerService.CompileAsync(Ai, _nl, useLlm, _cts.Token);
+            if (!r.IsValid || r.Spec is null) { _msg = "컴파일 실패: " + r.Note; return; }
+            _spec = r.Spec; _source = r.Source;
+            await RunBacktest();
+            if (_bt is null) { if (string.IsNullOrEmpty(_msg)) _msg = "스펙 컴파일 성공 — 종목코드를 입력하면 백테스트합니다."; }
+            else _msg = _bt.TradeCount == 0 ? "컴파일 성공 — 단, 해당 종목 구간에서 매매가 발생하지 않았습니다." : $"컴파일 성공 ({r.Note})";
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { _msg = "오류: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task RunBacktest()
+    {
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym) || _spec is null) { _bt = null; return; }
+        _sym = sym;
+        var market = Detect(sym);
+        try
+        {
+            var candles = (await Provider.GetHistoryAsync(sym, market, DateTime.Now.AddYears(-2), DateTime.Now, _cts!.Token))
+                .OrderBy(c => c.Date).ToList();
+            if (candles.Count < 30) { _msg = $"{sym} 캔들이 부족합니다(최소 30거래일)."; _bt = null; return; }
+            _bt = await Task.Run(() => StrategyCompiler.Backtest(_spec, candles, market), _cts.Token);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { _msg = $"{sym} 시세 조회 실패: {ex.Message}"; _bt = null; }
+    }
+
+    private void ExportCart()
+    {
+        if (_spec is null || _bt is null) return;
+        try
+        {
+            var path = StrategyCompilerService.ExportCartridge(Db, _spec, _bt, string.IsNullOrWhiteSpace(_sym) ? "-" : _sym);
+            _msg = "🧬 카트리지 생성: " + System.IO.Path.GetFileName(path) + " — /cartridges 에서 검증/공유 가능";
+        }
+        catch (Exception ex) { _msg = "카트리지 생성 실패: " + ex.Message; }
+    }
+
+    private string CurveSvg(BacktestSummary bt)
+    {
+        var e = bt.EquityCurve;
+        if (e == null || e.Count < 2) return "<div class='sub' style='font-size:12px'>표시할 곡선이 없습니다.</div>";
+        double w = 720, h = 220, padL = 6, padR = 8, padT = 10, padB = 10;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double mn = (double)e.Min(), mx = (double)e.Max(); var range = mx - mn; if (range < 1e-9) range = 1;
+        double X(int i) => padL + i / (double)(e.Count - 1) * plotW;
+        double Y(double v) => padT + plotH - (v - mn) / range * plotH;
+        bool up = e[^1] >= e[0];
+        string col = up ? "var(--up)" : "var(--down)";
+        var pts = string.Join(" ", e.Select((v, i) => $"{X(i):F1},{Y((double)v):F1}"));
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:220px;display:block'>");
+        sb.Append($"<polyline points='{pts}' fill='none' stroke='{col}' stroke-width='2'/>");
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}

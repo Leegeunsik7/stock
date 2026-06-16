@@ -11,10 +11,10 @@
 | 항목 | 상태 |
 |------|------|
 | 빌드 | ✅ Release 0 에러 / 0 경고 (`dotnet build StockManager.sln -c Release -m:1`) |
-| 단위 테스트 | ✅ **407건 통과** (`dotnet test StockManager.Tests`) |
-| 최신 커밋 | `b422339` v3.58.0 (Season 8 #1 블랙스완 시뮬레이터) · 태그 `v3.41~58.0` |
-| 커밋 대기 | ⏳ **v3.59.0 Season 8 #2 — 자율 야간 연구 루프**(`NightlyResearch` 발굴→자가서명→투영→평가→인과저널·일지 + `AlertEngineService` 야간 훅 + `/research` 일지·지금실행 + 테스트 8건) (빌드 0 에러·테스트 407) |
-| 다음 예정 | **Season 8 #3 — LLM 전략 컴파일러** · 사용자 런타임 검증 |
+| 단위 테스트 | ✅ **419건 통과** (`dotnet test StockManager.Tests`) |
+| 최신 커밋 | `25a95b9` v3.59.0 (Season 8 #2 자율 야간 연구 루프) · 태그 `v3.41~59.0` |
+| 커밋 대기 | ⏳ **v3.60.0 Season 8 #3 — LLM 전략 컴파일러**(`StrategyCompiler`+`StrategyParser` NL→선언적 스펙→결정론 백테스트, `StrategyCompilerService` LLM 오케스트레이션+카트리지 + `/compiler` + 테스트 11건) (빌드 0 에러·테스트 419) |
+| 다음 예정 | **Season 8 #4(마지막) — 회고 코치** · 사용자 런타임 검증 |
 
 > **검증 경계(정직 표기):** 빌드 성공·단위 테스트 통과는 자동 검증된 사실이다.
 > 그러나 **UI 렌더링, WebSocket 실시간 틱, Gemini LLM 응답, LAN/원격 접속, 실시간 시세 수집**은
@@ -89,7 +89,8 @@
 | **v3.57.0** | **Season 7 #3(마지막) — Strategy Forge** — `StrategyForge`(MA 격자 × **워크포워드 OOS 폴드** 평가·강건 점수=OOS평균−0.5·표준편차·거래빈약 컷·결정론, 테스트 4건) + `/forge`(순위표 + KPI) + **선택 전략을 #2 카트리지로 서명·증명서 포장**(발견→검증→교환 흐름 완결) |
 | — | **🌌 Season 7 완료** (#1 확률 미래 · #2 카트리지 생태계 · #3 Strategy Forge) |
 | **v3.58.0** | **Season 8 #1 — 블랙스완 시뮬레이터** — `BlackSwan`(과거 실제 위기의 **대표 일별 충격 경로**를 현재 포트폴리오에 강제 주입 · 상관 1 붕괴 가정: 종목수익=β×시장충격, 포트=Σ(비중×β)×충격 · 결정론·외부의존 0 · 위기 라이브러리 4종 코로나/2008/2022/블랙먼데이 · 테스트 5건) + `/blackswan`(위기 드롭다운+β가정 → 붕괴 곡선 SVG·KPI·손실기여 최악 종목) |
-| **v3.59.0** | **Season 8 #2 — 자율 야간 연구 루프(The Terminal Dreams)** — `NightlyResearch`(새벽 1회: 보유종목 Forge 전략 발굴 → `.ms2cart` 자가서명 → `FutureCone` 확률 미래 투영 → `CopilotEngine` 리스크 평가 → 시스템 알림으로 **인과 저널 적재** → 일지·히스토리 영속화 · 순수헬퍼 결정론·네트워크 0 · 테스트 8건) + `AlertEngineService` 야간 훅(옵트인·LastRun 선마킹·25종목 상한·API 보호) + `/research`(일지 KPI·발굴표·코파일럿 제안·히스토리·지금실행 버튼) · **게이팅: 발굴·서명·투영·평가는 모두 제안/읽기전용, 자동 주문 없음** — ⏳ 커밋 대기 |
+| **v3.59.0** | **Season 8 #2 — 자율 야간 연구 루프(The Terminal Dreams)** — `NightlyResearch`(새벽 1회: 보유종목 Forge 전략 발굴 → `.ms2cart` 자가서명 → `FutureCone` 확률 미래 투영 → `CopilotEngine` 리스크 평가 → 시스템 알림으로 **인과 저널 적재** → 일지·히스토리 영속화 · 순수헬퍼 결정론·네트워크 0 · 테스트 8건) + `AlertEngineService` 야간 훅(옵트인·LastRun 선마킹·25종목 상한·API 보호) + `/research`(일지 KPI·발굴표·코파일럿 제안·히스토리·지금실행 버튼) · **게이팅: 발굴·서명·투영·평가는 모두 제안/읽기전용, 자동 주문 없음** · 적대적 리뷰 7건 반영(공유 재진입 게이트·취소·정직성 라벨) |
+| **v3.60.0** | **Season 8 #3 — LLM 전략 컴파일러** — `StrategyCompiler`(선언적 `StrategySpec`: 지표항 Price/SMA/EMA/RSI/MACD/%B × 연산 상향·하향돌파/>/< + 손절·익절 · **결정론 백테스트**: TradingCost 재현·역슬리피지·강제청산·룩어헤드 없음 · 정준 직렬화 · MA크로스 환원) + `StrategyParser`(오프라인 **규칙 NL 파서** + LLM **JSON 검증 파서**=환각 방화벽) + `StrategyCompilerService`(LLM 우선→C# 검증→실패 시 규칙 폴백 · 검증 통과분만 실행/서명 · CartPrompt 정준+MA크로스면 CartStrategy 증명) + `/compiler`(자연어→스펙→KPI·자본곡선→카트리지) · 테스트 11건 — ⏳ 커밋 대기 |
 
 ---
 
