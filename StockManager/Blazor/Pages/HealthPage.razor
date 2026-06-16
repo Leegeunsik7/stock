@@ -1,0 +1,146 @@
+@page "/health"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>🩺 종합 건강검진 <span class="tag">PORTFOLIO HEALTH</span></h1><p>분산·위기 방어·미래 전망·행동 규율을 한 번에 — 흩어진 결정론 엔진(블랙스완·확률미래·리스크기여·회고)을 현재 포트폴리오에 종합. 정보 제공이며 투자 권유 아님</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;align-items:center;flex-wrap:wrap">
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "검진 중…" : "🩺 종합 검진 실행")</button>
+    @if (_view is { } v) { <span class="sub" style="font-size:11.5px">@v.Note</span> }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 16px;color:var(--sub)">@_msg</div> }
+
+@if (_report is null && !_busy && string.IsNullOrEmpty(_msg))
+{
+    <div style="padding:0 28px 40px"><div class="panel"><div class="panel-b sub" style="padding:24px;text-align:center">
+        <b>종합 검진 실행</b>을 누르면 보유 종목 시세를 불러와 4개 축(분산·위기·미래·행동) 건강점수를 산출합니다.<br/>
+        <small>(종목 수에 따라 수십 초 걸릴 수 있습니다.)</small>
+    </div></div></div>
+}
+
+@if (_report is { } rep)
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-b" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+                <div style="text-align:center;min-width:140px">
+                    <div style="font-size:52px;font-weight:700;line-height:1;color:@GradeColor(rep.Grade)">@(rep.Grade == "—" ? "—" : rep.Overall.ToString("0"))</div>
+                    <div style="font-size:15px;margin-top:6px;color:@GradeColor(rep.Grade)"><b>@rep.Grade</b> · @rep.GradeLabel</div>
+                    <div class="sub" style="font-size:11px;margin-top:2px">@(rep.Grade == "—" ? $"실측 {rep.RealAxes}/4축" : "/ 100점 · 실측 " + rep.RealAxes + "/4축")</div>
+                </div>
+                <div style="flex:1;min-width:280px;display:flex;flex-direction:column;gap:8px">
+                    @foreach (var s in rep.Subs)
+                    {
+                        var col = s.IsNeutral ? "var(--sub)" : ScoreColor(s.Score);
+                        <div>
+                            <div style="display:flex;justify-content:space-between;font-size:12.5px">
+                                <span>@s.Label @if (s.IsNeutral) { <span class="sub" style="font-size:10px;border:1px solid var(--hairline);border-radius:8px;padding:0 5px;margin-left:4px">데이터 부족</span> }</span>
+                                <span class="num" style="color:@col">@(s.IsNeutral ? "—" : s.Score.ToString("0"))</span>
+                            </div>
+                            <div style="height:7px;background:var(--hairline);border-radius:4px;overflow:hidden;margin-top:2px"><div style="height:100%;width:@(s.Score.ToString("0"))%;background:@col;opacity:@(s.IsNeutral ? "0.35" : "1")"></div></div>
+                            <div class="sub" style="font-size:11px;margin-top:2px">@s.Detail</div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top:16px">
+            <div class="panel-h">💡 권고</div>
+            <div class="panel-b">
+                @foreach (var r in rep.Recommendations) { <div style="padding:6px 0;border-bottom:1px solid var(--hairline);font-size:13px">@r</div> }
+            </div>
+        </div>
+
+        <div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-top:16px">
+            <div class="kpi"><div class="k-lab">종목 수</div><div class="k-val">@(_view!.Priced)/@(_view.Holdings)</div></div>
+            <div class="kpi"><div class="k-lab">포트 변동성(연)</div><div class="k-val">@(_view.Risk is { IsValid: true } rk ? rk.PortfolioVolPct.ToString("0.0") + "%" : "—")</div></div>
+            <div class="kpi @(_view.Worst is { } ? "d" : "")"><div class="k-lab">위기 최악 낙폭</div><div class="k-val down">@(_view.Worst is { } w ? w.MaxDrawdownPct.ToString("0.0") + "%" : "—")</div></div>
+            <div class="kpi"><div class="k-lab">1개월 손실확률</div><div class="k-val">@(_view.Future is { IsValid: true } f ? f.ProbLossPct.ToString("0") + "%" : "—")</div></div>
+        </div>
+
+        @if (_view!.Risk is { IsValid: true } risk)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">📊 리스크 기여 <span class="tag">@risk.TopName 집중 @risk.TopConcentrationPct.ToString("0.0")%</span></div>
+                <table class="ctbl dense">
+                    <thead><tr><th>종목</th><th style="text-align:right">비중</th><th style="text-align:right">위험 비중</th><th style="text-align:right">위험/비중</th></tr></thead>
+                    <tbody>
+                        @foreach (var c in risk.Contributions.Take(10))
+                        {
+                            <tr>
+                                <td><b>@c.Name</b></td>
+                                <td class="num sub" style="text-align:right">@c.WeightPct.ToString("0.0")%</td>
+                                <td class="num @(c.RiskContribPct > c.WeightPct ? "down" : "")" style="text-align:right">@c.RiskContribPct.ToString("0.0")%</td>
+                                <td class="num sub" style="text-align:right">@c.Ratio.ToString("0.00")×</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <div class="sub" style="font-size:11.5px;margin:8px 14px 0">@risk.Insight</div>
+            </div>
+        }
+
+        @if (_view.Worst is { IsValid: true } worst)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">🦢 최악 위기 시나리오 · @(_view.WorstCrisis) <span class="tag">STRESS</span></div>
+                <div class="panel-b sub" style="font-size:12.5px">
+                    이 포트폴리오에 가장 가혹한 역사적 위기는 <b>@(_view.WorstCrisis)</b> — 최종 @worst.TerminalPct.ToString("+0.0;-0.0")%, 최대 낙폭 @worst.MaxDrawdownPct.ToString("0.0")% (포트 β @worst.PortfolioBeta.ToString("0.00"), 상관 붕괴 가정). 자세히는 /blackswan.
+                </div>
+            </div>
+        }
+
+        @if (_view.Behavior is { IsValid: true } beh && beh.Insights.Count > 0)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">🪞 행동 규율 <span class="tag">@(beh.Stats.ClosedTrades)건 복기</span></div>
+                <div class="panel-b">
+                    @foreach (var i in beh.Insights.Take(4)) { <div style="padding:5px 0;font-size:12.5px">· <b>@i.Title</b> — <span class="sub">@i.Evidence</span></div> }
+                    <div class="sub" style="font-size:11.5px;margin-top:4px">자세한 복기는 /coach.</div>
+                </div>
+            </div>
+        }
+
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 각 축은 결정론 엔진의 산출 지표를 0~100으로 환산한 것입니다(데이터 부족 축은 중립값 표기). 분산은 후행정렬 상관·공분산, 위기는 대표 충격 경로 주입, 미래는 블록 부트스트랩 확률 추정입니다. <b>진단 보조·정보 제공이며 투자 권유가 아닙니다.</b>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _busy, _disposed;
+    private string _msg = "";
+    private HealthView? _view;
+    private HealthScoreResult? _report;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        _busy = true; _msg = "보유 종목 시세를 불러와 4개 축을 검진하는 중… (종목 수에 따라 수십 초)";
+        _report = null; _view = null;   // 실패/취소 시 이전 리포트가 남지 않도록 선클리어
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var view = await HealthCheckService.BuildAsync(Db, Provider, Fx, _cts.Token);
+            if (_disposed) return;
+            _view = view; _report = view.IsValid ? view.Score : null;
+            _msg = view.IsValid ? "" : view.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "검진 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    public void Dispose() { _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static string GradeColor(string g) => g switch { "A" => "var(--up)", "B" => "var(--up)", "C" => "var(--accent)", "D" => "#e0964d", "—" => "var(--sub)", _ => "var(--down)" };
+    private static string ScoreColor(double s) => s >= 65 ? "var(--up)" : s >= 50 ? "var(--accent)" : s >= 35 ? "#e0964d" : "var(--down)";
+}
