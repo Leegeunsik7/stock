@@ -56,6 +56,9 @@ namespace StockManager.Common
 
     public sealed record CompileResult(bool IsValid, StrategySpec? Spec, string Source, string Note);
 
+    // 현재 신호 상태(마지막 봉 기준). State ∈ {신규 진입, 청산 신호, 보유 중, 관망}. 정보 제공이며 주문 아님.
+    public sealed record SignalNow(string State, string Detail, bool InPosition, DateTime AsOf);
+
     public static class StrategyCompiler
     {
         public const int MinPeriod = 2, MaxPeriod = 200;
@@ -273,6 +276,46 @@ namespace StockManager.Common
             if (en.Left.Param >= en.Right.Param) return false;
             shortP = en.Left.Param; longP = en.Right.Param;
             return true;
+        }
+
+        // MA 골든/데드크로스를 동등한 StrategySpec으로(카트리지 CartStrategy → 신호 평가용)
+        public static StrategySpec FromMaCross(int shortP, int longP)
+        {
+            var lo = new SpecTerm(SpecKind.Sma, shortP);
+            var hi = new SpecTerm(SpecKind.Sma, longP);
+            var entry = new List<SpecCond> { new(lo, SpecOp.CrossAbove, false, 0, hi) };
+            var exit = new List<SpecCond> { new(lo, SpecOp.CrossBelow, false, 0, hi) };
+            var s = new StrategySpec("", $"MA {shortP}/{longP}", entry, SpecLogic.And, exit, SpecLogic.Or, 0, 0);
+            return s with { Id = Id(s) };
+        }
+
+        // 현재 신호: 비용 없이 진입/청산 규칙을 복기해 마지막 봉의 '규칙 상태'를 보고(정보 제공·주문 아님).
+        //  자본/체결가능성은 보지 않는다(전략 규칙의 충족 여부만) — 자본 제약은 백테스트의 관심사.
+        public static SignalNow CurrentSignal(StrategySpec spec, List<Candle> candles)
+        {
+            var asOf = candles is { Count: > 0 } ? candles[^1].Date : default;
+            if (spec == null || candles == null || candles.Count < 5) return new SignalNow("관망", "표본 부족", false, asOf);
+            int need = MaxParam(spec) + 1;
+            if (candles.Count <= need) return new SignalNow("관망", "표본 부족(워밍업 미달)", false, asOf);   // 시드값 가짜 신호 방지
+            var series = BuildSeries(spec, candles);
+            int warm = need;   // 위 가드로 need < count 보장 → 첫 평가봉의 i-1이 완성 지표
+            bool inPos = false; decimal entryPx = 0; bool entryNow = false, exitNow = false; string why = "";
+            for (int i = warm; i < candles.Count; i++)
+            {
+                decimal close = candles[i].Close;
+                bool lastBar = i == candles.Count - 1;
+                entryNow = false; exitNow = false;
+                if (inPos)
+                {
+                    bool stop = spec.StopLossPct > 0 && close <= entryPx * (1m - (decimal)spec.StopLossPct / 100m);
+                    bool take = spec.TakeProfitPct > 0 && close >= entryPx * (1m + (decimal)spec.TakeProfitPct / 100m);
+                    bool exitSig = spec.Exit.Count > 0 && EvalAll(spec.Exit, spec.ExitLogic, series, i);
+                    if (stop || take || exitSig) { inPos = false; if (lastBar) { exitNow = true; why = stop ? "손절선 도달" : take ? "익절선 도달" : "청산 조건 충족"; } }
+                }
+                if (!inPos && EvalAll(spec.Entry, spec.EntryLogic, series, i)) { inPos = true; entryPx = close; if (lastBar) { entryNow = true; why = "진입 조건 충족"; } }
+            }
+            string state = entryNow ? "신규 진입" : exitNow ? "청산 신호" : inPos ? "보유 중" : "관망";
+            return new SignalNow(state, string.IsNullOrEmpty(why) ? (inPos ? "진입 유지 중" : "진입 조건 미충족") : why, inPos, asOf);
         }
 
         // ===== 내부: 지표 시리즈 빌드 + 평가 =====

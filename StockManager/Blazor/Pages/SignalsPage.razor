@@ -1,0 +1,88 @@
+@page "/signals"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@inject LocalDatabase Db
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>📡 전략 신호 모니터 <span class="tag">STRATEGY STATE</span></h1><p>저장된 전략·컴파일러 스펙이 <b>지금 이 종목에서 어떤 상태</b>(신규 진입·청산·보유·관망)인지 결정론으로 평가 — 전략 규칙의 현재 상태 정보이며 <b>매매 지시가 아닙니다</b></p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "평가 중…" : "📡 신호 평가")</button>
+    @if (_view is { IsValid: true } v && !string.IsNullOrEmpty(v.Note)) { <span class="sub" style="font-size:11.5px">@v.Note</span> }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 16px;color:var(--sub)">@_msg</div> }
+
+@if (_view is { IsValid: true } vw)
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">📡 @vw.Symbol 전략 신호 <span class="tag">기준 @vw.AsOf.ToString("yyyy-MM-dd")</span></div>
+            <table class="ctbl dense">
+                <thead><tr><th>전략</th><th>출처</th><th>상태</th><th>설명</th></tr></thead>
+                <tbody>
+                    @foreach (var r in vw.Rows)
+                    {
+                        <tr>
+                            <td><b>@r.Name</b></td>
+                            <td class="sub" style="font-size:11.5px">@r.Source</td>
+                            <td><span class="pill" style="background:@Bg(r.State);color:@Fg(r.State)">@r.State</span></td>
+                            <td class="sub" style="font-size:12px">@r.Detail</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 각 전략의 진입·청산 규칙을 과거 봉에 복기해 마지막 봉의 상태를 표시합니다(비용 미반영). <b>전략 규칙이 현재 충족되는지에 대한 정보이며 매수·매도 지시나 자동 주문이 아닙니다.</b>
+        </div>
+    </div>
+}
+
+<style>
+    .pill { border-radius:10px; padding:2px 9px; font-size:11px; font-weight:600; }
+</style>
+
+@code {
+    private bool _busy, _disposed;
+    private string _sym = "", _msg = "";
+    private SignalView? _view;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+    }
+
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(StateHasChanged); }
+    public void Dispose() { SymCtx.OnChange -= OnSym; _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _busy = true; _msg = "저장된 전략의 현재 신호를 평가하는 중…"; _view = null;
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var v = await StrategySignalService.BuildAsync(Db, Provider, sym, Detect(sym), _cts.Token);
+            if (_disposed) return;
+            _view = v;
+            _msg = v.IsValid ? "" : v.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "평가 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private static string Bg(string s) => s switch { "신규 진입" => "rgba(15,157,107,.18)", "청산 신호" => "rgba(224,82,77,.18)", "보유 중" => "rgba(79,91,213,.16)", _ => "rgba(120,120,120,.15)" };
+    private static string Fg(string s) => s switch { "신규 진입" => "var(--up)", "청산 신호" => "var(--down)", "보유 중" => "var(--accent)", _ => "var(--sub)" };
+}
