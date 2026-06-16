@@ -1,0 +1,167 @@
+@page "/coach"
+@inject IQuoteProvider Provider
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@inject AiService Ai
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello"><h1>🪞 회고 코치 <span class="tag">BEHAVIORAL REVIEW</span></h1><p>실제 거래 이력을 분석해 <b>행동 편향</b>(처분효과·추격매수·패닉매도·물타기·과매매)을 짚고, "보유했다면?" 반사실까지 — 결정론 수치 기반 사후 복기(투자 권유 아님)</p></div>
+</div>
+
+<div style="display:flex;gap:8px;padding:0 28px 14px;align-items:center;flex-wrap:wrap">
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "분석 중…" : "🪞 거래 회고 분석")</button>
+    <button class="addbtn" disabled="@(_busy || _report is null || !Ai.HasLlm)" @onclick="Narrate" title="@(Ai.HasLlm ? Ai.ActiveLlm : "LLM 미설정")">🤖 AI 코칭</button>
+    <span class="sub" style="font-size:11.5px">LLM: @(Ai.HasLlm ? Ai.ActiveLlm : "미설정(수치만)")</span>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 16px;color:var(--sub)">@_msg</div> }
+
+@if (_report is null && !_busy && string.IsNullOrEmpty(_msg))
+{
+    <div style="padding:0 28px 40px"><div class="panel"><div class="panel-b sub" style="padding:24px;text-align:center">
+        <b>거래 회고 분석</b>을 누르면 실제 거래 이력을 불러와 행동 패턴을 분석합니다.<br/>
+        <small>(보유·청산 종목의 일봉을 조회하므로 종목 수에 따라 수십 초 걸릴 수 있습니다.)</small>
+    </div></div></div>
+}
+
+@if (_report is { IsValid: true } rep)
+{
+    var s = rep.Stats;
+    <div style="padding:0 28px 40px">
+        <div class="kpis" style="grid-template-columns:repeat(5,1fr)">
+            <div class="kpi"><div class="k-lab">닫힌 거래</div><div class="k-val">@(s.ClosedTrades)건</div></div>
+            <div class="kpi"><div class="k-lab">승률</div><div class="k-val">@s.WinRatePct.ToString("0.0")%</div></div>
+            <div class="kpi"><div class="k-lab">손익비</div><div class="k-val @(s.ProfitFactor >= 1 ? "up" : "down")">@RetroCoach.Pf(s.ProfitFactor)</div></div>
+            <div class="kpi"><div class="k-lab">평균 보유</div><div class="k-val">@s.AvgHoldDays.ToString("0")일</div></div>
+            <div class="kpi"><div class="k-lab">월 매매</div><div class="k-val">@s.TradesPerMonth.ToString("0.0")회</div></div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_narration))
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">🤖 AI 코칭 <span class="tag">@(_narrSrc)</span></div>
+                <div class="panel-b"><div style="font-size:14px;line-height:1.7;white-space:pre-wrap">@_narration</div></div>
+            </div>
+        }
+
+        <div class="panel" style="margin-top:16px">
+            <div class="panel-h">🔍 탐지된 행동 패턴 (@(rep.Insights.Count))</div>
+            <div class="panel-b">
+                @if (rep.Insights.Count == 0) { <div class="sub">표본이 부족해 패턴을 단정하기 어렵습니다.</div> }
+                @foreach (var i in rep.Insights)
+                {
+                    <div style="padding:10px 0;border-bottom:1px solid var(--hairline)">
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <span class="pill" style="background:@SevBg(i.Severity);color:@SevFg(i.Severity)">@SevLabel(i.Severity)</span>
+                            <b>@i.Title</b>
+                        </div>
+                        <div class="sub" style="font-size:12px;margin-top:4px">📊 @i.Evidence</div>
+                        <div style="font-size:13px;margin-top:4px">💡 @i.Suggestion</div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-top:16px">
+            <div class="kpi"><div class="k-lab">승자 평균 보유</div><div class="k-val">@s.AvgHoldWinDays.ToString("0")일</div></div>
+            <div class="kpi"><div class="k-lab">패자 평균 보유</div><div class="k-val">@s.AvgHoldLossDays.ToString("0")일</div></div>
+            <div class="kpi @(_view!.SoldHeldDeltaKrw >= 0 ? "" : "d")"><div class="k-lab">조기매도 기회손익(보유했다면)</div><div class="k-val @(_view.SoldHeldDeltaKrw >= 0 ? "up" : "down")">@FmtKrw(_view.SoldHeldDeltaKrw)</div></div>
+        </div>
+
+        @if (_view!.TopMissed.Count > 0)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">↩ 매도분을 지금까지 보유했다면 <span class="tag">COUNTERFACTUAL</span></div>
+                <table class="ctbl dense">
+                    <thead><tr><th>종목</th><th style="text-align:right">차이(KRW)</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var m in _view.TopMissed)
+                        {
+                            <tr>
+                                <td class="num">@m.Symbol</td>
+                                <td class="num @(m.DeltaKrw >= 0 ? "up" : "down")" style="text-align:right">@FmtKrw(m.DeltaKrw)</td>
+                                <td class="sub" style="font-size:11.5px">@(m.DeltaKrw >= 0 ? "보유가 유리했음(조기매도)" : "매도가 손실 회피")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (rep.Trades.Count > 0)
+        {
+            <div class="panel" style="margin-top:16px">
+                <div class="panel-h">📒 닫힌 거래 (@(rep.Trades.Count)) <span class="tag">이동평균 기준</span></div>
+                <table class="ctbl dense">
+                    <thead><tr><th>종목</th><th>청산일</th><th style="text-align:right">수량</th><th style="text-align:right">평단</th><th style="text-align:right">청산가</th><th style="text-align:right">손익%</th><th style="text-align:right">보유일</th></tr></thead>
+                    <tbody>
+                        @foreach (var t in rep.Trades.OrderByDescending(t => t.ExitDate).Take(40))
+                        {
+                            <tr>
+                                <td class="num">@t.Symbol</td>
+                                <td class="num sub">@t.ExitDate.ToString("yyyy-MM-dd")</td>
+                                <td class="num sub" style="text-align:right">@t.Qty</td>
+                                <td class="num sub" style="text-align:right">@t.AvgCost.ToString("0.##")</td>
+                                <td class="num sub" style="text-align:right">@t.ExitPrice.ToString("0.##")</td>
+                                <td class="num @(t.IsWin ? "up" : "down")" style="text-align:right">@t.PnlPct.ToString("+0.0;-0.0")%</td>
+                                <td class="num sub" style="text-align:right">@t.HoldingDays.ToString("0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <div class="sub" style="font-size:11.5px;margin-top:12px">
+            ℹ️ 손익은 앱 전체 규약(이동평균 원가)으로 계산하며, 통계는 통화 혼합을 피하기 위해 퍼센트 기반입니다. 반사실은 매도분을 마지막 종가로 평가한 가정치입니다. <b>사후 복기·정보 제공이며 투자 권유가 아닙니다.</b> AI 코칭은 위 결정론 수치만 근거로 서술합니다.
+        </div>
+    </div>
+}
+
+<style>
+    .pill { border-radius:10px; padding:2px 9px; font-size:11px; font-weight:600; }
+</style>
+
+@code {
+    private bool _busy;
+    private string _msg = "", _narration = "", _narrSrc = "";
+    private CoachReport? _report;
+    private CoachView? _view;
+    private bool _disposed;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        _busy = true; _msg = "거래 이력과 시세를 불러와 행동 패턴을 분석하는 중… (종목 수에 따라 수십 초)"; _narration = "";
+        _cts?.Dispose(); _cts = new();   // 새 토큰(Dispose 시 진행 중 분석을 취소하기 위함)
+        try
+        {
+            var view = await RetroCoachService.BuildAsync(Db, Provider, Fx, _cts.Token);
+            if (_disposed) return;
+            _view = view; _report = view.Report;
+            _msg = _report.IsValid ? "" : view.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "분석 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task Narrate()
+    {
+        if (_report is null || _busy) return;
+        _busy = true; _narration = "코칭 서술 생성 중…"; _narrSrc = Ai.ActiveLlm;
+        try { var txt = await RetroCoachService.NarrateAsync(Ai, _report); if (!_disposed) _narration = txt; }
+        catch (Exception ex) { if (!_disposed) _narration = "서술 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    public void Dispose() { _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static string FmtKrw(decimal v) => (v >= 0 ? "+" : "-") + "₩" + Math.Abs(v).ToString("#,##0");
+    private static string SevLabel(string s) => s switch { "high" => "주의", "warning" => "경고", "info" => "확인", "good" => "양호", _ => s };
+    private static string SevBg(string s) => s switch { "high" => "rgba(224,82,77,.18)", "warning" => "rgba(224,150,77,.18)", "good" => "rgba(15,157,107,.18)", _ => "rgba(120,120,120,.18)" };
+    private static string SevFg(string s) => s switch { "high" => "var(--down)", "warning" => "#e0964d", "good" => "var(--up)", _ => "var(--sub)" };
+}
