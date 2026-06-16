@@ -1,0 +1,184 @@
+@page "/cartridges"
+@inject LocalDatabase Db
+
+<div class="top">
+    <div class="hello"><h1>🧩 전략 카트리지</h1><p>매크로·전략을 서명된 카트리지로 교환 — 중앙 서버 없이 <b>서명 + 결정론 백테스트 증명서</b>로 무신뢰 검증</p></div>
+    <button class="ghost" style="margin-right:16px" @onclick="OpenFolder">📂 폴더 열기</button>
+</div>
+
+<div style="padding:0 28px 40px;max-width:980px">
+    <div class="sub" style="font-size:12px;margin-bottom:12px">내 신원(공개키): <code>@Trunc(_pub)</code> · 제작자: <b>@_author</b></div>
+
+    @if (!string.IsNullOrEmpty(_msg)) { <div style="background:color-mix(in srgb,var(--accent) 8%,transparent);border:1px solid var(--line);border-radius:10px;padding:9px 13px;font-size:12.5px;margin-bottom:14px">@_msg</div> }
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        @* ── 내보내기 ── *@
+        <div class="panel">
+            <div class="panel-h">📤 카트리지 만들기 <span class="tag">SIGN</span></div>
+            <div class="panel-b">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                    <input class="srch" style="flex:1;min-width:140px" placeholder="이름" @bind="_name" />
+                    <input class="srch" style="flex:2;min-width:160px" placeholder="설명(선택)" @bind="_desc" />
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <span class="sub" style="font-size:12px">전략 MA</span>
+                    <input class="srch" style="width:62px" type="number" @bind="_short" /> /
+                    <input class="srch" style="width:62px" type="number" @bind="_long" />
+                    <span class="sub" style="font-size:12px">시드</span>
+                    <input class="srch" style="width:74px" type="number" @bind="_seed" />
+                    <button class="ghost" @onclick="AddStrategy">+ 전략(증명서 부착)</button>
+                </div>
+                @if (_drafts.Count > 0)
+                {
+                    <table class="ctbl dense" style="margin-bottom:8px">
+                        <thead><tr><th>전략</th><th style="text-align:right">수익률</th><th style="text-align:right">MDD</th><th style="text-align:right">거래</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var s in _drafts)
+                            {
+                                <tr>
+                                    <td>@s.Name <small class="sub">seed @s.Seed</small></td>
+                                    <td class="num" style="text-align:right">@s.AttestTotalReturnPct.ToString("+0.0;-0.0")%</td>
+                                    <td class="num" style="text-align:right">@s.AttestMaxDrawdownPct.ToString("0.0")%</td>
+                                    <td class="num" style="text-align:right">@s.AttestTrades</td>
+                                    <td style="text-align:center"><button class="pill r" style="border:0;cursor:pointer;padding:2px 7px;font-size:11px" @onclick="() => _drafts.Remove(s)">✕</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                <div class="sub" style="font-size:11px;margin-bottom:8px">매크로는 현재 등록된 커맨드라인 매크로(@(_macroCount)개)가 함께 포장됩니다.</div>
+                <button class="addbtn" @onclick="Export">🔐 서명 + 내보내기</button>
+                @if (!string.IsNullOrEmpty(_exportMsg)) { <div class="sub" style="font-size:12px;margin-top:8px">@_exportMsg</div> }
+            </div>
+        </div>
+
+        @* ── 가져오기 ── *@
+        <div class="panel">
+            <div class="panel-h">📥 가져오기 · 검증 <span class="tag">VERIFY</span></div>
+            <div class="panel-b">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                    <select class="srch" style="flex:1;min-width:200px" @bind="_sel" @bind:after="Select">
+                        <option value="">— .ms2cart 선택 —</option>
+                        @foreach (var f in _files) { <option value="@f">@System.IO.Path.GetFileName(f)</option> }
+                    </select>
+                    <button class="ghost" @onclick="RefreshFiles">🔄</button>
+                </div>
+                @if (!string.IsNullOrEmpty(_impMsg)) { <div class="sub" style="font-size:12px;margin-bottom:8px">@_impMsg</div> }
+                @if (_cart is not null && _verdict is not null)
+                {
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+                        <span class="pill @(_verdict.SignatureOk?"r":"b")" style="font-size:11px">@(_verdict.SignatureOk ? "✅ 서명 OK" : "❌ 서명 실패")</span>
+                        <span class="pill @(_verdict.AttestationOk?"r":"b")" style="font-size:11px">@(_verdict.AttestationOk ? "✅ 증명서 OK" : "⚠️ 증명서 불일치")</span>
+                        @if (_verdict.FullyTrusted) { <span style="color:var(--up);font-weight:800;font-size:12px">무결성·증명서 OK</span> }
+                    </div>
+                    @if (_verdict.SignatureOk)
+                    {
+                        <div style="color:var(--warn);font-size:11px;margin-bottom:6px">⚠️ 자가서명 — <b>서명 유효 ≠ 제작자 신뢰</b>. 아래 키 지문을 신뢰하는 제작자 것과 직접 대조하세요.</div>
+                    }
+                    <div class="sub" style="font-size:11.5px;margin-bottom:8px">@_cart.Name · @_cart.Author · @_cart.CreatedIso · 키 <code>@Trunc(_cart.AuthorPubKey)</code> · @_verdict.Note</div>
+                    @if (_cart.Strategies.Count > 0)
+                    {
+                        <table class="ctbl dense" style="margin-bottom:8px">
+                            <thead><tr><th>전략</th><th style="text-align:right">주장 수익률</th><th style="text-align:right">거래</th><th style="text-align:center">재현</th></tr></thead>
+                            <tbody>
+                                @foreach (var s in _cart.Strategies)
+                                {
+                                    var okv = CartridgeEngine.VerifyStrategy(s);
+                                    <tr>
+                                        <td>@s.Name</td>
+                                        <td class="num" style="text-align:right">@s.AttestTotalReturnPct.ToString("+0.0;-0.0")%</td>
+                                        <td class="num" style="text-align:right">@s.AttestTrades</td>
+                                        <td style="text-align:center" class="@(okv?"up":"down")">@(okv ? "✓" : "✗")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    @if (_cart.Macros.Count > 0)
+                    {
+                        <div class="sub" style="font-size:11.5px;margin-bottom:6px">매크로 @(_cart.Macros.Count)개: @string.Join(", ", _cart.Macros.Select(m => m.Alias))</div>
+                        <button class="addbtn" disabled="@(!_verdict.SignatureOk)" @onclick="ApplyMacros">⬇ 매크로 적용</button>
+                        @if (!_verdict.SignatureOk) { <span class="sub" style="font-size:11px;margin-left:8px">서명 검증 실패 — 적용 차단</span> }
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="sub" style="font-size:11.5px;margin-top:14px">
+        ℹ️ <b>무신뢰 검증</b>: 카트리지는 ECDsa 서명(제작자·무결성)과 결정론 백테스트 증명서를 담습니다. 받는 쪽이 시드 기준 시계열에서 전략을 <b>재실행해 주장 성과를 대조</b>하므로, 자기 키로 유효 서명한 카트리지라도 <b>거짓 성과는 즉시 적발</b>됩니다. 기준 시계열 성과는 합성 벤치마크이며 실거래 보장이 아닙니다.
+    </div>
+</div>
+
+@code {
+    private string _pub = "", _author = "me", _msg = "";
+    // export draft
+    private string _name = "", _desc = "", _exportMsg = "";
+    private int _short = 5, _long = 20, _seed = 7;
+    private readonly List<CartStrategy> _drafts = new();
+    private int _macroCount;
+    // import
+    private List<string> _files = new();
+    private string _sel = "", _impMsg = "";
+    private Cartridge? _cart;
+    private CartridgeVerdict? _verdict;
+
+    protected override void OnInitialized()
+    {
+        _pub = CartridgeService.EnsureIdentity(Db);
+        _author = CartridgeService.Author(Db);
+        _macroCount = CartridgeService.Macros(Db).Count;
+        RefreshFiles();
+    }
+
+    private void AddStrategy()
+    {
+        _exportMsg = "";
+        if (_short < 1 || _long <= _short) { _exportMsg = "⚠️ 단기<장기, 단기≥1 이어야 합니다."; return; }
+        _drafts.Add(CartridgeEngine.Attest($"MA {_short}/{_long}", _short, _long, _seed));
+    }
+
+    private void Export()
+    {
+        _exportMsg = "";
+        if (_drafts.Count == 0 && _macroCount == 0) { _exportMsg = "⚠️ 전략 또는 매크로가 하나 이상 필요합니다."; return; }
+        try
+        {
+            var cart = CartridgeService.BuildSigned(Db, _name, _desc, _drafts.ToList());
+            var path = CartridgeService.ExportToFile(cart);
+            _drafts.Clear();
+            RefreshFiles();
+            _exportMsg = $"✅ 서명·내보내기 완료: {System.IO.Path.GetFileName(path)}";
+        }
+        catch (Exception ex) { _exportMsg = "내보내기 실패: " + ex.Message; }
+    }
+
+    private void RefreshFiles() => _files = CartridgeService.ListFiles();
+
+    private void Select()
+    {
+        _cart = null; _verdict = null; _impMsg = "";
+        if (string.IsNullOrEmpty(_sel)) return;
+        if (!CartridgeService.TryImport(_sel, out _cart, out var err) || _cart is null) { _impMsg = "❌ " + err; return; }
+        _verdict = CartridgeEngine.Verify(_cart);
+    }
+
+    private void ApplyMacros()
+    {
+        if (_cart is null || _verdict is null || !_verdict.SignatureOk) return;
+        var existing = CartridgeService.MacroMap(Db);
+        int over = _cart.Macros.Count(m => existing.ContainsKey(m.Alias));
+        CartridgeService.ApplyMacros(Db, _cart.Macros);
+        _macroCount = CartridgeService.Macros(Db).Count;
+        _msg = $"✅ 매크로 {_cart.Macros.Count}개 적용" + (over > 0 ? $" (기존 {over}개 덮어씀)" : "")
+             + " — Ctrl+K에서 alias로 사용. 매크로는 읽기전용 내비게이션만 수행합니다.";
+    }
+
+    private void OpenFolder()
+    {
+        try { System.IO.Directory.CreateDirectory(CartridgeService.Dir); System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = CartridgeService.Dir, UseShellExecute = true }); }
+        catch (Exception ex) { _msg = "폴더 열기 실패: " + ex.Message; }
+    }
+
+    private static string Trunc(string s) => string.IsNullOrEmpty(s) ? "—" : (s.Length > 24 ? s[..24] + "…" : s);
+}

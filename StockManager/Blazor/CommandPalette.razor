@@ -4,6 +4,7 @@
 @inject NavigationManager Nav
 @inject SymbolContext SymCtx
 @inject AsOfContext AsOfCtx
+@inject LocalDatabase Db
 @implements IDisposable
 
 @if (_open)
@@ -68,7 +69,17 @@
         }
     }
 
-    [JSInvokable] public void OpenPalette() { _open = true; _query = ""; _sel = 0; _focusQueued = true; StateHasChanged(); }
+    private Dictionary<string, string> _macros = new();
+    [JSInvokable] public void OpenPalette() { _open = true; _query = ""; _sel = 0; _focusQueued = true; try { _macros = CartridgeService.MacroMap(Db); } catch { } StateHasChanged(); }
+
+    // 카트리지 매크로: alias 입력 → 등록된 명령(함수 문법)으로 확장 실행
+    private Cmd? TryMacro(string q)
+    {
+        if (string.IsNullOrWhiteSpace(q) || _macros.Count == 0) return null;
+        if (!_macros.TryGetValue(q.Trim(), out var exp)) return null;
+        var inner = TryParseFunction(exp);
+        return new Cmd("⭐", $"매크로: {q.Trim()} → {exp}", "매크로", () => inner?.Action() ?? Task.CompletedTask);
+    }
     [JSInvokable] public void ClosePalette() { if (_open) { _open = false; StateHasChanged(); } }
     private void Close() => ClosePalette();
 
@@ -89,6 +100,7 @@
         {
             // 퀵 액션(매크로)은 항상 맨 위 — 원본 Launcher.ParseQuickAction 순서 유지
             var quick = new List<Cmd>();
+            if (TryMacro(_query) is { } mac) quick.Add(mac);           // 카트리지 매크로(alias → 명령)
             if (TryParseFunction(_query) is { } fnc) quick.Add(fnc);   // 블룸버그식 <종목> <기능[ 날짜]>
             if (TryParseAlertsOff(_query) is { } off) quick.Add(off);
             if (TryParseCoinAlert(_query) is { } ca) quick.Add(ca);
