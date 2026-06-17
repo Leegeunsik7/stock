@@ -18,7 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.65.0</Version>
+    <Version>3.67.0</Version>
+    <!-- v3.67.0: 홈 대시보드 — 전세계 주요 지수 위젯 (GlobalIndexService, Yahoo Finance 60초 폴링) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

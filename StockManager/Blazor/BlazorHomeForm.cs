@@ -29,6 +29,7 @@ namespace StockManager.Blazor
             services.AddSingleton<ToastService>();  // 액션형 전역 토스트 (어느 페이지에서나 주입)
             services.AddSingleton<SymbolContext>();  // 전역 활성 종목 (연구 도구 횡이동 시드)
             services.AddSingleton<AsOfContext>();    // 전역 시점(As-Of) — 글로벌 타임-스크러버
+            services.AddSingleton<GlobalIndexService>(); // 전세계 주요 지수 60초 폴링
 
             var view = new BlazorWebView
             {

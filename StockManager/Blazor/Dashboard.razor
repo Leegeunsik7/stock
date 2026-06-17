@@ -3,6 +3,7 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject ToastService Toasts
+@inject GlobalIndexService GlobIdx
 @implements IDisposable
 
 <div class="top">
@@ -159,6 +160,35 @@
                             <div class="act"><i></i><div>@a.Text</div><div class="tm">@a.When</div></div>
                         }
                         break;
+
+                    case "indices":
+                        @if (GlobIdx.Indices.Count == 0)
+                        {
+                            <div class="sub" style="color:var(--sub);padding:8px 0">지수 데이터 로딩 중… (네트워크 필요)</div>
+                        }
+                        else
+                        {
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 18px">
+                                @foreach (var region in new[] { "아시아", "미국", "유럽" })
+                                {
+                                    <div>
+                                        <div style="font-size:10px;font-weight:700;color:var(--sub);letter-spacing:.08em;padding:4px 0 3px">@region.ToUpperInvariant()</div>
+                                        @foreach (var r in GlobIdx.Indices.Where(x => x.Region == region))
+                                        {
+                                            <div class="row" style="padding:4px 0">
+                                                <div class="nm" style="font-size:12.5px;min-width:0;flex:1">@r.Flag @r.Name</div>
+                                                <div style="text-align:right;padding-left:6px">
+                                                    <div class="num" style="font-size:12.5px">@FormatIdx(r)</div>
+                                                    <div class="num @(r.Up ? "up" : "down")" style="font-size:11px">@(r.Up ? "▲" : "▼") @Math.Abs(r.ChgPct).ToString("0.00")%</div>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="sub" style="text-align:right;color:var(--sub);font-size:10.5px;margin-top:6px">Yahoo Finance · 60초 자동 갱신</div>
+                        }
+                        break;
                 }
             </div>
         </div>
@@ -187,7 +217,7 @@
 
 @code {
     private List<string> _layout = new();
-    private readonly string[] _all = { "coins", "pie", "weekly", "paper", "imminent", "activity" };
+    private readonly string[] _all = { "coins", "pie", "weekly", "paper", "imminent", "activity", "indices" };
     private bool _gallery;
     private string _theme = "light";
 
@@ -202,8 +232,11 @@
     {
         _theme = Svc.Theme;
         _layout = Svc.LoadLayout();
+        GlobIdx.OnRefreshed += OnIdxRefreshed;
         await Svc.LoadAsync();
     }
+
+    private void OnIdxRefreshed() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool first)
     {
@@ -241,6 +274,13 @@
         _ => null
     };
 
+    private static string FormatIdx(IndexRow r)
+    {
+        // 지수 값은 통화별 자릿수 관행에 맞춰 포맷
+        if (r.Last >= 1000) return r.Last.ToString("N2");
+        return r.Last.ToString("0.00");
+    }
+
     private void Remove(string k) { _layout.Remove(k); Svc.SaveLayout(_layout); }
     private void Add(string k) { if (!_layout.Contains(k)) { _layout.Add(k); Svc.SaveLayout(_layout); } _gallery = false; }
 
@@ -272,9 +312,10 @@
     private string TitleOf(string k) => k switch
     {
         "coins" => "🪙 코인 실시간", "pie" => "🧮 자산 구성", "weekly" => "📊 주간 수익률",
-        "paper" => "🧪 모의투자 계좌", "imminent" => "⏳ 임박 신호", "activity" => "📡 최근 활동", _ => k
+        "paper" => "🧪 모의투자 계좌", "imminent" => "⏳ 임박 신호", "activity" => "📡 최근 활동",
+        "indices" => "🌍 글로벌 지수", _ => k
     };
-    private string ColOf(string k) => k switch { "weekly" => "col8", _ => "col4" };
+    private string ColOf(string k) => k switch { "weekly" => "col8", "indices" => "col8", _ => "col4" };
 
     private MarkupString Spark(double[] d, string color)
     {
@@ -308,5 +349,5 @@
         return $"conic-gradient(var(--accent) 0 {a:F1}%, var(--accent-2) {a:F1}% {b:F1}%, var(--warn) {b:F1}% 100%)";
     }
 
-    public void Dispose() { }
+    public void Dispose() { GlobIdx.OnRefreshed -= OnIdxRefreshed; }
 }
