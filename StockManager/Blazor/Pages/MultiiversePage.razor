@@ -1,0 +1,323 @@
+@page "/portfolio/multiverse"
+@inject LocalDatabase Db
+@inject IQuoteProvider Provider
+@implements IDisposable
+@using StockManager.Common
+@using System.Threading
+
+<div class="top">
+    <div class="hello">
+        <h1>🌌 멀티버스 포트폴리오 <span class="tag">MULTIVERSE</span></h1>
+        <p>서로 다른 거시경제 시나리오 하에서 내 포트폴리오의 미래 자산 경로를 결정론적으로 시뮬레이션합니다. 예측이 아닌 시나리오별 위험 가시화입니다.</p>
+    </div>
+</div>
+
+@* ── 시나리오 탭 + 컨트롤 ── *@
+<div style="padding:0 28px 18px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    @foreach (var sp in MultiverseEngine.ScenarioTable)
+    {
+        bool active = _scenario == sp.Scenario;
+        <button @onclick="() => SwitchScenario(sp.Scenario)"
+            style="border:2px solid @(active ? sp.AccentHex : "transparent");color:@(active ? sp.AccentHex : "");font-weight:@(active ? "700" : "400")"
+            class="addbtn" disabled="@_busy">
+            @sp.Label
+        </button>
+    }
+    <select class="srch" @bind="_years" style="width:70px" disabled="@_busy">
+        <option value="1">1년</option>
+        <option value="2">2년</option>
+        <option value="3">3년</option>
+    </select>
+    <button class="addbtn" @onclick="LoadAndProject" disabled="@_busy">
+        @(_busy ? "시뮬레이션 중…" : "🔄 실행")
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(_msg))
+{
+    <div style="padding:0 28px 12px;font-size:12.5px;color:var(--sub)">@_msg</div>
+}
+
+@if (_result?.IsValid == true)
+{
+    var r = _result!;
+    var sp = MultiverseEngine.ScenarioTable[(int)r.Scenario];
+
+    @* ── 시나리오 설명 ── *@
+    <div style="margin:0 28px 16px;padding:10px 14px;border-left:3px solid @sp.AccentHex;background:rgba(0,0,0,.1);font-size:12px;color:var(--sub)">
+        ⚙️ @sp.Description
+    </div>
+
+    @* ── KPI 카드 3개 ── *@
+    <div style="padding:0 28px 18px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="panel" style="padding:14px 16px;border-top:3px solid @sp.AccentHex">
+            <div class="sub" style="font-size:11px;margin-bottom:4px">예상 NAV (1년 중앙값)</div>
+            <div class="@(r.ProjectedNavPct >= 0 ? "up" : "down")" style="font-size:22px;font-weight:700;line-height:1.1">
+                @(r.ProjectedNavPct.ToString("+0.0;-0.0;0.0"))%
+            </div>
+        </div>
+        <div class="panel" style="padding:14px 16px;border-top:3px solid @sp.AccentHex">
+            <div class="sub" style="font-size:11px;margin-bottom:4px">예상 MDD (중앙값 경로)</div>
+            <div class="down" style="font-size:22px;font-weight:700;line-height:1.1">
+                -@(r.ProjectedMddPct.ToString("0.0"))%
+            </div>
+        </div>
+        <div class="panel" style="padding:14px 16px;border-top:3px solid @sp.AccentHex">
+            <div class="sub" style="font-size:11px;margin-bottom:4px">연환산 샤프</div>
+            <div class="@(r.AnnualizedSharpe >= 0.5 ? "up" : r.AnnualizedSharpe < 0 ? "down" : "")" style="font-size:22px;font-weight:700;line-height:1.1">
+                @(r.AnnualizedSharpe.ToString("+0.00;-0.00;0.00"))
+            </div>
+        </div>
+    </div>
+
+    @* ── 콘 차트 ── *@
+    @if (_polyP50 != null)
+    {
+        <div style="padding:0 28px 18px">
+            <div class="panel" style="padding:16px 18px">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+                    📊 포트폴리오 경로 분포 (P5~P95 · @(_years)년 수평선)
+                </div>
+                <svg viewBox="0 0 660 210" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">
+                    @* P5-P95 외곽 밴드 *@
+                    <polygon points="@_polyBandOuter" fill="@(sp.AccentHex)18" />
+                    @* P25-P75 내부 밴드 *@
+                    <polygon points="@_polyBandInner" fill="@(sp.AccentHex)30" />
+                    @* 기준선 (0%) *@
+                    <line x1="24" y1="@_zeroY" x2="644" y2="@_zeroY"
+                          stroke="var(--sub)" stroke-dasharray="3,3" stroke-width="0.8" opacity="0.45" />
+                    @* P50 중앙값 경로 *@
+                    <polyline points="@_polyP50" fill="none" stroke="@sp.AccentHex" stroke-width="2" />
+                    @* GFC 2008 위기 오버레이 (DeepRecession 전용) *@
+                    @if (_polyCrisis != null)
+                    {
+                        <polyline points="@_polyCrisis" fill="none"
+                                  stroke="#ff3333" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.85" />
+                    }
+                </svg>
+                <div style="display:flex;gap:16px;font-size:11px;color:var(--sub);margin-top:6px">
+                    <span><span style="display:inline-block;width:20px;height:3px;background:@sp.AccentHex;vertical-align:middle;margin-right:4px"></span>중앙값 (P50)</span>
+                    <span><span style="display:inline-block;width:20px;height:8px;background:@(sp.AccentHex + "30");border:1px solid @(sp.AccentHex + "50");vertical-align:middle;margin-right:4px"></span>P25–P75 밴드</span>
+                    @if (_polyCrisis != null)
+                    {
+                        <span><span style="display:inline-block;width:20px;height:3px;background:#ff3333;vertical-align:middle;margin-right:4px"></span>GFC 2008 위기 충격</span>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── 종목별 예상 수익 테이블 ── *@
+    @if (r.Assets.Count > 0)
+    {
+        <div style="padding:0 28px 32px">
+            <div class="panel" style="padding:16px 18px">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+                    📋 종목별 시나리오 예상 연수익
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead>
+                        <tr style="color:var(--sub);font-size:11px">
+                            <th style="text-align:left;padding:4px 8px">종목</th>
+                            <th style="text-align:right;padding:4px 8px">비중</th>
+                            <th style="text-align:right;padding:4px 8px">예상 연수익</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var a in r.Assets.OrderByDescending(x => x.WeightPct))
+                        {
+                            <tr>
+                                <td style="padding:5px 8px">
+                                    @a.Symbol
+                                    <span class="sub" style="font-size:11px">
+                                        @(a.Name.Length > 10 ? a.Name[..10] + "…" : a.Name)
+                                    </span>
+                                </td>
+                                <td style="text-align:right;padding:5px 8px;color:var(--sub)">
+                                    @(a.WeightPct.ToString("0.0"))%
+                                </td>
+                                <td class="@(a.ProjectedAnnualPct >= 0 ? "up" : "down")"
+                                    style="text-align:right;padding:5px 8px;font-weight:600">
+                                    @(a.ProjectedAnnualPct.ToString("+0.0;-0.0;0.0"))%
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+else if (_result is { IsValid: false })
+{
+    <div style="padding:0 28px 20px;color:var(--sub);font-size:12.5px">
+        ⚠️ 시뮬레이션 불가: @_result.Note
+    </div>
+}
+
+@code {
+    private MultiverseScenario _scenario = MultiverseScenario.Live;
+    private int  _years = 2;
+    private bool _busy;
+    private string _msg = "";
+    private MultiverseResult? _result;
+
+    // 사전 계산 SVG 문자열 (Razor 로컬 함수 금지 패턴 준수)
+    private string? _polyP50, _polyBandOuter, _polyBandInner, _polyCrisis;
+    private string  _zeroY = "105";
+
+    private CancellationTokenSource? _cts;
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync() => await LoadAndProject();
+
+    private async Task SwitchScenario(MultiverseScenario s)
+    {
+        if (_scenario == s && _result?.IsValid == true) return;
+        _scenario = s;
+        await LoadAndProject();
+    }
+
+    private async Task LoadAndProject()
+    {
+        if (_busy) return;
+        _busy = true; _msg = "포트폴리오 로드 중…"; _result = null;
+        _polyP50 = _polyCrisis = null;
+        _cts?.Dispose(); _cts = new();
+
+        try
+        {
+            var ct = _cts.Token;
+            var assets = await LoadAssetsAsync(ct);
+            if (assets.Count == 0) { _msg = "포트폴리오가 비어 있거나 역사 데이터 부족."; return; }
+
+            _msg = $"{assets.Count}개 종목 · {_scenario} 시뮬레이션 중…"; StateHasChanged();
+
+            var scenario = _scenario;
+            _result = await Task.Run(() => MultiverseEngine.Project(assets, scenario), ct);
+            if (_result.IsValid) BuildChartData(_result);
+            _msg = _result.IsValid ? "" : _result.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "실패: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task<List<MultiverseAsset>> LoadAssetsAsync(CancellationToken ct)
+    {
+        System.Data.DataTable dt;
+        try { dt = Db.Query("SELECT Symbol, Name, Market, Quantity, CurrentPrice FROM Holdings WHERE Quantity > 0"); }
+        catch { return new(); }
+        if (dt.Rows.Count == 0) return new();
+
+        var rows = dt.Rows.Cast<System.Data.DataRow>().Select(r => new
+        {
+            Symbol = (r["Symbol"]?.ToString() ?? "").Trim().ToUpperInvariant(),
+            Name   = r["Name"]?.ToString() ?? "",
+            Market = (r["Market"]?.ToString() ?? "") == "KRX_KOSPI" ? Market.KRX_KOSPI : Market.US_NASDAQ,
+            Qty    = Safe.Dec(r["Quantity"]),
+            Price  = Safe.Dec(r["CurrentPrice"])
+        }).Where(h => !string.IsNullOrEmpty(h.Symbol) && h.Qty > 0 && h.Price > 0)
+          .Take(15)   // 최대 15종목 (병렬 API 부하 제한)
+          .ToList();
+
+        var from = DateTime.Today.AddYears(-_years);
+        var to   = DateTime.Today;
+
+        // 캔들 병렬 수신
+        var fetches = rows.Select(h =>
+            (h, Task: Provider.GetHistoryAsync(h.Symbol, h.Market, from, to, ct))).ToList();
+        await Task.WhenAll(fetches.Select(f => f.Task));
+        ct.ThrowIfCancellationRequested();  // C4: 취소 후 stale Result 접근 방지
+
+        // C3: history 필터 후 유효 종목 기준으로 비중 재계산 (총합 100% 보장)
+        var valid = fetches
+            .Where(f => f.Task.Result.Count >= 31)
+            .Select(f => (f.h, Candles: f.Task.Result))
+            .ToList();
+
+        double validMv = (double)valid.Sum(p => p.h.Qty * p.h.Price);
+        if (validMv <= 0) return new();
+
+        var result = new List<MultiverseAsset>();
+        foreach (var (h, candles) in valid)
+        {
+            var rets = new double[candles.Count - 1];
+            for (int i = 1; i < candles.Count; i++)
+            {
+                decimal prev = candles[i - 1].Close;
+                if (prev > 0) rets[i - 1] = (double)((candles[i].Close - prev) / prev);
+            }
+            double wt = (double)(h.Qty * h.Price) / validMv * 100.0;
+            result.Add(new MultiverseAsset(h.Symbol, h.Name, wt, rets));
+        }
+        return result;
+    }
+
+    private void BuildChartData(MultiverseResult r)
+    {
+        if (!r.IsValid || r.Bands.Count == 0) return;
+        var ic = System.Globalization.CultureInfo.InvariantCulture;
+
+        const int W = 660, H = 210, padL = 24, padR = 16, padT = 8, padB = 16;
+        int drawW = W - padL - padR, drawH = H - padT - padB;
+        var bands = r.Bands;
+        int n = bands.Count;
+
+        // Y 범위 (P5 ~ P95, 0 포함, BlackSwan 포함)
+        double yMin = Math.Min(0.0, bands.Min(b => b.P5));
+        double yMax = Math.Max(0.0, bands.Max(b => b.P95));
+
+        if (r.CrisisOverlay is { IsValid: true, EquityCurve.Count: > 0 } crisis)
+        {
+            double crisisBase = crisis.EquityCurve[0];
+            if (crisisBase > 0)
+                foreach (var v in crisis.EquityCurve)
+                {
+                    double pct = (v - crisisBase) / crisisBase * 100.0;
+                    if (pct < yMin) yMin = pct;
+                    if (pct > yMax) yMax = pct;
+                }
+        }
+
+        double yRange = Math.Max(yMax - yMin, 1.0);
+        double Px(int i) => padL + (double)drawW * i / Math.Max(n - 1, 1);
+        double Py(double v) => padT + drawH * (1.0 - (v - yMin) / yRange);
+        string Pt(int i, double v) => Px(i).ToString("0.0", ic) + "," + Py(v).ToString("0.0", ic);
+
+        _polyP50       = string.Join(" ", Enumerable.Range(0, n).Select(i => Pt(i, bands[i].P50)));
+        _zeroY         = Py(0.0).ToString("0.0", ic);
+
+        var outerFwd  = Enumerable.Range(0, n).Select(i => Pt(i, bands[i].P95));
+        var outerBack = Enumerable.Range(0, n).Reverse().Select(i => Pt(i, bands[i].P5));
+        _polyBandOuter = string.Join(" ", outerFwd.Concat(outerBack));
+
+        var innerFwd  = Enumerable.Range(0, n).Select(i => Pt(i, bands[i].P75));
+        var innerBack = Enumerable.Range(0, n).Reverse().Select(i => Pt(i, bands[i].P25));
+        _polyBandInner = string.Join(" ", innerFwd.Concat(innerBack));
+
+        // BlackSwan 오버레이: C2 fix — n점으로 클램프해 viewBox 초과 방지
+        _polyCrisis = null;
+        if (r.CrisisOverlay is { IsValid: true } c2 && c2.EquityCurve.Count > 0)
+        {
+            double crisisBase = c2.EquityCurve[0];
+            if (crisisBase > 0)
+            {
+                int crisisCount = Math.Min(c2.EquityCurve.Count, n);
+                _polyCrisis = string.Join(" ", Enumerable.Range(0, crisisCount)
+                    .Select(i =>
+                    {
+                        double px = padL + (double)drawW * i / Math.Max(n - 1, 1);
+                        double pct = (c2.EquityCurve[i] - crisisBase) / crisisBase * 100.0;
+                        return px.ToString("0.0", ic) + "," + Py(pct).ToString("0.0", ic);
+                    }));
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _cts?.Dispose();
+    }
+}

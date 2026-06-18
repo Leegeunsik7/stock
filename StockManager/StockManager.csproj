@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.73.0</Version>
-    <!-- v3.73.0: S10 #2 — 가상 퀀트 위원회 (Bull·Bear·CRO 병렬 심의 + 환각 방화벽) -->
+    <Version>3.74.0</Version>
+    <!-- v3.74.0: S10 #3 — 멀티버스 포트폴리오 (4-시나리오 콘 차트 + GFC2008 블랙스완 오버레이) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
