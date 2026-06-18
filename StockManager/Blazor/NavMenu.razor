@@ -5,7 +5,7 @@
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.67</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.68</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
@@ -61,13 +61,14 @@
             new Item("📈", "실시간 시세", "/live", NavLinkMatch.Prefix),
             new Item("📰", "뉴스 레이더", "/news", NavLinkMatch.Prefix),
         }),
-        new("folio", "💼", "포트폴리오", "PORTFOLIO", new[] { "/portfolio", "/health" }, new[]
+        new("folio", "💼", "포트폴리오", "PORTFOLIO", new[] { "/portfolio", "/health", "/mirror" }, new[]
         {
             new Item("📋", "보유·배분", "/portfolio", NavLinkMatch.All),
             new Item("🩺", "종합 건강검진", "/health", NavLinkMatch.Prefix),
             new Item("⚖️", "리밸런싱(MPT)", "/portfolio/rebalance", NavLinkMatch.All),
             new Item("🧯", "리스크 분해", "/portfolio/risk", NavLinkMatch.All),
             new Item("🧮", "총자산", "/portfolio/assets", NavLinkMatch.All),
+            new Item("🪟", "결정 품질 미러", "/mirror", NavLinkMatch.All),
         }),
         new("lab", "🔬", "전략 연구소", "STRATEGY LAB", new[] { "/lab", "/forge", "/compiler", "/tournament" }, new[]
         {
@@ -80,6 +81,7 @@
             new Item("🧱", "전략 컴파일러", "/compiler", NavLinkMatch.Prefix),
             new Item("🏆", "전략 토너먼트", "/tournament", NavLinkMatch.Prefix),
             new Item("📡", "신호 모니터", "/lab/signals", NavLinkMatch.Prefix),
+            new Item("🧬", "유전자 진화소", "/lab/genome", NavLinkMatch.All),
         }),
         new("risklab", "🎲", "리스크 시뮬", "RISK & SIM", new[] { "/risklab", "/future", "/blackswan" }, new[]
         {
