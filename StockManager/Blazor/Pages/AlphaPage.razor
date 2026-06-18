@@ -1,0 +1,245 @@
+@page "/lab/alpha"
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello">
+        <h1>🔭 진성 알파 인과 추론 <span class="tag">TRUE ALPHA</span></h1>
+        <p>OLS 회귀로 <b>시장 베타(β)</b>를 추정하고, 반사실 시뮬레이션으로 <b>시장 기여분</b>과 <b>순수 실력(True Alpha)</b>을 분리합니다. 상관이 아닌 인과 기반 분석입니다.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+    <select class="srch" @bind="_years" style="width:90px">
+        <option value="1">1년</option>
+        <option value="2">2년</option>
+        <option value="3" selected>3년</option>
+        <option value="5">5년</option>
+    </select>
+    <select class="srch" @bind="_rfRate" style="width:110px">
+        <option value="0.02">무위험 2%</option>
+        <option value="0.035" selected>무위험 3.5%</option>
+        <option value="0.05">무위험 5%</option>
+    </select>
+    <button class="addbtn" disabled="@_busy" @onclick="Run">
+        @(_busy ? "분석 중…" : "🔭 알파 분석")
+    </button>
+    @if (!string.IsNullOrEmpty(_bmLabel))
+    {
+        <span class="sub" style="font-size:11.5px">벤치마크: @_bmLabel</span>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 14px;color:var(--sub)">@_msg</div> }
+
+@if (_report?.IsValid == true)
+{
+    var r = _report!;
+    <div style="padding:0 28px 40px">
+
+        @* ── 스탯 카드 4개 ── *@
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+            <div class="panel" style="padding:14px 16px">
+                <div class="sub" style="font-size:11px;margin-bottom:4px">베타(β)</div>
+                <div class="@(r.Beta > 1.2 ? "down" : r.Beta < 0.5 ? "up" : "")" style="font-size:20px;font-weight:700;line-height:1.1">@(r.Beta.ToString("0.000"))</div>
+                <div class="sub" style="font-size:10.5px;margin-top:3px;opacity:.8">@(r.Beta > 1.2 ? "공격적(시장 과민)" : r.Beta < 0.8 ? "방어적(저변동)" : "시장 중립")</div>
+            </div>
+            <div class="panel" style="padding:14px 16px">
+                <div class="sub" style="font-size:11px;margin-bottom:4px">설명력(R²)</div>
+                <div class="@(r.R2Pct > 80 ? "sub" : "")" style="font-size:20px;font-weight:700;line-height:1.1">@(r.R2Pct.ToString("0.0"))%</div>
+                <div class="sub" style="font-size:10.5px;margin-top:3px;opacity:.8">시장이 수익률의 @(r.R2Pct.ToString("0.0"))%를 설명</div>
+            </div>
+            <div class="panel" style="padding:14px 16px">
+                <div class="sub" style="font-size:11px;margin-bottom:4px">연환산 True Alpha</div>
+                <div class="@(r.TrueAlphaAnnualPct >= 0 ? "up" : "down")" style="font-size:20px;font-weight:700;line-height:1.1">@(r.TrueAlphaAnnualPct.ToString("+0.00;-0.00;0.00"))%</div>
+                <div class="sub" style="font-size:10.5px;margin-top:3px;opacity:.8">시장 기여 제거 후 순수 초과 수익</div>
+            </div>
+            <div class="panel" style="padding:14px 16px">
+                <div class="sub" style="font-size:11px;margin-bottom:4px">IR (정보비율)</div>
+                <div class="@(r.InformationRatio >= 0.5 ? "up" : r.InformationRatio < 0 ? "down" : "")" style="font-size:20px;font-weight:700;line-height:1.1">@(r.InformationRatio.ToString("0.000"))</div>
+                <div class="sub" style="font-size:10.5px;margin-top:3px;opacity:.8">@(r.InformationRatio > 0.5 ? "우수 (>0.5)" : r.InformationRatio > 0 ? "양호" : "음수 알파")</div>
+            </div>
+        </div>
+
+        @* ── 수익률 분해 바 ── *@
+        <div class="panel" style="margin-bottom:16px">
+            <div class="panel-h">📊 수익률 분해 — @(r.Symbol) / @(r.AlignedDays)일 정합 거래일</div>
+            <div style="padding:16px 20px">
+                <div style="font-size:12px;color:var(--sub);margin-bottom:6px">
+                    전체 수익률 <b style="color:var(--ink)">@(r.TotalReturnPct.ToString("+0.00;-0.00;0.00"))%</b> =
+                    시장 기여 <b class="@(r.MarketAttributedPct>=0?"up":"down")">@(r.MarketAttributedPct.ToString("+0.00;-0.00;0.00"))%</b> +
+                    순수 알파 <b class="@(r.TrueAlphaPct>=0?"up":"down")">@(r.TrueAlphaPct.ToString("+0.00;-0.00;0.00"))%</b>
+                </div>
+                <div style="display:flex;height:18px;border-radius:4px;overflow:hidden;background:rgba(0,0,0,.12)">
+                    <div style="width:@(_mktWStr)%;background:@(_mktColor);opacity:.7"></div>
+                    <div style="width:@(_alpWStr)%;background:@(_alpColor)"></div>
+                </div>
+                <div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:var(--sub)">
+                    <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#0f9d6b;opacity:.7;border-radius:2px;display:inline-block"></span>시장 기여 (β×Rm)</span>
+                    <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#4f5bd5;border-radius:2px;display:inline-block"></span>순수 알파 (잔여)</span>
+                </div>
+            </div>
+        </div>
+
+        @* ── 누적 수익률 SVG 차트 ── *@
+        @if (_polyActual != null)
+        {
+            <div class="panel" style="margin-bottom:16px">
+                <div class="panel-h">📈 누적 수익률 비교 — 실제 vs 반사실(시장 제거) vs 벤치마크</div>
+                <div style="padding:12px 16px">
+                    <svg viewBox="0 0 660 184" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="8" y1="@_zeroLine" x2="652" y2="@_zeroLine" stroke="rgba(255,255,255,.1)" stroke-dasharray="4 3" />
+                        <polyline points="@_polyBm"     fill="none" stroke="rgba(180,180,180,.5)" stroke-width="1.2" />
+                        <polyline points="@_polyCf"     fill="none" stroke="#4f5bd5" stroke-width="1.5" stroke-dasharray="5 3" />
+                        <polyline points="@_polyActual" fill="none" stroke="#0f9d6b" stroke-width="2" />
+                    </svg>
+                    <div style="display:flex;gap:16px;font-size:11px;color:var(--sub);margin-top:4px">
+                        <span style="color:#0f9d6b">━ 실제 수익률</span>
+                        <span style="color:#4f5bd5">┅ 순수 알파(반사실)</span>
+                        <span style="color:rgba(180,180,180,.7)">━ @(r.Benchmark) 벤치마크</span>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* ── 구간별 수익률 테이블 ── *@
+        <div class="panel">
+            <div class="panel-h">🔍 주요 구간 스냅샷</div>
+            <table class="ctbl dense">
+                <thead><tr><th>날짜</th><th style="text-align:right">실제 누적%</th><th style="text-align:right">반사실 누적%</th><th style="text-align:right">벤치마크 누적%</th></tr></thead>
+                <tbody>
+                    @foreach (var pt in _snapshots)
+                    {
+                        <tr>
+                            <td class="sub">@pt.Date.ToString("yyyy-MM-dd")</td>
+                            <td style="text-align:right" class="@(pt.CumActual>=0?"up":"down")">@(pt.CumActual.ToString("+0.00;-0.00;0.00"))%</td>
+                            <td style="text-align:right" class="@(pt.CumCounterfactual>=0?"up":"down")">@(pt.CumCounterfactual.ToString("+0.00;-0.00;0.00"))%</td>
+                            <td style="text-align:right" class="@(pt.CumBenchmark>=0?"up":"down")">@(pt.CumBenchmark.ToString("+0.00;-0.00;0.00"))%</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="sub" style="font-size:11.5px;margin-top:10px">ℹ️ @r.Note 과거 수익은 미래를 보장하지 않습니다.</div>
+    </div>
+}
+
+@code {
+    private bool _busy, _disposed;
+    private string _sym = "", _msg = "", _bmLabel = "";
+    private int _years = 3;
+    private double _rfRate = 0.035;
+    private AlphaReport? _report;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    // SVG 차트용 사전 계산 필드 (Razor 템플릿 단순화)
+    private string? _polyActual, _polyCf, _polyBm, _zeroLine;
+    private string _mktWStr = "0", _alpWStr = "0";
+    private string _mktColor = "#0f9d6b", _alpColor = "#4f5bd5";
+    private List<AlphaPoint> _snapshots = new();
+
+    protected override void OnInitialized()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+    }
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(StateHasChanged); }
+    public void Dispose() { SymCtx.OnChange -= OnSym; _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static Market Detect(string s) =>
+        s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private static (string sym, Market market, string label) BenchmarkOf(string sym) =>
+        sym.Length == 6 && char.IsDigit(sym[0])
+            ? ("069500", Market.KRX_KOSPI, "KODEX200(069500)")
+            : ("SPY",    Market.US_NASDAQ, "SPY (S&P500)");
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _busy = true; _msg = "캔들 수신 중…"; _report = null;
+        _polyActual = _polyCf = _polyBm = null; _snapshots.Clear();
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var ct = _cts.Token;
+            var mkt = Detect(sym);
+            var (bmSym, bmMkt, bmLabel) = BenchmarkOf(sym);
+            _bmLabel = bmLabel;
+            var from = DateTime.Now.AddYears(-_years);
+            var to   = DateTime.Now;
+
+            _msg = $"{sym} + {bmLabel} 캔들 병렬 수신 중…";
+            StateHasChanged();
+
+            var pfTask = Provider.GetHistoryAsync(sym,   mkt,   from, to, ct);
+            var bmTask = Provider.GetHistoryAsync(bmSym, bmMkt, from, to, ct);
+            await Task.WhenAll(pfTask, bmTask);
+
+            if (pfTask.Result.Count < 31) { _msg = $"{sym} 캔들 부족 (최소 31봉 필요)."; return; }
+            if (bmTask.Result.Count < 31) { _msg = $"{bmLabel} 캔들 부족."; return; }
+
+            _msg = "알파 계산 중…"; StateHasChanged();
+            _report = await Task.Run(() =>
+                AlphaEngine.Compute(sym, pfTask.Result, bmTask.Result, bmLabel, _rfRate), ct);
+            if (_report.IsValid) BuildChartData(_report);
+            _msg = _report.IsValid ? "" : _report.Note;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "분석 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // SVG 폴리라인 문자열 + 분해 바 CSS 값 사전 계산 (Razor 내 로컬 함수 금지)
+    private void BuildChartData(AlphaReport r)
+    {
+        var ic = System.Globalization.CultureInfo.InvariantCulture;
+
+        // ── 분해 바 ──
+        double absTotal = Math.Max(Math.Abs(r.TotalReturnPct), 1.0);
+        double mktW = Math.Clamp(Math.Abs(r.MarketAttributedPct) / absTotal * 100, 0, 100);
+        double alpW = Math.Clamp(Math.Abs(r.TrueAlphaPct)        / absTotal * 100, 0, 100);
+        _mktWStr  = mktW.ToString("0.0", ic);
+        _alpWStr  = alpW.ToString("0.0", ic);
+        _mktColor = r.MarketAttributedPct >= 0 ? "#0f9d6b" : "#e34d4d";
+        _alpColor = r.TrueAlphaPct        >= 0 ? "#4f5bd5" : "#e5ac00";
+
+        // ── SVG 폴리라인 ──
+        var pts = r.Series;
+        if (pts.Count == 0) return;
+
+        const int W = 660, H = 180, pad = 8;
+        double minY = double.MaxValue, maxY = double.MinValue;
+        foreach (var p in pts)
+        {
+            double lo = Math.Min(Math.Min(p.CumActual, p.CumCounterfactual), p.CumBenchmark);
+            double hi = Math.Max(Math.Max(p.CumActual, p.CumCounterfactual), p.CumBenchmark);
+            if (lo < minY) minY = lo;
+            if (hi > maxY) maxY = hi;
+        }
+        double rangeY = Math.Max(maxY - minY, 1.0);
+        int n = pts.Count;
+
+        double PxD(int i) => pad + (double)(W - pad * 2) * i / Math.Max(n - 1, 1);
+        double PyD(double v) => pad + (H - pad * 2) * (1.0 - (v - minY) / rangeY);
+        string Pt(int i, double v) =>
+            PxD(i).ToString("0.0", ic) + "," + PyD(v).ToString("0.0", ic);
+
+        _polyActual = string.Join(" ", System.Linq.Enumerable.Range(0, n).Select(i => Pt(i, pts[i].CumActual)));
+        _polyCf     = string.Join(" ", System.Linq.Enumerable.Range(0, n).Select(i => Pt(i, pts[i].CumCounterfactual)));
+        _polyBm     = string.Join(" ", System.Linq.Enumerable.Range(0, n).Select(i => Pt(i, pts[i].CumBenchmark)));
+        _zeroLine   = PyD(0.0).ToString("0.0", ic);
+
+        // ── 스냅샷 테이블 (균등 간격 7개 + 마지막) ──
+        _snapshots.Clear();
+        int step = Math.Max(1, n / 7);
+        for (int i = 0; i < n - 1; i += step) _snapshots.Add(pts[i]);
+        _snapshots.Add(pts[n - 1]);
+    }
+}

@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.71.0</Version>
-    <!-- v3.71.0: S9 #6 고도화 — Genome 족보(Lineage) 결정론 추적 + Mutate 손절 단위버그 수정 + 서명검증 시드로드 -->
+    <Version>3.72.0</Version>
+    <!-- v3.72.0: S10 #1 — 진성 알파 인과 추론 엔진 (OLS Beta·반사실·IR) + /lab/alpha -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
