@@ -177,6 +177,75 @@ namespace StockManager.Common
             return entry;
         }
 
+        // ── ProcessFill: 실체결 vs 예상 주문 비교 감사 ───────────────────────────
+
+        /// <summary>
+        /// FillPayload와 PendingOrder를 비교해 허용 오차 초과 시 ForceFreeze.
+        /// priceTolerance: 체결가 허용 오차 (기본 0.5 %). 시장가(ExpectedPrice=0)는 가격 검사 생략.
+        /// </summary>
+        public FillAuditResult ProcessFill(
+            FillPayload  fill,
+            PendingOrder expected,
+            double       priceTolerance = 0.005)
+        {
+            if (expected == null) throw new ArgumentNullException(nameof(expected));
+
+            // 1. StockValidator 게이트
+            var v = StockValidator.ValidateFill(fill);
+            if (!v.IsValid)
+            {
+                var reason = $"StockValidator 거부: {v.Summary()}";
+                ForceFreeze(reason);
+                return new FillAuditResult(false, reason, 0.0, 0L);
+            }
+
+            // 2. 매매방향 일치
+            int expectedSide = expected.Side == PaperSide.Buy ? 1 : -1;
+            if (fill.Side != expectedSide)
+            {
+                var reason = $"매매방향 불일치: 예상 {(expectedSide == 1 ? "매수" : "매도")}, " +
+                             $"수신 {(fill.Side == 1 ? "매수" : "매도")}";
+                ForceFreeze(reason);
+                return new FillAuditResult(false, reason, 0.0, fill.FillQty - expected.Quantity);
+            }
+
+            // 3. 체결가 오차 (시장가 제외)
+            double priceDeltaPct = 0.0;
+            if (expected.ExpectedPrice > 0.0)
+            {
+                priceDeltaPct = Math.Abs(fill.FillPrice - expected.ExpectedPrice)
+                                / expected.ExpectedPrice;
+                if (priceDeltaPct > priceTolerance)
+                {
+                    var reason = $"체결가 허용 오차 초과: {priceDeltaPct:P2} > {priceTolerance:P2}";
+                    ForceFreeze(reason);
+                    return new FillAuditResult(false, reason, priceDeltaPct,
+                                               fill.FillQty - expected.Quantity);
+                }
+            }
+
+            // 4. 과체결
+            long qtyDelta = fill.FillQty - expected.Quantity;
+            if (qtyDelta > 0)
+            {
+                var reason = $"과체결 감지: 예상 {expected.Quantity}주, 체결 {fill.FillQty}주";
+                ForceFreeze(reason);
+                return new FillAuditResult(false, reason, priceDeltaPct, qtyDelta);
+            }
+
+            // 5. 통과 — 감사 로그 기록
+            string note = qtyDelta == 0
+                ? $"전량 체결 통과 ({fill.FillQty}주 @ {fill.FillPrice:N0})"
+                : $"부분 체결 ({fill.FillQty}/{expected.Quantity}주 @ {fill.FillPrice:N0})";
+
+            var entry = new AttestationAuditEntry(
+                DateTime.UtcNow, true, Array.Empty<AttestationMismatch>(), "", note);
+
+            lock (_lock) { _log.Insert(0, entry); TrimLog(); }
+
+            return new FillAuditResult(true, note, priceDeltaPct, qtyDelta);
+        }
+
         // ─ 내부 ──────────────────────────────────────────────────────────────
 
         private void TrimLog()
