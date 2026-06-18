@@ -139,6 +139,7 @@
     private bool   _convening;
     private bool   _bullBusy, _bearBusy, _croBusy;
     private string _bullOpinion = "", _bearOpinion = "", _croOpinion = "";
+    private int    _convGen;   // 세대 카운터: Reset() 시 증가 → 구 ContinueWith 콜백 자동 무효화
 
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -199,6 +200,7 @@
         _convening = true;
         _bullBusy = _bearBusy = _croBusy = true;
         _bullOpinion = _bearOpinion = _croOpinion = "";
+        var gen = ++_convGen;   // 이 소집 세대 캡처 — Reset() 시 _convGen 증가로 구 콜백 무효화
         StateHasChanged();
 
         var fs = _factSheet;
@@ -209,6 +211,7 @@
 
         _ = bullTask.ContinueWith(t =>
         {
+            if (_convGen != gen) return;   // 리셋 후 구 세대 — 폐기
             _bullOpinion = t.IsFaulted
                 ? "⚠️ 오류: " + (t.Exception?.InnerException?.Message ?? "unknown")
                 : t.Result;
@@ -218,6 +221,7 @@
 
         _ = bearTask.ContinueWith(t =>
         {
+            if (_convGen != gen) return;   // 리셋 후 구 세대 — 폐기
             _bearOpinion = t.IsFaulted
                 ? "⚠️ 오류: " + (t.Exception?.InnerException?.Message ?? "unknown")
                 : t.Result;
@@ -228,25 +232,32 @@
         // Bull + Bear 완료 대기 (예외는 이미 위에서 처리)
         try { await Task.WhenAll(bullTask, bearTask); } catch { }
 
-        // CRO: Bull·Bear 결과를 컨텍스트로 받아 종합
-        try
+        // CRO: Bull·Bear 결과를 컨텍스트로 받아 종합 (구 세대이면 스킵)
+        if (_convGen == gen)
         {
-            _croOpinion = await Ai.CompleteAsync(CommitteeEngine.CroPrompt(fs, _bullOpinion, _bearOpinion));
-        }
-        catch (Exception ex)
-        {
-            _croOpinion = "⚠️ 오류: " + ex.Message;
-        }
-        finally
-        {
-            _croBusy = false;
-            _convening = false;
-            StateHasChanged();
+            try
+            {
+                _croOpinion = await Ai.CompleteAsync(CommitteeEngine.CroPrompt(fs, _bullOpinion, _bearOpinion));
+            }
+            catch (Exception ex)
+            {
+                _croOpinion = "⚠️ 오류: " + ex.Message;
+            }
+            finally
+            {
+                if (_convGen == gen)   // 마지막 쓰기도 세대 확인
+                {
+                    _croBusy = false;
+                    _convening = false;
+                    StateHasChanged();
+                }
+            }
         }
     }
 
     private void Reset()
     {
+        _convGen++;   // 현재 진행 중인 Convene() 콜백 모두 무효화
         _factSheet = null;
         _convening = false;
         _bullOpinion = _bearOpinion = _croOpinion = "";

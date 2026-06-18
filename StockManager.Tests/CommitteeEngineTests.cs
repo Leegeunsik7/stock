@@ -144,5 +144,27 @@ namespace StockManager.Tests
             var t2 = CommitteeEngine.FormatFactSheet(fs);
             Assert.Equal(t1, t2);
         }
+
+        // C8-a: TailRisk.IsValid=false → else 분기 "비중 데이터 없음" 경로 검증
+        [Fact]
+        public void FormatFactSheet_InvalidTailRisk_ShowsMissingNote()
+        {
+            var invalidTail = new TailBudgetResult(false,
+                Array.Empty<TailAllocation>(), Array.Empty<TailScenario>(),
+                0, 0, "", "invalid");
+            var fs   = CommitteeEngine.BuildFactSheet("AAPL", MakeAlpha("AAPL"), invalidTail, null);
+            var text = CommitteeEngine.FormatFactSheet(fs);
+            Assert.Contains("비중 데이터 없음", text);
+        }
+
+        // C8-b: 빈 BacktestLabel → "전략" 폴백 검증
+        [Fact]
+        public void FormatFactSheet_EmptyBacktestLabel_ShowsFallback()
+        {
+            var fs   = CommitteeEngine.BuildFactSheet("AAPL", MakeAlpha("AAPL"), null, MakeBacktest(), "");
+            var text = CommitteeEngine.FormatFactSheet(fs);
+            Assert.Contains("전략", text);
+            Assert.Contains("샤프", text);
+        }
     }
 }
