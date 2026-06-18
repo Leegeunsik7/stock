@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.74.0</Version>
-    <!-- v3.74.0: S10 #3 — 멀티버스 포트폴리오 (4-시나리오 콘 차트 + GFC2008 블랙스완 오버레이) -->
+    <Version>3.75.0</Version>
+    <!-- v3.75.0: S11 #1 — 예측 타임캡슐 (ForecastVault: CaptureForecast/Evaluate/Stats) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

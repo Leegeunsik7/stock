@@ -1,7 +1,9 @@
 @page "/forecast"
+@page "/validate/forecast"
 @inject IQuoteProvider Provider
 @inject LocalDatabase Db
 @inject SymbolContext Ctx
+@inject ForecastVaultService Vault
 @implements IDisposable
 
 <CrossLinks Current="forecast" />
@@ -86,6 +88,93 @@
         }
         else { <div style="color:var(--sub);font-size:12px;padding:6px 2px">발행한 예측이 만기(기간 경과)되면 「만기 정산」 후 여기서 채점됩니다.</div> }
     </div>
+
+    <!-- C: Forecast Vault -->
+    <div style="border-top:1px solid var(--line);padding-top:16px;margin-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <div style="font-weight:700">🗄 예측 타임캡슐 Vault</div>
+            <button class="ghost" disabled="@_vaultBusy" @onclick="EvaluateVault">@(_vaultBusy ? "평가 중…" : "📊 만기 평가")</button>
+            @if (_vaultMsg.Length > 0) { <span style="color:var(--accent);font-size:12px">@_vaultMsg</span> }
+        </div>
+        @if (_vaultSummary is not null)
+        {
+            <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
+                <div class="kpi k"><div class="k-lab">전체 예측</div><div class="k-val">@(_vaultSummary.TotalForecasts)</div></div>
+                <div class="kpi k"><div class="k-lab">평가 대기</div><div class="k-val">@(_vaultSummary.PendingCount)</div></div>
+                <div class="kpi @(_vaultSummary.OverallHitRatePct >= 50 ? "u" : "d")"><div class="k-lab">방향 적중률</div><div class="k-val">@(_vaultSummary.OverallHitRatePct.ToString("0.0"))%</div></div>
+                <div class="kpi k"><div class="k-lab">평균 절대오차</div><div class="k-val">@(_vaultSummary.OverallMAE.ToString("0.0"))%</div></div>
+            </div>
+            @if (_vaultSummary.ByEngine.Any(e => e.TotalCount > 0))
+            {
+                <div class="panel" style="margin-bottom:14px">
+                    <div class="panel-h">엔진별 스코어카드 <span class="tag">VAULT</span></div>
+                    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                        <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:12.5px">
+                            <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                                <th style="text-align:left;padding:8px 12px">엔진</th>
+                                <th style="text-align:right;padding:8px 12px">건수</th>
+                                <th style="text-align:right;padding:8px 12px">평가</th>
+                                <th style="text-align:right;padding:8px 12px">방향%</th>
+                                <th style="text-align:right;padding:8px 12px">MAE%</th>
+                                <th style="text-align:right;padding:8px 12px">RMSE%</th>
+                                <th style="text-align:right;padding:8px 12px">편향%</th>
+                                <th style="text-align:right;padding:8px 12px">커버%</th>
+                            </tr></thead>
+                            <tbody>
+                            @foreach (var es in _vaultSummary.ByEngine)
+                            {
+                                <tr style="border-top:1px solid var(--line)">
+                                    <td style="padding:7px 12px">@EngineLabel(es.EngineType)</td>
+                                    <td style="text-align:right;padding:7px 12px">@(es.TotalCount)</td>
+                                    <td style="text-align:right;padding:7px 12px">@(es.EvaluatedCount)</td>
+                                    <td style="text-align:right;padding:7px 12px;font-weight:700" class="@(es.HitRatePct >= 50 ? "up" : "down")">@(es.HitRatePct.ToString("0"))%</td>
+                                    <td style="text-align:right;padding:7px 12px">@(es.MAE.ToString("0.0"))</td>
+                                    <td style="text-align:right;padding:7px 12px">@(es.RMSE.ToString("0.0"))</td>
+                                    <td style="text-align:right;padding:7px 12px" class="@(es.MeanBias >= 0 ? "up" : "down")">@(es.MeanBias.ToString("+0.0;-0.0"))</td>
+                                    <td style="text-align:right;padding:7px 12px">@(es.CoveragePct.ToString("0"))%</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+            @if (_vaultRecent.Count > 0)
+            {
+                <div class="panel">
+                    <div class="panel-h">최근 예측 기록 <span class="tag">최근 20건</span></div>
+                    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                        <table class="ctbl" style="width:100%;border-collapse:collapse;font-size:12.5px">
+                            <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
+                                <th style="text-align:left;padding:8px 12px">엔진</th>
+                                <th style="text-align:left;padding:8px 12px">종목</th>
+                                <th style="text-align:right;padding:8px 12px">발행</th>
+                                <th style="text-align:right;padding:8px 12px">만기</th>
+                                <th style="text-align:right;padding:8px 12px">예측%</th>
+                                <th style="text-align:right;padding:8px 12px">실현%</th>
+                                <th style="text-align:right;padding:8px 12px">오차</th>
+                            </tr></thead>
+                            <tbody>
+                            @foreach (var rec in _vaultRecent)
+                            {
+                                <tr style="border-top:1px solid var(--line)">
+                                    <td style="padding:7px 12px">@EngineLabel(rec.EngineType)</td>
+                                    <td style="padding:7px 12px">@(rec.Symbol)</td>
+                                    <td style="text-align:right;padding:7px 12px">@(rec.CreatedAt.ToString("yy-MM-dd"))</td>
+                                    <td style="text-align:right;padding:7px 12px">@(rec.TargetDate.ToString("yy-MM-dd"))</td>
+                                    <td style="text-align:right;padding:7px 12px" class="@(rec.PredictedValue >= 0 ? "up" : "down")">@(rec.PredictedValue.ToString("+0.0;-0.0"))</td>
+                                    <td style="text-align:right;padding:7px 12px" class="@(rec.ActualValue.HasValue ? (rec.ActualValue.Value >= 0 ? "up" : "down") : "")">@(rec.ActualValue.HasValue ? rec.ActualValue.Value.ToString("+0.0;-0.0") : "대기")</td>
+                                    <td style="text-align:right;padding:7px 12px">@(rec.AbsoluteError.HasValue ? rec.AbsoluteError.Value.ToString("0.0") : "—")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+        else { <div style="color:var(--sub);font-size:12px;padding:6px 2px">Vault에 예측이 없습니다. FutureCone·Multiverse·Alpha 페이지에서 예측을 캡처하세요.</div> }
+    </div>
 </div>
 
 @code {
@@ -96,12 +185,71 @@
     private ForecastScoreReport? _score, _liveScore;
     private int _pending;
 
+    private string _vaultMsg = "";
+    private bool _vaultBusy;
+    private VaultSummary? _vaultSummary;
+    private List<ForecastRecord> _vaultRecent = new();
+    private System.Threading.CancellationTokenSource? _vaultCts;
+
     private double ZHalf => _band >= 95 ? 1.96 : 1.645;
 
-    protected override void OnInitialized() { if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; } Ctx.OnChange += OnSym; _pending = ForecastLog.PendingCount(Db); _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db)); }
+    protected override async Task OnInitializedAsync()
+    {
+        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
+        Ctx.OnChange += OnSym;
+        _pending = ForecastLog.PendingCount(Db);
+        _liveScore = ForecastScore.Score(ForecastLog.ResolvedToScore(Db));
+        await LoadVaultAsync();
+    }
 
     private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunBacktest); }
-    public void Dispose() => Ctx.OnChange -= OnSym;
+
+    public void Dispose()
+    {
+        Ctx.OnChange -= OnSym;
+        _vaultCts?.Cancel();
+        _vaultCts?.Dispose();
+        _vaultCts = null;
+    }
+
+    private async Task LoadVaultAsync()
+    {
+        // DEFECT-3A fix: 이전 진행 중인 CTS를 취소 후 교체
+        var old = _vaultCts;
+        old?.Cancel();
+        old?.Dispose();
+
+        var cts = new System.Threading.CancellationTokenSource();
+        _vaultCts = cts;
+        try
+        {
+            _vaultSummary = await Vault.GetSummaryAsync(cts.Token);
+            _vaultRecent  = await Vault.GetRecentAsync(20, cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _vaultMsg = "Vault 로드 오류: " + ex.Message; }
+    }
+
+    private async Task EvaluateVault()
+    {
+        _vaultBusy = true; _vaultMsg = ""; StateHasChanged();
+        try
+        {
+            int n = await Vault.EvaluateExpiredForecastsAsync(Provider);
+            _vaultMsg = n > 0 ? $"{n}건 평가 완료" : "만기 도래 예측이 없습니다.";
+            await LoadVaultAsync();
+        }
+        catch (Exception ex) { _vaultMsg = "오류: " + ex.Message; }
+        finally { _vaultBusy = false; StateHasChanged(); }
+    }
+
+    private string EngineLabel(ForecastEngineType t) => t switch
+    {
+        ForecastEngineType.FutureCone => "미래 콘",
+        ForecastEngineType.Multiverse => "멀티버스",
+        ForecastEngineType.Alpha => "알파",
+        _ => t.ToString()
+    };
 
     private async Task RunBacktest()
     {
