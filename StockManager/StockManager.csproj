@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.80.0</Version>
-    <!-- v3.80.0: S12 #3 — 단독 파일 포터블 브릿지 (AES-256·PBKDF2·원자 머지·증명서 방화벽) -->
+    <Version>3.81.0</Version>
+    <!-- v3.81.0: S13 #1 — 제로-할당 틱 파이프라인 (ZeroAllocTickEngine·CandleFrame·BacktestFast) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

@@ -8,6 +8,7 @@
 //  ⚠️ 기준 시계열 성과는 합성 벤치마크이며 실거래 수익 보장이 아님(스펙↔성과 진위 검증용).
 // ============================================================================
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -34,6 +35,9 @@ namespace StockManager.Common
     public static class CartridgeEngine
     {
         public const int FormatVersion = 1;
+
+        // 시드별 CandleFrame 배열 캐시 — ToFrameArray 일회성 변환 결과 보관
+        private static readonly ConcurrentDictionary<int, CandleFrame[]> _frameCache = new();
 
         // 결정론 PRNG(SplitMix64) — System.Random 구현 변화/플랫폼에 독립적으로 동일 시퀀스 보장.
         //  (교차 기기·미래 .NET 버전에서도 증명서 재실행이 동일 결과를 내야 하므로 자체 PRNG 사용)
@@ -75,6 +79,18 @@ namespace StockManager.Common
             var r = BacktestEngine.RunMaCross(ReferenceSeries(seed), Market.KRX_KOSPI, shortP, longP);
             return ((double)r.TotalReturn, (double)r.MaxDrawdown, r.TradeCount);
         }
+
+        /// <summary>시드 기준 CandleFrame 배열 — 최초 1회 변환 후 캐시 재사용.</summary>
+        public static CandleFrame[] ReferenceFrames(int seed)
+            => _frameCache.GetOrAdd(seed, s => ZeroAllocTickEngine.ToFrameArray(ReferenceSeries(s)));
+
+        /// <summary>
+        /// 고속 MA 크로스 백테스트 — GC 힙 할당 0바이트 (ZeroAllocTickEngine 위임).
+        /// Attest/VerifyStrategy 는 decimal 기반 Backtest() 를 유지; 이 메서드는
+        /// CartridgeGenome 등 반복 최적화 루프의 빠른 순위 비교용.
+        /// </summary>
+        public static ZeroAllocResult BacktestFast(int shortP, int longP, int seed)
+            => ZeroAllocTickEngine.RunMaCross(ReferenceFrames(seed), shortP, longP);
 
         /// <summary>전략 스펙에 결정론 증명서(시드 기준 성과)를 부착.</summary>
         public static CartStrategy Attest(string name, int shortP, int longP, int seed)
