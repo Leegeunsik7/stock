@@ -1,0 +1,170 @@
+@page "/tailbudget"
+@inject LocalDatabase Db
+@inject FxConverter Fx
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello">
+        <h1>☠️ 테일 리스크 면역 설계사 <span class="tag">TAIL BUDGET</span></h1>
+        <p>현재 포트폴리오 비중을 4개 역사적 위기 시나리오(코로나·금융위기·금리충격·블랙먼데이)에서 그리디 알고리즘으로 최적화 — <b>최악 드로다운을 최소화</b>하는 비중 조합을 찾습니다.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <label style="font-size:12.5px;color:var(--sub)">전체 베타</label>
+    <input class="srch" style="width:74px" type="number" step="0.1" min="0.1" max="3.0" @bind="_beta" />
+    <label style="font-size:12.5px;color:var(--sub)">단일 최대비중</label>
+    <input class="srch" style="width:74px" type="number" step="0.05" min="0.1" max="1.0" @bind="_maxW" />
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "최적화 중…" : "☠️ 최적화 시작")</button>
+    @if (_result?.IsValid == true)
+    {
+        <span class="sub" style="font-size:11.5px">@_result.Note</span>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 14px;color:var(--sub)">@_msg</div> }
+
+@if (_result?.IsValid == true)
+{
+    <div style="padding:0 28px 40px">
+
+        @* 드로다운 개선 요약 *@
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:24px">
+            @{ string col0 = "var(--down)"; string colO = _result.OptimalWorstMdd < _result.BaselineWorstMdd ? "var(--up)" : "var(--warn)"; }
+            <div class="panel" style="flex:1;min-width:180px;border-left:3px solid @col0">
+                <div class="sub" style="font-size:11px">현재 최악 드로다운</div>
+                <div style="font-size:26px;font-weight:800;color:@col0;margin:6px 0">@(_result.BaselineWorstMdd.ToString("0.0"))%</div>
+                <div class="sub" style="font-size:11.5px">최악 시나리오: @_result.WorstCrisis</div>
+            </div>
+            <div class="panel" style="flex:1;min-width:180px;border-left:3px solid @colO">
+                <div class="sub" style="font-size:11px">최적화 후 최악 드로다운</div>
+                <div style="font-size:26px;font-weight:800;color:@colO;margin:6px 0">@(_result.OptimalWorstMdd.ToString("0.0"))%</div>
+                <div class="sub" style="font-size:11.5px">개선: @(_result.ImprovementPct.ToString("+0.0;0.0;0.0"))%p</div>
+            </div>
+        </div>
+
+        @* 시나리오별 비교 *@
+        <div class="panel" style="margin-bottom:20px">
+            <div class="panel-h">📉 위기 시나리오별 드로다운 비교 <span class="tag">기준 vs 최적화</span></div>
+            <table class="ctbl dense">
+                <thead>
+                    <tr>
+                        <th>시나리오</th>
+                        <th style="text-align:right">현재 MDD</th>
+                        <th style="text-align:right">최적화 MDD</th>
+                        <th style="text-align:right">개선</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in _result.Scenarios)
+                    {
+                        var imp = s.ImprovementPct;
+                        var ic = imp > 0 ? "var(--up)" : imp < 0 ? "var(--down)" : "var(--sub)";
+                        <tr>
+                            <td><b>@s.CrisisName</b></td>
+                            <td style="text-align:right;color:var(--down)">@(s.BaselineMdd.ToString("0.0"))%</td>
+                            <td style="text-align:right;color:@(s.OptimalMdd < s.BaselineMdd ? "var(--up)" : "var(--sub)")">@(s.OptimalMdd.ToString("0.0"))%</td>
+                            <td style="text-align:right;color:@ic">@(imp.ToString("+0.0;-0.0;0.0"))%p</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @* 비중 조정 권고 *@
+        <div class="panel">
+            <div class="panel-h">⚖️ 비중 조정 권고 <span class="tag">현재 → 최적</span></div>
+            <table class="ctbl dense">
+                <thead>
+                    <tr>
+                        <th>종목</th>
+                        <th style="text-align:right">베타</th>
+                        <th style="text-align:right">현재 비중</th>
+                        <th style="text-align:right">최적 비중</th>
+                        <th style="text-align:right">변화</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in _result.Allocations)
+                    {
+                        var dc = a.Delta > 0.001 ? "var(--up)" : a.Delta < -0.001 ? "var(--down)" : "var(--sub)";
+                        var darr = a.Delta > 0.001 ? "▲" : a.Delta < -0.001 ? "▼" : "─";
+                        <tr>
+                            <td><b>@a.Symbol</b> <span class="sub" style="font-size:11.5px">@a.Name</span></td>
+                            <td style="text-align:right;color:var(--sub)">@(a.Beta.ToString("0.00"))</td>
+                            <td style="text-align:right">@((a.OriginalWeight * 100).ToString("0.0"))%</td>
+                            <td style="text-align:right;font-weight:600">@((a.OptimalWeight * 100).ToString("0.0"))%</td>
+                            <td style="text-align:right;color:@dc">@darr @(Math.Abs(a.Delta * 100).ToString("0.0"))%p</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="sub" style="margin-top:12px;font-size:11.5px">
+            ℹ️ 테일 리스크 최적화는 역사적 위기 패턴 기반 참고 정보이며, <b>매수·매도 지시나 자동 주문이 아닙니다.</b>
+            실제 거래 전 전문가 검토를 권장합니다.
+        </div>
+    </div>
+}
+
+@code {
+    private bool _busy, _disposed;
+    private string _msg = "";
+    private double _beta = 1.0, _maxW = 0.50;
+    private TailBudgetResult? _result;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    public void Dispose() { _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        _busy = true; _msg = "포트폴리오 로드 및 최적화 중…"; _result = null;
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var ct = _cts.Token;
+            // FX 환율 갱신 (네트워크 — UI 스레드에서 선행 처리)
+            try { await Fx.GetUsdKrwAsync(); } catch { /* 캐시 폴백 */ }
+            var (result, msg) = await Task.Run(() => RunCore(ct), ct);
+            if (_disposed) return;
+            _result = result; _msg = msg;
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "오류: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private (TailBudgetResult? result, string msg) RunCore(System.Threading.CancellationToken ct)
+    {
+        var holdings = Db.GetAllHoldings().Where(h => h.Quantity > 0 && h.CurrentPrice > 0).ToList();
+        if (holdings.Count == 0)
+            return (null, "보유 종목이 없습니다. 포트폴리오에 종목을 추가하세요.");
+
+        // 시장가치 계산 + BlackSwanHolding 변환
+        // KRX: 6자리 숫자 코드 → KRW 그대로; 나머지 → USD × USD/KRW
+        var mv = holdings.Select(h =>
+        {
+            bool isKrw = h.Symbol.Length == 6 && char.IsDigit(h.Symbol[0]);
+            double price = (double)h.CurrentPrice;
+            if (!isKrw) price = (double)Fx.ToKrw((decimal)price);
+            return price * h.Quantity;
+        }).ToArray();
+
+        double total = mv.Sum();
+        if (total <= 0) return (null, "총 평가금액이 0입니다.");
+
+        double beta = Math.Clamp(_beta, 0.1, 5.0);
+        double maxW = Math.Clamp(_maxW, 0.1, 1.0);
+
+        var bsHoldings = holdings
+            .Select((h, i) => new BlackSwanHolding(h.Symbol, h.Name ?? h.Symbol,
+                mv[i] / total, beta))
+            .ToList();
+
+        var result = TailBudget.Optimize(bsHoldings, maxW, 0.0);
+        return (result, "");
+    }
+}
