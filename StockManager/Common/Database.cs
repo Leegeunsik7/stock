@@ -134,6 +134,18 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
     IsActive INTEGER DEFAULT 1, LastSyncAt TEXT,
     UNIQUE(Broker, AccountNo)
 );
+
+-- ⭐ v3.66.0: 부정거래 경고 (AddTransaction 검증 실패 시 자동 기록)
+CREATE TABLE IF NOT EXISTS FraudAlerts (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    AttemptedAt TEXT NOT NULL,
+    Symbol TEXT,
+    TransactionType TEXT,
+    Reason TEXT,
+    RawJson TEXT,
+    IsReviewed INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
 ");
         }
 
@@ -193,6 +205,10 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
         // ===== Holdings =====
         public void SaveHolding(Holding h)
         {
+            var vr = StockValidator.ValidateHolding(h);
+            if (!vr.IsValid)
+                throw new ArgumentException($"보유 종목 검증 실패: {vr.Summary()}");
+
             Execute(@"INSERT INTO Holdings(Symbol,Name,Market,Currency,Quantity,AvgPrice,CurrentPrice,FirstBuyDate,BrokerAccount,Memo,Tags)
                       VALUES(@s,@n,@m,@c,@q,@a,@p,@d,@b,@me,@t)
                       ON CONFLICT(Symbol,BrokerAccount) DO UPDATE SET
@@ -238,15 +254,101 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
 
         public void AddTransaction(Transaction t)
         {
-            Execute(@"INSERT INTO Transactions(Symbol,Type,Quantity,Price,Commission,Tax,ExecutedAt,BrokerAccount,Memo)
-                      VALUES(@s,@ty,@q,@p,@c,@tx,@e,@b,@m)",
-                new() {
-                    ["@s"] = t.Symbol, ["@ty"] = (int)t.Type, ["@q"] = t.Quantity,
-                    ["@p"] = (double)t.Price, ["@c"] = (double)t.Commission,
-                    ["@tx"] = (double)t.Tax, ["@e"] = t.ExecutedAt.ToString("o"),
-                    ["@b"] = t.BrokerAccount, ["@m"] = t.Memo
-                });
+            // ⭐ v3.66.0: 저장 전 검증 — 비정상값(NaN/음수/누락) 감지 시 FraudAlerts 기록 후 throw
+            var v = StockValidator.ValidateTransaction(t);
+            if (!v.IsValid)
+            {
+                _WriteFraudAlert(t, v.Summary());
+                throw new ArgumentException($"거래 검증 실패: {v.Summary()}");
+            }
+
+            // 명시적 SQLite 트랜잭션 — 부분 쓰기 방지, BUSY/LOCKED 시 Rollback 보장
+            lock (_lock)
+            {
+                using var tx = _conn.BeginTransaction();
+                try
+                {
+                    using var cmd = _conn.CreateCommand();
+                    cmd.Transaction = tx;
+                    cmd.CommandText = @"INSERT INTO Transactions(Symbol,Type,Quantity,Price,Commission,Tax,ExecutedAt,BrokerAccount,Memo)
+                                        VALUES(@s,@ty,@q,@p,@c,@tx,@e,@b,@m)";
+                    cmd.Parameters.AddWithValue("@s",  t.Symbol        ?? "");
+                    cmd.Parameters.AddWithValue("@ty", (int)t.Type);
+                    cmd.Parameters.AddWithValue("@q",  t.Quantity);
+                    cmd.Parameters.AddWithValue("@p",  (double)t.Price);
+                    cmd.Parameters.AddWithValue("@c",  (double)t.Commission);
+                    cmd.Parameters.AddWithValue("@tx", (double)t.Tax);
+                    cmd.Parameters.AddWithValue("@e",  t.ExecutedAt.ToString("o"));
+                    cmd.Parameters.AddWithValue("@b",  t.BrokerAccount ?? "");
+                    cmd.Parameters.AddWithValue("@m",  t.Memo          ?? "");
+                    cmd.ExecuteNonQuery();
+                    tx.Commit();
+                }
+                catch
+                {
+                    tx.Rollback();
+                    throw;
+                }
+            }
         }
+
+        // 검증 실패 거래를 FraudAlerts에 조용히 기록 (로거 실패가 원래 예외를 삼키면 안 됨)
+        private void _WriteFraudAlert(Transaction t, string reason)
+        {
+            try
+            {
+                var raw = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    symbol        = t.Symbol,
+                    type          = t.Type.ToString(),
+                    quantity      = t.Quantity,
+                    price         = t.Price,
+                    commission    = t.Commission,
+                    tax           = t.Tax,
+                    executedAt    = t.ExecutedAt.ToString("o"),
+                    brokerAccount = t.BrokerAccount,
+                });
+                Execute(
+                    @"INSERT INTO FraudAlerts(AttemptedAt,Symbol,TransactionType,Reason,RawJson,IsReviewed)
+                      VALUES(@at,@s,@ty,@r,@raw,0)",
+                    new() {
+                        ["@at"]  = DateTime.UtcNow.ToString("o"),
+                        ["@s"]   = t.Symbol        ?? "",
+                        ["@ty"]  = t.Type.ToString(),
+                        ["@r"]   = reason,
+                        ["@raw"] = raw,
+                    });
+                Log.Warn($"[FraudAlert] 부정거래 감지: {t.Symbol} {t.Type} — {reason}");
+                AuditClient.PostFraudAlert(t, reason); // 중앙 감사 서버 fire-and-forget
+            }
+            catch (Exception ex) { Log.Warn($"[FraudAlert] 기록 실패: {ex.Message}"); }
+        }
+
+        // ===== FraudAlerts =====
+        public List<FraudAlert> GetFraudAlerts(int limit = 200)
+        {
+            var dt = Query("SELECT * FROM FraudAlerts ORDER BY AttemptedAt DESC LIMIT @n",
+                new() { ["@n"] = limit });
+            return dt.Rows.Cast<DataRow>().Select(r => new FraudAlert
+            {
+                Id              = Safe.Int(r["Id"]),
+                AttemptedAt     = Safe.DT(r["AttemptedAt"]),
+                Symbol          = Safe.Str(r["Symbol"]),
+                TransactionType = Safe.Str(r["TransactionType"]),
+                Reason          = Safe.Str(r["Reason"]),
+                RawJson         = Safe.Str(r["RawJson"]),
+                IsReviewed      = Safe.Int(r["IsReviewed"]) == 1,
+            }).ToList();
+        }
+
+        public int GetUnreviewedFraudCount() =>
+            (int)QueryScalar<long>("SELECT COUNT(*) FROM FraudAlerts WHERE IsReviewed=0");
+
+        public void MarkFraudReviewed(int id) =>
+            Execute("UPDATE FraudAlerts SET IsReviewed=1 WHERE Id=@id", new() { ["@id"] = id });
+
+        public void MarkAllFraudReviewed() =>
+            Execute("UPDATE FraudAlerts SET IsReviewed=1 WHERE IsReviewed=0");
 
         // ===== Settings (Key-Value) =====
         public string? GetSetting(string key) =>

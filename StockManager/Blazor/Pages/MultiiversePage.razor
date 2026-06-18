@@ -200,7 +200,7 @@ else if (_result is { IsValid: false })
         }
         catch (OperationCanceledException) { _msg = "취소되었습니다."; }
         catch (Exception ex) { if (!_disposed) _msg = "실패: " + ex.Message; }
-        finally { _busy = false; StateHasChanged(); }
+        finally { _busy = false; if (!_disposed) StateHasChanged(); }
     }
 
     private async Task<List<MultiverseAsset>> LoadAssetsAsync(CancellationToken ct)
@@ -318,6 +318,7 @@ else if (_result is { IsValid: false })
     public void Dispose()
     {
         _disposed = true;
+        _cts?.Cancel();   // ML-001: 진행 중인 Task.Run을 취소해 Dispose 후 StateHasChanged 방지
         _cts?.Dispose();
     }
 }

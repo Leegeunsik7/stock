@@ -127,5 +127,28 @@ namespace StockManager.Tests
                 Assert.True(r.IsValid, $"Scenario {s} should produce valid result");
             }
         }
+
+        // GAP-03: sigma=0 경로 (모든 수익률 0) — 동작 핀
+        [Fact]
+        public void Project_ConstantZeroReturns_ZeroSharpe()
+        {
+            var zeroReturns = new double[100];   // 전부 0.0 → StdDev=0, sigma=0 경로
+            var asset = new MultiverseAsset("ZERO", "ZeroAsset", 100.0, zeroReturns);
+            var r = MultiverseEngine.Project(new[] { asset }, MultiverseScenario.Live);
+            if (r.IsValid)
+                Assert.Equal(0.0, r.AnnualizedSharpe);
+            else
+                Assert.False(string.IsNullOrEmpty(r.Note));
+        }
+
+        // BUG-003: sims 가드 — FutureCone 계약(100)과 일치 확인
+        [Fact]
+        public void Project_SimsDefaultAbove100()
+        {
+            var assets = new[] { MakeAsset("A", "T", 100) };
+            // 기본 sims=200이므로 FutureCone 최솟값(100) 이상 → 결과 유효
+            var r = MultiverseEngine.Project(assets, MultiverseScenario.Live);
+            Assert.True(r.IsValid, "sims 기본값이 FutureCone 최솟값 이상이어야 유효 결과를 반환해야 함");
+        }
     }
 }

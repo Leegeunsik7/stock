@@ -71,12 +71,12 @@ namespace StockManager.Common
             IReadOnlyList<MultiverseAsset> assets,
             MultiverseScenario scenario,
             int horizonDays = 252,
-            int sims = 80,
+            int sims = 200,
             int seed = 42)
         {
             if (assets == null || assets.Count == 0)
                 return Invalid(scenario, "보유 종목 없음");
-            if (sims < 10) sims = 10;
+            if (sims < 100) sims = 100;   // BUG-003: FutureCone 내부 클램프(100)와 계약 일치
 
             var sp = ScenarioTable[(int)scenario];
 
