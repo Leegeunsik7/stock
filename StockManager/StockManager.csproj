@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.77.0</Version>
-    <!-- v3.77.0: S11 #3 — 예측 루프 클로징 (Vault 저장 버튼·FuturePage·AlphaPage·MultiiversePage) -->
+    <Version>3.78.0</Version>
+    <!-- v3.78.0: S12 #1 — 섀도우 샌드박스 브로커 (결정론적 지연·슬리피지·DelayQueue) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

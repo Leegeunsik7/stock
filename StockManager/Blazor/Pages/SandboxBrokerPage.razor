@@ -1,0 +1,318 @@
+@page "/broker/sandbox"
+@inject LocalDatabase Db
+@inject ToastService Toasts
+@implements IDisposable
+
+<div class="top">
+    <div class="hello">
+        <h1>🌑 섀도우 샌드박스 <span class="tag">SHADOW BROKER</span></h1>
+        <p>결정론적 지연·슬리피지를 모사해 실거래 API 환경을 로컬에서 100% 검증합니다. 퀀트 알고리즘 내구성 테스트용입니다.</p>
+    </div>
+</div>
+
+@* ── 노이즈 프로파일 설정 ── *@
+<div style="padding:0 28px 16px">
+    <div class="panel" style="padding:16px 18px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub)">⚙️ 노이즈 프로파일</div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer">
+                <input type="checkbox" @bind="_noiseEnabled" /> 노이즈 활성
+            </label>
+            <button class="ghost" style="margin-left:auto" @onclick="RebuildBroker">🔄 브로커 재초기화</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;font-size:12.5px">
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">기본 지연 (ms)</label>
+                <input class="srch" style="width:100%" type="number" min="0" max="5000" step="10" @bind="_baseDelayMs" />
+            </div>
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">최대 지연 (ms)</label>
+                <input class="srch" style="width:100%" type="number" min="0" max="5000" step="10" @bind="_maxDelayMs" />
+            </div>
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">슬리피지 기준 (%)</label>
+                <input class="srch" style="width:100%" type="number" min="0" max="5" step="0.01" @bind="_slippagePct" />
+            </div>
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">슬리피지 변동성 배수</label>
+                <input class="srch" style="width:100%" type="number" min="0" max="10" step="0.1" @bind="_slippageVolMult" />
+            </div>
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">시뮬 VolRatio (레짐)</label>
+                <input class="srch" style="width:100%" type="number" min="0.1" max="10" step="0.1" @bind="_simVolRatio" />
+            </div>
+            <div>
+                <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">랜덤 시드</label>
+                <input class="srch" style="width:100%" type="number" @bind="_seed" />
+            </div>
+        </div>
+        <div style="margin-top:10px;font-size:11.5px;color:var(--sub)">
+            현재: 기본 <b>@(_baseDelayMs)ms</b> · 최대 <b>@(_maxDelayMs)ms</b> ·
+            슬리피지 <b>@(_slippagePct.ToString("0.00"))%</b> ·
+            VolMultiplier <b>@(_slippageVolMult.ToString("0.0"))×</b> ·
+            VolRatio <b>@(_simVolRatio.ToString("0.0"))</b> · 시드 <b>@(_seed)</b>
+        </div>
+    </div>
+</div>
+
+@* ── 시뮬레이션 클록 + 틱 컨트롤 ── *@
+<div style="padding:0 28px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div class="panel" style="padding:10px 16px;display:flex;align-items:center;gap:16px;min-width:0">
+        <span class="sub" style="font-size:11px">🕰 심 클록</span>
+        <b style="font-size:13px;font-family:var(--mono)">@(_simClock.ToString("HH:mm:ss.fff"))</b>
+        <span class="sub" style="font-size:11px">큐 깊이</span>
+        <span class="tag" style="min-width:28px;text-align:center">@(_broker?.QueueDepth ?? 0)</span>
+        <span class="sub" style="font-size:11px">잔고</span>
+        <b class="up" style="font-size:13px">@((_paper?.Account.Cash ?? 0m).ToString("N0"))원</b>
+    </div>
+    <span class="sub" style="font-size:11px">틱 단계</span>
+    <select class="srch" style="width:100px" @bind="_tickStepMs">
+        <option value="50">+50ms</option>
+        <option value="100">+100ms</option>
+        <option value="500" selected>+500ms</option>
+        <option value="1000">+1 s</option>
+        <option value="5000">+5 s</option>
+    </select>
+    <button class="addbtn" @onclick="DoTick">⏩ 틱 전진</button>
+    <button class="ghost" @onclick="ResetClock">⏮ 클록 초기화</button>
+</div>
+
+@* ── 주문 접수 폼 ── *@
+<div style="padding:0 28px 16px">
+    <div class="panel" style="padding:16px 18px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:12px">📋 주문 접수</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+            <select class="srch" style="width:80px" @bind="_side">
+                <option value="@PaperSide.Buy">매수</option>
+                <option value="@PaperSide.Sell">매도</option>
+            </select>
+            <select class="srch" style="width:80px" @bind="_kind">
+                <option value="@PaperKind.Market">시장가</option>
+                <option value="@PaperKind.Limit">지정가</option>
+            </select>
+            <span class="sub" style="font-size:11.5px">수량</span>
+            <input class="srch" style="width:80px" type="number" min="0.00000001" step="1" @bind="_qty" />
+            @if (_kind == PaperKind.Limit)
+            {
+                <span class="sub" style="font-size:11.5px">지정가</span>
+                <input class="srch" style="width:110px" type="number" step="1" @bind="_limitPrice" />
+            }
+            <span class="sub" style="font-size:11.5px">현재가(모의)</span>
+            <input class="srch" style="width:110px" type="number" step="1" @bind="_currentPrice" />
+            <button class="addbtn" disabled="@(_broker == null)" @onclick="PlaceOrder">📤 주문</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_placeMsg))
+        {
+            <div style="margin-top:8px;font-size:12px;color:var(--sub)">@_placeMsg</div>
+        }
+    </div>
+</div>
+
+@* ── 대기 큐 ── *@
+@if (_broker is not null && _broker.QueueDepth > 0)
+{
+    <div style="padding:0 28px 16px">
+        <div class="panel" style="padding:16px 18px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+                ⏳ 대기 큐 (@(_broker.QueueDepth)건)
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead>
+                    <tr style="color:var(--sub);font-size:11px">
+                        <th style="text-align:left;padding:4px 8px">ID</th>
+                        <th style="text-align:left;padding:4px 8px">종목</th>
+                        <th style="text-align:center;padding:4px 8px">방향</th>
+                        <th style="text-align:center;padding:4px 8px">종류</th>
+                        <th style="text-align:right;padding:4px 8px">수량</th>
+                        <th style="text-align:right;padding:4px 8px">제출가</th>
+                        <th style="text-align:right;padding:4px 8px">체결 예정가</th>
+                        <th style="text-align:right;padding:4px 8px">지연 ms</th>
+                        <th style="text-align:right;padding:4px 8px">슬리피지%</th>
+                        <th style="text-align:right;padding:4px 8px">체결 예정 시각</th>
+                        <th style="text-align:center;padding:4px 8px">취소</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var o in _broker.PendingOrders)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--sub)">@(o.Id)</td>
+                            <td style="padding:5px 8px;font-weight:600">@(o.Symbol)</td>
+                            <td style="text-align:center;padding:5px 8px" class="@(o.Side == PaperSide.Buy ? "up" : "down")">
+                                @(o.Side == PaperSide.Buy ? "매수" : "매도")
+                            </td>
+                            <td style="text-align:center;padding:5px 8px;color:var(--sub)">
+                                @(o.Kind == PaperKind.Market ? "시장가" : "지정가")
+                            </td>
+                            <td style="text-align:right;padding:5px 8px">@(o.Qty.ToString("0.####"))</td>
+                            <td style="text-align:right;padding:5px 8px;color:var(--sub)">@(o.SubmittedPrice.ToString("N0"))</td>
+                            <td style="text-align:right;padding:5px 8px;font-weight:600">
+                                @(o.Kind == PaperKind.Market ? o.SlippedFillPrice.ToString("N0") : o.LimitPrice.ToString("N0"))
+                            </td>
+                            <td style="text-align:right;padding:5px 8px;color:var(--sub)">@(o.DelayMs.ToString("0"))</td>
+                            <td class="@(o.SlippagePct > 0.005 ? "down" : "")" style="text-align:right;padding:5px 8px">
+                                @((o.SlippagePct * 100.0).ToString("0.000"))%
+                            </td>
+                            <td style="text-align:right;padding:5px 8px;font-size:11px;font-family:var(--mono)">
+                                @(o.ExecuteAt.ToString("HH:mm:ss.fff"))
+                            </td>
+                            <td style="text-align:center;padding:5px 8px">
+                                <button class="ghost" style="font-size:11px;padding:2px 8px"
+                                        @onclick="() => CancelOrder(o.Id)">취소</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@* ── 체결 이벤트 로그 ── *@
+@if (_fillLog.Count > 0)
+{
+    <div style="padding:0 28px 32px">
+        <div class="panel" style="padding:16px 18px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub)">
+                    ✅ 체결 로그 (최근 @(_fillLog.Count)건)
+                </div>
+                <button class="ghost" style="font-size:11px;margin-left:auto" @onclick="() => _fillLog.Clear()">지우기</button>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead>
+                    <tr style="color:var(--sub);font-size:11px">
+                        <th style="text-align:left;padding:4px 8px">ID</th>
+                        <th style="text-align:left;padding:4px 8px">종목</th>
+                        <th style="text-align:center;padding:4px 8px">방향</th>
+                        <th style="text-align:right;padding:4px 8px">제출가</th>
+                        <th style="text-align:right;padding:4px 8px">실체결가</th>
+                        <th style="text-align:right;padding:4px 8px">슬리피지%</th>
+                        <th style="text-align:right;padding:4px 8px">지연 ms</th>
+                        <th style="text-align:center;padding:4px 8px">결과</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var f in _fillLog)
+                    {
+                        decimal slipAmt = f.ActualFillPrice - f.SubmittedPrice;
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--sub)">@(f.ShadowOrderId)</td>
+                            <td style="padding:5px 8px;font-weight:600">@(f.Symbol)</td>
+                            <td style="text-align:center;padding:5px 8px" class="@(f.Side == PaperSide.Buy ? "up" : "down")">
+                                @(f.Side == PaperSide.Buy ? "매수" : "매도")
+                            </td>
+                            <td style="text-align:right;padding:5px 8px;color:var(--sub)">@(f.SubmittedPrice.ToString("N0"))</td>
+                            <td style="text-align:right;padding:5px 8px;font-weight:600">@(f.ActualFillPrice.ToString("N0"))</td>
+                            <td class="@(slipAmt * (f.Side == PaperSide.Buy ? 1 : -1) > 0 ? "down" : "up")"
+                                style="text-align:right;padding:5px 8px">
+                                @((f.SlippagePct * 100.0).ToString("0.000"))%
+                            </td>
+                            <td style="text-align:right;padding:5px 8px;color:var(--sub)">@(f.DelayMs.ToString("0"))</td>
+                            <td style="text-align:center;padding:5px 8px">
+                                @if (f.WasAccepted) { <span class="up">✓</span> }
+                                else { <span class="down">✗ @(f.InnerMsg)</span> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@if (_broker == null)
+{
+    <div style="padding:0 28px 20px;color:var(--sub);font-size:12.5px">
+        ⚙️ 설정을 조정하고 <b>🔄 브로커 재초기화</b>를 눌러 섀도우 샌드박스를 시작하세요.
+    </div>
+}
+
+@code {
+    private PaperBroker?               _paper;
+    private ShadowBroker?              _broker;
+    private readonly List<ShadowFillEvent> _fillLog = new();
+    private DateTime                   _simClock;
+
+    // ── 설정 필드 ──
+    private bool   _noiseEnabled    = true;
+    private int    _baseDelayMs     = 50;
+    private int    _maxDelayMs      = 500;
+    private double _slippagePct     = 0.1;       // % 입력; ShadowNoiseConfig에는 /100
+    private double _slippageVolMult = 2.0;
+    private double _simVolRatio     = 1.0;
+    private int    _seed            = 42;
+    private int    _tickStepMs      = 500;
+
+    // ── 주문 폼 ──
+    private string    _sym          = "005930";
+    private PaperSide _side         = PaperSide.Buy;
+    private PaperKind _kind         = PaperKind.Market;
+    private decimal   _qty          = 1m;
+    private decimal   _limitPrice   = 0m;
+    private decimal   _currentPrice = 70_000m;
+    private string    _placeMsg     = "";
+
+    protected override void OnInitialized()
+    {
+        _paper    = new PaperBroker(Db);
+        _simClock = DateTime.Now;
+        RebuildBroker();
+    }
+
+    private void RebuildBroker()
+    {
+        var cfg = new ShadowNoiseConfig
+        {
+            Enabled               = _noiseEnabled,
+            BaseDelayMs           = Math.Max(0, _baseDelayMs),
+            MaxDelayMs            = Math.Max(_baseDelayMs, _maxDelayMs),
+            SlippageBasePct       = Math.Max(0.0, _slippagePct / 100.0),
+            SlippageVolMultiplier = Math.Max(0.0, _slippageVolMult),
+            Seed                  = _seed,
+        };
+        var vol = _simVolRatio;
+        _broker = new ShadowBroker(_paper!, cfg, () => new RegimeSignal { VolRatio = vol });
+        _broker.Tick(_simClock, (_, _) => _currentPrice);
+        _fillLog.Clear();
+        _placeMsg = "";
+        Toasts.Info("섀도우 브로커 재초기화", $"지연 {cfg.BaseDelayMs}~{cfg.MaxDelayMs}ms · 슬리피지 {_slippagePct:0.00}%");
+    }
+
+    private void DoTick()
+    {
+        if (_broker == null) return;
+        _simClock = _simClock.AddMilliseconds(_tickStepMs);
+        var filled = _broker.Tick(_simClock, (_, _) => _currentPrice);
+        foreach (var f in filled) _fillLog.Insert(0, f);
+        if (filled.Count > 0)
+            Toasts.Success("체결", $"{filled.Count}건 체결 · 큐 잔여 {_broker.QueueDepth}건");
+        StateHasChanged();
+    }
+
+    private void ResetClock()
+    {
+        _simClock = DateTime.Now;
+        _broker?.Tick(_simClock, (_, _) => _currentPrice);
+    }
+
+    private void PlaceOrder()
+    {
+        if (_broker == null || string.IsNullOrWhiteSpace(_sym)) return;
+        var sym = _sym.Trim().ToUpperInvariant();
+        var (ok, msg) = _broker.Place(
+            PaperAsset.Stock, sym, sym,
+            _side, _kind, _qty, _limitPrice, _currentPrice);
+        _placeMsg = ok ? $"접수 — {msg}" : $"거부 — {msg}";
+        StateHasChanged();
+    }
+
+    private void CancelOrder(string orderId)
+    {
+        _broker?.Cancel(orderId);
+        StateHasChanged();
+    }
+
+    public void Dispose() { }
+}
