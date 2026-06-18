@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.75.0</Version>
-    <!-- v3.75.0: S11 #1 — 예측 타임캡슐 (ForecastVault: CaptureForecast/Evaluate/Stats) -->
+    <Version>3.76.0</Version>
+    <!-- v3.76.0: S11 #2 — 시나리오 실현 추적기 (코사인 유사도·NAV 오차·Committee 방화벽·히트맵) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

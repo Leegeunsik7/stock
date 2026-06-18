@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -106,6 +107,13 @@ CREATE INDEX IF NOT EXISTS IX_FV_Engine     ON ForecastVault(EngineType);
                 return BuildSummary(LoadAll());
             }, ct);
 
+        public Task<ScenarioCalibrationTable> GetCalibrationTableAsync(CancellationToken ct = default)
+            => Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return ScenarioTrackerEngine.BuildCalibrationTable(LoadAll(), DateTime.UtcNow);
+            }, ct);
+
         // ── 만기 평가 ─────────────────────────────────────────────────────────────
 
         public async Task<int> EvaluateExpiredForecastsAsync(
@@ -119,9 +127,25 @@ CREATE INDEX IF NOT EXISTS IX_FV_Engine     ON ForecastVault(EngineType);
             {
                 ct.ThrowIfCancellationRequested();
 
-                // 정직한 검증 경계: PORTFOLIO·Committee는 수치 평가 미지원 (S11 #2 예정)
-                if (rec.Symbol == "PORTFOLIO") continue;
                 if (rec.EngineType == ForecastEngineType.Committee) continue;
+
+                if (rec.Symbol == "PORTFOLIO")
+                {
+                    // S11 #2: CaptureMetaJson에 holdings("h")가 있으면 PORTFOLIO NAV 평가
+                    try
+                    {
+                        double? portfolioActual = await EvalPortfolioAsync(rec, provider, ct);
+                        if (portfolioActual.HasValue)
+                        {
+                            WriteEvaluation(rec.ForecastId, portfolioActual.Value,
+                                Math.Abs(rec.PredictedValue - portfolioActual.Value), DateTime.UtcNow);
+                            count++;
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch { /* 시세 없음 — 다음 평가 주기에 재시도 */ }
+                    continue;
+                }
 
                 try
                 {
@@ -168,11 +192,35 @@ CREATE INDEX IF NOT EXISTS IX_FV_Engine     ON ForecastVault(EngineType);
         }
 
         public static ForecastRecord BuildMultiverseRecord(
-            MultiverseResult mv, DateTime now)
+            MultiverseResult mv, DateTime now,
+            IReadOnlyList<PortfolioHoldingCapture>? holdings = null)
         {
             int n = mv.Bands.Count;
             double cl = n > 0 ? mv.Bands[n - 1].P5  : 0.0;
             double ch = n > 0 ? mv.Bands[n - 1].P95 : 0.0;
+
+            string metaJson;
+            if (holdings != null && holdings.Count > 0)
+            {
+                // {"scenario":"...","h":[{"s":"sym","w":wt,"p":price,"m":market_int},…]}
+                var sb = new StringBuilder();
+                sb.Append("{\"scenario\":\"");
+                sb.Append(EscapeJson(mv.Note));
+                sb.Append("\",\"h\":[");
+                for (int i = 0; i < holdings.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    var h = holdings[i];
+                    sb.Append($"{{\"s\":\"{EscapeJson(h.Symbol)}\",\"w\":{h.WeightPct:R},\"p\":{(double)h.CapturePrice:R},\"m\":{(int)h.AssetMarket}}}");
+                }
+                sb.Append("]}");
+                metaJson = sb.ToString();
+            }
+            else
+            {
+                metaJson = $"{{\"scenario\":\"{EscapeJson(mv.Note)}\"}}";
+            }
+
             return new ForecastRecord(
                 ForecastId:      Guid.NewGuid().ToString("N"),
                 CreatedAt:       now,
@@ -184,7 +232,7 @@ CREATE INDEX IF NOT EXISTS IX_FV_Engine     ON ForecastVault(EngineType);
                 ConfidenceLow:   cl,
                 ConfidenceHigh:  ch,
                 ScenarioTag:     mv.Note,
-                CaptureMetaJson: $"{{\"scenario\":\"{EscapeJson(mv.Note)}\"}}",
+                CaptureMetaJson: metaJson,
                 ActualValue:     null,
                 EvaluatedAt:     null,
                 AbsoluteError:   null,
@@ -311,6 +359,65 @@ CREATE INDEX IF NOT EXISTS IX_FV_Engine     ON ForecastVault(EngineType);
                 .First();
 
             return ((double)closest.Close - capturePrice) / capturePrice * 100.0;
+        }
+
+        // PORTFOLIO NAV 평가: CaptureMetaJson의 "h" 배열로부터 가중 실현 수익률 계산
+        private async Task<double?> EvalPortfolioAsync(
+            ForecastRecord rec, IQuoteProvider provider, CancellationToken ct)
+        {
+            List<(string sym, double wt, decimal cp, Market mkt)> captured;
+            try
+            {
+                using var doc = JsonDocument.Parse(rec.CaptureMetaJson);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("h", out var hArr) || hArr.ValueKind != JsonValueKind.Array)
+                    return null;   // holdings 미저장 → 정직한 경계: 평가 불가
+
+                captured = new();
+                foreach (var el in hArr.EnumerateArray())
+                {
+                    // TryGetProperty: 구버전 레코드에 필드 누락 시 해당 원소 건너뜀
+                    if (!el.TryGetProperty("s", out var sEl) ||
+                        !el.TryGetProperty("w", out var wEl) ||
+                        !el.TryGetProperty("p", out var pEl)) continue;
+                    string sym  = sEl.GetString() ?? "";
+                    double wt   = wEl.GetDouble();
+                    decimal cp  = (decimal)pEl.GetDouble();
+                    Market mkt  = el.TryGetProperty("m", out var mEl)
+                        ? (Market)mEl.GetInt32() : Market.KRX_KOSPI;
+                    if (!string.IsNullOrEmpty(sym) && wt > 0 && cp > 0)
+                        captured.Add((sym, wt, cp, mkt));
+                }
+            }
+            catch { return null; }
+
+            if (captured.Count == 0) return null;
+
+            var holdings = new List<PortfolioHoldingCapture>(captured.Count);
+            foreach (var (sym, wt, cp, mkt) in captured)
+            {
+                ct.ThrowIfCancellationRequested();
+                decimal? actualPrice = null;
+                try
+                {
+                    var candles = await provider.GetHistoryAsync(
+                        sym, mkt, rec.TargetDate.AddDays(-10), rec.TargetDate.AddDays(5), ct);
+                    if (candles.Count > 0)
+                    {
+                        var closest = candles
+                            .OrderBy(c => Math.Abs((c.Date - rec.TargetDate).TotalDays))
+                            .First();
+                        actualPrice = closest.Close;
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* 시세 없음 — 다음 평가 주기에 재시도 */ }
+
+                holdings.Add(new PortfolioHoldingCapture(sym, wt, cp, actualPrice, mkt));
+            }
+
+            var navResult = ScenarioTrackerEngine.EvaluatePortfolioNav(holdings, rec.PredictedValue);
+            return navResult.IsValid ? navResult.ActualNavPct : null;
         }
 
         private void WriteEvaluation(

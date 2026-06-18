@@ -1,6 +1,7 @@
 @page "/portfolio/multiverse"
 @inject LocalDatabase Db
 @inject IQuoteProvider Provider
+@inject ForecastVaultService Vault
 @implements IDisposable
 @using StockManager.Common
 @using System.Threading
@@ -155,6 +156,61 @@ else if (_result is { IsValid: false })
     </div>
 }
 
+@* ── 시나리오 캘리브레이션 히트맵 ── *@
+<div style="padding:0 28px 32px">
+    <div class="panel" style="padding:16px 18px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub)">
+                🎯 시나리오 캘리브레이션 히트맵
+            </div>
+            <span class="tag">VAULT</span>
+            <span style="font-size:11px;color:var(--sub)">Multiverse 예측 만기 평가 누적 · 코사인 유사도 기반 점수 [0–100]</span>
+        </div>
+        @if (_calibration is not null && _calibration.Rows.Count > 0)
+        {
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                    <thead>
+                        <tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub);font-size:11px">
+                            <th style="text-align:left;padding:8px 12px">시나리오</th>
+                            <th style="text-align:right;padding:8px 12px">캡처</th>
+                            <th style="text-align:right;padding:8px 12px">평가</th>
+                            <th style="text-align:right;padding:8px 12px">방향 적중%</th>
+                            <th style="text-align:right;padding:8px 12px">평균 점수</th>
+                            <th style="text-align:right;padding:8px 12px">P25</th>
+                            <th style="text-align:right;padding:8px 12px">P50</th>
+                            <th style="text-align:right;padding:8px 12px">P75</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var row in _calibration.Rows)
+                    {
+                        string heatClass = row.AvgMaterializationScore >= 65 ? "up"
+                                         : row.AvgMaterializationScore <= 40 ? "down" : "";
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:7px 12px;font-weight:600">@(row.ScenarioTag)</td>
+                            <td style="text-align:right;padding:7px 12px;color:var(--sub)">@(row.TotalCount)</td>
+                            <td style="text-align:right;padding:7px 12px;color:var(--sub)">@(row.EvaluatedCount)</td>
+                            <td class="@(row.HitRatePct >= 50 ? "up" : "down")" style="text-align:right;padding:7px 12px">@(row.HitRatePct.ToString("0"))%</td>
+                            <td class="@heatClass" style="text-align:right;padding:7px 12px;font-weight:700">@(row.AvgMaterializationScore.ToString("0.0"))</td>
+                            <td style="text-align:right;padding:7px 12px;color:var(--sub)">@(row.P25Score.ToString("0.0"))</td>
+                            <td style="text-align:right;padding:7px 12px">@(row.P50Score.ToString("0.0"))</td>
+                            <td style="text-align:right;padding:7px 12px;color:var(--sub)">@(row.P75Score.ToString("0.0"))</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div style="color:var(--sub);font-size:12px;padding:4px 2px">
+                📭 평가된 Multiverse 예측 없음. ForecastVault에 예측을 캡처하고 만기 평가 후 여기에 점수가 누적됩니다.
+            </div>
+        }
+    </div>
+</div>
+
 @code {
     private MultiverseScenario _scenario = MultiverseScenario.Live;
     private int  _years = 2;
@@ -167,9 +223,13 @@ else if (_result is { IsValid: false })
     private string  _zeroY = "105";
 
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _calCts;
     private bool _disposed;
 
-    protected override async Task OnInitializedAsync() => await LoadAndProject();
+    private ScenarioCalibrationTable? _calibration;
+
+    protected override async Task OnInitializedAsync()
+        => await Task.WhenAll(LoadAndProject(), LoadCalibrationAsync());
 
     private async Task SwitchScenario(MultiverseScenario s)
     {
@@ -315,10 +375,28 @@ else if (_result is { IsValid: false })
         }
     }
 
+    private async Task LoadCalibrationAsync()
+    {
+        var old = _calCts;
+        old?.Cancel();
+        old?.Dispose();
+        var cts = new CancellationTokenSource();
+        _calCts = cts;
+        try
+        {
+            _calibration = await Vault.GetCalibrationTableAsync(cts.Token);
+            if (!_disposed) StateHasChanged();
+        }
+        catch (OperationCanceledException) { }
+        catch { /* 캘리브레이션은 비핵심 UI — 실패 무시 */ }
+    }
+
     public void Dispose()
     {
         _disposed = true;
         _cts?.Cancel();   // ML-001: 진행 중인 Task.Run을 취소해 Dispose 후 StateHasChanged 방지
         _cts?.Dispose();
+        _calCts?.Cancel();
+        _calCts?.Dispose();
     }
 }
