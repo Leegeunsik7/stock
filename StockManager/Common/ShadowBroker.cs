@@ -59,12 +59,13 @@ namespace StockManager.Common
 
     public sealed class ShadowBroker : IBroker
     {
-        private readonly IBroker             _inner;
-        private readonly ShadowNoiseConfig   _config;
-        private readonly Func<RegimeSignal?> _regime;
-        private readonly Random              _rng;
-        private readonly List<ShadowOrder>   _queue = new();
-        private DateTime                     _simClock;
+        private readonly IBroker                   _inner;
+        private readonly ShadowNoiseConfig         _config;
+        private readonly Func<RegimeSignal?>       _regime;
+        private readonly Random                    _rng;
+        private readonly List<ShadowOrder>         _queue = new();
+        private readonly OrderAttestationService?  _gating;
+        private DateTime                           _simClock;
 
         public string Name   => $"Shadow({_inner.Name})";
         public bool   IsLive => false;
@@ -73,14 +74,16 @@ namespace StockManager.Common
         public IReadOnlyList<ShadowOrder> PendingOrders => _queue;
 
         public ShadowBroker(
-            IBroker            inner,
-            ShadowNoiseConfig  config,
-            Func<RegimeSignal?>? regimeProvider = null)
+            IBroker                    inner,
+            ShadowNoiseConfig          config,
+            Func<RegimeSignal?>?       regimeProvider = null,
+            OrderAttestationService?   gating         = null)
         {
             _inner    = inner  ?? throw new ArgumentNullException(nameof(inner));
             _config   = config ?? throw new ArgumentNullException(nameof(config));
             _regime   = regimeProvider ?? (() => null);
             _rng      = new Random(config.Seed);
+            _gating   = gating;
             _simClock = DateTime.UtcNow;   // 페이지 기준 초기값; 테스트는 Tick()으로 재설정
         }
 
@@ -91,6 +94,9 @@ namespace StockManager.Common
             PaperSide side, PaperKind kind, decimal qty,
             decimal limitPrice, decimal currentPrice)
         {
+            // 비상 동결 게이팅 인터셉터 — EmergencyFreeze 시 InvalidOperationException
+            _gating?.AssertNormal("ShadowBroker.Place");
+
             if (!_config.Enabled)
                 return _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
 

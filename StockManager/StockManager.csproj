@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.78.0</Version>
-    <!-- v3.78.0: S12 #1 — 섀도우 샌드박스 브로커 (결정론적 지연·슬리피지·DelayQueue) -->
+    <Version>3.79.0</Version>
+    <!-- v3.79.0: S12 #2 — 거래 증적 감사 추적기 (OrderAttestationLedger·GatingMode·EmergencyFreeze) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

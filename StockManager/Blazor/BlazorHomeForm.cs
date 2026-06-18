@@ -31,6 +31,7 @@ namespace StockManager.Blazor
             services.AddSingleton<AsOfContext>();    // 전역 시점(As-Of) — 글로벌 타임-스크러버
             services.AddSingleton<GlobalIndexService>(); // 전세계 주요 지수 60초 폴링
             services.AddSingleton<ForecastVaultService>(); // S11 #1 — 예측 타임캡슐
+            services.AddSingleton<OrderAttestationService>(); // S12 #2 — 거래 증적 감사 추적기
 
             var view = new BlazorWebView
             {

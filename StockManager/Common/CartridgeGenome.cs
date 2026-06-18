@@ -43,8 +43,12 @@ namespace StockManager.Common
             List<Candle> candles,
             Market market,
             int generations = 4,
-            int populationSize = 12)
+            int populationSize = 12,
+            OrderAttestationService? gating = null)
         {
+            // 비상 동결 게이팅 인터셉터 — EmergencyFreeze 시 InvalidOperationException
+            gating?.AssertNormal("CartridgeGenome.Evolve");
+
             generations    = Math.Clamp(generations,    1, 8);
             populationSize = Math.Clamp(populationSize, 4, 20);
 

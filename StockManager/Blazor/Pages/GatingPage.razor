@@ -1,0 +1,270 @@
+@page "/broker/gating"
+@inject OrderAttestationService Attestation
+@inject ToastService Toasts
+
+<div class="top">
+    <div class="hello">
+        <h1>🔐 증적 감사 추적기 <span class="tag">ORDER ATTESTATION LEDGER</span></h1>
+        <p>로컬 원장과 외부 브로커 잔고를 교차 검증합니다. 1원·1주 미스매치라도 시스템을 즉시 동결합니다.</p>
+    </div>
+</div>
+
+@* ══ 비상 동결 오버레이 ══════════════════════════════════════════════════ *@
+@if (Attestation.Mode == GatingMode.EmergencyFreeze)
+{
+    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(180,20,20,0.94);z-index:9000;display:flex;align-items:center;justify-content:center">
+        <div style="background:#110808;border:2px solid #e34d4d;border-radius:14px;padding:36px 44px;max-width:640px;width:90%;box-shadow:0 0 60px rgba(220,50,50,0.7)">
+            <div style="font-size:30px;font-weight:800;color:#ff4444;margin-bottom:10px">🚨 비상 동결 (EMERGENCY FREEZE)</div>
+            <div style="font-size:13.5px;color:#ffaaaa;margin-bottom:22px;line-height:1.7">
+                원장 미스매치가 감지되어 시스템이 하드 동결 상태입니다.<br/>
+                <b>ShadowBroker 주문</b> 및 <b>CartridgeGenome 자동화</b>가 차단됩니다.<br/>
+                아래에서 차이를 확인한 뒤 <b>서명</b>을 입력하고 수동 정합을 완료하세요.
+            </div>
+            @{
+                var lastFreeze = GetLastFreezEntry();
+            }
+            @if (lastFreeze != null)
+            {
+                <div style="background:#1f0a0a;border:1px solid #7a2020;border-radius:8px;padding:12px 16px;margin-bottom:20px">
+                    <div style="font-size:11px;color:#ff8888;font-weight:700;margin-bottom:8px">미스매치 목록</div>
+                    @foreach (var m in lastFreeze.Mismatches)
+                    {
+                        <div style="font-size:12.5px;color:#ffcccc;margin-bottom:4px;font-family:var(--mono)">
+                            <span style="color:#ff8888;font-weight:600">@(m.Field)</span>
+                            &nbsp;로컬 <b>@(m.LocalValue.ToString("N2"))</b>
+                            &nbsp;vs 브로커 <b>@(m.BrokerValue.ToString("N2"))</b>
+                            &nbsp;차이 <b class="@(m.Delta > 0 ? "up" : "down")">@(m.Delta.ToString("+0.##;-0.##;0"))</b>
+                        </div>
+                    }
+                </div>
+            }
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <input class="srch" style="flex:1;min-width:200px" placeholder="수동 정합 서명 (예: gslee@angtec.com)"
+                       @bind="_signature" />
+                <input class="srch" style="flex:1;min-width:160px" placeholder="비고 (선택)"
+                       @bind="_releaseNote" />
+                <button class="addbtn" style="background:#c0392b" disabled="@string.IsNullOrWhiteSpace(_signature)"
+                        @onclick="DoManualRelease">✅ 정합 완료·동결 해제</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_releaseMsg))
+            {
+                <div style="margin-top:10px;font-size:12px;color:#ffaaaa">@(_releaseMsg)</div>
+            }
+        </div>
+    </div>
+}
+
+@* ══ 상태 배너 ═══════════════════════════════════════════════════════════ *@
+<div style="padding:0 28px 14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    @if (Attestation.Mode == GatingMode.Normal)
+    {
+        <div style="display:flex;align-items:center;gap:8px;background:#0a1f0a;border:1.5px solid #2a7a2a;border-radius:8px;padding:10px 20px">
+            <span style="font-size:18px">✅</span>
+            <div>
+                <div style="font-size:13px;font-weight:700;color:#44cc44">NORMAL — 정합 상태</div>
+                <div style="font-size:11px;color:var(--sub)">주문·자동화 차단 없음</div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div style="display:flex;align-items:center;gap:8px;background:#1f0a0a;border:1.5px solid #e34d4d;border-radius:8px;padding:10px 20px">
+            <span style="font-size:18px">🚨</span>
+            <div>
+                <div style="font-size:13px;font-weight:700;color:#ff4444">EMERGENCY FREEZE — 비상 동결</div>
+                <div style="font-size:11px;color:#ff9999">주문·유전자 진화 전면 차단 중</div>
+            </div>
+        </div>
+    }
+    <div style="margin-left:auto;font-size:12px;color:var(--sub)">
+        감사 이력 <b>@(Attestation.AuditLog.Count)</b>건
+    </div>
+</div>
+
+@* ══ 수동 검증 입력 패널 ═════════════════════════════════════════════════ *@
+<div style="padding:0 28px 16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    @* 로컬 원장 입력 *@
+    <div class="panel" style="padding:16px 18px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:12px">
+            📋 로컬 원장 (Local DB)
+        </div>
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">예수금 (원)</label>
+        <input class="srch" style="width:100%;margin-bottom:10px" type="number" step="1"
+               @bind="_localCash" />
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">
+            보유 종목 (종목코드:수량, 줄 구분)
+        </label>
+        <textarea class="srch" style="width:100%;height:80px;resize:vertical;font-family:var(--mono);font-size:12px"
+                  @bind="_localHoldings" placeholder="005930:10&#10;000660:5"></textarea>
+    </div>
+    @* 브로커 잔고 입력 *@
+    <div class="panel" style="padding:16px 18px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:12px">
+            🌐 브로커 잔고 (외부 API 응답)
+        </div>
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">예수금 (원)</label>
+        <input class="srch" style="width:100%;margin-bottom:10px" type="number" step="1"
+               @bind="_brokerCash" />
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">
+            브로커 보유 (종목코드:수량, 줄 구분)
+        </label>
+        <textarea class="srch" style="width:100%;height:80px;resize:vertical;font-family:var(--mono);font-size:12px"
+                  @bind="_brokerHoldings" placeholder="005930:10&#10;000660:5"></textarea>
+    </div>
+</div>
+
+<div style="padding:0 28px 20px;display:flex;gap:12px;align-items:center">
+    <button class="addbtn" @onclick="DoReconcile">🔍 정합 검증 실행</button>
+    @if (!string.IsNullOrEmpty(_reconcileMsg))
+    {
+        <span style="font-size:12.5px;color:var(--sub)">@(_reconcileMsg)</span>
+    }
+</div>
+
+@* ══ 감사 로그 테이블 ════════════════════════════════════════════════════ *@
+@{
+    var log = Attestation.AuditLog;
+}
+@if (log.Count > 0)
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel" style="padding:16px 18px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+                📜 감사 이력 (최신순)
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+                <thead>
+                    <tr style="color:var(--sub);font-size:11px">
+                        <th style="text-align:left;padding:4px 8px">시각(UTC)</th>
+                        <th style="text-align:center;padding:4px 8px">결과</th>
+                        <th style="text-align:right;padding:4px 8px">미스매치</th>
+                        <th style="text-align:left;padding:4px 8px">서명</th>
+                        <th style="text-align:left;padding:4px 8px">비고</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in log)
+                    {
+                        <tr style="border-top:1px solid var(--line)">
+                            <td style="padding:5px 8px;font-family:var(--mono);font-size:11px;color:var(--sub)">
+                                @(e.Timestamp.ToString("MM-dd HH:mm:ss"))
+                            </td>
+                            <td style="text-align:center;padding:5px 8px">
+                                @if (e.Passed)
+                                { <span class="up" style="font-size:11px">✓ 통과</span> }
+                                else
+                                { <span class="down" style="font-size:11px">✗ 동결</span> }
+                            </td>
+                            <td style="text-align:right;padding:5px 8px;font-family:var(--mono)">
+                                @(e.Mismatches.Count)
+                            </td>
+                            <td style="padding:5px 8px;color:var(--sub);font-size:11.5px">
+                                @(string.IsNullOrEmpty(e.Signature) ? "—" : e.Signature)
+                            </td>
+                            <td style="padding:5px 8px;font-size:12px">@(e.Note)</td>
+                        </tr>
+                        @if (e.Mismatches.Count > 0)
+                        {
+                            <tr style="background:rgba(200,30,30,0.06)">
+                                <td colspan="5" style="padding:4px 24px 6px;font-size:11.5px;color:#cc6666;font-family:var(--mono)">
+                                    @foreach (var m in e.Mismatches)
+                                    {
+                                        <span style="margin-right:18px">
+                                            @(m.Field) 로컬 @(m.LocalValue.ToString("N2")) / 브로커 @(m.BrokerValue.ToString("N2")) Δ@(m.Delta.ToString("+0.##;-0.##;0"))
+                                        </span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    // ── 검증 폼 필드 ─────────────────────────────────────────────────────────
+    private decimal _localCash      = 0m;
+    private decimal _brokerCash     = 0m;
+    private string  _localHoldings  = "";
+    private string  _brokerHoldings = "";
+
+    // ── 동결 해제 폼 ─────────────────────────────────────────────────────────
+    private string  _signature   = "";
+    private string  _releaseNote = "";
+    private string  _releaseMsg  = "";
+    private string  _reconcileMsg = "";
+
+    private void DoReconcile()
+    {
+        _reconcileMsg = "";
+        try
+        {
+            var local  = new LocalState(_localCash,  ParseHoldings(_localHoldings));
+            var broker = new BrokerState(_brokerCash, ParseHoldings(_brokerHoldings));
+            var result = Attestation.Reconcile(local, broker);
+
+            if (result.Passed)
+            {
+                _reconcileMsg = "정합 통과 — 미스매치 없음.";
+                Toasts.Success("정합 통과", "로컬 원장 ↔ 브로커 잔고 일치 확인");
+            }
+            else
+            {
+                _reconcileMsg = $"미스매치 {result.Mismatches.Count}건 — 비상 동결 활성화.";
+                Toasts.Warning("비상 동결", $"미스매치 {result.Mismatches.Count}건 · 주문·자동화 차단");
+            }
+        }
+        catch (Exception ex)
+        {
+            _reconcileMsg = $"오류: {ex.Message}";
+        }
+    }
+
+    private void DoManualRelease()
+    {
+        _releaseMsg = "";
+        if (string.IsNullOrWhiteSpace(_signature))
+        {
+            _releaseMsg = "서명을 입력하세요.";
+            return;
+        }
+        try
+        {
+            Attestation.ManualRelease(_signature, _releaseNote);
+            _signature   = "";
+            _releaseNote = "";
+            Toasts.Success("동결 해제", "수동 정합 서명 확인 — 시스템 정상화");
+        }
+        catch (Exception ex)
+        {
+            _releaseMsg = $"해제 실패: {ex.Message}";
+        }
+    }
+
+    private AttestationAuditEntry? GetLastFreezEntry()
+    {
+        foreach (var e in Attestation.AuditLog)
+            if (!e.Passed) return e;
+        return null;
+    }
+
+    private static IReadOnlyDictionary<string, decimal> ParseHoldings(string raw)
+    {
+        var dict = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw)) return dict;
+        foreach (var line in raw.Split('\n'))
+        {
+            var parts = line.Trim().Split(':');
+            if (parts.Length == 2
+                && !string.IsNullOrWhiteSpace(parts[0])
+                && decimal.TryParse(parts[1].Trim(), out var qty)
+                && qty > 0)
+            {
+                dict[parts[0].Trim()] = qty;
+            }
+        }
+        return dict;
+    }
+}
