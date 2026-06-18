@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.87.0</Version>
-    <!-- v3.87.0: S15 #1 — 제로-할당 TWAP·VWAP 분할 집행 코어 (AlgoModels·TwapVwapExecutor) -->
+    <Version>3.88.0</Version>
+    <!-- v3.88.0: S15 #2 — 크로스-브로커 탄력 라우터 (MultiBrokerRouter) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
