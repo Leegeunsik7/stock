@@ -153,6 +153,30 @@ namespace StockManager.Common
             return entry;
         }
 
+        // ── ForceFreeze: 외부 이벤트(파이프 끊김 등)에 의한 강제 동결 ─────────
+
+        /// <summary>파이프 타임아웃 등 외부 이상 이벤트 시 즉시 EmergencyFreeze.</summary>
+        public AttestationAuditEntry ForceFreeze(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+                reason = "외부 요인에 의한 강제 동결";
+
+            var entry = new AttestationAuditEntry(
+                DateTime.UtcNow,
+                false,
+                Array.Empty<AttestationMismatch>(),
+                "",
+                reason);
+
+            lock (_lock)
+            {
+                _log.Insert(0, entry);
+                TrimLog();
+                _modeInt = (int)GatingMode.EmergencyFreeze;
+            }
+            return entry;
+        }
+
         // ─ 내부 ──────────────────────────────────────────────────────────────
 
         private void TrimLog()

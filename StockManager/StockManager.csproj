@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.83.0</Version>
-    <!-- v3.83.0: S13 #3 — 런타임 가드링·상태 스냅샷 (StateHydrationEngine·MMF·CRC32·HydrationSlot) -->
+    <Version>3.84.0</Version>
+    <!-- v3.84.0: S14 #1 — OpenAPI 통신 추상화 레이어 (BridgeProtocol·KiwoomBridgeClient·KiwoomProxyHost·ForceFreeze) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

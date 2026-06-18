@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!--
+      COM axKHOpenAPI+는 32비트 전용. 이 프로세스는 반드시 x86으로 실행.
+      메인 터미널(64비트 AnyCPU)과 격리되어 COM 크래시가 터미널에 전파되지 않음.
+    -->
+    <PlatformTarget>x86</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StockManager.KiwoomProxy</RootNamespace>
+    <AssemblyName>MS2E.KiwoomProxyHost</AssemblyName>
+    <Version>3.84.0</Version>
+    <!-- v3.84.0: S14 #1 — KiwoomProxyHost (x86 COM 격리 에이전트) -->
+    <Product>MS2-E KiwoomProxy</Product>
+    <Company>Angtec</Company>
+  </PropertyGroup>
+
+  <!--
+    BridgeProtocol 공유 타입: 프로젝트 참조 없이 소스 파일 직접 링크.
+    메인 프로젝트의 Blazor/QuestPDF 의존성을 끌어오지 않는다.
+  -->
+  <ItemGroup>
+    <Compile Include="..\StockManager\Common\BridgeProtocol.cs" />
+  </ItemGroup>
+
+</Project>

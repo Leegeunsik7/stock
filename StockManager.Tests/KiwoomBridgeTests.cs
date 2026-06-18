@@ -1,0 +1,427 @@
+// ============================================================================
+// KiwoomBridgeTests — S14 #1 키움 COM 브릿지 인프라 단위 테스트
+//  · BridgeSerializer: Pack/Unpack 라운드트립, 헤더 파싱, 경계 조건
+//  · StockValidator 확장: ValidateTick / ValidateFill 검증 규칙
+//  · KiwoomBridgeClient: 인-프로세스 파이프 통합, 하트비트 타임아웃, 검증 게이트
+//  · OrderAttestationService: ForceFreeze 추가 메서드
+// ============================================================================
+using System;
+using System.Collections.Generic;
+using System.IO.Pipes;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using StockManager.Common;
+using Xunit;
+
+namespace StockManager.Tests
+{
+    public class KiwoomBridgeTests
+    {
+        // ════════════════════════════════════════════════════════════════════
+        // 1. BridgeSerializer — Pack/Unpack 라운드트립
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void Pack_TickPayload_RoundTrip()
+        {
+            var orig = new TickPayload { SymbolCode = 5930, Price = 85_000.0, Volume = 12_345, ChangeRate = 1.23, TimestampTicks = 637_000_000_000L };
+            var buf  = BridgeSerializer.Pack(BridgeMessageType.RealtimeTick, in orig);
+            BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out var type, out int plen);
+            var restored = BridgeSerializer.Unpack<TickPayload>(buf.AsSpan(BridgeSerializer.HeaderSize, plen));
+
+            Assert.Equal(BridgeMessageType.RealtimeTick, type);
+            Assert.Equal(orig.SymbolCode,     restored.SymbolCode);
+            Assert.Equal(orig.Price,          restored.Price,      precision: 10);
+            Assert.Equal(orig.Volume,         restored.Volume);
+            Assert.Equal(orig.ChangeRate,     restored.ChangeRate, precision: 10);
+            Assert.Equal(orig.TimestampTicks, restored.TimestampTicks);
+        }
+
+        [Fact]
+        public void Pack_FillPayload_RoundTrip()
+        {
+            var orig = new FillPayload { OrderId = 99, SymbolCode = 5930, FillPrice = 84_950.0, FillQty = 10, Side = 1, TimestampTicks = 1L };
+            var buf  = BridgeSerializer.Pack(BridgeMessageType.OrderFilled, in orig);
+            BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out _, out int plen);
+            var restored = BridgeSerializer.Unpack<FillPayload>(buf.AsSpan(BridgeSerializer.HeaderSize, plen));
+
+            Assert.Equal(orig.OrderId,    restored.OrderId);
+            Assert.Equal(orig.FillPrice,  restored.FillPrice, precision: 10);
+            Assert.Equal(orig.FillQty,    restored.FillQty);
+            Assert.Equal(orig.Side,       restored.Side);
+        }
+
+        [Fact]
+        public void Pack_AccountPayload_RoundTrip()
+        {
+            var orig = new AccountPayload { Deposit = 5_000_000L, Equity = 5_200_000L, UnfilledCount = 3L };
+            var buf  = BridgeSerializer.Pack(BridgeMessageType.AccountState, in orig);
+            BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out _, out int plen);
+            var r = BridgeSerializer.Unpack<AccountPayload>(buf.AsSpan(BridgeSerializer.HeaderSize, plen));
+
+            Assert.Equal(orig.Deposit,       r.Deposit);
+            Assert.Equal(orig.Equity,        r.Equity);
+            Assert.Equal(orig.UnfilledCount, r.UnfilledCount);
+        }
+
+        [Fact]
+        public void PackOrderRequest_RoundTrip()
+        {
+            var orig = new OrderRequest { Type = OrderRequestType.Buy, OrderId = 42L, SymbolCode = 66570L, Price = 35_000.0, Quantity = 5L, GenomeId = 777L };
+            var buf  = BridgeSerializer.PackOrderRequest(in orig);
+            BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out var type, out int plen);
+            var r = BridgeSerializer.Unpack<OrderRequest>(buf.AsSpan(BridgeSerializer.HeaderSize, plen));
+
+            Assert.Equal(BridgeMessageType.OrderRequest, type);
+            Assert.Equal(orig.Type,       r.Type);
+            Assert.Equal(orig.OrderId,    r.OrderId);
+            Assert.Equal(orig.SymbolCode, r.SymbolCode);
+            Assert.Equal(orig.Price,      r.Price,  precision: 10);
+            Assert.Equal(orig.Quantity,   r.Quantity);
+            Assert.Equal(orig.GenomeId,   r.GenomeId);
+        }
+
+        [Fact]
+        public void PackHeartbeat_RoundTrip_SequencePreserved()
+        {
+            long seq = 12_345_678L;
+            var  buf = BridgeSerializer.PackHeartbeat(seq);
+            BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out var type, out int plen);
+            long restored = BitConverter.ToInt64(buf, BridgeSerializer.HeaderSize);
+
+            Assert.Equal(BridgeMessageType.Heartbeat, type);
+            Assert.Equal(sizeof(long), plen);
+            Assert.Equal(seq, restored);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 2. TryParseHeader — 경계 조건
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void TryParseHeader_ValidTick_Succeeds()
+        {
+            var buf = BridgeSerializer.Pack(BridgeMessageType.RealtimeTick, new TickPayload { Price = 1.0 });
+            var ok  = BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out var t, out int plen);
+            Assert.True(ok);
+            Assert.Equal(BridgeMessageType.RealtimeTick, t);
+            Assert.Equal(Unsafe.SizeOf<TickPayload>(), plen);
+        }
+
+        [Fact]
+        public void TryParseHeader_ShortBuffer_ReturnsFalse()
+        {
+            var ok = BridgeSerializer.TryParseHeader(new byte[3], out _, out _);
+            Assert.False(ok);
+        }
+
+        [Fact]
+        public void TryParseHeader_InvalidType_ReturnsFalse()
+        {
+            var buf = new byte[BridgeSerializer.HeaderSize];
+            BitConverter.TryWriteBytes(buf.AsSpan(0), 99);  // 99는 정의되지 않은 타입
+            BitConverter.TryWriteBytes(buf.AsSpan(4), 8);
+            Assert.False(BridgeSerializer.TryParseHeader(buf, out _, out _));
+        }
+
+        [Fact]
+        public void FormatSymbol_Pads_ToSixDigits()
+        {
+            Assert.Equal("005930", BridgeSerializer.FormatSymbol(5930L));
+            Assert.Equal("000001", BridgeSerializer.FormatSymbol(1L));
+            Assert.Equal("999999", BridgeSerializer.FormatSymbol(999999L));
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 3. StockValidator 확장 — ValidateTick / ValidateFill
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void ValidateTick_ValidData_Passes()
+        {
+            var t = new TickPayload { SymbolCode = 5930, Price = 85_000, Volume = 1000 };
+            Assert.True(StockValidator.ValidateTick(t).IsValid);
+        }
+
+        [Fact]
+        public void ValidateTick_NegativePrice_Fails()
+        {
+            var t = new TickPayload { SymbolCode = 5930, Price = -1.0, Volume = 0 };
+            Assert.False(StockValidator.ValidateTick(t).IsValid);
+        }
+
+        [Fact]
+        public void ValidateTick_ZeroPrice_Fails()
+        {
+            var t = new TickPayload { SymbolCode = 5930, Price = 0.0, Volume = 100 };
+            Assert.False(StockValidator.ValidateTick(t).IsValid);
+        }
+
+        [Fact]
+        public void ValidateTick_ZeroSymbolCode_Fails()
+        {
+            var t = new TickPayload { SymbolCode = 0, Price = 10_000 };
+            Assert.False(StockValidator.ValidateTick(t).IsValid);
+        }
+
+        [Fact]
+        public void ValidateTick_SymbolCodeOverMax_Fails()
+        {
+            var t = new TickPayload { SymbolCode = 1_000_000, Price = 100 };
+            Assert.False(StockValidator.ValidateTick(t).IsValid);
+        }
+
+        [Fact]
+        public void ValidateFill_ValidBuy_Passes()
+        {
+            var f = new FillPayload { SymbolCode = 5930, FillPrice = 85_000, FillQty = 10, Side = 1 };
+            Assert.True(StockValidator.ValidateFill(f).IsValid);
+        }
+
+        [Fact]
+        public void ValidateFill_InvalidSide_Fails()
+        {
+            var f = new FillPayload { SymbolCode = 5930, FillPrice = 85_000, FillQty = 10, Side = 0 };
+            Assert.False(StockValidator.ValidateFill(f).IsValid);
+        }
+
+        [Fact]
+        public void ValidateFill_NegativeFillPrice_Fails()
+        {
+            var f = new FillPayload { SymbolCode = 5930, FillPrice = -1.0, FillQty = 5, Side = -1 };
+            Assert.False(StockValidator.ValidateFill(f).IsValid);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 4. OrderAttestationService.ForceFreeze
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void ForceFreeze_SetsEmergencyFreezeMode()
+        {
+            var svc = new OrderAttestationService();
+            Assert.Equal(GatingMode.Normal, svc.Mode);
+            svc.ForceFreeze("테스트 강제 동결");
+            Assert.Equal(GatingMode.EmergencyFreeze, svc.Mode);
+        }
+
+        [Fact]
+        public void ForceFreeze_LogsEntry()
+        {
+            var svc = new OrderAttestationService();
+            svc.ForceFreeze("파이프 타임아웃");
+            Assert.Single(svc.AuditLog);
+            Assert.False(svc.AuditLog[0].Passed);
+            Assert.Contains("파이프", svc.AuditLog[0].Note);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 5. KiwoomBridgeClient — 인-프로세스 파이프 통합 테스트
+        // ════════════════════════════════════════════════════════════════════
+
+        private static string UniquePipe() => $"ms2e_test_{Guid.NewGuid():N}";
+
+        // 서버 측에서 정확히 N바이트 읽는 헬퍼
+        private static async Task<bool> ReadExactAsync(PipeStream pipe, byte[] buf, CancellationToken ct = default)
+        {
+            int total = 0;
+            while (total < buf.Length)
+            {
+                int n = await pipe.ReadAsync(buf.AsMemory(total), ct);
+                if (n == 0) return false;
+                total += n;
+            }
+            return true;
+        }
+
+        [Fact]
+        public async Task BridgeClient_ValidTick_FiresTickReceived()
+        {
+            var pipeName = UniquePipe();
+            var tcs      = new TaskCompletionSource<TickPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+
+                var tick = new TickPayload { SymbolCode = 5930, Price = 85_000.0, Volume = 1_000, ChangeRate = 1.5, TimestampTicks = 1L };
+                await srv.WriteAsync(BridgeSerializer.Pack(BridgeMessageType.RealtimeTick, in tick));
+                await srv.FlushAsync();
+                await Task.Delay(500);  // 클라이언트가 읽을 때까지 대기
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 10_000);
+            client.TickReceived += t => tcs.TrySetResult(t);
+            await client.ConnectAsync();
+            var loopTask = client.StartAsync();
+
+            var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(5930L,   received.SymbolCode);
+            Assert.Equal(85_000.0, received.Price, precision: 8);
+            Assert.Equal(1_000L,  received.Volume);
+
+            client.Dispose();
+            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public async Task BridgeClient_InvalidTick_Dropped_EventNotFired()
+        {
+            var pipeName = UniquePipe();
+            bool fired   = false;
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+
+                var badTick = new TickPayload { SymbolCode = 5930, Price = -100.0 };  // 음수 가격
+                await srv.WriteAsync(BridgeSerializer.Pack(BridgeMessageType.RealtimeTick, in badTick));
+                await srv.FlushAsync();
+                await Task.Delay(400);
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 10_000);
+            client.TickReceived += _ => fired = true;
+            await client.ConnectAsync();
+            var loopTask = client.StartAsync();
+
+            await Task.Delay(500);  // 충분히 대기
+            Assert.False(fired, "음수 가격 틱은 이벤트를 발행해서는 안 됩니다.");
+
+            client.Dispose();
+            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public async Task BridgeClient_HeartbeatTimeout_TriggersProxyLost()
+        {
+            var pipeName = UniquePipe();
+            var proxyLostTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+                await Task.Delay(3_000);  // 하트비트 없이 연결만 유지
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 200);
+            client.ProxyLost += () => proxyLostTcs.TrySetResult(true);
+            await client.ConnectAsync();
+            var loopTask = client.StartAsync();
+
+            var fired = await proxyLostTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(fired);
+            Assert.False(client.IsProxyAlive);
+
+            client.Dispose();
+            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public async Task BridgeClient_HeartbeatReceived_PreventsTimeout()
+        {
+            var pipeName = UniquePipe();
+            bool proxyLostFired = false;
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+                // 200ms마다 하트비트 전송 — 타임아웃(500ms) 방지
+                for (int i = 0; i < 5; i++)
+                {
+                    await srv.WriteAsync(BridgeSerializer.PackHeartbeat(i));
+                    await srv.FlushAsync();
+                    await Task.Delay(100);
+                }
+                await Task.Delay(300);
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 500);
+            client.ProxyLost += () => proxyLostFired = true;
+            await client.ConnectAsync();
+            var loopTask = client.StartAsync();
+
+            await Task.Delay(600);  // 하트비트를 받는 동안 대기
+            Assert.False(proxyLostFired, "하트비트가 수신되는 동안 ProxyLost가 발행되어서는 안 됩니다.");
+            Assert.True(client.IsProxyAlive);
+
+            client.Dispose();
+            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public async Task BridgeClient_SendOrder_ReceivedByServer()
+        {
+            var pipeName = UniquePipe();
+            var reqTcs   = new TaskCompletionSource<OrderRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+
+                var header = new byte[BridgeSerializer.HeaderSize];
+                if (!await ReadExactAsync(srv, header)) return;
+                if (!BridgeSerializer.TryParseHeader(header, out var type, out int plen)) return;
+                if (type != BridgeMessageType.OrderRequest) return;
+
+                var payload = new byte[plen];
+                if (!await ReadExactAsync(srv, payload)) return;
+                reqTcs.TrySetResult(BridgeSerializer.Unpack<OrderRequest>(payload));
+                await Task.Delay(300);
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 10_000);
+            await client.ConnectAsync();
+            var loopTask = client.StartAsync();
+
+            var order = new OrderRequest { Type = OrderRequestType.Buy, OrderId = 7L, SymbolCode = 66570L, Price = 35_000.0, Quantity = 3L, GenomeId = 42L };
+            await client.SendOrderAsync(order);
+
+            var received = await reqTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(OrderRequestType.Buy, received.Type);
+            Assert.Equal(7L,       received.OrderId);
+            Assert.Equal(66570L,   received.SymbolCode);
+            Assert.Equal(35_000.0, received.Price, precision: 8);
+            Assert.Equal(3L,       received.Quantity);
+            Assert.Equal(42L,      received.GenomeId);
+
+            client.Dispose();
+            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // 6. 타입·크기 불변식
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void BridgeEnvelope_IsValueType()
+            => Assert.True(typeof(BridgeEnvelope).IsValueType);
+
+        [Fact]
+        public void TickPayload_SizeIs_40B()
+            => Assert.Equal(40, Unsafe.SizeOf<TickPayload>());
+
+        [Fact]
+        public void FillPayload_SizeIs_48B()
+            => Assert.Equal(48, Unsafe.SizeOf<FillPayload>());
+
+        [Fact]
+        public void AccountPayload_SizeIs_24B()
+            => Assert.Equal(24, Unsafe.SizeOf<AccountPayload>());
+
+        [Fact]
+        public void OrderRequest_SizeIs_48B()
+            => Assert.Equal(48, Unsafe.SizeOf<OrderRequest>());
+    }
+}
