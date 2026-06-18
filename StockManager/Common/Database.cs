@@ -154,6 +154,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
         //  발생하면 지수 백오프로 재시도. 단일 _conn + lock으로 프로세스 내 직렬화 유지.
         //  (백오프 sleep은 lock 밖에서 수행 → 대기 중 다른 스레드를 막지 않음)
         private const int MaxRetries = 5;
+        private SqliteTransaction? _activeTx;  // RunInTransaction 중 활성 트랜잭션
 
         private TResult WithRetry<TResult>(Func<SqliteCommand, TResult> body,
             string sql, Dictionary<string, object>? pars)
@@ -167,6 +168,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
                     {
                         using var cmd = _conn.CreateCommand();
                         cmd.CommandText = sql;
+                        if (_activeTx != null) cmd.Transaction = _activeTx;
                         if (pars != null)
                             foreach (var kv in pars) cmd.Parameters.AddWithValue(kv.Key, kv.Value ?? DBNull.Value);
                         return body(cmd);
@@ -178,6 +180,31 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
                     attempt++;
                     Log.Warn($"[DB] 잠금 재시도 {attempt}/{MaxRetries} (code {ex.SqliteErrorCode})");
                     Thread.Sleep(40 * (1 << (attempt - 1)));   // 40·80·160·320·640ms
+                }
+            }
+        }
+
+        // RunInTransaction: lock 보유 중 work() 내 Execute() 재진입 — C# Monitor 재진입 허용.
+        // work()에서 Execute()를 호출하면 _activeTx를 통해 동일 트랜잭션에 참여.
+        public void RunInTransaction(Action work)
+        {
+            lock (_lock)
+            {
+                using var tx = _conn.BeginTransaction();
+                _activeTx = tx;
+                try
+                {
+                    work();
+                    tx.Commit();
+                }
+                catch
+                {
+                    tx.Rollback();
+                    throw;
+                }
+                finally
+                {
+                    _activeTx = null;
                 }
             }
         }

@@ -1,0 +1,285 @@
+@page "/intel/bridge"
+@inject LocalDatabase Db
+@inject ForecastVaultService Vault
+@inject ToastService Toasts
+@using System.IO
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello">
+        <h1>🌉 포터블 브릿지 <span class="tag">PORTABLE BRIDGE</span></h1>
+        <p>전략 카트리지와 예측 스냅샷을 AES-256 암호화 <b>.qbridge</b> 파일로 내보내고 가져옵니다.
+           복호화 즉시 증명서 전수 검증 → 실패 시 전체 롤백. 외부 의존 0.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 28px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
+
+    @* ══ 내보내기 패널 ══════════════════════════════════════════════════════ *@
+    <div class="panel" style="padding:20px 22px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:14px">
+            📤 내보내기 (EXPORT)
+        </div>
+
+        @* 전략 요약 *@
+        <div style="background:var(--card-bg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:12px">
+            <div style="font-size:11px;color:var(--sub);margin-bottom:4px">전략 카트리지</div>
+            <div style="font-size:13.5px;font-weight:600">
+                @(_exportStratCount)개 전략
+                <span style="font-size:11px;color:var(--sub);font-weight:400">
+                    (cartridges/ 폴더 내 .ms2cart 파일)
+                </span>
+            </div>
+        </div>
+
+        @* 예측 요약 *@
+        <div style="background:var(--card-bg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+            <div style="font-size:11px;color:var(--sub);margin-bottom:4px">예측 스냅샷</div>
+            <div style="font-size:13.5px;font-weight:600">
+                @(_exportForecastCount)건
+                <span style="font-size:11px;color:var(--sub);font-weight:400">(최근 500건)</span>
+            </div>
+        </div>
+
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">비밀번호 (AES-256)</label>
+        <input class="srch" type="password" style="width:100%;margin-bottom:10px"
+               placeholder="암호화 비밀번호" @bind="_exportPw" />
+
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">저장 경로</label>
+        <input class="srch" style="width:100%;margin-bottom:14px;font-size:11.5px"
+               @bind="_exportPath" />
+
+        <button class="addbtn"
+                disabled="@(string.IsNullOrWhiteSpace(_exportPw) || _exportStratCount + _exportForecastCount == 0)"
+                @onclick="DoExport">
+            📤 내보내기
+        </button>
+
+        @if (!string.IsNullOrEmpty(_exportMsg))
+        {
+            <div style="margin-top:10px;font-size:12px;color:@(_exportOk ? "var(--up)" : "#e34d4d")">
+                @(_exportMsg)
+            </div>
+        }
+    </div>
+
+    @* ══ 가져오기 패널 ══════════════════════════════════════════════════════ *@
+    <div class="panel" style="padding:20px 22px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:14px">
+            📥 가져오기 (IMPORT)
+        </div>
+
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:6px">
+            .qbridge 파일 선택
+        </label>
+        <InputFile OnChange="OnFileSelected" accept=".qbridge"
+                   style="display:block;margin-bottom:4px;font-size:12.5px;color:var(--ink)" />
+        @if (!string.IsNullOrEmpty(_importFileName))
+        {
+            <div style="font-size:11px;color:var(--sub);margin-bottom:12px;font-family:var(--mono)">
+                ✓ @(_importFileName)
+                (@(((_importBytes?.Length ?? 0) / 1024.0).ToString("F1")) KB)
+            </div>
+        }
+        else
+        {
+            <div style="height:20px;margin-bottom:12px"></div>
+        }
+
+        <label class="sub" style="font-size:11px;display:block;margin-bottom:4px">비밀번호</label>
+        <input class="srch" type="password" style="width:100%;margin-bottom:16px"
+               placeholder="복호화 비밀번호" @bind="_importPw" />
+
+        <button class="addbtn"
+                disabled="@(_importBytes == null || string.IsNullOrWhiteSpace(_importPw) || _importing)"
+                @onclick="DoImport">
+            @(_importing ? "검증 중…" : "📥 가져오기")
+        </button>
+
+        @if (_importResult != null)
+        {
+            <div style="margin-top:14px;background:@(_importResult.Success ? "rgba(20,120,20,0.12)" : "rgba(180,20,20,0.12)");
+                        border:1px solid @(_importResult.Success ? "#2a7a2a" : "#e34d4d");
+                        border-radius:8px;padding:12px 14px">
+                <div style="font-size:12.5px;font-weight:700;color:@(_importResult.Success ? "var(--up)" : "#ff4444");margin-bottom:6px">
+                    @(_importResult.Success ? "✅ 임포트 완료" : "❌ 임포트 실패")
+                </div>
+                @if (_importResult.Success)
+                {
+                    <div style="font-size:12px;color:var(--sub);line-height:1.7">
+                        전략 <b>@(_importResult.StrategiesImported)</b>개 저장<br/>
+                        예측 <b>@(_importResult.ForecastsImported)</b>건 저장
+                    </div>
+                }
+                <div style="font-size:11.5px;color:var(--sub);margin-top:6px">
+                    @(_importResult.Note)
+                </div>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_importError))
+        {
+            <div style="margin-top:14px;background:rgba(180,20,20,0.12);border:1px solid #e34d4d;
+                        border-radius:8px;padding:12px 14px">
+                <div style="font-size:12.5px;font-weight:700;color:#ff4444;margin-bottom:4px">❌ 오류</div>
+                <div style="font-size:12px;color:#ffaaaa;word-break:break-all">@(_importError)</div>
+            </div>
+        }
+    </div>
+</div>
+
+@* ══ 포맷 안내 ══════════════════════════════════════════════════════════════ *@
+<div style="padding:0 28px 40px">
+    <div class="panel" style="padding:16px 20px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+            🔒 .qbridge 파일 포맷
+        </div>
+        <div style="font-size:12px;color:var(--sub);line-height:1.8;font-family:var(--mono)">
+            [Magic 8B: "QBRIDGE1"] · [Salt 16B] · [IV 16B] · [AES-256-CBC 암호문]<br/>
+            키 유도: PBKDF2-SHA256 · 100,000회 반복 · 16B 솔트 → 32B 키<br/>
+            페이로드: JSON &#123; schemaVersion, exportedAt, strategies[], forecasts[] &#125;<br/>
+            전략 검증: CartridgeEngine.VerifyStrategy() — 결정론 백테스트 증명서 재실행<br/>
+            원자 머지: RunInTransaction — 1건 실패 시 전체 롤백
+        </div>
+    </div>
+</div>
+
+@code {
+    // ── 내보내기 ─────────────────────────────────────────────────────────────
+    private int    _exportStratCount    = 0;
+    private int    _exportForecastCount = 0;
+    private string _exportPw            = "";
+    private string _exportPath          = "";
+    private string _exportMsg           = "";
+    private bool   _exportOk            = false;
+
+    private List<CartStrategy>   _exportStrategies = new();
+    private List<ForecastRecord> _exportForecasts  = new();
+
+    // ── 가져오기 ─────────────────────────────────────────────────────────────
+    private IBrowserFile?      _importFile     = null;
+    private byte[]?            _importBytes    = null;
+    private string             _importFileName = "";
+    private string             _importPw       = "";
+    private BridgeImportResult? _importResult  = null;
+    private string             _importError    = "";
+    private bool               _importing      = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _exportPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            $"bridge-export.qbridge");
+
+        await LoadExportDataAsync();
+    }
+
+    private async Task LoadExportDataAsync()
+    {
+        // 전략: cartridges/ 폴더의 .ms2cart 파일 → 전략 목록 수집
+        _exportStrategies = LoadCartridgeStrategies();
+        _exportStratCount = _exportStrategies.Count;
+
+        // 예측: ForecastVault 최근 500건
+        try
+        {
+            _exportForecasts  = await Vault.GetRecentAsync(500);
+            _exportForecastCount = _exportForecasts.Count;
+        }
+        catch { _exportForecastCount = 0; }
+    }
+
+    private static List<CartStrategy> LoadCartridgeStrategies()
+    {
+        var list = new List<CartStrategy>();
+        var dir  = CartridgeService.Dir;
+        if (!Directory.Exists(dir)) return list;
+        foreach (var file in Directory.GetFiles(dir, "*.ms2cart"))
+        {
+            try
+            {
+                var cart = JsonSerializer.Deserialize<Cartridge>(
+                    File.ReadAllText(file),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (cart?.Strategies != null) list.AddRange(cart.Strategies);
+            }
+            catch { /* 손상 파일 건너뜀 */ }
+        }
+        return list;
+    }
+
+    private void DoExport()
+    {
+        _exportMsg = "";
+        _exportOk  = false;
+        try
+        {
+            var bytes = PortableBridgeEngine.Export(
+                _exportStrategies, _exportForecasts, _exportPw);
+            var dir = System.IO.Path.GetDirectoryName(_exportPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllBytes(_exportPath, bytes);
+            _exportOk  = true;
+            _exportMsg = $"저장 완료: {_exportPath}  ({bytes.Length / 1024.0:F1} KB)";
+            Toasts.Success("포터블 브릿지 내보내기",
+                $"전략 {_exportStratCount}개 + 예측 {_exportForecastCount}건 → {_exportPath}");
+        }
+        catch (Exception ex)
+        {
+            _exportMsg = $"내보내기 실패: {ex.Message}";
+            Toasts.Warning("내보내기 실패", ex.Message);
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _importFile     = e.File;
+        _importFileName = e.File.Name;
+        _importBytes    = null;
+        _importResult   = null;
+        _importError    = "";
+
+        try
+        {
+            using var ms = new System.IO.MemoryStream();
+            await e.File.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024).CopyToAsync(ms);
+            _importBytes = ms.ToArray();
+        }
+        catch (Exception ex)
+        {
+            _importError    = $"파일 읽기 실패: {ex.Message}";
+            _importFileName = "";
+        }
+    }
+
+    private async Task DoImport()
+    {
+        if (_importBytes == null || string.IsNullOrWhiteSpace(_importPw)) return;
+        _importing    = true;
+        _importResult = null;
+        _importError  = "";
+        StateHasChanged();
+
+        try
+        {
+            var bytes = _importBytes;
+            var pw    = _importPw;
+            var db    = Db;
+            var result = await Task.Run(() =>
+                PortableBridgeEngine.Import(bytes, pw, db));
+            _importResult = result;
+            Toasts.Success("포터블 브릿지 가져오기",
+                $"전략 {result.StrategiesImported}개 + 예측 {result.ForecastsImported}건 저장");
+        }
+        catch (Exception ex)
+        {
+            _importError = ex.Message;
+            Toasts.Warning("가져오기 실패", ex.Message);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+}
