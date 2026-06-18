@@ -60,6 +60,7 @@
                             <td>
                                 <b style="font-size:12.5px">@e.Spec.Title</b>
                                 <div class="sub" style="font-size:11px">@StrategyCompiler.Describe(e.Spec)</div>
+                                <div class="sub" style="font-size:10.5px;opacity:.78;margin-top:2px" title="@e.Lineage">🧬 @e.Lineage</div>
                             </td>
                             <td><span class="pill" style="background:rgba(79,91,213,.15);color:var(--accent)">@e.Origin</span></td>
                             <td class="sub">G@(e.Generation)</td>
@@ -139,16 +140,23 @@
     private List<StrategySpec> LoadSeeds()
     {
         var specs = new List<StrategySpec>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);   // 중복 스펙 제거
         foreach (var path in CartridgeService.ListFiles())
         {
             if (!CartridgeService.TryImport(path, out var cart, out _) || cart == null) continue;
+            // 서명 검증 통과분만 유전자 풀에 투입 (무신뢰 DNA 차단 — 공급망/환각 방화벽)
+            if (!CartridgeEngine.Verify(cart).SignatureOk) continue;
             // MA Cross 전략 → FromMaCross로 StrategySpec 재구성
-            foreach (var s in cart.Strategies)
-                specs.Add(StrategyCompiler.FromMaCross(s.Short, s.Long));
+            foreach (var s in cart.Strategies ?? Enumerable.Empty<CartStrategy>())
+            {
+                var spec = StrategyCompiler.FromMaCross(s.Short, s.Long);
+                if (seen.Add(spec.Id)) specs.Add(spec);
+            }
             // Genome/Compiler가 저장한 full spec (CartPrompt 형식)
-            foreach (var p in cart.Prompts)
-                if (p.Id.StartsWith("strategy-spec:v1:", StringComparison.Ordinal)
-                    && StrategyCompiler.TryParseCanonical(p.Template, out var spec) && spec != null)
+            foreach (var p in cart.Prompts ?? Enumerable.Empty<CartPrompt>())
+                if (!string.IsNullOrEmpty(p.Id) && p.Id.StartsWith("strategy-spec:v1:", StringComparison.Ordinal)
+                    && StrategyCompiler.TryParseCanonical(p.Template, out var spec) && spec != null
+                    && seen.Add(spec.Id))
                     specs.Add(spec);
         }
         return specs;
@@ -168,7 +176,7 @@
                 strategies.Add(CartridgeEngine.Attest($"MA {sp}/{lp}", sp, lp, 7));
             var cart = CartridgeService.BuildSigned(Db,
                 $"진화전략 {e.Spec.Id[..4]}",
-                $"CartridgeGenome가 {_generations}세대 진화로 발굴한 전략. OOS Sharpe {e.Sharpe:0.00}.",
+                $"CartridgeGenome {_generations}세대 진화 산물. 족보: {e.Lineage}. OOS Sharpe {e.Sharpe:0.00}, 수익률 {e.TotalReturn:+0.0;-0.0;0.0}%.",
                 strategies, macros: new List<CartMacro>(), prompts: prompts);
             var file = CartridgeService.ExportToFile(cart);
             _signMsg = $"카트리지 저장: {System.IO.Path.GetFileName(file)}";
