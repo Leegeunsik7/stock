@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.81.0</Version>
-    <!-- v3.81.0: S13 #1 — 제로-할당 틱 파이프라인 (ZeroAllocTickEngine·CandleFrame·BacktestFast) -->
+    <Version>3.82.0</Version>
+    <!-- v3.82.0: S13 #2 — 선형 정렬 인-메모리 캐시 (LinearQuoteCache·SymbolDescriptor·이진탐색) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
