@@ -169,7 +169,7 @@ namespace StockManager.Tests
             Assert.True(ok);
             Assert.StartsWith("ALGO-", msg);
 
-            await Task.Delay(250);   // 슬라이스 5 × 1ms + 버퍼
+            await Task.Delay(800);   // 여유 있는 대기: 5 × 1ms + 스케줄러 지연 허용
 
             Assert.Equal(5, spy.Calls.Count);
             Assert.Equal(100m, spy.Calls.Sum(c => c.Qty));
@@ -180,32 +180,25 @@ namespace StockManager.Tests
         {
             var spy = new SpyBroker();
 
-            // 3번째 슬라이스 이후 취소
-            using var cts = new CancellationTokenSource();
-            int fireCount = 0;
-
+            // 슬라이스 간격 20ms — 취소 전 3-4개만 발사되도록 설계
             var executor = new TwapVwapExecutor(
                 spy,
-                delayFactory: async (ms, ct) =>
-                {
-                    await Task.Delay(5, ct);      // 실제 5ms 대기
-                    if (Interlocked.Increment(ref fireCount) == 3)
-                        cts.Cancel();
-                })
+                delayFactory: (ms, ct) => Task.Delay(20, ct))
             {
                 DefaultConfig = new AlgoConfig { MinQty = 10m, Slices = 10, Style = AlgoStyle.Twap }
             };
 
-            executor.Place(PaperAsset.Stock, "005930", "삼성전자",
+            var (_, msg) = executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, qty: 100m, limitPrice: 85_000m, currentPrice: 0m);
 
-            // TwapVwapExecutor 자체 CTS 가 아닌 delayFactory 의 cts 를 통해 취소를 시뮬레이션.
-            // 단순화: 일정 시간 후 점검.
-            await Task.Delay(150);
+            // 3-4개 발사 예상 시점(70ms)에 executor.Cancel 호출
+            await Task.Delay(70);
+            executor.Cancel(msg);   // 내부 per-algo CTS 취소
 
-            // 10 슬라이스 전체가 발사되지 않았음을 확인 (5ms × 10 = 50ms 이상 걸리나,
-            // 취소 전 3-4개가 발사된 상태에서 OperationCanceledException 으로 중단)
-            Assert.True(spy.Calls.Count < 10, $"기대 < 10, 실제 {spy.Calls.Count}");
+            // 추가 슬라이스가 발사되지 않도록 기다림
+            await Task.Delay(200);
+
+            Assert.InRange(spy.Calls.Count, 1, 9);  // 전체 10개 미만
         }
 
         private static Task FastDelay(int _, CancellationToken ct)
