@@ -1,0 +1,268 @@
+@page "/intel/committee"
+@inject IQuoteProvider Provider
+@inject AiService Ai
+@inject SymbolContext SymCtx
+@implements IDisposable
+@using StockManager.Common
+@using System.Threading
+
+<div class="top">
+    <div class="hello">
+        <h1>⚖️ 가상 퀀트 위원회 <span class="tag">QUANT COMMITTEE</span></h1>
+        <p><b>C# 결정론 팩트 시트</b>를 근거로 🐂 Bull·🐻 Bear·⚖️ CRO 세 페르소나가 평행 심의합니다. 모든 의견은 텍스트 전용이며 C# 상태를 변경하지 않습니다 (환각 방화벽).</p>
+    </div>
+</div>
+
+@* ── Step 1: 팩트 시트 조립 ── *@
+<div class="panel" style="margin:0 28px 16px;padding:18px 20px">
+    <div style="font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:12px">STEP 1 — 팩트 시트 조립 (순수 C# · 결정론)</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+        <select class="srch" @bind="_years" style="width:80px">
+            <option value="1">1년</option>
+            <option value="2">2년</option>
+            <option value="3">3년</option>
+            <option value="5">5년</option>
+        </select>
+        <button class="addbtn" disabled="@(_busy || _convening)" @onclick="BuildFactSheet">
+            @(_busy ? "조립 중…" : "📊 팩트 시트 조립")
+        </button>
+        @if (!string.IsNullOrEmpty(_bmLabel))
+        {
+            <span class="sub" style="font-size:11.5px">벤치마크: @_bmLabel</span>
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(_msg))
+    {
+        <div style="margin-top:10px;font-size:12.5px;color:var(--sub)">@_msg</div>
+    }
+</div>
+
+@* ── 팩트 시트 표시 (LLM에 무엇을 줄지 투명 공개) ── *@
+@if (_factSheet != null)
+{
+    <div class="panel" style="margin:0 28px 16px;padding:18px 20px">
+        <div style="font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--sub);margin-bottom:10px">
+            📋 팩트 시트 — 위원회 근거 자료 (투명 공개)
+        </div>
+        <pre style="font-size:12px;line-height:1.65;color:var(--ink);white-space:pre-wrap;margin:0">@CommitteeEngine.FormatFactSheet(_factSheet)</pre>
+
+        @if (!_convening && string.IsNullOrEmpty(_bullOpinion))
+        {
+            <div style="margin-top:14px">
+                @if (!Ai.HasLlm)
+                {
+                    <div style="font-size:12px;color:var(--sub)">⚠️ LLM이 설정되지 않았습니다. 거래 설정에서 Gemini 키 또는 로컬 Ollama를 켜세요.</div>
+                }
+                else
+                {
+                    <button class="addbtn" @onclick="Convene">⚖️ 위원회 소집</button>
+                }
+            </div>
+        }
+    </div>
+
+    @* ── Step 2: 위원회 패널 ── *@
+    @if (_convening || !string.IsNullOrEmpty(_bullOpinion))
+    {
+        <div style="margin:0 28px 6px;font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--sub)">
+            STEP 2 — 위원회 심의
+        </div>
+        <div style="margin:0 28px 24px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+
+            @* 🐂 Bull *@
+            <div class="panel" style="padding:16px 18px;border-top:3px solid #0f9d6b">
+                <div style="font-size:15px;font-weight:700;margin-bottom:2px">🐂 Bull</div>
+                <div class="sub" style="font-size:11px;margin-bottom:12px">공격적 성장 추구</div>
+                @if (_bullBusy)
+                {
+                    <div class="sub" style="font-size:12px">⏳ 검토 중…</div>
+                }
+                else if (!string.IsNullOrEmpty(_bullOpinion))
+                {
+                    <div style="font-size:13px;line-height:1.7;white-space:pre-wrap">@_bullOpinion</div>
+                }
+            </div>
+
+            @* 🐻 Bear *@
+            <div class="panel" style="padding:16px 18px;border-top:3px solid #e34d4d">
+                <div style="font-size:15px;font-weight:700;margin-bottom:2px">🐻 Bear</div>
+                <div class="sub" style="font-size:11px;margin-bottom:12px">꼬리 리스크 경계</div>
+                @if (_bearBusy)
+                {
+                    <div class="sub" style="font-size:12px">⏳ 검토 중…</div>
+                }
+                else if (!string.IsNullOrEmpty(_bearOpinion))
+                {
+                    <div style="font-size:13px;line-height:1.7;white-space:pre-wrap">@_bearOpinion</div>
+                }
+            </div>
+
+            @* ⚖️ CRO *@
+            <div class="panel" style="padding:16px 18px;border-top:3px solid #e5ac00">
+                <div style="font-size:15px;font-weight:700;margin-bottom:2px">⚖️ CRO</div>
+                <div class="sub" style="font-size:11px;margin-bottom:12px">종합 안전 권고</div>
+                @if (_croBusy)
+                {
+                    <div class="sub" style="font-size:12px">
+                        @(_bullBusy || _bearBusy ? "⏳ Bull·Bear 완료 대기 중…" : "⏳ 종합 중…")
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(_croOpinion))
+                {
+                    <div style="font-size:13px;line-height:1.7;white-space:pre-wrap">@_croOpinion</div>
+                }
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_bullOpinion) && !string.IsNullOrEmpty(_bearOpinion) && !string.IsNullOrEmpty(_croOpinion))
+        {
+            <div style="margin:0 28px 16px;padding:12px 16px;background:rgba(229,172,0,.08);border-left:3px solid #e5ac00;font-size:12px;color:var(--sub);line-height:1.6">
+                ⚠️ 이 의견은 AI가 생성한 <b>내부 검토용 텍스트</b>이며 투자 권유가 아닙니다. 실제 결정은 반드시 개인의 판단과 책임 아래 이루어져야 합니다.
+            </div>
+            <div style="margin:0 28px 32px">
+                <button class="addbtn" @onclick="Reset">🔄 새 종목 분석</button>
+            </div>
+        }
+    }
+}
+
+@code {
+    private string _sym = "";
+    private int    _years = 3;
+    private string _bmLabel = "";
+    private string _msg = "";
+    private bool   _busy;
+
+    private CommitteeFactSheet? _factSheet;
+
+    private bool   _convening;
+    private bool   _bullBusy, _bearBusy, _croBusy;
+    private string _bullOpinion = "", _bearOpinion = "", _croOpinion = "";
+
+    private CancellationTokenSource? _cts;
+    private bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        if (!string.IsNullOrWhiteSpace(SymCtx.Symbol))
+            _sym = SymCtx.Symbol;
+    }
+
+    private async Task BuildFactSheet()
+    {
+        if (_busy) return;
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _busy = true; _msg = "캔들 수신 중…";
+        _factSheet = null;
+        _bullOpinion = _bearOpinion = _croOpinion = "";
+        _convening = false;
+        _cts?.Dispose(); _cts = new();
+
+        try
+        {
+            var ct = _cts.Token;
+            var mkt = sym.Length == 6 && char.IsDigit(sym[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+            var (bmSym, bmMkt, bmLabel) = BenchmarkOf(sym);
+            _bmLabel = bmLabel;
+
+            var from = DateTime.Now.AddYears(-_years);
+            var to   = DateTime.Now;
+
+            _msg = $"{sym} + {bmLabel} 병렬 수신 중…"; StateHasChanged();
+
+            var pfTask = Provider.GetHistoryAsync(sym,   mkt,   from, to, ct);
+            var bmTask = Provider.GetHistoryAsync(bmSym, bmMkt, from, to, ct);
+            await Task.WhenAll(pfTask, bmTask);
+
+            if (pfTask.Result.Count < 31) { _msg = $"{sym} 캔들 부족 (최소 31봉 필요)."; return; }
+            if (bmTask.Result.Count < 31) { _msg = $"{bmLabel} 캔들 부족."; return; }
+
+            _msg = "알파 계산 중…"; StateHasChanged();
+            var alpha = await Task.Run(() =>
+                AlphaEngine.Compute(sym, pfTask.Result, bmTask.Result, bmLabel), ct);
+
+            if (!alpha.IsValid) { _msg = "알파 계산 실패: " + alpha.Note; return; }
+
+            _factSheet = CommitteeEngine.BuildFactSheet(sym, alpha, null, null);
+            _msg = "";
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "조립 실패: " + ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task Convene()
+    {
+        if (_factSheet == null || _convening) return;
+        _convening = true;
+        _bullBusy = _bearBusy = _croBusy = true;
+        _bullOpinion = _bearOpinion = _croOpinion = "";
+        StateHasChanged();
+
+        var fs = _factSheet;
+
+        // Bull + Bear 병렬 시작, 각각 완료 즉시 UI 업데이트 (스트리밍 느낌)
+        var bullTask = Ai.CompleteAsync(CommitteeEngine.BullPrompt(fs));
+        var bearTask = Ai.CompleteAsync(CommitteeEngine.BearPrompt(fs));
+
+        _ = bullTask.ContinueWith(t =>
+        {
+            _bullOpinion = t.IsFaulted
+                ? "⚠️ 오류: " + (t.Exception?.InnerException?.Message ?? "unknown")
+                : t.Result;
+            _bullBusy = false;
+            InvokeAsync(StateHasChanged);
+        }, TaskScheduler.Default);
+
+        _ = bearTask.ContinueWith(t =>
+        {
+            _bearOpinion = t.IsFaulted
+                ? "⚠️ 오류: " + (t.Exception?.InnerException?.Message ?? "unknown")
+                : t.Result;
+            _bearBusy = false;
+            InvokeAsync(StateHasChanged);
+        }, TaskScheduler.Default);
+
+        // Bull + Bear 완료 대기 (예외는 이미 위에서 처리)
+        try { await Task.WhenAll(bullTask, bearTask); } catch { }
+
+        // CRO: Bull·Bear 결과를 컨텍스트로 받아 종합
+        try
+        {
+            _croOpinion = await Ai.CompleteAsync(CommitteeEngine.CroPrompt(fs, _bullOpinion, _bearOpinion));
+        }
+        catch (Exception ex)
+        {
+            _croOpinion = "⚠️ 오류: " + ex.Message;
+        }
+        finally
+        {
+            _croBusy = false;
+            _convening = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Reset()
+    {
+        _factSheet = null;
+        _convening = false;
+        _bullOpinion = _bearOpinion = _croOpinion = "";
+        _bullBusy = _bearBusy = _croBusy = false;
+        _msg = "";
+        _bmLabel = "";
+    }
+
+    private static (string sym, Market market, string label) BenchmarkOf(string sym) =>
+        sym.Length == 6 && char.IsDigit(sym[0])
+            ? ("069500", Market.KRX_KOSPI, "KODEX200(069500)")
+            : ("SPY",    Market.US_NASDAQ, "SPY (S&P500)");
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _cts?.Dispose();
+    }
+}

@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.72.0</Version>
-    <!-- v3.72.0: S10 #1 — 진성 알파 인과 추론 엔진 (OLS Beta·반사실·IR) + /lab/alpha -->
+    <Version>3.73.0</Version>
+    <!-- v3.73.0: S10 #2 — 가상 퀀트 위원회 (Bull·Bear·CRO 병렬 심의 + 환각 방화벽) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
