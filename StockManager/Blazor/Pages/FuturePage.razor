@@ -2,6 +2,7 @@
 @inject IQuoteProvider Provider
 @inject SymbolContext SymCtx
 @inject AsOfContext AsOfCtx
+@inject ForecastVaultService Vault
 @implements IDisposable
 
 <div class="top">
@@ -35,6 +36,13 @@ else if (_res is { IsValid: true })
         <div class="kpi @(Math.Abs(_goal)>0.0001?"g":"")"><div class="k-lab">목표 @(_goal.ToString("+0;-0"))% 달성</div><div class="k-val">@(Math.Abs(_goal)>0.0001 ? _res.GoalHitPct.ToString("0.0")+"%" : "—")</div></div>
     </div>
 
+    <div style="padding:0 28px 8px;display:flex;align-items:center;gap:12px">
+        <button class="ghost" disabled="@(_isSaving || _capturePrice <= 0m)" @onclick="CaptureAsync">
+            @(_isSaving ? "저장 중…" : "📌 Vault에 저장")
+        </button>
+        @if (!string.IsNullOrEmpty(_saveMsg)) { <span style="font-size:12px;color:var(--sub)">@_saveMsg</span> }
+    </div>
+
     <div style="padding:0 28px 40px">
         <div class="panel">
             <div class="panel-h">🔮 @_sym 확률 콘 · @_horizons[_horizonIdx].label <span class="tag">@(AsOfCtx.IsLive ? "FORECAST" : "AS-OF vs ACTUAL")</span></div>
@@ -61,7 +69,9 @@ else if (_res is { IsValid: true })
     private int _horizonIdx = 1;
     private double _goal = 10;
     private bool _busy;
-    private string _msg = "", _originLabel = "현재";
+    private string _msg = "", _originLabel = "현재", _saveMsg = "";
+    private decimal _capturePrice;
+    private bool _isSaving;
     private FutureConeResult? _res;
     private readonly List<(int day, double retPct)> _actual = new();
 
@@ -84,7 +94,7 @@ else if (_res is { IsValid: true })
 
     private async Task ProjectAsync()
     {
-        _msg = ""; _res = null; _actual.Clear();
+        _msg = ""; _res = null; _actual.Clear(); _capturePrice = 0m; _saveMsg = "";
         var sym = (_sym ?? "").Trim().ToUpperInvariant();
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
         _sym = sym; _mkt = Detect(sym);
@@ -117,6 +127,7 @@ else if (_res is { IsValid: true })
 
             int horizon = _horizons[_horizonIdx].days;
             _res = FutureCone.Project(rets, horizon, 2000, Seed, _goal);
+            if (_res.IsValid && hist.Count > 0) _capturePrice = hist[^1].Close;
 
             // 실제 경로(있으면) — as-of 종가 기준 누적수익률
             if (after.Count > 0)
@@ -190,6 +201,20 @@ else if (_res is { IsValid: true })
     }
     private static string Line(IReadOnlyList<ConeBand> b, Func<int, double> X, Func<double, double> Y, Func<ConeBand, double> sel)
         => string.Join(" ", b.Select(x => $"{X(x.Day):F1},{Y(sel(x)):F1}"));
+
+    private async Task CaptureAsync()
+    {
+        if (_isSaving || _res is not { IsValid: true } || _capturePrice <= 0m) return;
+        _isSaving = true; _saveMsg = ""; StateHasChanged();
+        try
+        {
+            var rec = ForecastVaultService.BuildConeRecord(_sym, _mkt, _capturePrice, _res, DateTime.UtcNow);
+            await Vault.CaptureForecastAsync(rec);
+            _saveMsg = $"저장 완료 ({rec.ForecastId[..8]}…)";
+        }
+        catch (Exception ex) { _saveMsg = "저장 실패: " + ex.Message; }
+        finally { _isSaving = false; StateHasChanged(); }
+    }
 
     public void Dispose() { SymCtx.OnChange -= OnSym; AsOfCtx.OnChange -= OnAsOf; }
 }

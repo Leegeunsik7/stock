@@ -71,6 +71,13 @@
         </div>
     </div>
 
+    <div style="padding:0 28px 8px;display:flex;align-items:center;gap:12px">
+        <button class="ghost" disabled="@_isSaving" @onclick="CaptureMultiverseAsync">
+            @(_isSaving ? "저장 중…" : "📌 Vault에 저장")
+        </button>
+        @if (!string.IsNullOrEmpty(_saveMsg)) { <span style="font-size:12px;color:var(--sub)">@_saveMsg</span> }
+    </div>
+
     @* ── 콘 차트 ── *@
     @if (_polyP50 != null)
     {
@@ -214,8 +221,8 @@ else if (_result is { IsValid: false })
 @code {
     private MultiverseScenario _scenario = MultiverseScenario.Live;
     private int  _years = 2;
-    private bool _busy;
-    private string _msg = "";
+    private bool _busy, _isSaving;
+    private string _msg = "", _saveMsg = "";
     private MultiverseResult? _result;
 
     // 사전 계산 SVG 문자열 (Razor 로컬 함수 금지 패턴 준수)
@@ -241,7 +248,7 @@ else if (_result is { IsValid: false })
     private async Task LoadAndProject()
     {
         if (_busy) return;
-        _busy = true; _msg = "포트폴리오 로드 중…"; _result = null;
+        _busy = true; _msg = "포트폴리오 로드 중…"; _result = null; _saveMsg = "";
         _polyP50 = _polyCrisis = null;
         _cts?.Dispose(); _cts = new();
 
@@ -389,6 +396,20 @@ else if (_result is { IsValid: false })
         }
         catch (OperationCanceledException) { }
         catch { /* 캘리브레이션은 비핵심 UI — 실패 무시 */ }
+    }
+
+    private async Task CaptureMultiverseAsync()
+    {
+        if (_isSaving || _result is not { IsValid: true }) return;
+        _isSaving = true; _saveMsg = ""; StateHasChanged();
+        try
+        {
+            var rec = ForecastVaultService.BuildMultiverseRecord(_result, DateTime.UtcNow);
+            await Vault.CaptureForecastAsync(rec);
+            _saveMsg = $"저장 완료 ({rec.ForecastId[..8]}…)";
+        }
+        catch (Exception ex) { _saveMsg = "저장 실패: " + ex.Message; }
+        finally { _isSaving = false; StateHasChanged(); }
     }
 
     public void Dispose()
