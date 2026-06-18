@@ -1,0 +1,147 @@
+@* OrderReconcilePanel — 비상 동결 해제 패널
+   EmergencyFreeze 상태에서 브로커 잔고와 로컬 원장을 비교하고 서명으로 해제합니다.
+   LiveTradingDashboard 오버레이 내에 임베드되어 사용됩니다. *@
+@inject OrderAttestationService Attestation
+@inject ToastService Toasts
+
+@{
+    var lastFreeze = GetLastFreezeEntry();
+}
+
+@* ── 동결 사유 ────────────────────────────────────────────────────────── *@
+@if (lastFreeze != null)
+{
+    <div style="background:#1f0808;border:1px solid #7a2020;border-radius:8px;padding:12px 16px;margin-bottom:18px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#ff8888;margin-bottom:6px">동결 사유</div>
+        <div style="font-size:13px;color:#ffcccc;font-family:var(--mono)">@(lastFreeze.Note)</div>
+        <div style="font-size:10.5px;color:#cc6666;margin-top:4px">
+            @(lastFreeze.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")) UTC
+        </div>
+    </div>
+}
+
+@* ── 원장 입력 (2열) ─────────────────────────────────────────────────── *@
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+    <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#ff8888;margin-bottom:8px">
+            📋 로컬 원장 (터미널 기대값)
+        </div>
+        <input class="srch" style="width:100%;margin-bottom:8px" type="number" step="1"
+               placeholder="예수금 (원)" @bind="_localCash" />
+        <textarea class="srch"
+                  style="width:100%;height:72px;resize:none;font-family:var(--mono);font-size:11.5px"
+                  placeholder="005930:10&#10;000660:5"
+                  @bind="_localHoldings"></textarea>
+    </div>
+    <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:#aaaaff;margin-bottom:8px">
+            🌐 브로커 잔고 (API 실측값)
+        </div>
+        <input class="srch" style="width:100%;margin-bottom:8px" type="number" step="1"
+               placeholder="예수금 (원)" @bind="_brokerCash" />
+        <textarea class="srch"
+                  style="width:100%;height:72px;resize:none;font-family:var(--mono);font-size:11.5px"
+                  placeholder="005930:10&#10;000660:5"
+                  @bind="_brokerHoldings"></textarea>
+    </div>
+</div>
+
+@* ── 검증 실행 ────────────────────────────────────────────────────────── *@
+<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+    <button class="addbtn" @onclick="DoReconcile">🔍 정합 검증</button>
+    @if (!string.IsNullOrEmpty(_reconcileMsg))
+    {
+        <span style="font-size:12px;color:@(_reconcileOk ? "#44cc44" : "#ff8888")">
+            @(_reconcileMsg)
+        </span>
+    }
+</div>
+
+@* ── 서명 + 해제 ─────────────────────────────────────────────────────── *@
+<div style="border-top:1px solid #4a1a1a;padding-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="flex:1;min-width:200px"
+           placeholder="수동 정합 서명 (예: gslee@angtec.com)"
+           @bind="_signature" />
+    <input class="srch" style="flex:1;min-width:140px"
+           placeholder="비고 (선택)"
+           @bind="_releaseNote" />
+    <button class="addbtn"
+            style="background:#9b2335"
+            disabled="@(string.IsNullOrWhiteSpace(_signature))"
+            @onclick="DoRelease">
+        ✅ 서명·동결 해제
+    </button>
+</div>
+@if (!string.IsNullOrEmpty(_releaseMsg))
+{
+    <div style="margin-top:8px;font-size:12px;color:#ff8888">@(_releaseMsg)</div>
+}
+
+<div style="margin-top:12px;font-size:11px;color:#885555;text-align:right">
+    전체 감사 이력 →
+    <a href="/broker/gating" style="color:#cc8888;text-decoration:underline">
+        /broker/gating
+    </a>
+</div>
+
+@code {
+    private decimal _localCash       = 0m;
+    private decimal _brokerCash      = 0m;
+    private string  _localHoldings   = "";
+    private string  _brokerHoldings  = "";
+    private string  _signature       = "";
+    private string  _releaseNote     = "";
+    private string  _releaseMsg      = "";
+    private string  _reconcileMsg    = "";
+    private bool    _reconcileOk;
+
+    private void DoReconcile()
+    {
+        _reconcileMsg = "";
+        try
+        {
+            var local  = new LocalState(_localCash,  ParseHoldings(_localHoldings));
+            var broker = new BrokerState(_brokerCash, ParseHoldings(_brokerHoldings));
+            var result = Attestation.Reconcile(local, broker);
+            _reconcileOk  = result.Passed;
+            _reconcileMsg = result.Passed
+                ? "정합 통과 — 미스매치 없음"
+                : $"미스매치 {result.Mismatches.Count}건 감지";
+            if (result.Passed) Toasts.Success("정합 통과", "로컬 원장 ↔ 브로커 잔고 일치 확인");
+        }
+        catch (Exception ex) { _reconcileOk = false; _reconcileMsg = ex.Message; }
+    }
+
+    private void DoRelease()
+    {
+        _releaseMsg = "";
+        if (string.IsNullOrWhiteSpace(_signature)) { _releaseMsg = "서명을 입력하세요."; return; }
+        try
+        {
+            Attestation.ManualRelease(_signature.Trim(), _releaseNote);
+            _signature = _releaseNote = "";
+            Toasts.Success("동결 해제", "수동 정합 서명 확인 — 실거래 게이트 정상화");
+        }
+        catch (Exception ex) { _releaseMsg = $"해제 실패: {ex.Message}"; }
+    }
+
+    private AttestationAuditEntry? GetLastFreezeEntry()
+    {
+        foreach (var e in Attestation.AuditLog)
+            if (!e.Passed) return e;
+        return null;
+    }
+
+    private static IReadOnlyDictionary<string, decimal> ParseHoldings(string raw)
+    {
+        var dict = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw)) return dict;
+        foreach (var line in raw.Split('\n'))
+        {
+            var parts = line.Trim().Split(':');
+            if (parts.Length == 2 && decimal.TryParse(parts[1].Trim(), out var qty) && qty > 0)
+                dict[parts[0].Trim()] = qty;
+        }
+        return dict;
+    }
+}

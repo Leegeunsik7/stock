@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.85.0</Version>
-    <!-- v3.85.0: S14 #2 — 실거래 체결 엔진 (ExecutionBridgeBroker·LiveAuditService·ProcessFill·체결 감사 원장) -->
+    <Version>3.86.0</Version>
+    <!-- v3.86.0: S14 #3 — 트레이딩 커맨드 센터 (LiveTradingDashboard·OrderReconcilePanel·DI 등록·NavMenu) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

@@ -5,7 +5,7 @@
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.85</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.86</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
@@ -120,7 +120,7 @@
             new Item("📜", "알림 이력", "/alertcenter/history", NavLinkMatch.All),
             new Item("🚨", "부정거래 경고", "/fraud-alerts", NavLinkMatch.All),
         }),
-        new("tools", "🧰", "도구", "TOOLS", new[] { "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker" }, new[]
+        new("tools", "🧰", "도구", "TOOLS", new[] { "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading" }, new[]
         {
             new Item("🧑‍✈️", "코파일럿", "/copilot", NavLinkMatch.Prefix),
             new Item("🩺", "진단", "/diagnostics", NavLinkMatch.Prefix),
@@ -130,6 +130,7 @@
             new Item("🧪", "모의투자", "/paper", NavLinkMatch.Prefix),
             new Item("🌑", "섀도우 샌드박스", "/broker/sandbox", NavLinkMatch.Prefix),
             new Item("🔐", "증적 감사 추적", "/broker/gating", NavLinkMatch.Prefix),
+            new Item("🎯", "실거래 계기판", "/trading/live", NavLinkMatch.Prefix),
             new Item("⚙️", "거래 설정", "/settings", NavLinkMatch.Prefix),
         }),
     };

@@ -31,7 +31,14 @@ namespace StockManager.Blazor
             services.AddSingleton<AsOfContext>();    // 전역 시점(As-Of) — 글로벌 타임-스크러버
             services.AddSingleton<GlobalIndexService>(); // 전세계 주요 지수 60초 폴링
             services.AddSingleton<ForecastVaultService>(); // S11 #1 — 예측 타임캡슐
-            services.AddSingleton<OrderAttestationService>(); // S12 #2 — 거래 증적 감사 추적기
+
+            // S14 #2/#3 — 실거래 체결 엔진: 인스턴스를 명시적으로 생성해 세 서비스가 동일 객체를 공유
+            var attestation = new OrderAttestationService();
+            var (broker, bridge) = ExecutionBridgeBroker.Create(attestation);
+            services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
+            services.AddSingleton(bridge);                 // S14 #1 — KiwoomBridgeClient (하트비트 500ms)
+            services.AddSingleton(broker.Audit);           // S14 #2 — LiveAuditService (체결 원장)
+            services.AddSingleton(broker);                 // S14 #2 — ExecutionBridgeBroker (IBroker 실거래)
 
             var view = new BlazorWebView
             {
