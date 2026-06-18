@@ -1,0 +1,179 @@
+@page "/lab/genome"
+@inject LocalDatabase Db
+@inject IQuoteProvider Provider
+@inject SymbolContext SymCtx
+@implements IDisposable
+@using StockManager.Common
+
+<div class="top">
+    <div class="hello">
+        <h1>🧬 전략 유전자 진화소 <span class="tag">GENOME LAB</span></h1>
+        <p>저장된 카트리지 전략을 <b>DNA</b>로 보고 교차(Crossover)·돌연변이(Mutation)·OOS 선택(Selection)으로 새 전략을 진화시킵니다. 최적자만 살아남습니다.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input class="srch" style="width:130px" placeholder="종목코드" @bind="_sym" />
+    <select class="srch" @bind="_generations" style="width:90px">
+        <option value="2">2세대</option>
+        <option value="4" selected>4세대</option>
+        <option value="6">6세대</option>
+        <option value="8">8세대</option>
+    </select>
+    <select class="srch" @bind="_popSize" style="width:110px">
+        <option value="8">집단 8개</option>
+        <option value="12" selected>집단 12개</option>
+        <option value="16">집단 16개</option>
+        <option value="20">집단 20개</option>
+    </select>
+    <button class="addbtn" disabled="@_busy" @onclick="Run">@(_busy ? "진화 중…" : "🧬 진화 시작")</button>
+    @if (_result?.IsValid == true)
+    {
+        <span class="sub" style="font-size:11.5px">@_result.Note</span>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(_msg)) { <div style="padding:0 28px 14px;color:var(--sub)">@_msg</div> }
+
+@if (_result?.IsValid == true)
+{
+    <div style="padding:0 28px 40px">
+        <div class="panel">
+            <div class="panel-h">🏆 진화 결과 — @_sym <span class="tag">OOS SHARPE 기준 정렬</span></div>
+            <table class="ctbl dense">
+                <thead>
+                    <tr>
+                        <th>순위</th><th>전략</th><th>출처</th><th>세대</th>
+                        <th style="text-align:right">샤프</th>
+                        <th style="text-align:right">수익률</th>
+                        <th style="text-align:right">매매</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ int rank = 1; }
+                    @foreach (var e in _result.Ranked)
+                    {
+                        var isTop = rank == 1;
+                        <tr style="@(isTop ? "background:rgba(15,157,107,.06)" : "")">
+                            <td><b style="@(isTop ? "color:var(--up)" : "")">@(rank++)</b></td>
+                            <td>
+                                <b style="font-size:12.5px">@e.Spec.Title</b>
+                                <div class="sub" style="font-size:11px">@StrategyCompiler.Describe(e.Spec)</div>
+                            </td>
+                            <td><span class="pill" style="background:rgba(79,91,213,.15);color:var(--accent)">@e.Origin</span></td>
+                            <td class="sub">G@(e.Generation)</td>
+                            <td style="text-align:right"><b class="@(e.Sharpe >= 0 ? "up" : "down")">@e.Sharpe.ToString("0.00")</b></td>
+                            <td style="text-align:right"><span class="@(e.TotalReturn >= 0 ? "up" : "down")">@e.TotalReturn.ToString("+0.0;-0.0;0.0")%</span></td>
+                            <td style="text-align:right">@e.Trades</td>
+                            <td>
+                                @if (isTop)
+                                {
+                                    <button class="addbtn" style="font-size:11px;padding:3px 8px" @onclick="() => SignTop(e)">
+                                        🧬 서명
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="sub" style="font-size:11.5px;margin-top:10px">
+            ℹ️ 진화된 전략은 OOS 백테스트 기준이며 미래 수익을 보장하지 않습니다. "서명"으로 카트리지에 저장 후 토너먼트에서 추가 검증하세요.
+        </div>
+        @if (!string.IsNullOrEmpty(_signMsg))
+        {
+            <div style="margin-top:8px;color:var(--up);font-size:12.5px">✅ @_signMsg</div>
+        }
+    </div>
+}
+
+@code {
+    private bool _busy, _disposed;
+    private string _sym = "", _msg = "", _signMsg = "";
+    private int _generations = 4, _popSize = 12;
+    private GenomeResult? _result;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
+        SymCtx.OnChange += OnSym;
+    }
+    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(StateHasChanged); }
+    public void Dispose() { SymCtx.OnChange -= OnSym; _disposed = true; try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+
+    private static Market Detect(string s) =>
+        s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+
+    private async Task Run()
+    {
+        if (_busy) return;
+        var sym = (_sym ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; return; }
+        _sym = sym; _busy = true; _signMsg = ""; _msg = "카트리지 로드 및 캔들 수신 중…"; _result = null;
+        _cts?.Dispose(); _cts = new();
+        try
+        {
+            var ct = _cts.Token;
+            var market = Detect(sym);
+            var candles = await Provider.GetHistoryAsync(sym, market, DateTime.Now.AddYears(-3), DateTime.Now, ct);
+            if (candles.Count < 60) { _msg = "캔들 부족 (최소 60봉 필요)."; return; }
+
+            _msg = $"씨앗 전략 로드 중…";
+            var seeds = await Task.Run(() => LoadSeeds(), ct);
+            if (seeds.Count == 0) { _msg = "저장된 카트리지 전략이 없습니다. /compiler 또는 /forge에서 먼저 카트리지를 서명하세요."; return; }
+
+            _msg = $"씨앗 {seeds.Count}개 로드 완료. {_generations}세대 진화 시작…";
+            StateHasChanged();
+
+            _result = await Task.Run(() => CartridgeGenome.Evolve(seeds, candles, market, _generations, _popSize), ct);
+            _msg = "";
+        }
+        catch (OperationCanceledException) { _msg = "취소되었습니다."; }
+        catch (Exception ex) { if (!_disposed) _msg = "진화 실패: " + ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private List<StrategySpec> LoadSeeds()
+    {
+        var specs = new List<StrategySpec>();
+        foreach (var path in CartridgeService.ListFiles())
+        {
+            if (!CartridgeService.TryImport(path, out var cart, out _) || cart == null) continue;
+            // MA Cross 전략 → FromMaCross로 StrategySpec 재구성
+            foreach (var s in cart.Strategies)
+                specs.Add(StrategyCompiler.FromMaCross(s.Short, s.Long));
+            // Genome/Compiler가 저장한 full spec (CartPrompt 형식)
+            foreach (var p in cart.Prompts)
+                if (p.Id.StartsWith("strategy-spec:v1:", StringComparison.Ordinal)
+                    && StrategyCompiler.TryParseCanonical(p.Template, out var spec) && spec != null)
+                    specs.Add(spec);
+        }
+        return specs;
+    }
+
+    private void SignTop(GenomeEntry e)
+    {
+        try
+        {
+            // 임의 스펙은 CartPrompt로 저장; MA Cross이면 CartStrategy(Attest)도 추가
+            var prompts = new List<CartPrompt>
+            {
+                new CartPrompt("strategy-spec:v1:" + e.Spec.Id, StrategyCompiler.Canonical(e.Spec))
+            };
+            var strategies = new List<CartStrategy>();
+            if (StrategyCompiler.ReducesToMaCross(e.Spec, out var sp, out var lp))
+                strategies.Add(CartridgeEngine.Attest($"MA {sp}/{lp}", sp, lp, 7));
+            var cart = CartridgeService.BuildSigned(Db,
+                $"진화전략 {e.Spec.Id[..4]}",
+                $"CartridgeGenome가 {_generations}세대 진화로 발굴한 전략. OOS Sharpe {e.Sharpe:0.00}.",
+                strategies, macros: new List<CartMacro>(), prompts: prompts);
+            var file = CartridgeService.ExportToFile(cart);
+            _signMsg = $"카트리지 저장: {System.IO.Path.GetFileName(file)}";
+        }
+        catch (Exception ex) { _signMsg = "서명 실패: " + ex.Message; }
+        StateHasChanged();
+    }
+}

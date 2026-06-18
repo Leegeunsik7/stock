@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.68.0</Version>
-    <!-- v3.68.0: S9 #5 — 결정 품질 미러 (DecisionMirror 순수 엔진 + /mirror 페이지) -->
+    <Version>3.69.0</Version>
+    <!-- v3.69.0: S9 #6 — 전략 유전자 진화소 (CartridgeGenome 순수 엔진 + /lab/genome 페이지) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
