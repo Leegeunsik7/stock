@@ -1,0 +1,249 @@
+@page "/command"
+@implements IDisposable
+@inject SystemStatusAggregator Agg
+@using System.Threading
+
+@* ═══════════════════════════════════════════════════════════════════════════
+   CommandCentrePage — S18 #2: 전체 관제 탑 (v3.96.0)
+   4대 핵심 센서(원장 정합성·메모리 릭·어댑티브 튜너·파이프 연결)를 사분면 매트릭스로
+   통합 관제. 하나라도 동결/누수면 중앙 인디케이터가 최고 심각도 색으로 전역 동기화.
+   ═══════════════════════════════════════════════════════════════════════════ *@
+
+<div class="top">
+    <div class="hello">
+        <h1>🗺️ 전체 관제 탑 <span class="tag">GRAND COMMAND CENTRE</span></h1>
+        <p>시스템 4대 비탈 통합 관제 · @_snap.CapturedUtc.ToLocalTime().ToString("HH:mm:ss") 기준 · 3초 자동 갱신</p>
+    </div>
+    <div>
+        <button class="addbtn" @onclick="RefreshNow">🔄 새로고침</button>
+    </div>
+</div>
+
+@* ── 중앙 전역 인디케이터 ─────────────────────────────────────────────────── *@
+<div class="cc-master @SystemStatusAggregator.SeverityCssClass(_snap.Overall)">
+    <div class="cc-master-icon">@OverallIcon(_snap.Overall)</div>
+    <div class="cc-master-body">
+        <div class="cc-master-state">시스템 @SystemStatusAggregator.SeverityLabel(_snap.Overall)</div>
+        <div class="cc-master-sub">@OverallMessage(_snap)</div>
+    </div>
+    <div class="cc-master-quad">
+        <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.AttestationSeverity)" title="원장 정합성"></span>
+        <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.MemorySeverity)" title="메모리 릭 프로브"></span>
+        <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.TunerSeverity)" title="어댑티브 튜너"></span>
+        <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.BridgeSeverity)" title="파이프 연결"></span>
+    </div>
+</div>
+
+@* ── 4대 사분면 매트릭스 ──────────────────────────────────────────────────── *@
+<div class="cc-matrix">
+
+    @* ① 원장 정합성 *@
+    <div class="cc-quad @SystemStatusAggregator.SeverityCssClass(_snap.AttestationSeverity)">
+        <div class="cc-quad-hd">
+            <span class="cc-quad-no">①</span> 원장 정합성
+            <span class="cc-quad-badge">@SystemStatusAggregator.SeverityLabel(_snap.AttestationSeverity)</span>
+        </div>
+        <div class="cc-quad-big">
+            @(!_snap.AttestationPresent ? "미배선"
+              : _snap.GatingMode == GatingMode.EmergencyFreeze ? "🔒 비상 동결" : "✅ 정상 게이트")
+        </div>
+        <div class="cc-quad-rows">
+            <div><span>게이팅 모드</span><b>@(_snap.AttestationPresent ? _snap.GatingMode.ToString() : "—")</b></div>
+            <div><span>거래 허용</span><b>@(_snap.AttestationPresent && _snap.GatingMode == GatingMode.Normal ? "예" : "차단")</b></div>
+        </div>
+        @if (_snap.GatingMode == GatingMode.EmergencyFreeze)
+        {
+            <a class="cc-quad-link" href="/broker/gating">→ 정합 서명 해제</a>
+        }
+    </div>
+
+    @* ② 메모리 릭 프로브 *@
+    <div class="cc-quad @SystemStatusAggregator.SeverityCssClass(_snap.MemorySeverity)">
+        <div class="cc-quad-hd">
+            <span class="cc-quad-no">②</span> 메모리 릭 프로브
+            <span class="cc-quad-badge">@SystemStatusAggregator.SeverityLabel(_snap.MemorySeverity)</span>
+        </div>
+        <div class="cc-quad-big">
+            @(!_snap.MemoryPresent ? "미배선" : _snap.LeakSuspected ? "⚠ 누수 의심" : "✅ 정상")
+        </div>
+        <div class="cc-quad-rows">
+            <div><span>활성 리스(핸들러)</span><b>@_snap.LiveLeases</b></div>
+            <div><span>워킹셋</span><b>@(_snap.WorkingSetBytes / 1048576) MB</b></div>
+            <div><span>관리 힙</span><b>@(_snap.ManagedHeapBytes / 1048576) MB</b></div>
+            <div><span>Gen2 GC</span><b>@_snap.Gen2Collections</b></div>
+        </div>
+    </div>
+
+    @* ③ 어댑티브 튜너 *@
+    <div class="cc-quad @SystemStatusAggregator.SeverityCssClass(_snap.TunerSeverity)">
+        <div class="cc-quad-hd">
+            <span class="cc-quad-no">③</span> 어댑티브 튜너
+            <span class="cc-quad-badge">@SystemStatusAggregator.SeverityLabel(_snap.TunerSeverity)</span>
+        </div>
+        <div class="cc-quad-big">
+            @(!_snap.TunerPresent ? "미배선" : _snap.TunerFrozen ? "🔒 안전 동결" : "✅ 가동")
+        </div>
+        <div class="cc-quad-rows">
+            <div><span>집행 슬라이스</span><b>@(_snap.TunerPresent ? _snap.TunerSlices.ToString() : "—")</b></div>
+            <div><span>집행 시간</span><b>@(_snap.TunerPresent ? _snap.TunerDurationSec + "초" : "—")</b></div>
+            <div><span>동결 여부</span><b>@(_snap.TunerFrozen ? "동결" : "정상")</b></div>
+        </div>
+    </div>
+
+    @* ④ 파이프 연결 *@
+    <div class="cc-quad @SystemStatusAggregator.SeverityCssClass(_snap.BridgeSeverity)">
+        <div class="cc-quad-hd">
+            <span class="cc-quad-no">④</span> 파이프 연결
+            <span class="cc-quad-badge">@SystemStatusAggregator.SeverityLabel(_snap.BridgeSeverity)</span>
+        </div>
+        <div class="cc-quad-big">
+            @(!_snap.BridgePresent ? "미배선" : _snap.BridgeAlive ? "🟢 연결됨" : "⚪ 대기")
+        </div>
+        <div class="cc-quad-rows">
+            <div><span>키움 브리지</span><b>@(_snap.BridgePresent ? (_snap.BridgeAlive ? "프록시 연결" : "프록시 미연결") : "—")</b></div>
+            <div><span>하트비트</span><b>@(_snap.BridgeAlive ? "수신 중" : "없음")</b></div>
+        </div>
+    </div>
+
+</div>
+
+@code {
+    private SystemHealthSnapshot _snap;
+
+    private Timer?        _timer;
+    private volatile bool _disposed;
+    private int           _refreshPending;
+    private ResourceLease? _lease;   // S18 #1 가드 — 타이머 리소스를 추적
+
+    protected override void OnInitialized()
+    {
+        // 렌더 스로틀 타이머를 추적 리소스로 등록 — Dispose 시 반납해 누수 0 보장
+        _lease = MemoryLeakGuard.Shared.Acquire("command-centre-timer");
+        Refresh();
+        _timer = new Timer(OnTimer, null, 3_000, 3_000);
+    }
+
+    private void OnTimer(object? _)
+    {
+        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _refreshPending, 1, 0) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _refreshPending, 0);
+                if (_disposed) return;
+                Refresh();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+        catch { }
+    }
+
+    private void RefreshNow() { Refresh(); StateHasChanged(); }
+
+    private void Refresh()
+    {
+        if (_disposed) return;
+        try { _snap = Agg.Capture(); } catch { }
+    }
+
+    private static string OverallIcon(SystemSeverity s) => s switch
+    {
+        SystemSeverity.Critical => "🛑",
+        SystemSeverity.Warning  => "⚠️",
+        SystemSeverity.Notice   => "🔎",
+        _                       => "🟢",
+    };
+
+    private static string OverallMessage(SystemHealthSnapshot s) => s.Overall switch
+    {
+        SystemSeverity.Critical => "하부 시스템이 동결 상태입니다 — 즉시 개입이 필요합니다.",
+        SystemSeverity.Warning  => "리소스 경고가 감지되었습니다 — 점검을 권장합니다.",
+        SystemSeverity.Notice   => "일부 센서가 대기/미배선 상태입니다.",
+        _                       => "모든 핵심 비탈이 정상 범위입니다.",
+    };
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+        _timer?.Dispose();
+        _lease?.Dispose();   // 리스 반납 — MemoryLeakGuard LiveCount 가 0으로 수렴
+    }
+}
+
+<style>
+    /* ── 중앙 전역 인디케이터 ──────────────────────────────────────────────── */
+    .cc-master {
+        display:flex; align-items:center; gap:18px;
+        margin:0 28px 18px; padding:18px 24px;
+        border:2px solid var(--line,#2d3447); border-radius:12px;
+        background:var(--card,#111827); transition:all .25s ease;
+    }
+    .cc-master-icon { font-size:34px; line-height:1; }
+    .cc-master-body { flex:1; }
+    .cc-master-state { font-size:21px; font-weight:800; color:var(--fg,#e2e8f0); }
+    .cc-master-sub { font-size:12.5px; color:var(--sub,#6b7280); margin-top:3px; }
+    .cc-master-quad { display:flex; gap:7px; }
+    .cc-pip { width:13px; height:13px; border-radius:50%; background:#3a4252; display:inline-block; }
+
+    /* ── 사분면 매트릭스 (고정폭 2×2) ──────────────────────────────────────── */
+    .cc-matrix {
+        display:grid; grid-template-columns:repeat(2, 1fr); gap:14px;
+        padding:0 28px 40px;
+    }
+    .cc-quad {
+        background:var(--card,#111827); border:1.5px solid var(--line,#2d3447);
+        border-radius:10px; padding:16px 18px; min-height:168px;
+        border-left-width:4px;
+    }
+    .cc-quad-hd {
+        display:flex; align-items:center; gap:8px;
+        font-size:13px; font-weight:700; color:var(--fg,#e2e8f0);
+        padding-bottom:10px; border-bottom:1px solid var(--line,#2d3447); margin-bottom:12px;
+    }
+    .cc-quad-no { font-size:15px; opacity:.7; }
+    .cc-quad-badge {
+        margin-left:auto; font-size:9.5px; font-weight:800; letter-spacing:.06em;
+        padding:2px 8px; border-radius:5px; text-transform:uppercase;
+    }
+    .cc-quad-big { font-size:20px; font-weight:800; margin-bottom:12px; color:var(--fg,#e2e8f0); }
+    .cc-quad-rows { display:flex; flex-direction:column; gap:5px; }
+    .cc-quad-rows > div {
+        display:flex; justify-content:space-between; font-size:12px;
+        color:var(--sub,#6b7280);
+    }
+    .cc-quad-rows > div > b { color:var(--fg,#e2e8f0); font-variant-numeric:tabular-nums; }
+    .cc-quad-link {
+        display:inline-block; margin-top:10px; font-size:11.5px; font-weight:700;
+        color:#ff6060; text-decoration:none;
+    }
+    .cc-quad-link:hover { text-decoration:underline; }
+
+    /* ── 심각도 색상 체계 ──────────────────────────────────────────────────── */
+    /* 정상 = 녹색 */
+    .sev-ok.cc-master, .sev-ok.cc-quad { border-color:#2a4a32; border-left-color:#44c66a; }
+    .sev-ok .cc-quad-badge, .cc-quad-badge { background:#13241a; color:#6ee7b7; }
+    .cc-pip.sev-ok { background:#44c66a; }
+
+    /* 주의 = 슬레이트 */
+    .sev-notice.cc-master, .sev-notice.cc-quad { border-color:#3a4252; border-left-color:#64748b; }
+    .sev-notice .cc-quad-badge { background:#1c2433; color:#94a3b8; }
+    .cc-pip.sev-notice { background:#64748b; }
+
+    /* 경고 = 황색 */
+    .sev-warning.cc-master, .sev-warning.cc-quad { border-color:#6a5310; border-left-color:#e6a23c; }
+    .sev-warning.cc-master { background:#241d0c; }
+    .sev-warning .cc-quad-badge { background:#332810; color:#fbbf24; }
+    .cc-pip.sev-warning { background:#e6a23c; }
+
+    /* 위험 = 핏빛 차콜 */
+    .sev-critical.cc-master, .sev-critical.cc-quad { border-color:#7a1a1a; border-left-color:#ff4444; }
+    .sev-critical.cc-master { background:#240b0b; }
+    .sev-critical.cc-quad { background:#1c0a0a; }
+    .sev-critical .cc-quad-badge { background:#3a0d0d; color:#ff6060; }
+    .sev-critical .cc-master-state { color:#ff6060; }
+    .cc-pip.sev-critical { background:#ff4444; }
+</style>

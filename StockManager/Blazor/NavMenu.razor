@@ -5,7 +5,7 @@
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.95</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v3.96</div></div>
     </div>
     <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
@@ -120,8 +120,9 @@
             new Item("📜", "알림 이력", "/alertcenter/history", NavLinkMatch.All),
             new Item("🚨", "부정거래 경고", "/fraud-alerts", NavLinkMatch.All),
         }),
-        new("tools", "🧰", "도구", "TOOLS", new[] { "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading" }, new[]
+        new("tools", "🧰", "도구", "TOOLS", new[] { "/command", "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading" }, new[]
         {
+            new Item("🗺️", "관제 탑", "/command", NavLinkMatch.Prefix),
             new Item("🧑‍✈️", "코파일럿", "/copilot", NavLinkMatch.Prefix),
             new Item("🩺", "진단", "/diagnostics", NavLinkMatch.Prefix),
             new Item("🧩", "플러그인", "/plugins", NavLinkMatch.Prefix),

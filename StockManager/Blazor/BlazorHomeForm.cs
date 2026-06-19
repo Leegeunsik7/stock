@@ -46,6 +46,23 @@ namespace StockManager.Blazor
             services.AddSingleton(broker);                 // S14 #2 — ExecutionBridgeBroker (IBroker 실거래)
             services.AddSingleton(hydration);              // S18 #1 — 상태 복원 엔진 (관제탑 신선도 조회용)
 
+            // S18 #2 — S15~17 알고/컴플라이언스 스택을 라이브 호스트에 결속해 관제 대상 센서로 노출.
+            // (라이브 알고 집행 피드가 연결되기 전에는 휴면 상태이나, 센서 배선은 정합하게 가동된다.)
+            var sentinel   = new SlippageSentinel();
+            var friction   = new FrictionFeedbackBridge(sentinel);
+            var tuner      = new AdaptiveExecutionTuner(friction, 4, System.TimeSpan.FromSeconds(30));
+            var compliance = new ComplianceBridge();
+            compliance.Initialize(db);
+            compliance.Attach(sentinel);   // 슬리피지 경보 → FraudAlerts(SENTINEL/HIGH)
+            compliance.Wire(tuner);        // 캡 연속 위반 → FraudAlerts(TUNER/CRITICAL) + 안전 동결
+            services.AddSingleton(sentinel);
+            services.AddSingleton(tuner);
+            services.AddSingleton(compliance);
+
+            // S18 #2 — 중앙 관제 허브: 4대 핵심 센서를 단일 불변 스냅샷으로 취합
+            services.AddSingleton(new SystemStatusAggregator(
+                attestation, MemoryLeakGuard.Shared, tuner, bridge));
+
             var view = new BlazorWebView
             {
                 Dock = DockStyle.Fill,
