@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.91.0</Version>
-    <!-- v3.91.0: S16 #1+#2 — 마찰 적응형 폐루프 (FrictionFeedbackBridge·AdaptiveExecutionTuner·TwapVwapExecutor 연결) + 테스트 14개 -->
+    <Version>3.92.0</Version>
+    <!-- v3.92.0: S17 #1 — DB 감사 레이어 완성 (FraudAlerts DDL 확장·AuditClient 파사드·ComplianceTests 12개) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

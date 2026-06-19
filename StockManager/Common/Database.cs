@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS BrokerAccounts (
 );
 
 -- ⭐ v3.66.0: 부정거래 경고 (AddTransaction 검증 실패 시 자동 기록)
+-- ⭐ v3.92.0: Severity(HIGH/MEDIUM/LOW) + ReviewedAt 감사 원장 확장
 CREATE TABLE IF NOT EXISTS FraudAlerts (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     AttemptedAt TEXT NOT NULL,
@@ -143,10 +144,16 @@ CREATE TABLE IF NOT EXISTS FraudAlerts (
     TransactionType TEXT,
     Reason TEXT,
     RawJson TEXT,
-    IsReviewed INTEGER DEFAULT 0
+    IsReviewed INTEGER DEFAULT 0,
+    Severity TEXT DEFAULT 'HIGH',
+    ReviewedAt TEXT
 );
 CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
+CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, AttemptedAt DESC);
 ");
+            // v3.92.0: 기존 설치 하위 호환 스키마 마이그레이션 (컬럼 이미 존재 시 SQLite 에러 무시)
+            try { Execute("ALTER TABLE FraudAlerts ADD COLUMN Severity TEXT DEFAULT 'HIGH'");  } catch { }
+            try { Execute("ALTER TABLE FraudAlerts ADD COLUMN ReviewedAt TEXT");               } catch { }
         }
 
         // ── DB 동시성 방어 (v3.5.0) ──────────────────────────────────────
@@ -336,8 +343,8 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
                     brokerAccount = t.BrokerAccount,
                 });
                 Execute(
-                    @"INSERT INTO FraudAlerts(AttemptedAt,Symbol,TransactionType,Reason,RawJson,IsReviewed)
-                      VALUES(@at,@s,@ty,@r,@raw,0)",
+                    @"INSERT INTO FraudAlerts(AttemptedAt,Symbol,TransactionType,Reason,RawJson,Severity,IsReviewed)
+                      VALUES(@at,@s,@ty,@r,@raw,'HIGH',0)",
                     new() {
                         ["@at"]  = DateTime.UtcNow.ToString("o"),
                         ["@s"]   = t.Symbol        ?? "",
@@ -365,17 +372,43 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Time ON FraudAlerts(AttemptedAt DESC);
                 Reason          = Safe.Str(r["Reason"]),
                 RawJson         = Safe.Str(r["RawJson"]),
                 IsReviewed      = Safe.Int(r["IsReviewed"]) == 1,
+                Severity        = Safe.Str(r["Severity"]) is { Length: > 0 } sev ? sev : "HIGH",
+                ReviewedAt      = Safe.Str(r["ReviewedAt"]) is { Length: > 0 } rvStr
+                                  && DateTime.TryParse(rvStr, out var rvDt) ? rvDt : (DateTime?)null,
             }).ToList();
         }
 
         public int GetUnreviewedFraudCount() =>
             (int)QueryScalar<long>("SELECT COUNT(*) FROM FraudAlerts WHERE IsReviewed=0");
 
-        public void MarkFraudReviewed(int id) =>
-            Execute("UPDATE FraudAlerts SET IsReviewed=1 WHERE Id=@id", new() { ["@id"] = id });
+        public void MarkFraudReviewed(int id, DateTime? reviewedAt = null) =>
+            Execute("UPDATE FraudAlerts SET IsReviewed=1, ReviewedAt=@rv WHERE Id=@id",
+                new() { ["@id"] = id, ["@rv"] = (reviewedAt ?? DateTime.UtcNow).ToString("o") });
 
-        public void MarkAllFraudReviewed() =>
-            Execute("UPDATE FraudAlerts SET IsReviewed=1 WHERE IsReviewed=0");
+        public void MarkAllFraudReviewed(DateTime? reviewedAt = null) =>
+            Execute("UPDATE FraudAlerts SET IsReviewed=1, ReviewedAt=@rv WHERE IsReviewed=0",
+                new() { ["@rv"] = (reviewedAt ?? DateTime.UtcNow).ToString("o") });
+
+        // 외부 경보 소스(SlippageSentinel, ComplianceBridge 등)에서 직접 호출
+        // _WriteFraudAlert(internal, 트랜잭션 검증 실패)와는 별도 경로
+        public void AddFraudAlert(string symbol, string source, string message,
+            string severity = "HIGH")
+        {
+            try
+            {
+                Execute(
+                    @"INSERT INTO FraudAlerts(AttemptedAt,Symbol,TransactionType,Reason,Severity,IsReviewed)
+                      VALUES(@at,@s,@src,@msg,@sev,0)",
+                    new() {
+                        ["@at"]  = DateTime.UtcNow.ToString("o"),
+                        ["@s"]   = symbol   ?? "",
+                        ["@src"] = source   ?? "",
+                        ["@msg"] = message  ?? "",
+                        ["@sev"] = severity ?? "HIGH",
+                    });
+            }
+            catch (Exception ex) { Log.Warn($"[AddFraudAlert] 기록 실패: {ex.Message}"); }
+        }
 
         // ===== Settings (Key-Value) =====
         public string? GetSetting(string key) =>
