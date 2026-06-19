@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.93.0</Version>
-    <!-- v3.93.0: S17 #2 — 자동 경보 생성 브릿지 (ComplianceBridge·Tuner캡감시·TwapFreeze·ComplianceBridgeTests 12개) -->
+    <Version>3.94.0</Version>
+    <!-- v3.94.0: S17 #3 — 실행 품질 대시보드 (ExecutionQualityPage·ExecutionQualityService·ExecutionQualityTests 12개) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

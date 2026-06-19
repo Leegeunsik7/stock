@@ -1,0 +1,367 @@
+@page "/trading/quality"
+@implements IDisposable
+@inject LocalDatabase Db
+@using System.Data
+@using System.Threading
+
+@* ═══════════════════════════════════════════════════════════════════════════
+   ExecutionQualityPage — S17 #3: 실행 품질 대시보드 (v3.94.0)
+   VWAP 대비 슬리피지 계량 + 컴플라이언스 타임라인 통합 관제
+   ═══════════════════════════════════════════════════════════════════════════ *@
+
+<div class="top">
+    <div class="hello">
+        <h1>📊 실행 품질 대시보드 <span class="tag">EXECUTION QUALITY</span></h1>
+        <p>주문별 VWAP 대비 슬리피지 계량 · 컴플라이언스 타임라인 통합 관제 · @_lastRefreshed.ToString("HH:mm:ss") 기준</p>
+    </div>
+    <div>
+        <button class="addbtn" @onclick="RefreshNow">🔄 새로고침</button>
+    </div>
+</div>
+
+@* ── KPI 카드 행 ────────────────────────────────────────────────────────────── *@
+<div class="eq-kpi-row">
+    <div class="eq-kpi">
+        <div class="eq-kpi-val">@_kpiTotal</div>
+        <div class="eq-kpi-lbl">총 경보</div>
+    </div>
+    <div class="eq-kpi @(_kpiUnreviewedHigh > 0 ? "eq-kpi-warn" : "")">
+        <div class="eq-kpi-val">@_kpiUnreviewedHigh</div>
+        <div class="eq-kpi-lbl">미검토 HIGH</div>
+    </div>
+    <div class="eq-kpi @(_kpiCritical > 0 ? "eq-kpi-crit" : "")">
+        <div class="eq-kpi-val">@_kpiCritical</div>
+        <div class="eq-kpi-lbl">CRITICAL</div>
+    </div>
+    <div class="eq-kpi">
+        <div class="eq-kpi-val">
+            @(_execRows.Any(r => r.BenchmarkPrice > 0)
+                ? _avgSlipPct.ToString("+0.00;-0.00") + "%"
+                : "–")
+        </div>
+        <div class="eq-kpi-lbl">평균 슬리피지</div>
+    </div>
+    <div class="eq-kpi">
+        <div class="eq-kpi-val">@_execRows.Count</div>
+        <div class="eq-kpi-lbl">체결 건수</div>
+    </div>
+</div>
+
+@* ── 주문 집행 품질 테이블 ──────────────────────────────────────────────────── *@
+<div class="eq-section-hd">
+    📈 주문 집행 품질
+    <span style="margin-left:8px;font-size:11px;color:var(--sub);font-weight:400">
+        최근 50건 · 기준가 = 일봉 (H+L+C)/3
+    </span>
+</div>
+
+@if (!_execRows.Any())
+{
+    <div class="eq-empty">체결 기록이 없거나 캔들 데이터를 불러오는 중입니다.</div>
+}
+else
+{
+    <div style="overflow-x:auto;padding:0 28px 8px">
+        <table class="ctbl">
+            <thead>
+                <tr>
+                    <th>종목</th>
+                    <th>유형</th>
+                    <th style="text-align:right">수량</th>
+                    <th style="text-align:right">체결가</th>
+                    <th style="text-align:right">기준VWAP</th>
+                    <th style="text-align:right">슬리피지</th>
+                    <th style="white-space:nowrap">날짜</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _execRows)
+                {
+                    <tr>
+                        <td><b>@row.Symbol</b></td>
+                        <td style="font-size:12px;color:var(--sub)">@row.TypeLabel</td>
+                        <td style="text-align:right">@row.Quantity.ToString("N0")</td>
+                        <td style="text-align:right">@row.FilledPrice.ToString("N0")</td>
+                        <td style="text-align:right;color:var(--sub)">
+                            @(row.BenchmarkPrice > 0 ? row.BenchmarkPrice.ToString("N0") : "–")
+                        </td>
+                        <td style="text-align:right;@SlippageStyle(row)">
+                            @(row.BenchmarkPrice > 0
+                                ? row.SlippagePct.ToString("+0.00;-0.00") + "%"
+                                : "–")
+                        </td>
+                        <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">
+                            @row.ExecutedAt.ToString("MM-dd HH:mm")
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ── 컴플라이언스 타임라인 ─────────────────────────────────────────────────── *@
+<div class="eq-section-hd" style="margin-top:22px">
+    🛡 컴플라이언스 타임라인
+    @if (_kpiUnreviewedHigh + _kpiCritical > 0)
+    {
+        <button class="addbtn" style="font-size:11px;margin-left:12px" @onclick="MarkAllReviewed">
+            ✅ 전체 검토완료
+        </button>
+    }
+    <span style="margin-left:auto;font-size:11px;color:var(--sub);font-weight:400">
+        총 @_timeline.Count 건
+    </span>
+</div>
+
+@if (!_timeline.Any())
+{
+    <div class="eq-empty">🟢 컴플라이언스 경보 이력이 없습니다</div>
+}
+else
+{
+    <div class="eq-timeline" style="padding:0 28px 40px">
+        @foreach (var e in _timeline.Take(200))
+        {
+            <div class="eq-tl-row @(e.IsReviewed ? "eq-tl-reviewed" : "")">
+                <span class="eq-tl-time">
+                    @e.OccurredAt.ToString("MM-dd HH:mm:ss")
+                </span>
+                <span class="eq-badge @ExecutionQualityService.SourceCssClass(e.Source)">
+                    @e.Source
+                </span>
+                <span class="eq-badge @ExecutionQualityService.SeverityCssClass(e.Severity)">
+                    @e.Severity
+                </span>
+                <span class="eq-tl-sym">@e.Symbol</span>
+                <span class="eq-tl-msg" title="@e.Message">@e.Message</span>
+                @if (!e.IsReviewed && e.DbId.HasValue)
+                {
+                    <button class="addbtn"
+                            style="font-size:10px;padding:2px 8px;margin-left:auto;flex-shrink:0"
+                            @onclick="@(() => MarkOneReviewed(e.DbId!.Value))">
+                        검토
+                    </button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    // ── 데이터 ──────────────────────────────────────────────────────────────
+    private IReadOnlyList<TimelineEntry> _timeline = Array.Empty<TimelineEntry>();
+    private List<ExecutionRow>           _execRows = new();
+    private int     _kpiTotal;
+    private int     _kpiUnreviewedHigh;
+    private int     _kpiCritical;
+    private decimal _avgSlipPct;
+    private DateTime _lastRefreshed = DateTime.UtcNow;
+
+    // ── 스로틀 타이머 ─────────────────────────────────────────────────────
+    // 3초마다 자동 갱신. _refreshPending CAS로 중복 dispatch 방지.
+    private Timer?       _timer;
+    private volatile bool _disposed;
+    private int          _refreshPending;
+
+    protected override void OnInitialized()
+    {
+        LoadData();
+        _timer = new Timer(OnTimer, null, 3_000, 3_000);
+    }
+
+    private void OnTimer(object? _)
+    {
+        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _refreshPending, 1, 0) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _refreshPending, 0);
+                if (_disposed) return;
+                LoadData();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+        catch { }
+    }
+
+    private void RefreshNow()
+    {
+        LoadData();
+        StateHasChanged();
+    }
+
+    // ── 데이터 로드 ───────────────────────────────────────────────────────
+    private void LoadData()
+    {
+        if (_disposed) return;
+        try
+        {
+            var fraudAlerts = Db.GetFraudAlerts(200);
+            _timeline = ExecutionQualityService.BuildTimeline(fraudAlerts);
+            var kpi = ExecutionQualityService.ComputeKpi(_timeline);
+            _kpiTotal          = kpi.Total;
+            _kpiUnreviewedHigh = kpi.UnreviewedHigh;
+            _kpiCritical       = kpi.Critical;
+
+            _execRows = LoadExecRows();
+            var slips = _execRows.Where(r => r.BenchmarkPrice > 0).Select(r => r.SlippagePct).ToList();
+            _avgSlipPct = slips.Count > 0 ? slips.Average() : 0m;
+            _lastRefreshed = DateTime.UtcNow;
+        }
+        catch { }
+    }
+
+    private List<ExecutionRow> LoadExecRows()
+    {
+        try
+        {
+            // LEFT JOIN Candles: 기준VWAP = (High+Low+Close)/3 (일봉 HLC3 근사)
+            var dt = Db.Query(@"
+                SELECT t.Symbol, t.Type, t.Quantity, t.Price, t.ExecutedAt,
+                       c.High, c.Low, c.Close
+                FROM   Transactions t
+                LEFT JOIN Candles c
+                    ON  c.Symbol = t.Symbol
+                    AND c.Date   = substr(t.ExecutedAt, 1, 10)
+                ORDER  BY t.ExecutedAt DESC
+                LIMIT  50");
+
+            var rows = new List<ExecutionRow>(dt.Rows.Count);
+            foreach (DataRow r in dt.Rows)
+            {
+                decimal filled = Safe.Dec(r["Price"]);
+                decimal high   = Safe.Dec(r["High"]);
+                decimal low    = Safe.Dec(r["Low"]);
+                decimal close  = Safe.Dec(r["Close"]);
+                decimal bench  = (high > 0 && low > 0 && close > 0)
+                                 ? (high + low + close) / 3m
+                                 : 0m;
+
+                rows.Add(new ExecutionRow(
+                    Symbol:         Safe.Str(r["Symbol"]),
+                    TypeLabel:      TypeLabel(Safe.Int(r["Type"])),
+                    Quantity:       Safe.Int(r["Quantity"]),
+                    FilledPrice:    filled,
+                    BenchmarkPrice: bench,
+                    SlippagePct:    ExecutionQualityService.SlippagePct(filled, bench),
+                    ExecutedAt:     Safe.DT(r["ExecutedAt"])));
+            }
+            return rows;
+        }
+        catch
+        {
+            return new List<ExecutionRow>();
+        }
+    }
+
+    private static string TypeLabel(int typeInt) =>
+        ((TransactionType)typeInt) switch
+        {
+            TransactionType.Buy      => "매수",
+            TransactionType.Sell     => "매도",
+            TransactionType.Dividend => "배당",
+            TransactionType.Deposit  => "입금",
+            TransactionType.Withdraw => "출금",
+            _                        => "기타",
+        };
+
+    // ── 슬리피지 셀 색상 ──────────────────────────────────────────────────
+    // 매수: 양수(비쌈) = 빨강, 음수(싸게삼) = 초록
+    // 매도: 음수(싸게팜) = 빨강, 양수(비싸게팜) = 초록
+    private static string SlippageStyle(ExecutionRow r)
+    {
+        if (r.BenchmarkPrice <= 0) return "";
+        bool bad = r.TypeLabel == "매수" ? r.SlippagePct > 0 : r.SlippagePct < 0;
+        return bad ? "color:#e34d4d;font-weight:700" : "color:#44c66a;font-weight:700";
+    }
+
+    // ── 검토 마킹 ─────────────────────────────────────────────────────────
+    private void MarkOneReviewed(int id)
+    {
+        try { Db.MarkFraudReviewed(id); LoadData(); StateHasChanged(); }
+        catch { }
+    }
+
+    private void MarkAllReviewed()
+    {
+        try { Db.MarkAllFraudReviewed(); LoadData(); StateHasChanged(); }
+        catch { }
+    }
+
+    // ── IDisposable ───────────────────────────────────────────────────────
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+        _timer?.Dispose();
+    }
+}
+
+<style>
+    /* ── KPI 카드 ─────────────────────────────────────────────────────────── */
+    .eq-kpi-row { display:flex; gap:14px; padding:0 28px 20px; flex-wrap:wrap; }
+    .eq-kpi {
+        flex:1; min-width:110px; background:var(--card,#111827);
+        border:1.5px solid var(--line,#2d3447); border-radius:10px;
+        padding:14px 18px; text-align:center;
+    }
+    .eq-kpi-val { font-size:24px; font-weight:800; color:var(--fg,#e2e8f0); line-height:1.2; }
+    .eq-kpi-lbl { font-size:11px; color:var(--sub,#6b7280); margin-top:4px; letter-spacing:.05em; }
+    .eq-kpi-warn { border-color:#e67e22; }
+    .eq-kpi-warn .eq-kpi-val { color:#e67e22; }
+    .eq-kpi-crit { border-color:#e34d4d; }
+    .eq-kpi-crit .eq-kpi-val { color:#e34d4d; }
+
+    /* ── 섹션 헤더 ───────────────────────────────────────────────────────── */
+    .eq-section-hd {
+        display:flex; align-items:center; gap:8px;
+        padding:10px 28px 10px;
+        font-size:13.5px; font-weight:700; color:var(--fg,#e2e8f0);
+        border-bottom:1px solid var(--line,#2d3447);
+    }
+
+    /* ── 빈 상태 ─────────────────────────────────────────────────────────── */
+    .eq-empty { padding:40px 28px; color:var(--sub,#6b7280); font-size:14px; text-align:center; }
+
+    /* ── 타임라인 피드 ───────────────────────────────────────────────────── */
+    .eq-timeline { display:flex; flex-direction:column; gap:0; }
+    .eq-tl-row {
+        display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+        padding:9px 0; border-bottom:1px solid var(--line,#2d3447);
+        min-height:38px;
+    }
+    .eq-tl-reviewed { opacity:.45; }
+    .eq-tl-time {
+        font-size:11px; color:var(--sub,#6b7280); white-space:nowrap;
+        min-width:108px; font-variant-numeric:tabular-nums;
+    }
+    .eq-tl-sym {
+        font-size:12.5px; font-weight:700; color:var(--fg,#e2e8f0);
+        min-width:64px; white-space:nowrap;
+    }
+    .eq-tl-msg {
+        font-size:12px; color:var(--fg,#e2e8f0); flex:1;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+
+    /* ── 뱃지 ────────────────────────────────────────────────────────────── */
+    .eq-badge {
+        font-size:9.5px; font-weight:800; letter-spacing:.06em;
+        padding:2px 7px; border-radius:5px; white-space:nowrap; text-transform:uppercase;
+    }
+
+    /* 소스 뱃지 */
+    .src-sentinel { background:#0f3460; color:#4da6e3; border:1px solid #1a4a7a; }
+    .src-tuner    { background:#2d1a4a; color:#c084fc; border:1px solid #4a2a6a; }
+    .src-system   { background:#1a2a1a; color:#6ee7b7; border:1px solid #2a4a2a; }
+
+    /* 심각도 뱃지 */
+    .sev-critical { background:#3a0000; color:#ff6060; border:1px solid #7a1515; }
+    .sev-high     { background:#3a1a00; color:#fb923c; border:1px solid #7a3a00; }
+    .sev-medium   { background:#3a3200; color:#fde047; border:1px solid #6a5a00; }
+    .sev-low      { background:#1a2a1a; color:#86efac; border:1px solid #2a4a2a; }
+</style>
