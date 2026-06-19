@@ -18,11 +18,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.96.0</Version>
-    <!-- v3.96.0: S18 #2 — 전체 관제 탑 통합 (SystemStatusAggregator·CommandCentrePage·S15~17 알고스택 라이브 결속·SystemStatusTests 14개) -->
+    <Version>4.0.0</Version>
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <FileVersion>4.0.0.0</FileVersion>
+    <!-- v4.0.0 — The Gold Master: 18개 시즌 결정론 퀀트 터미널 정식 프로덕션 릴리스 (850+ 단위 테스트, 빌드 가드레일 최대화) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
+
+    <!-- v4.0.0 골드 마스터 빌드 가드레일: 단 하나의 경고도 빌드를 차단 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

@@ -14,10 +14,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>StockManager.KiwoomProxy</RootNamespace>
     <AssemblyName>MS2E.KiwoomProxyHost</AssemblyName>
-    <Version>3.84.0</Version>
-    <!-- v3.84.0: S14 #1 — KiwoomProxyHost (x86 COM 격리 에이전트) -->
+    <Version>4.0.0</Version>
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <FileVersion>4.0.0.0</FileVersion>
+    <!-- v4.0.0 — The Gold Master: x86 COM 격리 에이전트, 스위트 버전 정합 -->
     <Product>MS2-E KiwoomProxy</Product>
     <Company>Angtec</Company>
+
+    <!-- v4.0.0 골드 마스터 빌드 가드레일: 단 하나의 경고도 빌드를 차단 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
 
   <!--

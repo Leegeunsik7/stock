@@ -8,6 +8,10 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <!-- 무의존 원칙: BenchmarkDotNet 대신 Stopwatch 기반 경량 하니스 -->
+
+    <!-- v4.0.0 골드 마스터 빌드 가드레일: 단 하나의 경고도 빌드를 차단 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
