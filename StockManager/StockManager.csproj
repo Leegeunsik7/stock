@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.89.0</Version>
-    <!-- v3.89.0: S15 #3 — 슬리피지 편차 경보기 (SlippageSentinel) + 탄력 메시 테스트 18개 -->
+    <Version>3.91.0</Version>
+    <!-- v3.91.0: S16 #1+#2 — 마찰 적응형 폐루프 (FrictionFeedbackBridge·AdaptiveExecutionTuner·TwapVwapExecutor 연결) + 테스트 14개 -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>

@@ -41,6 +41,9 @@ namespace StockManager.Common
         /// <summary>분할 집행 전략 설정 (최소 수량·슬라이스 수·시간창 등).</summary>
         public AlgoConfig DefaultConfig { get; init; } = new AlgoConfig();
 
+        /// <summary>S16 #1: 마찰 적응형 튜너. null 이면 DefaultConfig 값 그대로 사용.</summary>
+        public AdaptiveExecutionTuner? Tuner { get; set; }
+
         /// <summary>각 슬라이스 발사 직후 발행 (UI 실시간 진행 표시용).</summary>
         public event Action<AlgoExecution>? SliceFired;
         /// <summary>알고리즘 집행 완료·취소·동결 시 발행.</summary>
@@ -76,6 +79,12 @@ namespace StockManager.Common
             if (qty < DefaultConfig.MinQty)
                 return _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
 
+            // S16 #1: 튜너가 연결된 경우 최신 Z-score 기반 파라미터 보정 후 적용
+            var tuner = Tuner;
+            tuner?.Calibrate();
+            int      effectiveSlices   = tuner?.CurrentSlices   ?? DefaultConfig.Slices;
+            TimeSpan effectiveDuration = tuner?.CurrentDuration ?? DefaultConfig.Duration;
+
             long algoId = Interlocked.Increment(ref _nextAlgoId);
 
             var order = new AlgoOrder
@@ -89,8 +98,8 @@ namespace StockManager.Common
                 TotalQty   = qty,
                 LimitPrice = limitPrice,
                 Style      = DefaultConfig.Style,
-                Duration   = DefaultConfig.Duration,
-                Slices     = DefaultConfig.Slices,
+                Duration   = effectiveDuration,
+                Slices     = effectiveSlices,
             };
 
             var exec = new AlgoExecution

@@ -1,16 +1,19 @@
 // ============================================================================
 // SlippageSentinel — S15 #3: 슬리피지 편차 경보기
+//   S16 #1 확장: LastZ — Interlocked int64 비트 저장으로 FrictionFeedbackBridge 노출
 //
 //  · Welford 온라인 알고리즘으로 실시간 평균·표준편차 갱신 (GC 0).
 //  · 순환 윈도우(최근 WindowSize 건)로 이상치 추적.
 //  · |Z| > AlertThresholdSigma 가 ConsecutiveAlertCount 회 연속 → AlertTriggered 이벤트.
 //  · WebhookUrl 설정 시 Discord/Telegram 포맷 웹훅 POST (화재-망각).
 //  · 시장가(expectedPrice=0) 건은 측정 대상 제외.
+//  · LastZ: Interlocked.Exchange(long bits) 로 스레드 세이프 노출.
 // ============================================================================
 using System;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace StockManager.Common
@@ -35,6 +38,9 @@ namespace StockManager.Common
         // 연속 초과 카운터
         private int _consecutive;
 
+        // S16 #1: FrictionFeedbackBridge 노출용 최근 Z-score (Interlocked int64 비트 저장)
+        private long _lastZBits;
+
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
         /// <summary>AlertThresholdSigma 초과가 ConsecutiveAlertCount 회 연속 시 발행.</summary>
@@ -44,6 +50,10 @@ namespace StockManager.Common
         public double RunningMean  => _mean;
         public double RunningStdDev
             => _n >= 2 ? Math.Sqrt(_m2 / (_n - 1)) : 0.0;
+
+        /// <summary>직전 체결의 절대 Z-score. Interlocked 원자 읽기 보장 (FrictionFeedbackBridge 전용).</summary>
+        public double LastZ
+            => BitConverter.Int64BitsToDouble(Interlocked.Read(ref _lastZBits));
 
         public SlippageSentinel()
             => _window = new double[Math.Max(WindowSize, 1)];
@@ -73,6 +83,7 @@ namespace StockManager.Common
             if (sigma < 1e-12 || _n < 4) return;
 
             double z = Math.Abs(residual - _mean) / sigma;
+            Interlocked.Exchange(ref _lastZBits, BitConverter.DoubleToInt64Bits(z));
 
             if (z > AlertThresholdSigma)
             {
