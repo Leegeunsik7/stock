@@ -79,8 +79,12 @@ namespace StockManager.Common
             if (qty < DefaultConfig.MinQty)
                 return _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
 
-            // S16 #1: 튜너가 연결된 경우 최신 Z-score 기반 파라미터 보정 후 적용
+            // S17 #2: 튜너 안전 동결 상태이면 신규 주문 차단
             var tuner = Tuner;
+            if (tuner?.IsFrozen == true)
+                return (false, "[TUNER-FREEZE] 안전 동결 모드 — 알고 집행 차단");
+
+            // S16 #1: 튜너가 연결된 경우 최신 Z-score 기반 파라미터 보정 후 적용
             tuner?.Calibrate();
             int      effectiveSlices   = tuner?.CurrentSlices   ?? DefaultConfig.Slices;
             TimeSpan effectiveDuration = tuner?.CurrentDuration ?? DefaultConfig.Duration;

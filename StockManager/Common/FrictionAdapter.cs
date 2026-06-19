@@ -116,6 +116,23 @@ namespace StockManager.Common
         /// <summary>이 건수 미만이면 통계 불충분으로 Calibrate() 를 건너뜀.</summary>
         public int    MinSamples     { get; init; } = 4;
 
+        // ── S17 #2: 캡 연속 위반 감시 + 안전 동결 ────────────────────────────
+        // MaxSlices 또는 MaxDuration 캡에 CapBreachThreshold 회 연속 도달하면
+        // _frozenFlag = 1 로 설정하고 OnCapBreached 콜백을 발행.
+        // IsFrozen = true 이후 Calibrate() 및 TwapVwapExecutor.Place() 모두 차단.
+
+        /// <summary>이 횟수 연속으로 하드 캡에 도달하면 안전 동결 및 CRITICAL 경보 발행.</summary>
+        public int CapBreachThreshold { get; init; } = 5;
+
+        /// <summary>캡 연속 위반 확정 시 발행되는 콜백. (symbol, message) 쌍. ComplianceBridge 가 배선.</summary>
+        public Action<string, string>? OnCapBreached { get; set; }
+
+        private int          _capHitCount;  // Interlocked — 연속 캡 도달 횟수
+        private volatile int _frozenFlag;   // 0=정상  1=안전 동결
+
+        /// <summary>안전 동결 상태. true 이면 Calibrate 및 알고 집행이 즉시 차단됩니다.</summary>
+        public bool IsFrozen => _frozenFlag != 0;
+
         // ── 내부 상태 (비트패킹, Interlocked CAS) ─────────────────────────────
         // _packed: 상위 32비트 = DurationSec(int), 하위 32비트 = Slices(int)
         // 두 값을 단일 long CAS 로 항상 일관된 쌍으로 원자 갱신.
@@ -157,6 +174,9 @@ namespace StockManager.Common
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Calibrate()
         {
+            // S17 #2: 안전 동결 상태이면 즉시 차단
+            if (_frozenFlag != 0) return;
+
             FrictionSnapshot snap = _bridge.GetSnapshot();  // stack-allocated struct
 
             // 통계 불충분 또는 표준편차 미형성 → 건너뜀
@@ -183,6 +203,23 @@ namespace StockManager.Common
             // else: 유지 구간 — CAS 없이 그대로
 
             Interlocked.Exchange(ref _packed, Pack(slices, durSec));
+
+            // S17 #2: 캡 연속 위반 감시
+            // MaxSlices 또는 MaxDuration 에 도달했는지 확인
+            bool atCap = slices >= MaxSlices || durSec >= (int)MaxDuration.TotalSeconds;
+            int  count = atCap
+                ? Interlocked.Increment(ref _capHitCount)
+                : Interlocked.Exchange(ref _capHitCount, 0);  // 연속 깨짐 → 카운터 리셋
+
+            if (atCap && count >= CapBreachThreshold && _frozenFlag == 0)
+            {
+                // 안전 동결 + CRITICAL 경보 — 한 번만 실행 (CAS 로 중복 방지)
+                if (Interlocked.CompareExchange(ref _frozenFlag, 1, 0) == 0)
+                {
+                    OnCapBreached?.Invoke("SYSTEM",
+                        $"캡 연속 {count}회 도달 — Slices={slices}/{MaxSlices} DurSec={durSec}/{(int)MaxDuration.TotalSeconds}");
+                }
+            }
         }
 
         // ── 비트패킹 유틸리티 ─────────────────────────────────────────────────
