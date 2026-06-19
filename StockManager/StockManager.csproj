@@ -18,10 +18,11 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.0.0</Version>
-    <AssemblyVersion>4.0.0.0</AssemblyVersion>
-    <FileVersion>4.0.0.0</FileVersion>
-    <!-- v4.0.0 — The Gold Master: 18개 시즌 결정론 퀀트 터미널 정식 프로덕션 릴리스 (850+ 단위 테스트, 빌드 가드레일 최대화) -->
+    <Version>4.1.0</Version>
+    <AssemblyVersion>4.1.0.0</AssemblyVersion>
+    <FileVersion>4.1.0.0</FileVersion>
+    <!-- v4.1.0 — S19 #2: 섀도우 그린하우스 순수 코어 (MutationBoundsMatrix·FitnessEvaluator·MutationBoundsTests 39개) -->
+    <!-- v4.0.0 — The Gold Master: 18개 시즌 결정론 퀀트 터미널 정식 프로덕션 릴리스 (빌드 가드레일 최대화) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
