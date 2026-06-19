@@ -239,6 +239,49 @@ namespace StockManager.Common
         /// <summary>스냅샷 파일이 존재하는지 확인 (복구 가능 여부 사전 체크용).</summary>
         public bool HasValidSnapshot => File.Exists(_filePath);
 
+        /// <summary>
+        /// 스냅샷 헤더의 기록 시각(UTC)을 무결성 검증 후 반환합니다. 신선도(staleness) 판정용.
+        /// 파일 부재·매직/스키마 불일치·CRC32 실패·손상 시 null (Hydrate()와 동일한 검증 스코프).
+        /// 읽기 전용 — 슬롯 복구는 수행하지 않습니다.
+        /// </summary>
+        public DateTime? SnapshotTimeUtc()
+        {
+            ThrowIfDisposed();
+            if (!File.Exists(_filePath)) return null;
+
+            try
+            {
+                long fileLen = new FileInfo(_filePath).Length;
+                if (fileLen < HeaderSize) return null;
+
+                int readLen = (int)Math.Min(fileLen, MaxFileSize);
+                var buf = new byte[MaxFileSize];
+
+                using var mmf = MemoryMappedFile.CreateFromFile(
+                    _filePath, FileMode.Open, null, 0,
+                    MemoryMappedFileAccess.Read);
+                using var view = mmf.CreateViewAccessor(0, readLen, MemoryMappedFileAccess.Read);
+                view.ReadArray(0, buf, 0, readLen);
+
+                for (int i = 0; i < 8; i++)
+                    if (buf[i] != MagicBytes[i]) return null;
+                if (BitConverter.ToInt32(buf, 8) != SchemaVersion) return null;
+
+                int slotCount = BitConverter.ToInt32(buf, 12);
+                if (slotCount < 0 || slotCount > MaxSlots) return null;
+                if (HeaderSize + slotCount * SlotSize > readLen) return null;
+
+                uint stored   = BitConverter.ToUInt32(buf, 24);
+                uint computed = Crc32(buf.AsSpan(HeaderSize, slotCount * SlotSize));
+                if (computed != stored) return null;
+
+                long ticks = BitConverter.ToInt64(buf, 16);
+                if (ticks <= 0 || ticks > DateTime.MaxValue.Ticks) return null;
+                return new DateTime(ticks, DateTimeKind.Utc);
+            }
+            catch { return null; }
+        }
+
         /// <summary>스냅샷 파일 삭제 — 정상 시작 후 호출하여 불필요한 복구 방지.</summary>
         public void ClearSnapshot()
         {

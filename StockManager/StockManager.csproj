@@ -18,8 +18,8 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>3.94.0</Version>
-    <!-- v3.94.0: S17 #3 — 실행 품질 대시보드 (ExecutionQualityPage·ExecutionQualityService·ExecutionQualityTests 12개) -->
+    <Version>3.95.0</Version>
+    <!-- v3.95.0: S18 #1 — 콜드 하든 (BootIntegrityChecker·MemoryLeakGuard·StateHydration↔Attestation 부팅 결속·BootIntegrityTests 13개) -->
     <Product>MS2-E Stock Suite</Product>
     <Company>Angtec</Company>
     <Authors>Angtec Engineering</Authors>
