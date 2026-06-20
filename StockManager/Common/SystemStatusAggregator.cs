@@ -60,6 +60,12 @@ namespace StockManager.Common
         public bool BridgePresent { get; init; }
         public bool BridgeAlive   { get; init; }
 
+        // ⑤ 유전자 온실 (S19 #4)
+        public bool           GreenhousePresent { get; init; }
+        public PromotionState Promotion         { get; init; }
+        public string?        CandidateSpecId   { get; init; }
+        public double         CandidateFitness  { get; init; }
+
         // 취합 시각
         public DateTime CapturedUtc { get; init; }
 
@@ -85,15 +91,22 @@ namespace StockManager.Common
           : BridgeAlive    ? SystemSeverity.Ok
           :                  SystemSeverity.Notice;   // 미연결은 대기(비오류)
 
-        /// <summary>4개 사분면 중 최고 심각도 — 중앙 인디케이터 색상 결정.</summary>
+        // 온실은 선택적 진화 기능 — 미가동(미배선)은 양성(Ok). 승인 대기만 Notice(지휘관 액션 유도).
+        public SystemSeverity GreenhouseSeverity =>
+            !GreenhousePresent                          ? SystemSeverity.Ok
+          : Promotion == PromotionState.PendingApproval ? SystemSeverity.Notice
+          :                                               SystemSeverity.Ok;
+
+        /// <summary>5개 사분면 중 최고 심각도 — 중앙 인디케이터 색상 결정.</summary>
         public SystemSeverity Overall
         {
             get
             {
                 var m = AttestationSeverity;
-                if (MemorySeverity > m) m = MemorySeverity;
-                if (TunerSeverity  > m) m = TunerSeverity;
-                if (BridgeSeverity > m) m = BridgeSeverity;
+                if (MemorySeverity     > m) m = MemorySeverity;
+                if (TunerSeverity      > m) m = TunerSeverity;
+                if (BridgeSeverity     > m) m = BridgeSeverity;
+                if (GreenhouseSeverity > m) m = GreenhouseSeverity;
                 return m;
             }
         }
@@ -107,6 +120,7 @@ namespace StockManager.Common
         private readonly MemoryLeakGuard?         _memGuard;
         private readonly AdaptiveExecutionTuner?  _tuner;
         private readonly KiwoomBridgeClient?      _bridge;
+        private readonly PromotionGateway?        _gateway;
 
         /// <summary>
         /// 모든 센서는 선택적. null이면 해당 사분면은 안전 기본값(Notice·미배선)으로 폴백한다.
@@ -115,12 +129,14 @@ namespace StockManager.Common
             OrderAttestationService? attestation = null,
             MemoryLeakGuard?         memGuard    = null,
             AdaptiveExecutionTuner?  tuner       = null,
-            KiwoomBridgeClient?      bridge      = null)
+            KiwoomBridgeClient?      bridge      = null,
+            PromotionGateway?        gateway     = null)
         {
             _attestation = attestation;
             _memGuard    = memGuard;
             _tuner       = tuner;
             _bridge      = bridge;
+            _gateway     = gateway;
         }
 
         /// <summary>
@@ -175,6 +191,22 @@ namespace StockManager.Common
                 catch { bridgePresent = false; }
             }
 
+            // ⑤ 유전자 온실 — PromotionGateway 의 락-프리 상태/후보 독출
+            bool           ghPresent = _gateway is not null;
+            PromotionState phase     = PromotionState.Idle;
+            string         candId    = "";
+            double         candF     = 0.0;
+            if (ghPresent)
+            {
+                try
+                {
+                    phase = _gateway!.State;
+                    var cur = _gateway.Current;
+                    if (cur is not null) { candId = cur.Spec.Id; candF = cur.Fitness; }
+                }
+                catch { ghPresent = false; }
+            }
+
             return new SystemHealthSnapshot
             {
                 AttestationPresent = attPresent,
@@ -191,6 +223,10 @@ namespace StockManager.Common
                 TunerDurationSec   = durSec,
                 BridgePresent      = bridgePresent,
                 BridgeAlive        = bridgeAlive,
+                GreenhousePresent  = ghPresent,
+                Promotion          = phase,
+                CandidateSpecId    = candId,
+                CandidateFitness   = candF,
                 CapturedUtc        = DateTime.UtcNow,
             };
         }

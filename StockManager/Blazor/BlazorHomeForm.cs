@@ -59,9 +59,16 @@ namespace StockManager.Blazor
             services.AddSingleton(tuner);
             services.AddSingleton(compliance);
 
-            // S18 #2 — 중앙 관제 허브: 4대 핵심 센서를 단일 불변 스냅샷으로 취합
+            // S19 #3/#4 — 승급 게이트웨이 + 격리 배양 온실 (관제 대상 센서로 노출)
+            var promotionGateway = new PromotionGateway(db, attestation);
+            var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared);
+            services.AddSingleton(promotionGateway);
+            services.AddSingleton(greenhouse);
+            // 주: 배양 스레드는 씨앗 전략·캔들 히스토리가 결속되는 S19 #5에서 Start 한다(엔진은 가동 대기).
+
+            // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(
-                attestation, MemoryLeakGuard.Shared, tuner, bridge));
+                attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway));
 
             var view = new BlazorWebView
             {

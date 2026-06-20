@@ -1,5 +1,6 @@
 // ============================================================================
 // PromotionGateway — S19 #3: 인간 매개형 승급 유한 상태기계 + 서명 검증기
+//                     S19 #4: 관제탑용 락-프리 상태 독출 추가
 //
 //  그린하우스가 배양한 최상위 변이체의 생애주기를 인간 인증 하에 제어한다:
 //    Idle → Candidate → PendingApproval → Approved → Active → Sunsetted
@@ -13,8 +14,9 @@
 //  ── Fail-Closed 계승 (§I4) ─────────────────────────────────────────────────
 //  OrderAttestationService 가 EmergencyFreeze 면 승급(Approve) 자체가 차단된다.
 //
-//  스레드 안전: 인간 페이스의 상태 전이이므로 lock 사용(핫패스 아님).
-//  Sunset(안락사)·Reject 는 실거래 축소 방향이므로 자율 허용. 승급만 인간 게이트.
+//  ── 락-프리 독출 (§S19 #4) ─────────────────────────────────────────────────
+//  State·Current 는 volatile 미러로 락 없이 읽힌다(관제탑 SystemStatusAggregator 용).
+//  상태 전이(check-then-act)는 여전히 _lock 으로 직렬화한다.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -45,8 +47,9 @@ namespace StockManager.Common
         private readonly Func<string, bool>       _isAuthorized;  // 서명 인가 정책
         private readonly List<PromotionAudit>     _log = new();
 
-        private PromotionState      _state = PromotionState.Idle;
-        private PromotionCandidate? _current;
+        // 락-프리 독출용 volatile 미러 (전이는 _lock 으로 직렬화, 읽기는 무락)
+        private volatile int                 _stateInt = (int)PromotionState.Idle;
+        private volatile PromotionCandidate? _current;
 
         /// <summary>이 적응도 이상이면 Candidate → PendingApproval 자동 승격.</summary>
         public double ChampionThreshold { get; init; } = 0.0;
@@ -60,16 +63,15 @@ namespace StockManager.Common
             _db          = db;
             _attestation = attestation;
             // 기본 정책: ManualRelease 패턴 — 비어있지 않은 서명이면 인가.
-            // 운영자는 더 엄격한 검증기(고정 토큰 일치 등)를 주입할 수 있다.
             _isAuthorized = signatureValidator ?? (s => !string.IsNullOrWhiteSpace(s));
         }
 
-        // ── 상태 독출 ─────────────────────────────────────────────────────────
-        public PromotionState      State   { get { lock (_lock) return _state; } }
-        public PromotionCandidate? Current { get { lock (_lock) return _current; } }
+        // ── 락-프리 독출 ──────────────────────────────────────────────────────
+        public PromotionState      State   => (PromotionState)_stateInt;
+        public PromotionCandidate? Current => _current;
         public IReadOnlyList<PromotionAudit> AuditLog { get { lock (_lock) return _log.ToArray(); } }
 
-        // ── 전이 ──────────────────────────────────────────────────────────────
+        // ── 전이 (lock 직렬화) ─────────────────────────────────────────────────
 
         /// <summary>변이체 제출. 적응도가 ChampionThreshold 이상이면 PendingApproval 로 자동 승격.</summary>
         public PromotionState Submit(StrategySpec spec, double fitness)
@@ -78,15 +80,15 @@ namespace StockManager.Common
             lock (_lock)
             {
                 _current = new PromotionCandidate(spec, fitness, DateTime.UtcNow);
-                Audit(_state, PromotionState.Candidate, "Submit", $"적응도 {fitness:F4}");
-                _state = PromotionState.Candidate;
+                Audit(State, PromotionState.Candidate, "Submit", $"적응도 {fitness:F4}");
+                _stateInt = (int)PromotionState.Candidate;
 
                 if (fitness >= ChampionThreshold)
                 {
-                    Audit(_state, PromotionState.PendingApproval, "Nominate", "챔피언 임계 통과 — 승인 대기");
-                    _state = PromotionState.PendingApproval;
+                    Audit(State, PromotionState.PendingApproval, "Nominate", "챔피언 임계 통과 — 승인 대기");
+                    _stateInt = (int)PromotionState.PendingApproval;
                 }
-                return _state;
+                return State;
             }
         }
 
@@ -98,24 +100,24 @@ namespace StockManager.Common
                 // §I4 — 비상 동결 중 승급 금지 (fail-closed)
                 if (_attestation is not null && _attestation.Mode == GatingMode.EmergencyFreeze)
                 {
-                    Audit(_state, _state, "Approve거부", "비상 동결 상태 — 승급 차단");
+                    Audit(State, State, "Approve거부", "비상 동결 상태 — 승급 차단");
                     return false;
                 }
-                if (_state != PromotionState.PendingApproval)
+                if (State != PromotionState.PendingApproval)
                 {
-                    Audit(_state, _state, "Approve거부", "승인 대기 상태가 아님");
+                    Audit(State, State, "Approve거부", "승인 대기 상태가 아님");
                     return false;
                 }
                 // 자율 배포 영구 금지 도어락 — 올바른 인간 서명만 통과
                 if (!_isAuthorized(signature ?? ""))
                 {
-                    Audit(_state, _state, "Approve거부", "변조·미인가 서명");
+                    Audit(State, State, "Approve거부", "변조·미인가 서명");
                     RaiseCompliance("변조·미인가 승인 서명 거부 — 자율 배포 도어락 작동");
                     return false;
                 }
-                Audit(_state, PromotionState.Approved, "Approve",
+                Audit(State, PromotionState.Approved, "Approve",
                     string.IsNullOrWhiteSpace(note) ? "인간 서명 승인" : note.Trim());
-                _state = PromotionState.Approved;
+                _stateInt = (int)PromotionState.Approved;
                 return true;
             }
         }
@@ -126,14 +128,14 @@ namespace StockManager.Common
             if (slot is null) throw new ArgumentNullException(nameof(slot));
             lock (_lock)
             {
-                if (_state != PromotionState.Approved || _current is null)
+                if (State != PromotionState.Approved || _current is null)
                 {
-                    Audit(_state, _state, "Activate거부", "승인 상태가 아님");
+                    Audit(State, State, "Activate거부", "승인 상태가 아님");
                     return false;
                 }
                 slot.Swap(_current.Spec);   // ⚛ 원자 핫스왑
-                Audit(_state, PromotionState.Active, "Activate", $"핫스왑 적용 (gen={slot.Generation})");
-                _state = PromotionState.Active;
+                Audit(State, PromotionState.Active, "Activate", $"핫스왑 적용 (gen={slot.Generation})");
+                _stateInt = (int)PromotionState.Active;
                 return true;
             }
         }
@@ -143,11 +145,11 @@ namespace StockManager.Common
         {
             lock (_lock)
             {
-                if (_state is PromotionState.Candidate or PromotionState.PendingApproval or PromotionState.Approved)
+                if (State is PromotionState.Candidate or PromotionState.PendingApproval or PromotionState.Approved)
                 {
-                    Audit(_state, PromotionState.Rejected, "Reject", reason ?? "");
-                    _state   = PromotionState.Rejected;
-                    _current = null;
+                    Audit(State, PromotionState.Rejected, "Reject", reason ?? "");
+                    _stateInt = (int)PromotionState.Rejected;
+                    _current  = null;
                 }
             }
         }
@@ -157,10 +159,10 @@ namespace StockManager.Common
         {
             lock (_lock)
             {
-                if (_state != PromotionState.Active) return false;
-                Audit(_state, PromotionState.Sunsetted, "Sunset", reason ?? "");
-                _state   = PromotionState.Sunsetted;
-                _current = null;
+                if (State != PromotionState.Active) return false;
+                Audit(State, PromotionState.Sunsetted, "Sunset", reason ?? "");
+                _stateInt = (int)PromotionState.Sunsetted;
+                _current  = null;
                 return true;
             }
         }
