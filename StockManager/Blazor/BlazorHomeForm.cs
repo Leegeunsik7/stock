@@ -73,6 +73,13 @@ namespace StockManager.Blazor
             services.AddSingleton(greenhouse);
             services.AddSingleton(strategySlot);
             services.AddSingleton(algoGate);
+
+            // S20 #4 — 드라이런 종단 조립체: 게이트 + 가상 멀티계좌 메시 결속.
+            // 기본 단일 가상계좌(primary) — 다중 동시 전략 활성화 시 메시를 확장한다.
+            var accountMesh  = new MultiAccountMesh(new[] { new SubAccountSpec("primary", 1m) });
+            var shadowRouter = new ShadowExecutionRouter(algoGate, accountMesh);
+            services.AddSingleton(accountMesh);
+            services.AddSingleton(shadowRouter);
             // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
