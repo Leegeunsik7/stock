@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.9.0</Version>
-    <AssemblyVersion>4.9.0.0</AssemblyVersion>
-    <FileVersion>4.9.0.0</FileVersion>
+    <Version>4.10.0</Version>
+    <AssemblyVersion>4.10.0.0</AssemblyVersion>
+    <FileVersion>4.10.0.0</FileVersion>
+    <!-- v4.10.0 — S21 #2: 그림자 추적기 + 단방향 발주 밸브 (ShadowMetricsBridge·틱미러·실측마찰·ShadowMetricsBridgeTests 12개) -->
     <!-- v4.9.0 — S21 #1-b: 카오스 폭격 + 불변식 방어 (ChaosInjectionTests 20개·브로커예외 fail-closed 하드닝·테스트 1024) -->
     <!-- v4.8.0 — S20 #4: 드라이런 종단 조립체 (ShadowExecutionRouter·게이트+메시 결속·ClosedLoopAssemblyTests 11개·테스트 1000 돌파) -->
     <!-- v4.7.0 — S20 #3(Path B): 가상 멀티 계좌 할당 (MultiAccountMesh·최대잉여 무손실 분배·MultiAccountMeshTests 15개) -->

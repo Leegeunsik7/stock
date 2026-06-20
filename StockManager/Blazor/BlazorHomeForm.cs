@@ -80,6 +80,15 @@ namespace StockManager.Blazor
             var shadowRouter = new ShadowExecutionRouter(algoGate, accountMesh);
             services.AddSingleton(accountMesh);
             services.AddSingleton(shadowRouter);
+
+            // S21 #2 — 그림자 추적기: 키움 실시간 틱·체결 미러링 + 단방향 발주 밸브.
+            // 프록시 연결 시 실 틱이 링버퍼로, 실 체결이 SlippageSentinel(실측 마찰)로 흐른다.
+            // 발주는 BlockPhysicalOrder 박제로 물리 차단(눈 뜨고 손 묶임).
+            var tickMirror    = new RingBufferCore<TickPayload>(4096);
+            var shadowMetrics = new ShadowMetricsBridge(tickMirror, sentinel);
+            shadowMetrics.Attach(bridge);
+            services.AddSingleton(tickMirror);
+            services.AddSingleton(shadowMetrics);
             // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합

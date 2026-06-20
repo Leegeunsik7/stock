@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject SystemStatusAggregator Agg
 @inject PromotionGateway Gw
+@inject ShadowMetricsBridge Shadow
 @using System.Threading
 
 @* ═══════════════════════════════════════════════════════════════════════════
@@ -143,6 +144,20 @@
     {
         <div class="cc-gh-idle">현재 상태: @GreenhouseLabel(_snap.Promotion) — 승인 대기 변이체 없음</div>
     }
+</div>
+
+@* ── 👁️ 그림자 파이프라인: 실시간 연동 (눈 뜨고 손 묶임) ─────────────────────── *@
+<div class="cc-shadow @(Shadow.Connected ? "cc-shadow-live" : "")">
+    <div class="cc-shadow-hd">
+        <span class="cc-shadow-icon">👁️</span> 그림자 파이프라인
+        <span class="cc-shadow-state">@(Shadow.Connected ? "실시간 연동 중" : "프록시 대기")</span>
+    </div>
+    <div class="cc-shadow-rows">
+        <div><span>실 틱 유입</span><b>@Shadow.TicksReceived.ToString("N0") 틱 · @Shadow.TicksPerSecond.ToString("F1")/s</b></div>
+        <div><span>실측 마찰 Z</span><b>@Shadow.LastZ.ToString("F4")</b></div>
+        <div><span>물리 발주 차단</span><b>@Shadow.BlockedOrders.ToString("N0") 건 · 와이어 송신 0%</b></div>
+    </div>
+    <div class="cc-shadow-note">🔒 발주부 물리 단절 — 온실은 실 시장으로 회전하되 손은 묶여 있음</div>
 </div>
 
 @code {
@@ -322,6 +337,21 @@
     .cc-gh-input { background:#0b0e1a; border:1px solid #3a4252; border-radius:6px; padding:6px 10px; color:var(--fg,#e2e8f0); font-size:12px; min-width:180px; }
     .cc-gh-reject { opacity:.85; }
     .cc-gh-msg { margin-top:11px; font-size:12px; color:#c084fc; }
+
+    /* ── 👁️ 그림자 파이프라인 ──────────────────────────────────────────────── */
+    .cc-shadow {
+        margin:0 28px 40px; padding:16px 20px;
+        background:var(--card,#111827); border:1.5px solid var(--line,#2d3447);
+        border-left:4px solid #6b7280; border-radius:10px;
+    }
+    .cc-shadow-live { border-left-color:#22d3ee; background:#0a1a1e; }
+    .cc-shadow-hd { display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:700; color:var(--fg,#e2e8f0); margin-bottom:12px; }
+    .cc-shadow-icon { font-size:17px; }
+    .cc-shadow-state { margin-left:auto; font-size:10px; font-weight:800; letter-spacing:.06em; color:#22d3ee; text-transform:uppercase; }
+    .cc-shadow-rows { display:flex; gap:28px; flex-wrap:wrap; margin-bottom:10px; }
+    .cc-shadow-rows > div { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--sub,#6b7280); }
+    .cc-shadow-rows > div > b { font-size:14px; color:var(--fg,#e2e8f0); font-variant-numeric:tabular-nums; }
+    .cc-shadow-note { font-size:11px; color:#22d3ee; }
 
     /* ── 심각도 색상 체계 ──────────────────────────────────────────────────── */
     /* 정상 = 녹색 */
