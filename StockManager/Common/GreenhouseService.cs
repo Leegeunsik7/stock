@@ -49,8 +49,10 @@ namespace StockManager.Common
         public int    CycleIntervalMs { get; init; } = 1000;   // 사이클 간 휴면(백프레셔)
         public int    Generations     { get; init; } = 4;
         public int    PopulationSize  { get; init; } = 12;
-        public double ProxyMeanAbsZ   { get; init; } = 0.0;     // backtest-proxy(마찰 게이트 중립)
+        public double ProxyMeanAbsZ   { get; init; } = 0.0;     // backtest-proxy(마찰 게이트 중립, Sentinel 미결속 시)
         public double ProxyExposure   { get; init; } = 0.5;     // backtest-proxy(노출 O 중립=목표)
+        /// <summary>S19 #5 — 실시간 마찰 피드. 결속 시 ProxyMeanAbsZ 대신 실거래 LastZ 를 적응도에 반영.</summary>
+        public SlippageSentinel? Sentinel { get; init; }
         /// <summary>테스트용 — 배양 사이클 시작 지점에 결함을 주입해 격리 방화벽을 검증한다.</summary>
         public Action? CycleFaultHook { get; init; }
 
@@ -170,6 +172,9 @@ namespace StockManager.Common
             double       bestF    = double.NegativeInfinity;
             StrategySpec? bestSpec = null;
 
+            // S19 #5 — 실시간 마찰: Sentinel 결속 시 실거래 LastZ, 아니면 백테스트 프록시
+            double meanAbsZ = Sentinel is not null ? Math.Abs(Sentinel.LastZ) : ProxyMeanAbsZ;
+
             foreach (var entry in result.Ranked)
             {
                 var rec = MutationBoundsMatrix.Reconcile(entry.Spec, _mutBounds);
@@ -177,7 +182,7 @@ namespace StockManager.Common
                 Interlocked.Increment(ref _mutations);
 
                 var bt = StrategyCompiler.Backtest(rec.Repaired, candles, _market);
-                double f = FitnessEvaluator.BaseFitness(bt, ProxyMeanAbsZ, ProxyExposure, _fitBounds);
+                double f = FitnessEvaluator.BaseFitness(bt, meanAbsZ, ProxyExposure, _fitBounds);
                 if (f > bestF) { bestF = f; bestSpec = rec.Repaired; }
             }
 

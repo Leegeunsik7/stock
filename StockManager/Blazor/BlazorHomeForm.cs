@@ -59,12 +59,21 @@ namespace StockManager.Blazor
             services.AddSingleton(tuner);
             services.AddSingleton(compliance);
 
-            // S19 #3/#4 — 승급 게이트웨이 + 격리 배양 온실 (관제 대상 센서로 노출)
+            // S19 #3/#4/#5 — 승급 게이트웨이 + 격리 배양 온실 + 원자 핫스왑 슬롯 + 집행 안전 게이트
             var promotionGateway = new PromotionGateway(db, attestation);
-            var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared);
+            var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared)
+            {
+                Sentinel = sentinel,   // S19 #5 — 실시간 마찰 피드 결속(ProxyMeanAbsZ 제거)
+            };
+            var strategySlot = new StrategySlot();
+            // ⚠️ IsDryRun=true 하드 박제 — 라이브 발주는 코드 변경 없이는 도달 불가(§7 안전 경계).
+            //    디싱크 시 algoGate 가 attestation 까지 비상 동결시켜 ExecutionBridgeBroker 도 함께 차단.
+            var algoGate = new AlgoExecutionGate(strategySlot, attestation, broker) { IsDryRun = true };
             services.AddSingleton(promotionGateway);
             services.AddSingleton(greenhouse);
-            // 주: 배양 스레드는 씨앗 전략·캔들 히스토리가 결속되는 S19 #5에서 Start 한다(엔진은 가동 대기).
+            services.AddSingleton(strategySlot);
+            services.AddSingleton(algoGate);
+            // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(

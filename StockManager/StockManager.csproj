@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.3.0</Version>
-    <AssemblyVersion>4.3.0.0</AssemblyVersion>
-    <FileVersion>4.3.0.0</FileVersion>
+    <Version>4.4.0</Version>
+    <AssemblyVersion>4.4.0.0</AssemblyVersion>
+    <FileVersion>4.4.0.0</FileVersion>
+    <!-- v4.4.0 — S19 #5: 라이브 결속 + 3중 강철 안전 게이트 (AlgoExecutionGate·실시간마찰피드·LiveBindingTests 18개) -->
     <!-- v4.3.0 — S19 #4: 격리 배양 온실 + 관제탑 5번째 센서 (GreenhouseService·SystemStatus 확장·GreenhouseTests 16개) -->
     <!-- v4.2.0 — S19 #3: 원자 핫스왑 게이트웨이 (StrategySlot·PromotionGateway·HotSwapTests 23개) -->
     <!-- v4.1.0 — S19 #2: 섀도우 그린하우스 순수 코어 (MutationBoundsMatrix·FitnessEvaluator·MutationBoundsTests 39개) -->
