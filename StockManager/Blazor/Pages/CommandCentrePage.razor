@@ -3,6 +3,7 @@
 @inject SystemStatusAggregator Agg
 @inject PromotionGateway Gw
 @inject ShadowMetricsBridge Shadow
+@inject IgnitionLock Ignition
 @using System.Threading
 
 @* ═══════════════════════════════════════════════════════════════════════════
@@ -160,6 +161,32 @@
     <div class="cc-shadow-note">🔒 발주부 물리 단절 — 온실은 실 시장으로 회전하되 손은 묶여 있음</div>
 </div>
 
+@* ── 🔑 점화 제어반 (조종석 — 방아쇠 잠김) ──────────────────────────────────── *@
+<div class="cc-ign @IgnitionLock.StageCss(Ignition.Stage)">
+    <div class="cc-ign-hd">
+        <span class="cc-ign-icon">🔑</span> 점화 제어반
+        <span class="cc-ign-stage">@IgnitionLock.StageLabel(Ignition.Stage)</span>
+    </div>
+    <div class="cc-ign-banner">🔒 발주 밸브 미결속(-c) — 점화 단계와 무관하게 실거래 0%. 제어반 조종석(드라이런 박제).</div>
+    <div class="cc-ign-rows">
+        <div><span>현재 단계</span><b>@IgnitionLock.StageLabel(Ignition.Stage)</b></div>
+        <div><span>1주 프로브 잔여</span><b>@Ignition.ProbeRemaining</b></div>
+        <div><span>물리 발주 허용</span><b>@(Ignition.AllowPhysical() ? "허용(밸브 미결속)" : "차단")</b></div>
+        <div><span>시스템 동결</span><b>@(Ignition.SystemFrozen ? "동결" : "정상")</b></div>
+    </div>
+    <div class="cc-ign-panel">
+        <input class="cc-ign-input" @bind="_ignSignature" placeholder="지휘관 점화 서명" />
+        <button class="addbtn" @onclick="ArmProbe">① 1주 프로브</button>
+        <button class="addbtn" @onclick="ArmTimeBox">② 시간상자</button>
+        <button class="addbtn" @onclick="ArmMaster">③ 마스터</button>
+        <button class="addbtn cc-ign-retreat" @onclick="Retreat">⏹ 후퇴(Lock)</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_ignMsg))
+    {
+        <div class="cc-ign-msg">@_ignMsg</div>
+    }
+</div>
+
 @code {
     private SystemHealthSnapshot _snap;
 
@@ -253,6 +280,31 @@
 
     private static string ShortId(string? id) =>
         string.IsNullOrEmpty(id) ? "—" : (id.Length > 12 ? id[..12] : id);
+
+    // ── 점화 제어반 (IgnitionLock 직접 호출 — 검증된 FSM 위임. 밸브 미결속 = 실거래 0) ──
+    private string  _ignSignature = "";
+    private string? _ignMsg;
+
+    private void ArmProbe()   => DoArm(IgnitionStage.ProbeReady, null);
+    private void ArmTimeBox() => DoArm(IgnitionStage.TimeBoxOpen, System.TimeSpan.FromMinutes(30));
+    private void ArmMaster()  => DoArm(IgnitionStage.MasterIgnited, null);
+
+    private void DoArm(IgnitionStage stage, System.TimeSpan? window)
+    {
+        bool ok = Ignition.Arm(stage, _ignSignature ?? "", window);
+        _ignMsg = ok
+            ? $"✅ {IgnitionLock.StageLabel(stage)} 점화 — 단, 밸브 미결속(-c)이라 실거래 0"
+            : "⛔ 점화 거부 — Locked 상태 아님 · 미인가 서명 · 비상 동결 중";
+        _ignSignature = "";
+        StateHasChanged();
+    }
+
+    private void Retreat()
+    {
+        Ignition.Lock("관제반 수동 후퇴");
+        _ignMsg = "⏹ 후퇴 — 즉시 Locked 다운그레이드";
+        StateHasChanged();
+    }
 
     public void Dispose()
     {
@@ -352,6 +404,34 @@
     .cc-shadow-rows > div { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--sub,#6b7280); }
     .cc-shadow-rows > div > b { font-size:14px; color:var(--fg,#e2e8f0); font-variant-numeric:tabular-nums; }
     .cc-shadow-note { font-size:11px; color:#22d3ee; }
+
+    /* ── 🔑 점화 제어반 ─────────────────────────────────────────────────────── */
+    .cc-ign {
+        margin:0 28px 40px; padding:16px 20px;
+        background:var(--card,#111827); border:1.5px solid var(--line,#2d3447);
+        border-left:4px solid #6b7280; border-radius:10px;
+    }
+    .cc-ign-hd { display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:700; color:var(--fg,#e2e8f0); margin-bottom:10px; }
+    .cc-ign-icon { font-size:17px; }
+    .cc-ign-stage { margin-left:auto; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .cc-ign-banner { font-size:11.5px; font-weight:700; color:#fbbf24; background:#241d0c; border-radius:6px; padding:7px 11px; margin-bottom:13px; }
+    .cc-ign-rows { display:flex; gap:26px; flex-wrap:wrap; margin-bottom:13px; }
+    .cc-ign-rows > div { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--sub,#6b7280); }
+    .cc-ign-rows > div > b { font-size:14px; color:var(--fg,#e2e8f0); font-variant-numeric:tabular-nums; }
+    .cc-ign-panel { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .cc-ign-input { background:#0b0e1a; border:1px solid #3a4252; border-radius:6px; padding:6px 10px; color:var(--fg,#e2e8f0); font-size:12px; min-width:170px; }
+    .cc-ign-retreat { opacity:.9; }
+    .cc-ign-msg { margin-top:11px; font-size:12px; color:#e2e8f0; }
+
+    /* 점화 단계 색상 — Locked=녹(안전), 단계 상승할수록 경고색 */
+    .ign-locked  { border-left-color:#44c66a; }
+    .ign-locked  .cc-ign-stage { color:#6ee7b7; }
+    .ign-probe   { border-left-color:#e6a23c; background:#241d0c; }
+    .ign-probe   .cc-ign-stage { color:#fbbf24; }
+    .ign-timebox { border-left-color:#fb923c; background:#241405; }
+    .ign-timebox .cc-ign-stage { color:#fb923c; }
+    .ign-master  { border-left-color:#ff4444; background:#240b0b; }
+    .ign-master  .cc-ign-stage { color:#ff6060; }
 
     /* ── 심각도 색상 체계 ──────────────────────────────────────────────────── */
     /* 정상 = 녹색 */

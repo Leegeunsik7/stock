@@ -166,6 +166,24 @@ namespace StockManager.Common
         private void OnRiskAlert(SlippageAlert a)
             => Lock($"슬리피지 {a.ZScore:F2}σ 경보 — 자동 후퇴");
 
+        // ── UI 매핑 (순수 함수 — 테스트 가능) ──────────────────────────────────
+
+        public static string StageLabel(IgnitionStage s) => s switch
+        {
+            IgnitionStage.ProbeReady    => "1주 프로브",
+            IgnitionStage.TimeBoxOpen   => "시간상자 개방",
+            IgnitionStage.MasterIgnited => "마스터 점화",
+            _                            => "잠금(Locked)",
+        };
+
+        public static string StageCss(IgnitionStage s) => s switch
+        {
+            IgnitionStage.ProbeReady    => "ign-probe",
+            IgnitionStage.TimeBoxOpen   => "ign-timebox",
+            IgnitionStage.MasterIgnited => "ign-master",
+            _                            => "ign-locked",
+        };
+
         // ── 내부 ──────────────────────────────────────────────────────────────
 
         private bool WindowExpired()

@@ -89,6 +89,12 @@ namespace StockManager.Blazor
             shadowMetrics.Attach(bridge);
             services.AddSingleton(tickMirror);
             services.AddSingleton(shadowMetrics);
+
+            // v5.0.0-a/b — 점화 제어반 두뇌. 부팅 기본 Locked. 3σ 경보 시 자동 후퇴.
+            // ⚠️ 밸브 실 위임(-c) 미결속 — 점화 단계와 무관하게 실거래 0(방아쇠 잠김).
+            var ignition = new IgnitionLock(attestation: attestation);
+            ignition.Attach(sentinel);
+            services.AddSingleton(ignition);
             // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합

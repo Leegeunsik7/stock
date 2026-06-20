@@ -257,5 +257,25 @@ namespace StockManager.Tests
 
             Assert.Equal(IgnitionStage.MasterIgnited, ign.Stage);
         }
+
+        // ════════════════════════ §6 UI 매핑 (관제반 표시) ════════════════════════
+
+        [Fact]
+        public void StageLabel_MapsAllStages()
+        {
+            Assert.Equal("잠금(Locked)", IgnitionLock.StageLabel(IgnitionStage.Locked));
+            Assert.Equal("1주 프로브",   IgnitionLock.StageLabel(IgnitionStage.ProbeReady));
+            Assert.Equal("시간상자 개방", IgnitionLock.StageLabel(IgnitionStage.TimeBoxOpen));
+            Assert.Equal("마스터 점화",   IgnitionLock.StageLabel(IgnitionStage.MasterIgnited));
+        }
+
+        [Fact]
+        public void StageCss_MapsAllStages()
+        {
+            Assert.Equal("ign-locked",  IgnitionLock.StageCss(IgnitionStage.Locked));
+            Assert.Equal("ign-probe",   IgnitionLock.StageCss(IgnitionStage.ProbeReady));
+            Assert.Equal("ign-timebox", IgnitionLock.StageCss(IgnitionStage.TimeBoxOpen));
+            Assert.Equal("ign-master",  IgnitionLock.StageCss(IgnitionStage.MasterIgnited));
+        }
     }
 }
