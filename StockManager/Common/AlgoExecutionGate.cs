@@ -133,11 +133,22 @@ namespace StockManager.Common
             }
 
             decimal limit = intent.Kind == PaperKind.Limit ? intent.Price : 0m;
-            var (ok, msg) = _broker.Place(
-                PaperAsset.Stock, intent.Symbol, intent.Name,
-                intent.Side, intent.Kind, approved, limit, intent.Price);
-            return new ExecVerdict(
-                ok ? ExecOutcome.Executed : ExecOutcome.RejectedFrozen, ok ? approved : 0m, msg);
+            try
+            {
+                var (ok, msg) = _broker.Place(
+                    PaperAsset.Stock, intent.Symbol, intent.Name,
+                    intent.Side, intent.Kind, approved, limit, intent.Price);
+                return new ExecVerdict(
+                    ok ? ExecOutcome.Executed : ExecOutcome.RejectedFrozen, ok ? approved : 0m, msg);
+            }
+            catch (Exception ex)
+            {
+                // S21: 브로커 발주 장애 → fail-closed 비상 동결 (예외를 전파시키지 않음).
+                // 카오스 검증으로 드러난 갭 — 라이브 경로의 미가드 예외를 동결로 봉쇄.
+                Interlocked.Exchange(ref _algoState, (int)AlgoGateState.Frozen);
+                try { _attestation.ForceFreeze($"브로커 발주 장애 — 안전 동결: {ex.Message}"); } catch { }
+                return new ExecVerdict(ExecOutcome.RejectedFrozen, 0m, $"브로커 장애 동결: {ex.Message}");
+            }
         }
 
         // ── 가드2 클램프 (순수 함수 — 테스트 가능) ─────────────────────────────
