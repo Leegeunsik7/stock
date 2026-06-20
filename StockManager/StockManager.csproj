@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.1.0</Version>
-    <AssemblyVersion>4.1.0.0</AssemblyVersion>
-    <FileVersion>4.1.0.0</FileVersion>
+    <Version>4.2.0</Version>
+    <AssemblyVersion>4.2.0.0</AssemblyVersion>
+    <FileVersion>4.2.0.0</FileVersion>
+    <!-- v4.2.0 — S19 #3: 원자 핫스왑 게이트웨이 (StrategySlot·PromotionGateway·HotSwapTests 23개) -->
     <!-- v4.1.0 — S19 #2: 섀도우 그린하우스 순수 코어 (MutationBoundsMatrix·FitnessEvaluator·MutationBoundsTests 39개) -->
     <!-- v4.0.0 — The Gold Master: 18개 시즌 결정론 퀀트 터미널 정식 프로덕션 릴리스 (빌드 가드레일 최대화) -->
     <Product>MS2-E Stock Suite</Product>
