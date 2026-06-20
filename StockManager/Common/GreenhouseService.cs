@@ -29,13 +29,14 @@ using System.Threading;
 namespace StockManager.Common
 {
     public sealed record GreenhouseReport(
-        bool      Running,
-        long      Cycles,
-        long      Mutations,
-        long      Errors,
-        double    BestFitness,
-        string?   BestSpecId,
-        DateTime? LastCycleUtc);
+        bool        Running,
+        long        Cycles,
+        long        Mutations,
+        long        Errors,
+        double      BestFitness,
+        string?     BestSpecId,
+        MacroRegime Regime,
+        DateTime?   LastCycleUtc);
 
     public sealed class GreenhouseService : IDisposable
     {
@@ -53,6 +54,9 @@ namespace StockManager.Common
         public double ProxyExposure   { get; init; } = 0.5;     // backtest-proxy(노출 O 중립=목표)
         /// <summary>S19 #5 — 실시간 마찰 피드. 결속 시 ProxyMeanAbsZ 대신 실거래 LastZ 를 적응도에 반영.</summary>
         public SlippageSentinel? Sentinel { get; init; }
+        /// <summary>S20 #2 — 거시 매크로 피드(주입식). 결속 시 레짐 스트레스로 거부 게이트를 실시간 수축.</summary>
+        public Func<MacroSnapshot>? MacroFeed { get; init; }
+        public MacroRegimeBounds   MacroBounds { get; init; } = MacroRegimeBounds.Default;
         /// <summary>테스트용 — 배양 사이클 시작 지점에 결함을 주입해 격리 방화벽을 검증한다.</summary>
         public Action? CycleFaultHook { get; init; }
 
@@ -66,6 +70,7 @@ namespace StockManager.Common
         private volatile bool _running;
         private long          _cycles, _mutations, _errors;
         private long          _bestBits = BitConverter.DoubleToInt64Bits(double.NegativeInfinity);
+        private volatile int  _regimeInt = (int)MacroRegime.Calm;   // 최근 사이클의 매크로 레짐
         private volatile string? _bestSpecId;
         private long          _lastCycleTicks;
         private ResourceLease? _lease;
@@ -175,6 +180,20 @@ namespace StockManager.Common
             // S19 #5 — 실시간 마찰: Sentinel 결속 시 실거래 LastZ, 아니면 백테스트 프록시
             double meanAbsZ = Sentinel is not null ? Math.Abs(Sentinel.LastZ) : ProxyMeanAbsZ;
 
+            // S20 #2 — 거시 매크로 레짐: 피드 결속 시 스트레스로 거부 게이트 허용오차 수축
+            var fb = _fitBounds;
+            if (MacroFeed is not null)
+            {
+                try
+                {
+                    var    macro  = MacroFeed();
+                    double stress = MacroRegimeFusion.StressScore(macro, MacroBounds);
+                    _regimeInt = (int)MacroRegimeFusion.Classify(stress, MacroBounds);
+                    fb = MacroRegimeFusion.Modulate(_fitBounds, stress, MacroBounds);
+                }
+                catch { /* 매크로 피드 실패 → 비변조(평온) 폴백, 그레이스풀 강등 */ }
+            }
+
             foreach (var entry in result.Ranked)
             {
                 var rec = MutationBoundsMatrix.Reconcile(entry.Spec, _mutBounds);
@@ -182,7 +201,7 @@ namespace StockManager.Common
                 Interlocked.Increment(ref _mutations);
 
                 var bt = StrategyCompiler.Backtest(rec.Repaired, candles, _market);
-                double f = FitnessEvaluator.BaseFitness(bt, meanAbsZ, ProxyExposure, _fitBounds);
+                double f = FitnessEvaluator.BaseFitness(bt, meanAbsZ, ProxyExposure, fb);
                 if (f > bestF) { bestF = f; bestSpec = rec.Repaired; }
             }
 
@@ -210,6 +229,7 @@ namespace StockManager.Common
                 Errors:       Interlocked.Read(ref _errors),
                 BestFitness:  double.IsNegativeInfinity(best) ? 0.0 : best,
                 BestSpecId:   _bestSpecId,
+                Regime:       (MacroRegime)_regimeInt,
                 LastCycleUtc: ticks == 0 ? null : new DateTime(ticks, DateTimeKind.Utc));
         }
 
