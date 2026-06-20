@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.6.0</Version>
-    <AssemblyVersion>4.6.0.0</AssemblyVersion>
-    <FileVersion>4.6.0.0</FileVersion>
+    <Version>4.7.0</Version>
+    <AssemblyVersion>4.7.0.0</AssemblyVersion>
+    <FileVersion>4.7.0.0</FileVersion>
+    <!-- v4.7.0 — S20 #3(Path B): 가상 멀티 계좌 할당 (MultiAccountMesh·최대잉여 무손실 분배·MultiAccountMeshTests 15개) -->
     <!-- v4.6.0 — S20 #2: 거시 매크로 레짐 융합 (MacroRegimeFusion·레짐별 게이트 수축·MacroRegimeTests 17개) -->
     <!-- v4.5.0 — S20 #1: 락-프리 SPMC 링버퍼 (RingBufferCore·seqlock·캐시라인패딩·RingBufferTests 15개) -->
     <!-- v4.4.0 — S19 #5: 라이브 결속 + 3중 강철 안전 게이트 (AlgoExecutionGate·실시간마찰피드·LiveBindingTests 18개) -->
