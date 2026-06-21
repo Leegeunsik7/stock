@@ -224,9 +224,25 @@ namespace StockManager.Common
             }
 
             var seeds = _seeds;
-            if (seeds.Length == 0 || _candles.Length < 60) return;
+            // ★ S25-c Lock-Free Catch-Up + As-Of 원자 박제 — 글로벌 _candles 를 사이클 진입점에서 '단 한 번'
+            //   Volatile.Read 로 로컬 snap 에 가둔다. (a) acquire 배리어가 Prime 의 Volatile.Write(release)와 짝지어
+            //   ARM64 등 약메모리에서도 배열 참조+심층복제된 원소를 일관 가시화한다. (b) 사이클 전체가 이 단일
+            //   스냅샷만 참조하므로 인그레스가 도중에 _candles 를 스왑해도 시간 왜곡(과거/미래 윈도우 혼입)이 없다.
+            //   이후 _candles 직간접 재참조 전면 금지 — Evolve/Backtest 는 snap 에서 파생된 로컬만 받는다.
+            //
+            //   ★적대적 리뷰(major) 수정 — 챔피언에 박제할 As-Of(snapAsOf)를 snap '보다 먼저' 독출한다.
+            //   Prime 은 _candles(release) → _lastFreshTicks(release) 순으로 쓰므로, 독출을 역순
+            //   (_lastFreshTicks acquire → _candles acquire)으로 하면 release-acquire 에 의해 "신선 시각 +
+            //   오래된 데이터"(과대신선·fail-OPEN)가 원천 불가능해진다: snapAsOf 가 새 시각을 관측하면 그 acquire 가
+            //   직전 _candles 쓰기를 happens-before 로 끌어와 snap 도 반드시 새 데이터다. 최악은 "오래된 시각 +
+            //   새 데이터"(과소신선·fail-CLOSED) — 안전 측 편향. 과거엔 As-Of 를 사이클 '끝'에서 재독출해
+            //   snap(과거 윈도우) 으로 진화한 챔피언이 도중 Prime 의 더 신선한 시각을 달고 나가 신선도 게이트를
+            //   부당 통과(fail-open)했다 — catch-up 이 봉인한 시간왜곡을 As-Of 가 도로 은폐하던 자가당착.
+            long snapAsOf = Volatile.Read(ref _lastFreshTicks);
+            var  snap     = Volatile.Read(ref _candles);
+            if (seeds.Length == 0 || snap.Length < 60) return;
 
-            var candles = new List<Candle>(_candles);   // 불변 스냅샷의 작업 복사본
+            var candles = new List<Candle>(snap);   // 단일 스냅샷에서만 파생(글로벌 재독출 0)
             var result  = CartridgeGenome.Evolve(
                 seeds, candles, _market, Generations, PopulationSize, _attestation);
             if (!result.IsValid || result.Ranked.Count == 0) return;
@@ -269,8 +285,10 @@ namespace StockManager.Common
             {
                 Interlocked.Exchange(ref _bestBits, BitConverter.DoubleToInt64Bits(bestF));
                 _bestSpecId = bestSpec.Id;
-                // S23-b 규칙3 — 제안에 데이터 As-Of(마지막 Prime 마켓 시각) 박제 → 승인·활성 시점 신선도 검문 근거
-                _gateway.Submit(bestSpec, bestF, Volatile.Read(ref _lastFreshTicks));   // Candidate ➔ PendingApproval
+                // S23-b 규칙3 — 제안에 데이터 As-Of 박제 → 승인·활성 시점 신선도 검문 근거.
+                // ★S25-c — cycle-start 에서 snap 과 역순으로 가둔 snapAsOf 사용(사이클 끝 재독출 금지):
+                //   챔피언이 실제 진화한 윈도우의 신선도와 일관 → 잔여 시간왜곡 시 신선도 게이트가 fail-closed.
+                _gateway.Submit(bestSpec, bestF, snapAsOf);   // Candidate ➔ PendingApproval
                 OnChampionPromoted?.Invoke();   // S24-b — 핫패스 dirty 트리거(펌프 RequestFlush, 무할당 Interlocked)
             }
         }

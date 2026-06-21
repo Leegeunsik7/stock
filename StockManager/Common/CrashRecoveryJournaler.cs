@@ -18,8 +18,7 @@
 // ============================================================================
 using System;
 using System.Buffers.Binary;
-using System.IO;
-using System.IO.MemoryMappedFiles;
+using System.IO;                       // IOException(접근불가 분류)
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -166,18 +165,23 @@ namespace StockManager.Common
         }
     }
 
-    // ── MMF 결속 (StateHydrationEngine 패턴) ──────────────────────────────────────
+    // ── 저널 결속 (StateHydrationEngine 패턴) — 물리 I/O 는 IJournalStore 로 격리(S25-c) ──────────
     public sealed class CrashRecoveryJournaler
     {
-        private readonly string _path;
+        private readonly IJournalStore _store;   // S25-c — MMF(프로덕션) ↔ 인메모리(헤르메틱 카오스) 추상화
         private readonly int    _capacity;
         private readonly long   _maxBytes;
         private readonly byte[] _buf;          // 재사용 플랫 인코딩/디코딩 버퍼(생성 시 1회 할당)
         private readonly byte[] _compositeBuf; // S25-b — 복합 포맷 전용 재사용 버퍼(플랫보다 큼: 게놈섹터+헤더)
 
+        /// <summary>경로 생성자 — 프로덕션 MMF backing(후방호환: 기존 모든 호출부·테스트가 그대로 동작).</summary>
         public CrashRecoveryJournaler(string path, int capacity = 64)
+            : this(new MmfJournalStore(path ?? throw new ArgumentNullException(nameof(path))), capacity) { }
+
+        /// <summary>store 주입 생성자 — 헤르메틱 카오스 테스트가 InMemoryJournalStore 로 디스크 없이 검증.</summary>
+        public CrashRecoveryJournaler(IJournalStore store, int capacity = 64)
         {
-            _path         = path ?? throw new ArgumentNullException(nameof(path));
+            _store        = store ?? throw new ArgumentNullException(nameof(store));
             _capacity     = capacity < 1 ? 1 : capacity;
             _maxBytes     = JournalCodec.RequiredBytes(_capacity);
             _buf          = new byte[_maxBytes];
@@ -194,14 +198,7 @@ namespace StockManager.Common
         {
             var slice = recs.Length > _capacity ? recs.Slice(recs.Length - _capacity) : recs;
             int len   = JournalCodec.Encode(slice, _buf);
-            try
-            {
-                using var mmf  = MemoryMappedFile.CreateFromFile(
-                    _path, FileMode.Create, null, _maxBytes, MemoryMappedFileAccess.ReadWrite);
-                using var view = mmf.CreateViewAccessor(0, _maxBytes, MemoryMappedFileAccess.Write);
-                view.WriteArray(0, _buf, 0, len);
-                return true;
-            }
+            try { _store.Write(_buf, len, _maxBytes); return true; }
             catch { return false; /* 영속화 실패 흡수 — 펌프가 다음 주기 재시도 */ }
         }
 
@@ -211,15 +208,10 @@ namespace StockManager.Common
             count = 0;
             try
             {
-                if (!File.Exists(_path)) return JournalStatus.Empty;
-                long fileLen = new FileInfo(_path).Length;
-                if (fileLen < JournalCodec.HeaderSize) return JournalStatus.Empty;
+                if (!_store.Exists) return JournalStatus.Empty;
+                if (_store.Length < JournalCodec.HeaderSize) return JournalStatus.Empty;
 
-                int readLen = (int)Math.Min(fileLen, _maxBytes);
-                using var mmf  = MemoryMappedFile.CreateFromFile(
-                    _path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-                using var view = mmf.CreateViewAccessor(0, readLen, MemoryMappedFileAccess.Read);
-                view.ReadArray(0, _buf, 0, readLen);
+                int readLen = _store.Read(_buf);   // min(파일길이, _buf.Length) — 기존 readLen 과 동일
                 return JournalCodec.Decode(_buf.AsSpan(0, readLen), dest, out count);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -266,14 +258,7 @@ namespace StockManager.Common
         public bool PersistComposite(in GenomeSnapshot genome, ReadOnlySpan<JournalRecord> recs)
         {
             int len = CompositeJournalCodec.Encode(genome, recs, _capacity, _compositeBuf);
-            try
-            {
-                using var mmf  = MemoryMappedFile.CreateFromFile(
-                    _path, FileMode.Create, null, _compositeBuf.Length, MemoryMappedFileAccess.ReadWrite);
-                using var view = mmf.CreateViewAccessor(0, _compositeBuf.Length, MemoryMappedFileAccess.Write);
-                view.WriteArray(0, _compositeBuf, 0, len);
-                return true;
-            }
+            try { _store.Write(_compositeBuf, len, _compositeBuf.Length); return true; }
             catch { return false; }
         }
 
@@ -283,16 +268,12 @@ namespace StockManager.Common
             count = 0; genome = default;
             try
             {
-                if (!File.Exists(_path))
+                if (!_store.Exists)
                     return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
-                long fileLen = new FileInfo(_path).Length;
-                if (fileLen < 8)
+                if (_store.Length < 8)
                     return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
 
-                int readLen = (int)Math.Min(fileLen, _compositeBuf.Length);
-                using var mmf  = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-                using var view = mmf.CreateViewAccessor(0, readLen, MemoryMappedFileAccess.Read);
-                view.ReadArray(0, _compositeBuf, 0, readLen);
+                int readLen = _store.Read(_compositeBuf);   // min(파일길이, _compositeBuf.Length)
                 var r = CompositeJournalCodec.Decode(_compositeBuf.AsSpan(0, readLen), _capacity, recsDest, out count);
                 genome = r.GenomeRecord;
                 return r;

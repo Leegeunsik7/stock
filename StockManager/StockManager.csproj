@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.26.0</Version>
-    <AssemblyVersion>4.26.0.0</AssemblyVersion>
-    <FileVersion>4.26.0.0</FileVersion>
+    <Version>4.27.0</Version>
+    <AssemblyVersion>4.27.0.0</AssemblyVersion>
+    <FileVersion>4.27.0.0</FileVersion>
+    <!-- v4.27.0 — S25-c: Horizon A — 복구 요새 통합 검증 (헤르메틱 가상 MMF 카오스 + Lock-Free Catch-Up). IJournalStore 추상화(MmfJournalStore 프로덕션/InMemoryJournalStore 디스크0 가상)·CrashRecoveryJournaler 가 _store 위임[경로 생성자 후방호환]·카오스 인젝션(torn 절단/후미0/비트플립/부재/IO락)→무디스크 결정론 freeze 검증·Store_Equivalence 바이트 트윈 증명. GreenhouseService.RunCycleOnce 단일 Volatile.Read catch-up. ★적대적 리뷰(major) 수정: 챔피언 As-Of 를 사이클 끝 재독출→cycle-start snapAsOf 역순 독출(release-acquire fail-closed 편향)로 과대신선 fail-OPEN 봉인. minor: vacuous 절단단언→이진 길이가드 전수증명·역방향 섹터독립 테스트·섹터독립 주석 범위 정정. 신규 테스트 13. liveArmed:false 불변 — 통합 검증 CI 영속, 펌프 활성은 옵트인 -->
     <!-- v4.26.0 — S25-b: 복합 저널 메인 척추 승격 (RejectionForensicAuditor.PublishGenome+SnapshotSession[genome+forensic 단일 seqlock 원자 스냅샷·write-gate 다중라이터·split-brain 봉인]·CrashRecoveryJournaler.PersistComposite/RecoverComposite/RecoverOrFreezeComposite·CompositeJournalCodec 구 플랫(MS2C)→Empty 마이그레이션·JournalFlushPump 위임 모드·BootOrchestrator composite·호스트 복합 펌프+게놈 발행 배선[Recovery.PumpEnabled 기본 OFF]·Record _seq를 odd윈도우로 이동[팬텀슬롯 봉인]). 신규 테스트 11. 적대적 리뷰 4렌즈 클린(결함 0). liveArmed:false 불변 -->
     <!-- v4.25.0 — S25-a: 격리 라이브 인그레스 + 방벽 어댑터 (LiveIngressDriver 격리 펌프·트립와이어 edge·BulkheadCandleSource IQuoteProvider 어댑터[예외→0 고갈, 결정 오염 0]·LiveCandleFeed.Validate OHLC 전부등식 강화·greenhouse staleness/isDirty 게이트·Greenhouse.LiveFeed 게이트 기본 OFF·관제탑 피드단절 경보). ★적대적 리뷰 critical 수정: Candle=가변class 라 Prime 얕은복사가 인그레스 버퍼와 별칭→배양 torn 읽기(결정 오염). Prime 딥카피(값 복제)로 별칭 단절·격리. 방벽 반증 테스트 14. 실 provider 왕복 CI 미검증(사용자측). liveArmed:false 불변 — 입력만 합성→실시간 -->
     <!-- v4.24.0 — S24-c: 전방위 트리거 결속 + 복합 저널 + Pack=1 (PromotionGateway.OnLedgerChanged 훅[승인·활성·거부]→펌프 RequestFlush, 다중 소스 Interlocked 손실0 검증. CompositeJournalCodec 게놈섹터+포렌식링 독립 CRC[포렌식 torn 에도 게놈 복구]·결정론 오프셋·오버플로 클램프. JournalRecord/GenomeSnapshot Pack=1 패딩 사살[51/33B]·JournalCodec v2(버전 스큐는 Empty=무동결, 자가당착 차단). 신규 테스트 16). 복합 코덱은 채택 대기(플랫 journaler 유지). liveArmed 불변 -->
