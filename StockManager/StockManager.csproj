@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.15.0</Version>
-    <AssemblyVersion>4.15.0.0</AssemblyVersion>
-    <FileVersion>4.15.0.0</FileVersion>
+    <Version>4.16.0</Version>
+    <AssemblyVersion>4.16.0.0</AssemblyVersion>
+    <FileVersion>4.16.0.0</FileVersion>
+    <!-- v4.16.0 — S22 #3: 로그 비밀 차폐 전수 (LogRedactor·2겹 방어[등록 실비밀 정확일치+라벨패턴]·Log.Write 단일 초크포인트 마스킹·Program.cs 부팅 등록[KIS/Gemini/Upbit/Telegram/계좌번호]·LogRedactorTests 20). 예외 덤프 평문 누출 차단 -->
     <!-- v4.15.0 — S22 #2: 무위험 설정 라우팅 + 부팅 무결성 결속 (ConfigAuditor·BootConfigSpecs 3튜너블 검증경로 라우팅[스냅샷주기·신선도·온실사이클]·부팅 redacted 스냅샷 원장·Coerced 시 관제탑 [⚠️ 설정복구] 경보·ConfigAuditorTests 24). liveArmed 미노출 -->
     <!-- v4.14.0 — S22 #1: 설정 격리·런타임 보안 파사드 (RuntimeConfig·env→DB precedence·검증/바운드/fail-safe·비밀 Redact·LiveTradingConfigurable=false 안전 불변식·RuntimeConfigTests 38). liveArmed 미노출(코드 게이트 전용) -->
     <!-- v4.13.0 — v5.0.0-c(안전형)/S21 #3: 2중 게이트 핫-밸브 (정적 차단막 → liveArmed 마스터 + IgnitionLock 런타임 게이트). 호스트 liveArmed:false 박제 — 실거래 0. 5.0.0은 최종 flip 시 -->

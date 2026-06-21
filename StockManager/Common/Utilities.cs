@@ -171,16 +171,18 @@ namespace StockManager.Common
 
         private static void Write(string level, string msg)
         {
+            // S22 #3 — 단일 초크포인트 비밀 차폐: 파일·디버그 출력 전에 등록 비밀·라벨 비밀 마스킹.
+            var safe = LogRedactor.Shared.Scrub(msg);
             try
             {
                 Directory.CreateDirectory(LogDir);
                 var file = Path.Combine(LogDir, $"stock_{DateTime.Now:yyyyMMdd}.log");
-                var line = $"[{DateTime.Now:HH:mm:ss.fff}] [{level}] {msg}{Environment.NewLine}";
+                var line = $"[{DateTime.Now:HH:mm:ss.fff}] [{level}] {safe}{Environment.NewLine}";
                 lock (_lock) File.AppendAllText(file, line);
             }
             catch { /* 로깅 실패는 무시 */ }
 
-            if (level == "ERROR") System.Diagnostics.Debug.WriteLine($"[{level}] {msg}");
+            if (level == "ERROR") System.Diagnostics.Debug.WriteLine($"[{level}] {safe}");
         }
     }
 

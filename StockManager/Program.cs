@@ -45,6 +45,10 @@ namespace StockManager
                 "Upbit.AccessKey", "Upbit.SecretKey", "Telegram.Token"
             });
 
+            // S22 #3 — 로그 비밀 차폐: 실 비밀값을 LogRedactor 에 등록 → 이후 모든 Log 출력(파일·예외
+            // 덤프 포함)에서 평문 마스킹. 비밀이 로그/덤프에 생으로 남는 경로를 프로세스 전역에서 차단.
+            RegisterLogSecrets(db);
+
             // 테마 로드 (블랙/화이트)
             ThemeManager.Load(db);
 
@@ -61,6 +65,7 @@ namespace StockManager
                 Log.Info("[Setup] 최초 실행 — 설정 마법사 표시");
                 using (var wizard = new SetupWizard(db)) wizard.ShowDialog();
                 db.SetSetting("Setup.Completed", "true"); // 취소해도 다음 실행부터 자동 표시 안 함
+                RegisterLogSecrets(db);   // 최초 실행 갭 차단 — 방금 입력된 비밀을 즉시 등록(멱등)
             }
 
             // 데이터 프로바이더 구성 (KIS 키가 있으면 KIS 우선)
@@ -156,6 +161,25 @@ namespace StockManager
         {
             var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             return v == null ? "v3" : $"v{v.Major}.{v.Minor}.{v.Build}";
+        }
+
+        // S22 #3 — 실 비밀값을 LogRedactor 에 등록. DPAPI 비밀 + 민감 평문 식별자(계좌번호).
+        // 이후 모든 Log 출력은 이 값들을 어느 라인에 박혀 있든 마스킹한다.
+        private static void RegisterLogSecrets(LocalDatabase db)
+        {
+            try
+            {
+                foreach (var key in new[]
+                {
+                    "Gemini.ApiKey", "KIS.AppKey", "KIS.AppSecret",
+                    "Upbit.AccessKey", "Upbit.SecretKey", "Telegram.Token",
+                })
+                    LogRedactor.Shared.Register(db.GetSecret(key));
+
+                LogRedactor.Shared.Register(db.GetSetting("KIS.AccountNo"));   // 민감 평문 식별자
+                Log.Info($"[보안] 로그 비밀 차폐 활성 — 등록 {LogRedactor.Shared.Count}건");
+            }
+            catch (Exception ex) { Log.Error("[보안] 로그 비밀 등록 실패", ex); }
         }
 
         // 헤드리스 상주 — 트레이 아이콘 + 메시지 루프(UI 폼 없음). LAN 서버는 Lan.Enabled일 때만 동작.
