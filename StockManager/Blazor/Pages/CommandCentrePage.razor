@@ -131,6 +131,14 @@
         {
             <span class="cc-gh-err"> · 격리흡수 @ghp.Errors</span>
         }
+        @if (Greenhouse.FeedStale)
+        {
+            <span class="cc-gh-err"> · ⚠️ 데이터 피드 단절(fail-closed)</span>
+        }
+        else if (Greenhouse.StalePauses > 0)
+        {
+            <span class="cc-gh-err"> · staleness 정지 @Greenhouse.StalePauses</span>
+        }
     </div>
 
     @if (!_snap.GreenhousePresent)

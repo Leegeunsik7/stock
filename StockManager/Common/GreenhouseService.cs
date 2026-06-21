@@ -60,6 +60,16 @@ namespace StockManager.Common
         /// <summary>테스트용 — 배양 사이클 시작 지점에 결함을 주입해 격리 방화벽을 검증한다.</summary>
         public Action? CycleFaultHook { get; init; }
 
+        // ── S23-b 라이브 피드 게이트 (옵트인 · 기본 OFF = 현행 동작) ────────────────
+        /// <summary>규칙1 — true면 데이터 세대 불변 시 재진화 숏서킷(할당·CPU 0).</summary>
+        public bool          SkipUnchanged   { get; init; }
+        /// <summary>규칙2 — 마지막 Prime 이후 이 한도 초과 시 배양 fail-closed. null이면 게이팅 없음.</summary>
+        public TimeSpan?     StalenessWindow { get; init; }
+        /// <summary>테스트용 주입 클록. null이면 UtcNow.</summary>
+        public Func<DateTime>? Clock         { get; init; }
+
+        private DateTime Now() => (Clock ?? (static () => DateTime.UtcNow))();
+
         // ── 불변 입력 스냅샷 (메인과 공유 0) ──────────────────────────────────
         private StrategySpec[] _seeds   = Array.Empty<StrategySpec>();
         private Candle[]       _candles = Array.Empty<Candle>();
@@ -74,6 +84,23 @@ namespace StockManager.Common
         private volatile string? _bestSpecId;
         private long          _lastCycleTicks;
         private ResourceLease? _lease;
+
+        // S23-b — 피드 신선도·세대 추적 (volatile long 불법 → Volatile.Read/Write(ref long))
+        private long _fedGen, _evolvedGen, _lastFreshTicks, _stalePauses;
+
+        /// <summary>규칙2 — 데이터 staleness 로 배양이 fail-closed 된 누적 횟수(관제탑 진단).</summary>
+        public long StalePauses => Interlocked.Read(ref _stalePauses);
+
+        /// <summary>규칙2 — 현재 캔들 피드가 staleness 한도를 넘었는가(관제탑 트립와이어).</summary>
+        public bool FeedStale
+        {
+            get
+            {
+                if (StalenessWindow is not TimeSpan w) return false;
+                long f = Volatile.Read(ref _lastFreshTicks);
+                return f == 0 || Now() - new DateTime(f, DateTimeKind.Utc) > w;
+            }
+        }
 
         public GreenhouseService(
             PromotionGateway         gateway,
@@ -102,6 +129,9 @@ namespace StockManager.Common
             _seeds   = seeds   is null ? Array.Empty<StrategySpec>() : ToArray(seeds);
             _candles = candles is null ? Array.Empty<Candle>()       : ToArray(candles);
             _market  = market;
+            // S23-b — 새 데이터 윈도우: 신선도 갱신 + 세대 증가(isDirty 신호)
+            Volatile.Write(ref _lastFreshTicks, Now().Ticks);
+            Interlocked.Increment(ref _fedGen);
         }
 
         /// <summary>씨앗·캔들의 불변 스냅샷을 적재하고 격리 배양 스레드를 가동한다.</summary>
@@ -166,6 +196,26 @@ namespace StockManager.Common
             // fail-closed — 비상 동결 중에는 배양·제출 모두 정지
             if (_attestation is not null && _attestation.Mode == GatingMode.EmergencyFreeze) return;
 
+            // S23-b 규칙2 — 캔들 staleness fail-closed: 척추(데이터)가 낡으면 배양 즉시 정지.
+            // 매크로(필터)와 달리 캔들(피사체)은 강등 불가 — 사라진 시장에 적합 금지.
+            if (StalenessWindow is TimeSpan sw)
+            {
+                long fresh = Volatile.Read(ref _lastFreshTicks);
+                if (fresh == 0 || Now() - new DateTime(fresh, DateTimeKind.Utc) > sw)
+                {
+                    Interlocked.Increment(ref _stalePauses);
+                    return;
+                }
+            }
+
+            // S23-b 규칙1 — isDirty 숏서킷: 데이터 세대 불변 시 재진화 회피(모집단·백테스트 할당 0).
+            if (SkipUnchanged)
+            {
+                long fed = Interlocked.Read(ref _fedGen);
+                if (fed == Interlocked.Read(ref _evolvedGen)) return;
+                Interlocked.Exchange(ref _evolvedGen, fed);
+            }
+
             var seeds = _seeds;
             if (seeds.Length == 0 || _candles.Length < 60) return;
 
@@ -212,7 +262,8 @@ namespace StockManager.Common
             {
                 Interlocked.Exchange(ref _bestBits, BitConverter.DoubleToInt64Bits(bestF));
                 _bestSpecId = bestSpec.Id;
-                _gateway.Submit(bestSpec, bestF);   // Candidate ➔ PendingApproval
+                // S23-b 규칙3 — 제안에 데이터 As-Of(마지막 Prime 마켓 시각) 박제 → 승인·활성 시점 신선도 검문 근거
+                _gateway.Submit(bestSpec, bestF, Volatile.Read(ref _lastFreshTicks));   // Candidate ➔ PendingApproval
             }
         }
 
