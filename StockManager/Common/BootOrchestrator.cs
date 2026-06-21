@@ -41,16 +41,25 @@ namespace StockManager.Common
             HydrationSlot<int>      gatingSlot,
             CrashRecoveryJournaler? journaler   = null,
             Span<JournalRecord>     journalDest = default,
-            TimeSpan?               freshness   = null)
+            TimeSpan?               freshness   = null,
+            bool                    composite   = false)
         {
             if (hydration   is null) throw new ArgumentNullException(nameof(hydration));
             if (attestation is null) throw new ArgumentNullException(nameof(attestation));
             if (gatingSlot  is null) throw new ArgumentNullException(nameof(gatingSlot));
 
-            // ── (1) 저널 무결성 게이트 — 가장 먼저. Corrupt → 동결(파일 보존), Inaccessible → 비동결 ──
+            // ── (1) 저널 무결성 게이트 — 가장 먼저. Corrupt → 동결(파일 보존), Inaccessible·구포맷 → 비동결 ──
             var jStatus = JournalStatus.Empty;
             if (journaler is not null)
-                jStatus = journaler.RecoverOrFreeze(attestation, journalDest, out _);
+            {
+                if (composite)   // S25-b — 복합 포맷(섹터 독립). 구 플랫(MS2C)·버전 스큐는 Empty(마이그레이션·무동결).
+                {
+                    var cr = journaler.RecoverOrFreezeComposite(attestation, journalDest, out _, out _);
+                    jStatus = cr.AnyCorrupt ? JournalStatus.Truncated : cr.File;   // 리포트용 대표 상태
+                }
+                else
+                    jStatus = journaler.RecoverOrFreeze(attestation, journalDest, out _);
+            }
 
             // ── (3) 하이드레이션 게이트 — 시그니처 불변 호출. (1)이 동결시켰으면 분기 자연 단락 ──
             var integ = BootIntegrityChecker.CheckAndHydrate(hydration, attestation, gatingSlot, freshness);

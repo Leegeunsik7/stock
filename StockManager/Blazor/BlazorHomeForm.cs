@@ -90,7 +90,21 @@ namespace StockManager.Blazor
             JournalFlushPump? flushPump = null;
             if (cfg.GetBool(BootConfigSpecs.RecoveryPumpEnabledKey, BootConfigSpecs.RecoveryPumpEnabledDefault))
             {
-                flushPump = new JournalFlushPump(recoveryJournaler, new ForensicJournalProvider(rejectionForensics));
+                // S25-b — 복합 포맷 펌프: 원자 세션(genome+forensic 단일 seqlock) 스냅샷 → PersistComposite.
+                // 사전 할당 스크래치 클로저 → per-flush 무할당. 펌프 백그라운드 단일 스레드에서만 실행.
+                var scratchRej     = new RejectionRecord[recoveryJournaler.Capacity];
+                var scratchJournal = new JournalRecord[recoveryJournaler.Capacity];
+                flushPump = new JournalFlushPump(() =>
+                {
+                    int n = rejectionForensics.SnapshotSession(scratchRej, out var genome);   // ★원자 세션(split-brain 봉인)
+                    for (int i = 0; i < n; i++)
+                    {
+                        var r = scratchRej[i];
+                        scratchJournal[i] = new JournalRecord(r.Seq, RecoveryKind.Rejection, (byte)r.Stage, 0,
+                            r.AsOfTicks, r.NowTicks, r.WindowTicks, r.Fitness, JournalRecord.HashId(r.SpecId));
+                    }
+                    return recoveryJournaler.PersistComposite(genome, scratchJournal.AsSpan(0, n));
+                });
                 flushPump.Start();
                 services.AddSingleton(flushPump);
             }
@@ -110,7 +124,16 @@ namespace StockManager.Blazor
                 CycleIntervalMs = cfg.GetInt(BootConfigSpecs.GreenhouseCycleMsKey,   // S22 #2 — 검증 경로 라우팅
                     BootConfigSpecs.GreenhouseCycleMsDefault,
                     BootConfigSpecs.GreenhouseCycleMsMin, BootConfigSpecs.GreenhouseCycleMsMax),
-                OnChampionPromoted = flushPump is null ? (Action?)null : flushPump.RequestFlush,   // S24-b dirty 트리거
+                // S24-b/S25-b — 챔피언 발행: 게놈 스냅샷을 원자 세션에 발행(auditor) + 플러시 트리거.
+                OnChampionPromoted = flushPump is null ? (Action?)null : () =>
+                {
+                    var cur = promotionGateway.Current;
+                    if (cur is not null)
+                        rejectionForensics.PublishGenome(new GenomeSnapshot(
+                            cur.SubmittedUtc.Ticks, JournalRecord.HashId(cur.Spec.Id),
+                            cur.Fitness, cur.AsOfTicks, (byte)promotionGateway.State));
+                    flushPump.RequestFlush();
+                },
                 // S25-a — 라이브 시 데이터 신선도 fail-closed(한도 초과 배양 정지) + isDirty 숏서킷. OFF면 합성 모드 유지.
                 SkipUnchanged   = liveFeed,
                 StalenessWindow = liveFeed
@@ -238,10 +261,12 @@ namespace StockManager.Blazor
 
             try
             {
-                // S24-b — 가역적 안전 부팅 시퀀스: (1)저널 무결성 → (3)하이드레이션 게이트(단조-동결).
+                // S24-b/S25-b — 가역적 안전 부팅: (1)복합 저널 무결성 → (3)하이드레이션 게이트(단조-동결).
+                // composite:true — 복합 포맷 복구. 구 플랫(v1·MS2C)·버전 스큐는 Empty(마이그레이션·무동결),
+                // I/O 접근불가도 비동결(자가당착 차단), 내용 오염만 fail-closed. 파일 부재 → Empty(클린).
                 var boot = BootOrchestrator.RunSafeBoot(
                     hydration, attestation, gatingSlot, journaler, journalDest,
-                    System.TimeSpan.FromHours(freshnessHours));
+                    System.TimeSpan.FromHours(freshnessHours), composite: true);
                 Log.Info($"[BOOT] {boot.Detail} 모드={boot.Integrity.RecoveredMode} 동결적용={boot.Integrity.FrozeOnBoot}");
 
                 if (boot.Safety == BootSafety.Frozen)

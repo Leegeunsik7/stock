@@ -172,14 +172,16 @@ namespace StockManager.Common
         private readonly string _path;
         private readonly int    _capacity;
         private readonly long   _maxBytes;
-        private readonly byte[] _buf;          // 재사용 인코딩/디코딩 버퍼(생성 시 1회 할당)
+        private readonly byte[] _buf;          // 재사용 플랫 인코딩/디코딩 버퍼(생성 시 1회 할당)
+        private readonly byte[] _compositeBuf; // S25-b — 복합 포맷 전용 재사용 버퍼(플랫보다 큼: 게놈섹터+헤더)
 
         public CrashRecoveryJournaler(string path, int capacity = 64)
         {
-            _path     = path ?? throw new ArgumentNullException(nameof(path));
-            _capacity = capacity < 1 ? 1 : capacity;
-            _maxBytes = JournalCodec.RequiredBytes(_capacity);
-            _buf      = new byte[_maxBytes];
+            _path         = path ?? throw new ArgumentNullException(nameof(path));
+            _capacity     = capacity < 1 ? 1 : capacity;
+            _maxBytes     = JournalCodec.RequiredBytes(_capacity);
+            _buf          = new byte[_maxBytes];
+            _compositeBuf = new byte[CompositeJournalCodec.RequiredBytes(_capacity)];
         }
 
         public int Capacity => _capacity;
@@ -256,6 +258,75 @@ namespace StockManager.Common
                 Log.Warn("[복구] 크래시 저널 접근불가(I/O·락) — 오염 아님, 비동결. 포렌식 복구만 생략, 안전 상태는 하이드레이션이 검증.");
             }
             return status;
+        }
+
+        // ── S25-b 복합 포맷(게놈 섹터 + 포렌식 링) ────────────────────────────────────
+
+        /// <summary>원자 세션(게놈 + 포렌식)을 복합 포맷으로 MMF 영속화. 무할당(재사용 _compositeBuf). 디스크 실패 시 false.</summary>
+        public bool PersistComposite(in GenomeSnapshot genome, ReadOnlySpan<JournalRecord> recs)
+        {
+            int len = CompositeJournalCodec.Encode(genome, recs, _capacity, _compositeBuf);
+            try
+            {
+                using var mmf  = MemoryMappedFile.CreateFromFile(
+                    _path, FileMode.Create, null, _compositeBuf.Length, MemoryMappedFileAccess.ReadWrite);
+                using var view = mmf.CreateViewAccessor(0, _compositeBuf.Length, MemoryMappedFileAccess.Write);
+                view.WriteArray(0, _compositeBuf, 0, len);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>복합 저널 복구. 섹터 독립 검증. 구 플랫(MS2C)·버전 스큐는 Empty(마이그레이션). I/O 예외는 Inaccessible.</summary>
+        public CompositeResult RecoverComposite(Span<JournalRecord> recsDest, out int count, out GenomeSnapshot genome)
+        {
+            count = 0; genome = default;
+            try
+            {
+                if (!File.Exists(_path))
+                    return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
+                long fileLen = new FileInfo(_path).Length;
+                if (fileLen < 8)
+                    return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
+
+                int readLen = (int)Math.Min(fileLen, _compositeBuf.Length);
+                using var mmf  = MemoryMappedFile.CreateFromFile(_path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+                using var view = mmf.CreateViewAccessor(0, readLen, MemoryMappedFileAccess.Read);
+                view.ReadArray(0, _compositeBuf, 0, readLen);
+                var r = CompositeJournalCodec.Decode(_compositeBuf.AsSpan(0, readLen), _capacity, recsDest, out count);
+                genome = r.GenomeRecord;
+                return r;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new CompositeResult(JournalStatus.Inaccessible, JournalStatus.Inaccessible, JournalStatus.Inaccessible, default, 0);
+            }
+            catch
+            {
+                return new CompositeResult(JournalStatus.Truncated, JournalStatus.Truncated, JournalStatus.Truncated, default, 0);
+            }
+        }
+
+        /// <summary>복합 복구 + 부팅 방화벽. 어느 섹터든 내용 오염(Corrupt)이면 ForceFreeze. Inaccessible·Empty·구포맷은 비동결.</summary>
+        public CompositeResult RecoverOrFreezeComposite(OrderAttestationService attestation,
+                                                        Span<JournalRecord> recsDest, out int count, out GenomeSnapshot genome)
+        {
+            var r = RecoverComposite(recsDest, out count, out genome);
+            if (r.AnyCorrupt)
+            {
+                try
+                {
+                    attestation?.ForceFreeze(
+                        $"크래시 복구(복합): 저널 오염(file={r.File} genome={r.Genome} forensic={r.Forensic}) — " +
+                        "불결한 종료 증거, 부팅 fail-closed. /broker/gating 수동 정합 후 해제(파일 보존).");
+                }
+                catch { }
+            }
+            else if (r.File.IsInaccessible())
+            {
+                Log.Warn("[복구] 복합 저널 접근불가(I/O·락) — 오염 아님, 비동결(자가당착 차단).");
+            }
+            return r;
         }
     }
 }

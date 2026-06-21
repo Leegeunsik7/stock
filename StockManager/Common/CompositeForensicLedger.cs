@@ -135,6 +135,10 @@ namespace StockManager.Common
             uint fmagic = BinaryPrimitives.ReadUInt32LittleEndian(src);
             if (fmagic == 0u)
                 return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
+            // S25-b 마이그레이션 — 구 플랫 포맷(JournalCodec.MagicHead "MS2C")은 torn/변조 오염이 아니라 양성 구포맷.
+            // 동결하지 말고 Empty(폐기→복합 재생성 신호)로 그레이스풀 흡수(v4.24 버전 스큐 사상 일관). 미상 매직만 BadMagic.
+            if (fmagic == JournalCodec.MagicHead)
+                return new CompositeResult(JournalStatus.Empty, JournalStatus.Empty, JournalStatus.Empty, default, 0);
             if (fmagic != FileMagic)
                 return new CompositeResult(JournalStatus.BadMagic, JournalStatus.BadMagic, JournalStatus.BadMagic, default, 0);
             // S24-c — 매직 맞으나 버전 스큐(우리 구 포맷)는 오염 아님 → 폐기·클린(무동결). 플랫 코덱과 동일 사상.

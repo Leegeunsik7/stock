@@ -56,10 +56,11 @@ namespace StockManager.Common
 
     public sealed class JournalFlushPump : IDisposable
     {
-        private readonly CrashRecoveryJournaler   _journaler;
-        private readonly IJournalSnapshotProvider _provider;
-        private readonly JournalRecord[]          _scratch;     // 재사용 수집 버퍼(생성 시 1회 할당)
-        private readonly int                      _intervalMs;
+        private readonly CrashRecoveryJournaler?   _journaler;
+        private readonly IJournalSnapshotProvider? _provider;
+        private readonly JournalRecord[]?          _scratch;     // 재사용 수집 버퍼(플랫 모드)
+        private readonly Func<bool>?               _flushDelegate;  // S25-b — 복합 플러시 위임(주입식 capture+persist)
+        private readonly int                       _intervalMs;
 
         private long          _dirtyGen, _flushedGen, _flushes, _flushErrors;
         private volatile bool _running;
@@ -77,6 +78,17 @@ namespace StockManager.Common
             _intervalMs = intervalMs < 25 ? 25 : intervalMs;
         }
 
+        /// <summary>
+        /// S25-b — 위임 모드. flushOnce 는 '원자 세션 캡처 + 영속화'를 한 번 수행하고 성공 여부를 반환한다
+        /// (예: 복합 저널의 SnapshotSession→PersistComposite). 핫패스 RequestFlush·수명·lost-update 로직은 공유.
+        /// flushOnce 는 단일 호출자(펌프 스레드/Stop)에서만 실행되며 무할당이어야 한다(사전 할당 버퍼 클로저).
+        /// </summary>
+        public JournalFlushPump(Func<bool> flushOnce, int intervalMs = 1000)
+        {
+            _flushDelegate = flushOnce ?? throw new ArgumentNullException(nameof(flushOnce));
+            _intervalMs    = intervalMs < 25 ? 25 : intervalMs;
+        }
+
         /// <summary>핫패스 — 단일 Interlocked. 할당 0·블로킹 0·디스크 무접촉.</summary>
         public void RequestFlush() => Interlocked.Increment(ref _dirtyGen);
 
@@ -91,14 +103,20 @@ namespace StockManager.Common
             long observed = Interlocked.Read(ref _dirtyGen);                       // (A)
             if (observed == Interlocked.Read(ref _flushedGen)) return false;
 
-            int n;
-            try { n = _provider.CaptureInto(_scratch); }
-            catch { Interlocked.Increment(ref _flushErrors); return false; }       // 수집 실패 → 미전진
+            bool ok;
+            if (_flushDelegate is not null)
+            {
+                try { ok = _flushDelegate(); } catch { ok = false; }               // (B) 위임 모드(복합)
+            }
+            else
+            {
+                try { ok = _journaler!.Persist(_scratch.AsSpan(0, _provider!.CaptureInto(_scratch))); }
+                catch { ok = false; }                                              // (B) 플랫 모드
+            }
 
-            if (!_journaler.Persist(_scratch.AsSpan(0, n)))                        // (B)
-            { Interlocked.Increment(ref _flushErrors); return false; }            // 디스크 실패 → 미전진·재시도
+            if (!ok) { Interlocked.Increment(ref _flushErrors); return false; }    // 실패 → 미전진·재시도
 
-            Interlocked.Exchange(ref _flushedGen, observed);                      // (C) 성공시에만 전진
+            Interlocked.Exchange(ref _flushedGen, observed);                       // (C) 성공시에만 전진
             Interlocked.Increment(ref _flushes);
             return true;
         }

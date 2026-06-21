@@ -53,9 +53,11 @@ namespace StockManager.Common
     public sealed class RejectionForensicAuditor
     {
         private readonly RejectionRecord[] _ring;
+        private readonly object _writeGate = new();   // S25-b — 다중 라이터(genome 발행+rejection 기록) 직렬화
         private long _seq;        // 단조 쓰기 시퀀스(1-based). 0 = 거부 없음.
-        private long _version;    // seqlock: 짝=안정, 홀=쓰기중
+        private long _version;    // seqlock: 짝=안정, 홀=쓰기중 (genome+ring 공통 — 원자 세션 스냅샷용)
         private int  _lastIndex;  // 최신 레코드 슬롯
+        private GenomeSnapshot _genome;   // S25-b — 최신 챔피언 스냅샷(seqlock 보호, ring 과 동일 버전)
 
         public RejectionForensicAuditor(int capacity = 64)
             => _ring = new RejectionRecord[capacity < 1 ? 1 : capacity];
@@ -70,15 +72,61 @@ namespace StockManager.Common
         public long Record(RejectionStage stage, long asOfTicks, long nowTicks,
                            long windowTicks, double fitness, string? specId)
         {
-            long seq = Interlocked.Increment(ref _seq);          // 1-based
-            int  idx = (int)((seq - 1) % _ring.Length);
+            lock (_writeGate)   // S25-b — genome 발행과 직렬화(다중 라이터). seqlock 버전 무결성 보장.
+            {
+                long ver = _version;                                  // _writeGate 보유 → 자기 마지막 쓰기값
+                Volatile.Write(ref _version, ver + 1);                // 홀수 — 쓰기 시작(reader 무효화)
+                // ★ _seq 증가는 반드시 odd 윈도우 '안'에서 — total/lastIndex/slot 이 reader 에게 함께 발행돼야
+                //   "증가된 total + 미갱신 lastIndex" 로 미기록 팬텀 슬롯을 읽는 창이 없다(seqlock 일관성).
+                long seq = Interlocked.Increment(ref _seq);           // 1-based
+                int  idx = (int)((seq - 1) % _ring.Length);
+                _ring[idx] = new RejectionRecord(seq, stage, asOfTicks, nowTicks, windowTicks, fitness, specId);
+                _lastIndex = idx;
+                Volatile.Write(ref _version, ver + 2);                // 짝수 — 쓰기 완료(total·슬롯·인덱스 발행)
+                return seq;
+            }
+        }
 
-            long ver = _version;                                  // 단일 라이터 → 자기 마지막 쓰기값
-            Volatile.Write(ref _version, ver + 1);                // 홀수 — 쓰기 시작(reader 무효화)
-            _ring[idx] = new RejectionRecord(seq, stage, asOfTicks, nowTicks, windowTicks, fitness, specId);
-            _lastIndex = idx;
-            Volatile.Write(ref _version, ver + 2);                // 짝수 — 쓰기 완료(슬롯·인덱스 발행)
-            return seq;
+        /// <summary>
+        /// 최신 챔피언 게놈 스냅샷을 발행한다(온실 챔피언 갱신 시). write-gate + seqlock — 무할당.
+        /// ring 과 동일 _version 으로 보호되어, SnapshotSession 이 genome+forensic 을 원자적으로 함께 읽는다.
+        /// </summary>
+        public void PublishGenome(in GenomeSnapshot genome)
+        {
+            lock (_writeGate)
+            {
+                long ver = _version;
+                Volatile.Write(ref _version, ver + 1);   // 홀
+                _genome = genome;                          // 구조체 복사
+                Volatile.Write(ref _version, ver + 2);   // 짝
+            }
+        }
+
+        /// <summary>
+        /// 원자 세션 스냅샷 — genome + 최신 K 거부를 '단일 seqlock' 으로 함께 읽어 split-brain(단면 시간
+        /// 비정합)을 봉인한다. v1==v2 검증 통과 시 genome 과 ring 은 동일 순간의 일관 스냅샷이다. 락-프리·무할당.
+        /// </summary>
+        public int SnapshotSession(Span<RejectionRecord> dest, out GenomeSnapshot genome)
+        {
+            for (int attempt = 0; attempt < 16; attempt++)
+            {
+                long v1 = Volatile.Read(ref _version);
+                if ((v1 & 1L) != 0L) continue;                       // 쓰기 중 → 재시도
+                var  g     = _genome;                                // genome 읽기(구조체 복사)
+                long total = Interlocked.Read(ref _seq);
+                int  cap   = _ring.Length;
+                int  k     = total == 0L ? 0 : (int)Math.Min(Math.Min(total, cap), dest.Length);
+                int  last  = Volatile.Read(ref _lastIndex);
+                for (int i = 0; i < k; i++)
+                {
+                    int idx = ((last - (k - 1 - i)) % cap + cap) % cap;
+                    dest[i] = _ring[idx];
+                }
+                long v2 = Volatile.Read(ref _version);
+                if (v1 == v2) { genome = g; return k; }              // genome+ring 동일 버전 → 원자 일관
+            }
+            genome = default;
+            return 0;
         }
 
         /// <summary>
