@@ -7,9 +7,9 @@
 //  ── 규칙1: isDirty + 제로 할당 fetch ───────────────────────────────────────
 //  · fetch 는 '사전 할당된 단일 재사용 버퍼'에 소스가 필드를 덮어쓴다 → fetch 측 할당 0.
 //  · 시그니처로 데이터 변화를 비트 판정 → 불변이면 Prime 자체를 숏서킷(할당·재진화 0).
-//  · 더블버퍼는 불필요하다: GreenhouseService.Prime 이 ToArray 로 동기 방어 복사를 하므로,
-//    재사용 버퍼는 Prime 반환 시점에 안전하게 재충전 가능. 유일한 할당은 '변화 시 1회'의 Prime 스냅샷.
-//    (측정 없는 풀링은 미신 — 올바른 고도는 isDirty + 단일 버퍼다.)
+//  · 단일 재사용 버퍼가 안전한 근거: GreenhouseService.Prime 이 캔들을 '값 복제(deep copy)'해 _candles 에
+//    적재하므로(S25-a 수정 — Candle 은 가변 class 라 얕은 복사로는 별칭 레이스 발생), 이 버퍼와 온실
+//    스냅샷은 완전 격리된다. 다음 Refresh 가 버퍼를 덮어써도 배양 스레드의 캔들은 불변. 더블버퍼 불요.
 //
 //  ── 규칙2: 검증 → 손상/부족은 드롭(fail-closed 위임) ────────────────────────
 //  · 개수 부족·단조성 위반·비유한/음수 OHLC 윈도우는 거부하고 마지막 유효 스냅샷을 유지한다.
@@ -102,8 +102,10 @@ namespace StockManager.Common
             {
                 var c = buf[i];
                 if (c is null) return false;
-                if (c.Open <= 0m || c.Close <= 0m) return false;
-                if (c.High < c.Low || c.High < c.Close || c.Close < c.Low) return false;
+                if (c.Open <= 0m || c.Close <= 0m || c.High <= 0m || c.Low <= 0m) return false;
+                // OHLC 부등식 전수: High 는 최댓값, Low 는 최솟값 — Open/Close 모두 [Low,High] 안.
+                if (c.High < c.Low || c.High < c.Open || c.High < c.Close) return false;
+                if (c.Low > c.Open || c.Low > c.Close) return false;
                 if (c.Volume < 0) return false;
                 if (i > 0 && buf[i].Date <= buf[i - 1].Date) return false;   // 역순·중복 거부
             }

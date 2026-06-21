@@ -95,6 +95,9 @@ namespace StockManager.Blazor
                 services.AddSingleton(flushPump);
             }
 
+            // S25-a — 라이브 캔들 인그레스 옵트인(기본 OFF). ON 시 온실에 staleness fail-closed + isDirty 게이트 결속.
+            bool liveFeed = cfg.GetBool(BootConfigSpecs.GreenhouseLiveFeedKey, BootConfigSpecs.GreenhouseLiveFeedDefault);
+
             // S19 #3/#4/#5 — 승급 게이트웨이 + 격리 배양 온실 + 원자 핫스왑 슬롯 + 집행 안전 게이트
             var promotionGateway = new PromotionGateway(db, attestation)
             {
@@ -108,6 +111,11 @@ namespace StockManager.Blazor
                     BootConfigSpecs.GreenhouseCycleMsDefault,
                     BootConfigSpecs.GreenhouseCycleMsMin, BootConfigSpecs.GreenhouseCycleMsMax),
                 OnChampionPromoted = flushPump is null ? (Action?)null : flushPump.RequestFlush,   // S24-b dirty 트리거
+                // S25-a — 라이브 시 데이터 신선도 fail-closed(한도 초과 배양 정지) + isDirty 숏서킷. OFF면 합성 모드 유지.
+                SkipUnchanged   = liveFeed,
+                StalenessWindow = liveFeed
+                    ? System.TimeSpan.FromSeconds(cfg.GetInt("Greenhouse.FeedStaleSec", 90, 10, 3600))
+                    : (System.TimeSpan?)null,
             };
             var strategySlot = new StrategySlot();
             // ⚠️ IsDryRun=true 하드 박제 — 라이브 발주는 코드 변경 없이는 도달 불가(§7 안전 경계).
@@ -129,6 +137,29 @@ namespace StockManager.Blazor
             // 종료 순서: 온실 정지(라이터 차단) → 펌프 Dispose(Join 후 최종 플러시). 동시 라이터 torn write 차단.
             FormClosed += (_, _) => greenhouseActivator.Deactivate();
             FormClosed += (_, _) => { try { flushPump?.Dispose(); } catch { } };
+
+            // S25-a — 라이브 캔들 인그레스(옵트인). 방벽: 네트워크는 지연·고갈만(→staleness fail-closed),
+            //   결정 오염 불가(→BulkheadCandleSource 0반환·LiveCandleFeed 검증 드롭). 실거래선(liveArmed:false) 무관.
+            //   ⚠️ 실 provider 왕복은 CI 미검증 — 코어 계약은 fake 로 검증, 실환경 검증은 사용자 측.
+            if (liveFeed)
+            {
+                var feedSymbol = cfg.GetString("Greenhouse.FeedSymbol", "069500");   // 기본 KODEX 200 ETF
+                var liveSource = new BulkheadCandleSource(provider, feedSymbol, Market.KRX_KOSPI);
+                var liveFeedPipe = new LiveCandleFeed(greenhouse, liveSource, GreenhouseActivator.DefaultSeeds(), Market.KRX_KOSPI);
+                var ingress = new LiveIngressDriver(liveFeedPipe,
+                    intervalMs:     cfg.GetInt("Greenhouse.FeedIntervalSec", 60, 5, 3600) * 1000,
+                    staleProbe:     () => greenhouse.FeedStale,
+                    onStaleChanged: stale =>
+                    {
+                        if (stale)
+                            AlertCenter.Instance.RaiseSystem("온실 데이터 피드 단절",
+                                "라이브 캔들 staleness 한도 초과 — 배양 fail-closed. 피드 복구 시 자동 재개.",
+                                AlertLevel.Warning);
+                    });
+                ingress.Start();
+                services.AddSingleton(ingress);
+                FormClosed += (_, _) => { try { ingress.Dispose(); } catch { } };
+            }
 
             // S20 #4 — 드라이런 종단 조립체: 게이트 + 가상 멀티계좌 메시 결속.
             // 기본 단일 가상계좌(primary) — 다중 동시 전략 활성화 시 메시를 확장한다.

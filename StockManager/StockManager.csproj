@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.24.0</Version>
-    <AssemblyVersion>4.24.0.0</AssemblyVersion>
-    <FileVersion>4.24.0.0</FileVersion>
+    <Version>4.25.0</Version>
+    <AssemblyVersion>4.25.0.0</AssemblyVersion>
+    <FileVersion>4.25.0.0</FileVersion>
+    <!-- v4.25.0 — S25-a: 격리 라이브 인그레스 + 방벽 어댑터 (LiveIngressDriver 격리 펌프·트립와이어 edge·BulkheadCandleSource IQuoteProvider 어댑터[예외→0 고갈, 결정 오염 0]·LiveCandleFeed.Validate OHLC 전부등식 강화·greenhouse staleness/isDirty 게이트·Greenhouse.LiveFeed 게이트 기본 OFF·관제탑 피드단절 경보). ★적대적 리뷰 critical 수정: Candle=가변class 라 Prime 얕은복사가 인그레스 버퍼와 별칭→배양 torn 읽기(결정 오염). Prime 딥카피(값 복제)로 별칭 단절·격리. 방벽 반증 테스트 14. 실 provider 왕복 CI 미검증(사용자측). liveArmed:false 불변 — 입력만 합성→실시간 -->
     <!-- v4.24.0 — S24-c: 전방위 트리거 결속 + 복합 저널 + Pack=1 (PromotionGateway.OnLedgerChanged 훅[승인·활성·거부]→펌프 RequestFlush, 다중 소스 Interlocked 손실0 검증. CompositeJournalCodec 게놈섹터+포렌식링 독립 CRC[포렌식 torn 에도 게놈 복구]·결정론 오프셋·오버플로 클램프. JournalRecord/GenomeSnapshot Pack=1 패딩 사살[51/33B]·JournalCodec v2(버전 스큐는 Empty=무동결, 자가당착 차단). 신규 테스트 16). 복합 코덱은 채택 대기(플랫 journaler 유지). liveArmed 불변 -->
     <!-- v4.23.0 — S24-b: 가역적 부팅 교량 + 비동기 플러시 + 자가당착 차단 (BootOrchestrator (1)RecoverOrFreeze→(3)CheckAndHydrate 단조-동결 합성[저널 옵트인 null]·JournalStatus.Inaccessible=5 신규(I/O 예외≠오염→무동결, 미션3 자가당착 차단)·JournalFlushPump 핫패스 RequestFlush 무할당+(A)→(B)→(C) lost-update 0·GreenhouseService.OnChampionPromoted 훅·호스트 WireBootIntegrity 결속[펌프 Recovery.PumpEnabled 기본 OFF]). 신규 테스트 18. BootIntegrityChecker 시그니처 불변·1229 무파손. liveArmed 불변 -->
     <!-- v4.22.0 — Season 24: 크래시 복구 원장 코어 (Crc32 IEEE 순수코어·JournalRecord unmanaged·JournalCodec 무할당 MemoryMarshal 직렬화[unsafe 불요]·Magic head/tail+CRC32 torn 판정·CrashRecoveryJournaler MMF Persist/Recover/RecoverOrFreeze[오염→ForceFreeze fail-closed]·Season24JournalTests 19[제로할당 GC 증명·MMF freeze 포함]). 호스트 부팅 결속은 문서화 후속(미배선). liveArmed 불변 -->

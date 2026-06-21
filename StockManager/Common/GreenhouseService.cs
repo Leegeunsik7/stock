@@ -129,8 +129,12 @@ namespace StockManager.Common
         /// </summary>
         public void Prime(IReadOnlyList<StrategySpec> seeds, IReadOnlyList<Candle> candles, Market market)
         {
-            _seeds   = seeds   is null ? Array.Empty<StrategySpec>() : ToArray(seeds);
-            _candles = candles is null ? Array.Empty<Candle>()       : ToArray(candles);
+            _seeds   = seeds is null ? Array.Empty<StrategySpec>() : ToArray(seeds);   // StrategySpec=불변 record, 참조 공유 무해
+            // ★S25-a 적대적 리뷰 수정 — Candle 은 가변 class 라 얕은 복사(ToArray)는 참조만 공유한다. 라이브 인그레스가
+            //   재사용 버퍼 인스턴스를 in-place 덮어쓰므로, 얕으면 온실 _candles 가 그 버퍼와 별칭이 되어 배양 중
+            //   torn 필드 읽기(결정 오염)가 발생한다. '값 복제(deep copy)'로 별칭을 끊어 온실 스레드를 격리한다.
+            //   Volatile.Write 로 완성된 배열을 안전 발행(x64 store 순서 + 명시 release).
+            Volatile.Write(ref _candles, DeepCopyCandles(candles));
             _market  = market;
             // S23-b — 새 데이터 윈도우: 신선도 갱신 + 세대 증가(isDirty 신호)
             Volatile.Write(ref _lastFreshTicks, Now().Ticks);
@@ -295,6 +299,22 @@ namespace StockManager.Common
         {
             var arr = new T[src.Count];
             for (int i = 0; i < src.Count; i++) arr[i] = src[i];
+            return arr;
+        }
+
+        // S25-a — 캔들 깊은 복사: 호출자(라이브 인그레스 재사용 버퍼)와의 별칭을 끊어 배양 스레드를 격리한다.
+        // Candle 은 가변 class 라 값 복제만이 동시 in-place 덮어쓰기로부터 _candles 를 보호한다(얕은 ToArray 불가).
+        private static Candle[] DeepCopyCandles(IReadOnlyList<Candle>? src)
+        {
+            if (src is null || src.Count == 0) return Array.Empty<Candle>();
+            var arr = new Candle[src.Count];
+            for (int i = 0; i < src.Count; i++)
+            {
+                var c = src[i];
+                arr[i] = c is null
+                    ? new Candle()
+                    : new Candle { Date = c.Date, Open = c.Open, High = c.High, Low = c.Low, Close = c.Close, Volume = c.Volume };
+            }
             return arr;
         }
     }

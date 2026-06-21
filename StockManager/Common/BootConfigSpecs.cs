@@ -46,6 +46,11 @@ namespace StockManager.Common
         public const string RecoveryPumpEnabledKey      = "Recovery.PumpEnabled";
         public const bool   RecoveryPumpEnabledDefault   = false;
 
+        // S25-a 라이브 캔들 인그레스 — 기본 OFF(옵트인). OFF면 합성 BootstrapCandles 유지(후방호환).
+        // ON 시 BulkheadCandleSource→LiveCandleFeed→LiveIngressDriver 가 실 시장 캔들로 온실을 구동(실거래선 무관).
+        public const string GreenhouseLiveFeedKey       = "Greenhouse.LiveFeed";
+        public const bool   GreenhouseLiveFeedDefault    = false;
+
         /// <summary>감사 대상 = 라우팅 대상. 항상 1:1로 일치한다.</summary>
         public static IReadOnlyList<ConfigSpec> All { get; } = new[]
         {
@@ -72,6 +77,10 @@ namespace StockManager.Common
             new ConfigSpec(RecoveryPumpEnabledKey, ConfigKind.Bool,
                 RecoveryPumpEnabledDefault ? "true" : "false",
                 Label: "복구 플러시 펌프"),
+
+            new ConfigSpec(GreenhouseLiveFeedKey, ConfigKind.Bool,
+                GreenhouseLiveFeedDefault ? "true" : "false",
+                Label: "라이브 캔들 인그레스"),
         };
     }
 }
