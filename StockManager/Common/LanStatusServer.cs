@@ -35,11 +35,15 @@ namespace StockManager.Common
         private LanStatusServer() { }
 
         /// <summary>Lan.Enabled=="true"일 때만 시작. 이미 실행 중이면 무시. (앱 시작 시·설정 변경 시 호출)</summary>
-        public void Start(LocalDatabase db)
+        /// <param name="cfg">설정 검증 파사드. null이면 db 기반(env→DB)으로 자체 구성 — 어느 경로든 검증 경로 통과.</param>
+        public void Start(LocalDatabase db, RuntimeConfig? cfg = null)
         {
             _db = db;
             if (db.GetSetting("Lan.Enabled") != "true" || Running) return;
-            Port = int.TryParse(db.GetSetting("Lan.Port"), out var p) && p is > 0 and < 65536 ? p : 8787;
+            // S22 #3-b/PathA — 포트를 RuntimeConfig 검증 경로로 해석(BootConfigSpecs SSOT·바운드·부팅 감사 일치).
+            var rc = cfg ?? new RuntimeConfig(k => Environment.GetEnvironmentVariable(k) ?? db.GetSetting(k));
+            Port = rc.GetInt(BootConfigSpecs.LanPortKey, BootConfigSpecs.LanPortDefault,
+                             BootConfigSpecs.LanPortMin, BootConfigSpecs.LanPortMax);
             LastError = "";
             try
             {

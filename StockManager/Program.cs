@@ -110,7 +110,10 @@ namespace StockManager
             AlertEngineService.Instance.Start(db, provider);
 
             // 읽기전용 LAN 상태 서버(옵트인 — Lan.Enabled=="true"일 때만 시작)
-            LanStatusServer.Instance.Start(db);
+            // S22 PathA — 트레이 호스트에도 RuntimeConfig 검증 파사드를 주입(env→DB). Blazor 호스트와
+            // 동일 BootConfigSpecs SSOT·동일 provider 의미 → 인프라 설정 파이프라인 단일화.
+            var cfg = new RuntimeConfig(key => Environment.GetEnvironmentVariable(key) ?? db.GetSetting(key));
+            LanStatusServer.Instance.Start(db, cfg);
 
             void Cleanup()
             {

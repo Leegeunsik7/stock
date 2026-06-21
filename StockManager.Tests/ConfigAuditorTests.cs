@@ -202,7 +202,20 @@ namespace StockManager.Tests
             var clean = new ConfigAuditor(_ => null).Audit(BootConfigSpecs.All);
             Assert.False(clean.HasAnomaly);
             Assert.All(clean.Entries, e => Assert.Equal(ConfigStatus.Defaulted, e.Status));
-            Assert.Equal(3, clean.Entries.Count);
+            Assert.Equal(4, clean.Entries.Count);
+        }
+
+        [Fact]
+        public void BootConfigSpecs_IncludesLanPort_AndAuditCatchesBadPort()
+        {
+            // PathA — LAN 포트가 SSOT 에 편입되어 부팅 감사가 자동 포함하는지 + 잘못된 포트를 잡는지.
+            var lan = BootConfigSpecs.All.Single(s => s.Key == BootConfigSpecs.LanPortKey);
+            Assert.Equal(ConfigKind.Int, lan.Kind);
+            Assert.Equal("8787", lan.Fallback);
+
+            var e = new ConfigAuditor(_ => "70000").Audit(new[] { lan }).Entries.Single();
+            Assert.Equal(ConfigStatus.Coerced, e.Status);   // 범위 밖 → 클램프
+            Assert.Equal("65535", e.Display);
         }
     }
 }

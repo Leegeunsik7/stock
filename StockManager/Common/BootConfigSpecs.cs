@@ -1,5 +1,5 @@
 // ============================================================================
-// BootConfigSpecs — 부팅 시 RuntimeConfig 경로로 라우팅되는 '무위험' 설정의 단일 진실 공급원.
+// BootConfigSpecs — RuntimeConfig 검증 경로로 라우팅되는 '무위험' 부팅·인프라 설정의 단일 진실 공급원.
 //
 //  여기 선언된 키·폴백·바운드를 호스트의 실효 GetInt 호출과 ConfigAuditor 감사가
 //  '동일하게' 참조한다 → 감사 스냅샷과 런타임 실효값이 절대 어긋나지 않는다.
@@ -32,7 +32,13 @@ namespace StockManager.Common
         public const int    GreenhouseCycleMsMin         = 100;
         public const int    GreenhouseCycleMsMax         = 60000;
 
-        /// <summary>감사 대상 = 라우팅 대상. 셋은 항상 1:1로 일치한다.</summary>
+        // 읽기전용 LAN 상태 서버 포트 — LanStatusServer (트레이/헤드리스 호스트, 옵트인).
+        public const string LanPortKey                  = "Lan.Port";
+        public const int    LanPortDefault               = 8787;
+        public const int    LanPortMin                   = 1;
+        public const int    LanPortMax                   = 65535;
+
+        /// <summary>감사 대상 = 라우팅 대상. 항상 1:1로 일치한다.</summary>
         public static IReadOnlyList<ConfigSpec> All { get; } = new[]
         {
             new ConfigSpec(SnapshotIntervalSecKey, ConfigKind.Int,
@@ -46,6 +52,10 @@ namespace StockManager.Common
             new ConfigSpec(GreenhouseCycleMsKey, ConfigKind.Int,
                 GreenhouseCycleMsDefault.ToString(),
                 GreenhouseCycleMsMin, GreenhouseCycleMsMax, "온실 사이클(ms)"),
+
+            new ConfigSpec(LanPortKey, ConfigKind.Int,
+                LanPortDefault.ToString(),
+                LanPortMin, LanPortMax, "LAN 포트"),
         };
     }
 }
