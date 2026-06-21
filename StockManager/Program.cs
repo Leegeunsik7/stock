@@ -49,6 +49,11 @@ namespace StockManager
             // 덤프 포함)에서 평문 마스킹. 비밀이 로그/덤프에 생으로 남는 경로를 프로세스 전역에서 차단.
             RegisterLogSecrets(db);
 
+            // S22 #3-b — 콘솔 봉합선 밀봉: 서드파티 라이브러리(WebView2·Sqlite 등)가 stdout/stderr 로
+            // 직접 써도 LogRedactor 를 통과하도록 Console 출력을 래핑. 앱 외 출력까지 비밀 차폐.
+            System.Console.SetOut(new ScrubbingTextWriter(System.Console.Out, LogRedactor.Shared));
+            System.Console.SetError(new ScrubbingTextWriter(System.Console.Error, LogRedactor.Shared));
+
             // 테마 로드 (블랙/화이트)
             ThemeManager.Load(db);
 
