@@ -26,12 +26,24 @@ using System.Runtime.InteropServices;
 namespace StockManager.Common
 {
     public enum RecoveryKind   : byte { None = 0, Rejection = 1, Champion = 2 }
-    public enum JournalStatus : byte { Empty = 0, Ok = 1, BadMagic = 2, BadCrc = 3, Truncated = 4 }
+
+    // append-only(기존 0~4 불변). Inaccessible=5 신규 — I/O 예외(파일 락·권한)는 '오염'이 아니다.
+    public enum JournalStatus : byte
+    {
+        Empty = 0, Ok = 1, BadMagic = 2, BadCrc = 3, Truncated = 4,
+        Inaccessible = 5
+    }
 
     public static class JournalStatusEx
     {
+        // 내용 증거 기반 오염(불결한 크래시·변조) — 동결 + (하이드레이션 측) 폐기 대상.
         public static bool IsCorrupt(this JournalStatus s)
             => s is JournalStatus.BadMagic or JournalStatus.BadCrc or JournalStatus.Truncated;
+
+        // 읽지 못함(증거 無) — 오염 아님. S24-b: 안전 상태(게이팅)는 하이드레이션이 권위 있게 검증하므로
+        // 포렌식 저널의 일시적 접근불가는 동결시키지 않는다(미션3 자가당착 차단). 비파괴.
+        public static bool IsInaccessible(this JournalStatus s)
+            => s == JournalStatus.Inaccessible;
     }
 
     /// <summary>크래시 복구 저널 1건(unmanaged · 참조 0 · 블리터블). 기본값(Seq=0)='없음'.</summary>
@@ -164,8 +176,11 @@ namespace StockManager.Common
 
         public int Capacity => _capacity;
 
-        /// <summary>최근 레코드 스냅샷을 MMF에 영속화. 인코딩 무할당(재사용 버퍼). 실패는 흡수.</summary>
-        public void Persist(ReadOnlySpan<JournalRecord> recs)
+        /// <summary>
+        /// 최근 레코드 스냅샷을 MMF에 영속화. 인코딩 무할당(재사용 버퍼). 디스크 실패는 흡수하되
+        /// false 를 반환해 호출자(플러시 펌프)가 flushedGen 을 전진시키지 않고 재시도하게 한다.
+        /// </summary>
+        public bool Persist(ReadOnlySpan<JournalRecord> recs)
         {
             var slice = recs.Length > _capacity ? recs.Slice(recs.Length - _capacity) : recs;
             int len   = JournalCodec.Encode(slice, _buf);
@@ -175,8 +190,9 @@ namespace StockManager.Common
                     _path, FileMode.Create, null, _maxBytes, MemoryMappedFileAccess.ReadWrite);
                 using var view = mmf.CreateViewAccessor(0, _maxBytes, MemoryMappedFileAccess.Write);
                 view.WriteArray(0, _buf, 0, len);
+                return true;
             }
-            catch { /* 영속화 실패 흡수 — 다음 주기 재시도 */ }
+            catch { return false; /* 영속화 실패 흡수 — 펌프가 다음 주기 재시도 */ }
         }
 
         /// <summary>부팅 시 1회 복구. 검증 후 레코드를 dest 에 채우고 상태 반환. 클린 부재 → Empty.</summary>
@@ -196,13 +212,23 @@ namespace StockManager.Common
                 view.ReadArray(0, _buf, 0, readLen);
                 return JournalCodec.Decode(_buf.AsSpan(0, readLen), dest, out count);
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // S24-b 미션3 — 파일 락·권한 등 접근 실패는 '오염'이 아니다(증거 無). 비파괴 신호.
+                return JournalStatus.Inaccessible;
+            }
             catch
             {
-                return JournalStatus.Truncated;   // 읽기 예외 = 상태 미상 → 보수적 corrupt(fail-closed 유도)
+                // 그 외(파싱·범위·프로그래밍 오류 등 미상) = 보수적 corrupt 유지(fail-closed 유도).
+                return JournalStatus.Truncated;
             }
         }
 
-        /// <summary>복구 + 오염 시 부팅 방화벽: Corrupt 면 ForceFreeze(fail-closed). 상태 반환.</summary>
+        /// <summary>
+        /// 복구 + 부팅 방화벽. 내용 오염(Corrupt)이면 ForceFreeze(fail-closed, 파일 보존). 상태 반환.
+        /// I/O 접근불가(Inaccessible)는 동결하지 않는다 — 권위 있는 게이팅 검증은 하이드레이션이 담당하며,
+        /// 포렌식 저널의 일시적 락으로 거래를 동결하는 것이 미션3의 자가당착이기 때문이다(구별 경보만).
+        /// </summary>
         public JournalStatus RecoverOrFreeze(OrderAttestationService attestation, Span<JournalRecord> dest, out int count)
         {
             var status = Recover(dest, out count);
@@ -211,9 +237,15 @@ namespace StockManager.Common
                 try
                 {
                     attestation?.ForceFreeze(
-                        $"크래시 복구: 저널 오염({status}) 감지 — 부팅 fail-closed. /broker/gating 수동 정합 후 해제.");
+                        $"크래시 복구: 저널 오염({status}) 감지 — 불결한 종료 증거, 부팅 fail-closed. " +
+                        "/broker/gating 수동 정합 후 해제(저널 파일은 보존됨).");
                 }
                 catch { /* 동결 실패해도 상태는 정직히 반환 */ }
+            }
+            else if (status.IsInaccessible())
+            {
+                // 동결하지 않음 — 비파괴. 운영자에게 '재시도 가능·오염 아님'을 구별 보고.
+                Log.Warn("[복구] 크래시 저널 접근불가(I/O·락) — 오염 아님, 비동결. 포렌식 복구만 생략, 안전 상태는 하이드레이션이 검증.");
             }
             return status;
         }

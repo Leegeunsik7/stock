@@ -42,6 +42,10 @@ namespace StockManager.Common
         public const string GreenhouseAutoStartKey      = "Greenhouse.AutoStart";
         public const bool   GreenhouseAutoStartDefault   = true;
 
+        // S24-b 크래시 복구 저널 플러시 펌프 — 기본 OFF(옵트인). OFF면 저널 미기록 → 부팅 항상 Empty(후방호환).
+        public const string RecoveryPumpEnabledKey      = "Recovery.PumpEnabled";
+        public const bool   RecoveryPumpEnabledDefault   = false;
+
         /// <summary>감사 대상 = 라우팅 대상. 항상 1:1로 일치한다.</summary>
         public static IReadOnlyList<ConfigSpec> All { get; } = new[]
         {
@@ -64,6 +68,10 @@ namespace StockManager.Common
             new ConfigSpec(GreenhouseAutoStartKey, ConfigKind.Bool,
                 GreenhouseAutoStartDefault ? "true" : "false",
                 Label: "온실 자동점등"),
+
+            new ConfigSpec(RecoveryPumpEnabledKey, ConfigKind.Bool,
+                RecoveryPumpEnabledDefault ? "true" : "false",
+                Label: "복구 플러시 펌프"),
         };
     }
 }

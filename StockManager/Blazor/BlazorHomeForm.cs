@@ -58,7 +58,7 @@ namespace StockManager.Blazor
 
             // S18 #1 — 콜드 하든: 부팅 무결성 검사를 브로커 파이프라인 구성 '이전'에 수행.
             // 이전 세션이 비상 동결이었거나 스냅샷이 손상되었으면 여기서 fail-closed 동결된다.
-            var hydration = WireBootIntegrity(attestation, cfg);
+            var (hydration, recoveryJournaler) = WireBootIntegrity(attestation, cfg);
 
             var (broker, bridge) = ExecutionBridgeBroker.Create(attestation);
             services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
@@ -66,6 +66,7 @@ namespace StockManager.Blazor
             services.AddSingleton(broker.Audit);           // S14 #2 — LiveAuditService (체결 원장)
             services.AddSingleton(broker);                 // S14 #2 — ExecutionBridgeBroker (IBroker 실거래)
             services.AddSingleton(hydration);              // S18 #1 — 상태 복원 엔진 (관제탑 신선도 조회용)
+            services.AddSingleton(recoveryJournaler);      // S24-b — 크래시 복구 저널(부팅 검증·플러시 펌프 공유)
 
             // S18 #2 — S15~17 알고/컴플라이언스 스택을 라이브 호스트에 결속해 관제 대상 센서로 노출.
             // (라이브 알고 집행 피드가 연결되기 전에는 휴면 상태이나, 센서 배선은 정합하게 가동된다.)
@@ -84,6 +85,16 @@ namespace StockManager.Blazor
             var rejectionForensics = new RejectionForensicAuditor();
             services.AddSingleton(rejectionForensics);
 
+            // S24-b — 비동기 플러시 펌프(옵트인 기본 OFF). 핫패스는 RequestFlush(Interlocked) 한 줄만,
+            //   격리 백그라운드가 ring→MMF 영속화. OFF면 펌프 null → 저널 미기록 → 부팅 항상 Empty(후방호환).
+            JournalFlushPump? flushPump = null;
+            if (cfg.GetBool(BootConfigSpecs.RecoveryPumpEnabledKey, BootConfigSpecs.RecoveryPumpEnabledDefault))
+            {
+                flushPump = new JournalFlushPump(recoveryJournaler, new ForensicJournalProvider(rejectionForensics));
+                flushPump.Start();
+                services.AddSingleton(flushPump);
+            }
+
             // S19 #3/#4/#5 — 승급 게이트웨이 + 격리 배양 온실 + 원자 핫스왑 슬롯 + 집행 안전 게이트
             var promotionGateway = new PromotionGateway(db, attestation) { Forensics = rejectionForensics };
             var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared)
@@ -92,6 +103,7 @@ namespace StockManager.Blazor
                 CycleIntervalMs = cfg.GetInt(BootConfigSpecs.GreenhouseCycleMsKey,   // S22 #2 — 검증 경로 라우팅
                     BootConfigSpecs.GreenhouseCycleMsDefault,
                     BootConfigSpecs.GreenhouseCycleMsMin, BootConfigSpecs.GreenhouseCycleMsMax),
+                OnChampionPromoted = flushPump is null ? (Action?)null : flushPump.RequestFlush,   // S24-b dirty 트리거
             };
             var strategySlot = new StrategySlot();
             // ⚠️ IsDryRun=true 하드 박제 — 라이브 발주는 코드 변경 없이는 도달 불가(§7 안전 경계).
@@ -110,7 +122,9 @@ namespace StockManager.Blazor
             if (cfg.GetBool(BootConfigSpecs.GreenhouseAutoStartKey, BootConfigSpecs.GreenhouseAutoStartDefault))
                 greenhouseActivator.Activate(Market.KRX_KOSPI);
             services.AddSingleton(greenhouseActivator);
+            // 종료 순서: 온실 정지(라이터 차단) → 펌프 Dispose(Join 후 최종 플러시). 동시 라이터 torn write 차단.
             FormClosed += (_, _) => greenhouseActivator.Deactivate();
+            FormClosed += (_, _) => { try { flushPump?.Dispose(); } catch { } };
 
             // S20 #4 — 드라이런 종단 조립체: 게이트 + 가상 멀티계좌 메시 결속.
             // 기본 단일 가상계좌(primary) — 다중 동시 전략 활성화 시 메시를 확장한다.
@@ -158,7 +172,8 @@ namespace StockManager.Blazor
         /// 손상·동결 스냅샷이면 브로커 파이프라인 구성 전에 fail-closed 동결시키고,
         /// 이후 60초 주기로 게이팅 모드를 MMF 에 영속화한다.
         /// </summary>
-        private StateHydrationEngine WireBootIntegrity(OrderAttestationService attestation, RuntimeConfig cfg)
+        private (StateHydrationEngine Hydration, CrashRecoveryJournaler Journaler) WireBootIntegrity(
+            OrderAttestationService attestation, RuntimeConfig cfg)
         {
             // S22 #2 — 무위험 부팅 튜너블을 검증 경로로 라우팅(BootConfigSpecs 와 동일 키·폴백·바운드).
             int freshnessHours = cfg.GetInt(BootConfigSpecs.FreshnessWindowHoursKey,
@@ -172,9 +187,14 @@ namespace StockManager.Blazor
                 System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
                 "StockManager");
             try { System.IO.Directory.CreateDirectory(stateDir); } catch { }
-            var path = System.IO.Path.Combine(stateDir, "state.hydr");
+            var path        = System.IO.Path.Combine(stateDir, "state.hydr");
+            var journalPath = System.IO.Path.Combine(stateDir, "state.jrnl");
 
             var hydration  = new StateHydrationEngine(path);
+            // S24-b — 크래시 복구 저널. 부팅 시 무결성 검증(오염→동결·접근불가→무동결·자가당착 차단).
+            // 펌프 OFF면 파일 미기록 → 항상 Empty → RunSafeBoot 은 CheckAndHydrate 단독과 바이트 동일.
+            var journaler   = new CrashRecoveryJournaler(journalPath);
+            var journalDest = new JournalRecord[journaler.Capacity];   // 부팅 1회 할당(복구 대상)
             var gatingSlot = new HydrationSlot<int>((int)GatingMode.Normal);
             // 스냅샷 시 현재 모드를 라이브 캡처, 복원 시 슬롯에 기록
             hydration.Register<int>("gatingMode",
@@ -183,14 +203,16 @@ namespace StockManager.Blazor
 
             try
             {
-                var report = BootIntegrityChecker.CheckAndHydrate(
-                    hydration, attestation, gatingSlot, System.TimeSpan.FromHours(freshnessHours));
-                Log.Info($"[BOOT] 무결성={report.Status} 모드={report.RecoveredMode} " +
-                         $"동결적용={report.FrozeOnBoot} — {report.Detail}");
+                // S24-b — 가역적 안전 부팅 시퀀스: (1)저널 무결성 → (3)하이드레이션 게이트(단조-동결).
+                var boot = BootOrchestrator.RunSafeBoot(
+                    hydration, attestation, gatingSlot, journaler, journalDest,
+                    System.TimeSpan.FromHours(freshnessHours));
+                Log.Info($"[BOOT] {boot.Detail} 모드={boot.Integrity.RecoveredMode} 동결적용={boot.Integrity.FrozeOnBoot}");
 
-                if (report.FrozeOnBoot)
+                if (boot.Safety == BootSafety.Frozen)
                     AlertCenter.Instance.RaiseSystem("부팅 안전 동결",
-                        $"이전 세션 상태 복원으로 트레이딩이 동결되었습니다. ({report.Status}) " +
+                        $"부팅 무결성/크래시 저널 검증으로 트레이딩이 동결되었습니다. " +
+                        $"(무결성={boot.Integrity.Status} 저널={boot.Journal}) " +
                         "/broker/gating 에서 수동 정합 서명 후 해제하세요.", AlertLevel.Critical);
 
                 // 메모리 누수 가드 부팅 베이스라인
@@ -221,7 +243,7 @@ namespace StockManager.Blazor
                 try { hydration.Snapshot(); } catch { }   // 종료 시 최종 상태 영속화
             };
 
-            return hydration;
+            return (hydration, journaler);
         }
     }
 }

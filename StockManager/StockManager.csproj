@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.22.0</Version>
-    <AssemblyVersion>4.22.0.0</AssemblyVersion>
-    <FileVersion>4.22.0.0</FileVersion>
+    <Version>4.23.0</Version>
+    <AssemblyVersion>4.23.0.0</AssemblyVersion>
+    <FileVersion>4.23.0.0</FileVersion>
+    <!-- v4.23.0 — S24-b: 가역적 부팅 교량 + 비동기 플러시 + 자가당착 차단 (BootOrchestrator (1)RecoverOrFreeze→(3)CheckAndHydrate 단조-동결 합성[저널 옵트인 null]·JournalStatus.Inaccessible=5 신규(I/O 예외≠오염→무동결, 미션3 자가당착 차단)·JournalFlushPump 핫패스 RequestFlush 무할당+(A)→(B)→(C) lost-update 0·GreenhouseService.OnChampionPromoted 훅·호스트 WireBootIntegrity 결속[펌프 Recovery.PumpEnabled 기본 OFF]). 신규 테스트 18. BootIntegrityChecker 시그니처 불변·1229 무파손. liveArmed 불변 -->
     <!-- v4.22.0 — Season 24: 크래시 복구 원장 코어 (Crc32 IEEE 순수코어·JournalRecord unmanaged·JournalCodec 무할당 MemoryMarshal 직렬화[unsafe 불요]·Magic head/tail+CRC32 torn 판정·CrashRecoveryJournaler MMF Persist/Recover/RecoverOrFreeze[오염→ForceFreeze fail-closed]·Season24JournalTests 19[제로할당 GC 증명·MMF freeze 포함]). 호스트 부팅 결속은 문서화 후속(미배선). liveArmed 불변 -->
     <!-- v4.21.0 — S23-c: 비가역 거부 포렌식 (RejectionForensicAuditor·값타입 링버퍼+단일라이터 seqlock·임계구역 내 무할당 박제·락-프리 독출). PromotionGateway.Forensics 옵트인 Approve/Activate 거부 기록. SystemStatusAggregator.TryGetLatestRejection 락-프리. 관제탑 [❌ 스왑 거부: As-Of Xms 지연] 텔레메트리. S23cForensicTests 12(torn-read 내성 포함). 옵트인 기본 OFF → 무파손. liveArmed 불변 -->
     <!-- v4.20.0 — S23-b: 라이브 피드 결속 안전 코어 (3대 비대칭 규칙·전부 옵트인 기본 OFF). 규칙1 isDirty 숏서킷(GreenhouseService.SkipUnchanged)+LiveCandleFeed 단일 재사용 버퍼. 규칙2 staleness fail-closed(StalenessWindow)+피드 검증(단조·OHLC). 규칙3 As-Of 락아웃(PromotionGateway.AsOfTicks·Approve/Activate 원자 신선도 검문·승인→활성 레이스 방어). S23bLiveFeedTests 19. 라이브 provider 바인딩은 문서화 후속(미배선). liveArmed 불변 -->

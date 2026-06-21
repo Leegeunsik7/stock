@@ -205,5 +205,61 @@ namespace StockManager.Tests
         [Fact]
         public void RecordSize_IsStableAndPositive()
             => Assert.True(JournalCodec.RecordSize >= 48);   // 6×long + 3×byte(+패딩)
+
+        // ═══════════════════ §4 S24-b 자가당착 차단 (Inaccessible ≠ Corrupt) ═══════════════════
+
+        [Fact]
+        public void Inaccessible_IsNotCorrupt()
+        {
+            Assert.False(JournalStatus.Inaccessible.IsCorrupt());
+            Assert.True(JournalStatus.Inaccessible.IsInaccessible());
+            Assert.True(JournalStatus.BadCrc.IsCorrupt());
+            Assert.False(JournalStatus.BadCrc.IsInaccessible());
+        }
+
+        [Fact]
+        public void Journaler_IoLocked_Inaccessible_NoFreeze_FilePreserved()
+        {
+            // 미션3 — 백신 스캔/공유위반으로 저널을 못 읽어도 거래를 '엉뚱하게' 동결하지 않는다.
+            string path = TempPath();
+            try
+            {
+                var j = new CrashRecoveryJournaler(path, capacity: 16);
+                j.Persist(Recs(3));
+
+                using (var locker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    var att = new OrderAttestationService();
+                    var st  = j.RecoverOrFreeze(att, new JournalRecord[16], out _);
+                    Assert.Equal(JournalStatus.Inaccessible, st);
+                    Assert.False(st.IsCorrupt());
+                    Assert.NotEqual(GatingMode.EmergencyFreeze, att.Mode);   // 자가당착 차단 — 무동결
+                }
+                Assert.True(File.Exists(path));   // 비파괴 — 파일 보존
+            }
+            finally { TryDelete(path); }
+        }
+
+        [Fact]
+        public void Journaler_TornTail_FailsClosed()
+        {
+            // 미션2 — 불결한 크래시(torn write·후미 소실)는 동결한다.
+            string path = TempPath();
+            try
+            {
+                var j = new CrashRecoveryJournaler(path, capacity: 16);
+                j.Persist(Recs(3));
+                var bytes = File.ReadAllBytes(path);
+                int tailPos = JournalCodec.HeaderSize + 3 * JournalCodec.RecordSize;   // 후미 매직 위치
+                bytes[tailPos] ^= 0xFF;
+                File.WriteAllBytes(path, bytes);
+
+                var att = new OrderAttestationService();
+                var st  = j.RecoverOrFreeze(att, new JournalRecord[16], out _);
+                Assert.Equal(JournalStatus.Truncated, st);
+                Assert.Equal(GatingMode.EmergencyFreeze, att.Mode);   // 불결한 종료 → fail-closed
+            }
+            finally { TryDelete(path); }
+        }
     }
 }

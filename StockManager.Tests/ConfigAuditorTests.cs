@@ -202,7 +202,7 @@ namespace StockManager.Tests
             var clean = new ConfigAuditor(_ => null).Audit(BootConfigSpecs.All);
             Assert.False(clean.HasAnomaly);
             Assert.All(clean.Entries, e => Assert.Equal(ConfigStatus.Defaulted, e.Status));
-            Assert.Equal(5, clean.Entries.Count);
+            Assert.Equal(6, clean.Entries.Count);
         }
 
         [Fact]

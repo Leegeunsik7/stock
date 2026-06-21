@@ -60,6 +60,9 @@ namespace StockManager.Common
         /// <summary>테스트용 — 배양 사이클 시작 지점에 결함을 주입해 격리 방화벽을 검증한다.</summary>
         public Action? CycleFaultHook { get; init; }
 
+        /// <summary>S24-b — 새 챔피언 제출 직후 호출(플러시 펌프 RequestFlush 결속용). null이면 무동작.</summary>
+        public Action? OnChampionPromoted { get; init; }
+
         // ── S23-b 라이브 피드 게이트 (옵트인 · 기본 OFF = 현행 동작) ────────────────
         /// <summary>규칙1 — true면 데이터 세대 불변 시 재진화 숏서킷(할당·CPU 0).</summary>
         public bool          SkipUnchanged   { get; init; }
@@ -264,6 +267,7 @@ namespace StockManager.Common
                 _bestSpecId = bestSpec.Id;
                 // S23-b 규칙3 — 제안에 데이터 As-Of(마지막 Prime 마켓 시각) 박제 → 승인·활성 시점 신선도 검문 근거
                 _gateway.Submit(bestSpec, bestF, Volatile.Read(ref _lastFreshTicks));   // Candidate ➔ PendingApproval
+                OnChampionPromoted?.Invoke();   // S24-b — 핫패스 dirty 트리거(펌프 RequestFlush, 무할당 Interlocked)
             }
         }
 

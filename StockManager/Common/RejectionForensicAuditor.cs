@@ -81,6 +81,33 @@ namespace StockManager.Common
             return seq;
         }
 
+        /// <summary>
+        /// 최신 K개 거부 레코드를 시간순(오래된→최신)으로 dest 에 채운다(락-프리·무할당). 채운 개수 반환.
+        /// S24-b 플러시 펌프가 백그라운드에서 ring→저널로 읽어가는 배치 드레인. seqlock 검증으로 torn read 격리.
+        /// </summary>
+        public int SnapshotInto(Span<RejectionRecord> dest)
+        {
+            if (dest.IsEmpty) return 0;
+            for (int attempt = 0; attempt < 16; attempt++)
+            {
+                long v1 = Volatile.Read(ref _version);
+                if ((v1 & 1L) != 0L) continue;                       // 쓰기 중 → 재시도
+                long total = Interlocked.Read(ref _seq);
+                if (total == 0L) return 0;                            // 아직 거부 없음
+                int cap  = _ring.Length;
+                int k    = (int)Math.Min(Math.Min(total, cap), dest.Length);
+                int last = Volatile.Read(ref _lastIndex);
+                for (int i = 0; i < k; i++)
+                {
+                    int idx = ((last - (k - 1 - i)) % cap + cap) % cap;   // 음수 안전 모듈로
+                    dest[i] = _ring[idx];                            // 구조체 복사
+                }
+                long v2 = Volatile.Read(ref _version);
+                if (v1 == v2) return k;                              // 검증 통과(torn 없음)
+            }
+            return 0;
+        }
+
         /// <summary>최신 거부 레코드를 락-프리로 읽는다. torn read 면 재시도, 거부 없음/실패 시 false.</summary>
         public bool TryGetLatest(out RejectionRecord rec)
         {
