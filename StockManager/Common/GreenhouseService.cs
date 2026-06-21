@@ -73,6 +73,22 @@ namespace StockManager.Common
 
         private DateTime Now() => (Clock ?? (static () => DateTime.UtcNow))();
 
+        // ── S26-b C-1 두-갈래 신선도 펜스 (옵트인 · 기본 OFF = 현행 동작) ─────────────────
+        //   시간 도메인 3분할: Market(캔들 마켓시각) / Mono(단조 클록) / Wall(시스템 시계).
+        /// <summary>C-1 ① 데이터 시장-나이 한도(W_data) — now − 최신캔들 마켓시각 초과 시 fail-closed. null이면 OFF.</summary>
+        public TimeSpan? DataFreshnessWindow { get; init; }
+        /// <summary>C-1 ② 인제스트 liveness 한도(W_live) — 단조 클록 측정(NTP 스텝/스큐 면역). null이면 OFF.</summary>
+        public TimeSpan? LivenessWindow      { get; init; }
+        /// <summary>C-1 미래-데이터 허용오차 — 마켓시각이 now+이 값 초과(미래)면 시간 도메인 스큐(KST↔UTC)·시계역행으로 판정·fail-closed.</summary>
+        public TimeSpan  FutureSkewTolerance { get; init; } = TimeSpan.FromMinutes(2);
+        /// <summary>테스트용 단조 클록 주입(Stopwatch.GetTimestamp 단위). null이면 Stopwatch.GetTimestamp.</summary>
+        public Func<long>? MonoClock         { get; init; }
+        /// <summary>MonoClock 의 초당 틱(주파수). 0이면 Stopwatch.Frequency.</summary>
+        public long      MonoFrequency       { get; init; }
+
+        private long MonoNow()  => MonoClock?.Invoke() ?? System.Diagnostics.Stopwatch.GetTimestamp();
+        private long MonoFreq   => MonoFrequency > 0 ? MonoFrequency : System.Diagnostics.Stopwatch.Frequency;
+
         // ── 불변 입력 스냅샷 (메인과 공유 0) ──────────────────────────────────
         private StrategySpec[] _seeds   = Array.Empty<StrategySpec>();
         private Candle[]       _candles = Array.Empty<Candle>();
@@ -90,6 +106,9 @@ namespace StockManager.Common
 
         // S23-b — 피드 신선도·세대 추적 (volatile long 불법 → Volatile.Read/Write(ref long))
         private long _fedGen, _evolvedGen, _lastFreshTicks, _stalePauses;
+        // S26-b C-1 — 시간 도메인 분리 신선도 펜싱 (단일-long 원자 — Volatile.Read/Write, 무할당)
+        private long _lastMarketTicks;   // 최신 캔들 마켓 시각(As-Of 근거·데이터 나이 — 인제스트 wall-clock 아님)
+        private long _lastIngestMono;    // 인제스트 단조 순간(Stopwatch 단위, liveness·wall-clock 스큐 면역)
 
         /// <summary>규칙2 — 데이터 staleness 로 배양이 fail-closed 된 누적 횟수(관제탑 진단).</summary>
         public long StalePauses => Interlocked.Read(ref _stalePauses);
@@ -138,6 +157,11 @@ namespace StockManager.Common
             _market  = market;
             // S23-b — 새 데이터 윈도우: 신선도 갱신 + 세대 증가(isDirty 신호)
             Volatile.Write(ref _lastFreshTicks, Now().Ticks);
+            // S26-b C-1 — 데이터의 '진짜 나이'(마켓시각) + 단조 인제스트(liveness). 쓰기 순서 candles→fresh→market→mono
+            //   를 RunCycleOnce 가 역순 독출해 release-acquire fail-closed 편향을 확보한다(과대신선 봉인).
+            //   마켓시각은 인제스트 wall-clock 이 아니라 캔들 고유의 시장 생성 시각 → 네트워크 지연 Δt_network 자동 반영.
+            Volatile.Write(ref _lastMarketTicks, candles.Count > 0 ? candles[candles.Count - 1].Date.Ticks : 0L);
+            Volatile.Write(ref _lastIngestMono, MonoNow());
             Interlocked.Increment(ref _fedGen);
         }
 
@@ -238,13 +262,50 @@ namespace StockManager.Common
             //   새 데이터"(과소신선·fail-CLOSED) — 안전 측 편향. 과거엔 As-Of 를 사이클 '끝'에서 재독출해
             //   snap(과거 윈도우) 으로 진화한 챔피언이 도중 Prime 의 더 신선한 시각을 달고 나가 신선도 게이트를
             //   부당 통과(fail-open)했다 — catch-up 이 봉인한 시간왜곡을 As-Of 가 도로 은폐하던 자가당착.
-            long snapAsOf = Volatile.Read(ref _lastFreshTicks);
-            var  snap     = Volatile.Read(ref _candles);
+            //   ★S26-b C-1 — 역순 독출 체인. 쓰기 순서(Prime): _candles → _lastFreshTicks → _lastMarketTicks
+            //   → _lastIngestMono. 독출은 그 역순(마지막 쓰인 것부터)으로 _candles 를 가장 나중에 읽는다.
+            //   release-acquire 에 의해 어떤 타임스탬프든 '새 값'을 관측하면 그보다 먼저 쓰인 _candles 도 반드시
+            //   새 값이다 → "신선시각+오래된데이터"(과대신선·fail-open) 원천 불가, 최악은 과소신선(fail-closed).
+            long snapAsOf = Volatile.Read(ref _lastFreshTicks);    // 레거시 As-Of(StalenessWindow 경로)
+            long ingMono  = Volatile.Read(ref _lastIngestMono);    // C-1 ② liveness(단조)
+            long market   = Volatile.Read(ref _lastMarketTicks);   // C-1 ① As-Of/데이터 시장-나이
+            var  snap     = Volatile.Read(ref _candles);           // 단일 스냅샷(마지막 — release-acquire 앵커)
             if (seeds.Length == 0 || snap.Length < 60) return;
 
+            // ── S26-b C-1 두-갈래 신선도 펜스(옵트인) ──────────────────────────────────────
+            //   ① 데이터 시장-나이: 마켓시각 기준(인제스트 wall-clock 아님) → 네트워크 지연 Δt_network 자동 반영.
+            //      음수 나이(미래 데이터)는 시간 도메인 스큐(KST↔UTC)·시계 역행 → 도메인 정준화 가드로 fail-closed.
+            if (DataFreshnessWindow is TimeSpan wData)
+            {
+                long marketAge = Now().Ticks - market;
+                if (market == 0L || marketAge > wData.Ticks || marketAge < -FutureSkewTolerance.Ticks)
+                {
+                    Interlocked.Increment(ref _stalePauses);
+                    return;
+                }
+            }
+            //   ② 인제스트 liveness: 단조 클록 측정 → NTP wall-clock 스텝에는 면역(전진 가정 시).
+            //   ★적대적 리뷰(major) 수정 — '단조'는 전진 가정일 뿐, 역행은 NTP 가 아닌 하드웨어/주입 경로로 들어온다:
+            //   멀티코어 TSC/QPC 미동기·VM live-migration·주입된 비단조 클록. 그때 monoΔ<0 이면 과거의
+            //   `Δ>임계값`은 false → 미발화 → stale 진행(fail-OPEN). "모호함 앞의 Fail-Closed"상 음수 Δ = 클록 상태
+            //   모호 → 반드시 트립해야 한다. 임계값도 정수(long) 도메인으로 끌어와 double 정밀 손실/fail-open 편향 제거.
+            if (LivenessWindow is TimeSpan wLive)
+            {
+                long monoDelta     = MonoNow() - ingMono;
+                long thresholdMono = (long)(wLive.TotalSeconds * MonoFreq);   // 절사 → 작은 임계값 = fail-closed 편향
+                if (ingMono == 0L || monoDelta < 0L || monoDelta > thresholdMono)
+                {
+                    Interlocked.Increment(ref _stalePauses);
+                    return;
+                }
+            }
+
             var candles = new List<Candle>(snap);   // 단일 스냅샷에서만 파생(글로벌 재독출 0)
+            var mkt     = _market;                  // ★적대적 리뷰(minor) — _market 도 cycle-start 1회 포획
+                                                    //   (Evolve/Backtest 가 글로벌 _market 재독출 시 사이클 도중 Prime 의
+                                                    //   중간값 혼입 가능 → 단일 스냅샷 격리 불변식 일관성 유지).
             var result  = CartridgeGenome.Evolve(
-                seeds, candles, _market, Generations, PopulationSize, _attestation);
+                seeds, candles, mkt, Generations, PopulationSize, _attestation);
             if (!result.IsValid || result.Ranked.Count == 0) return;
 
             double       bestF    = double.NegativeInfinity;
@@ -273,7 +334,7 @@ namespace StockManager.Common
                 if (!rec.Ok) continue;
                 Interlocked.Increment(ref _mutations);
 
-                var bt = StrategyCompiler.Backtest(rec.Repaired, candles, _market);
+                var bt = StrategyCompiler.Backtest(rec.Repaired, candles, mkt);
                 double f = FitnessEvaluator.BaseFitness(bt, meanAbsZ, ProxyExposure, fb);
                 if (f > bestF) { bestF = f; bestSpec = rec.Repaired; }
             }
@@ -286,9 +347,12 @@ namespace StockManager.Common
                 Interlocked.Exchange(ref _bestBits, BitConverter.DoubleToInt64Bits(bestF));
                 _bestSpecId = bestSpec.Id;
                 // S23-b 규칙3 — 제안에 데이터 As-Of 박제 → 승인·활성 시점 신선도 검문 근거.
-                // ★S25-c — cycle-start 에서 snap 과 역순으로 가둔 snapAsOf 사용(사이클 끝 재독출 금지):
-                //   챔피언이 실제 진화한 윈도우의 신선도와 일관 → 잔여 시간왜곡 시 신선도 게이트가 fail-closed.
-                _gateway.Submit(bestSpec, bestF, snapAsOf);   // Candidate ➔ PendingApproval
+                // ★S25-c — cycle-start 에서 snap 과 역순으로 가둔 값 사용(사이클 끝 재독출 금지): 챔피언이 실제
+                //   진화한 윈도우의 신선도와 일관 → 잔여 시간왜곡 시 신선도 게이트가 fail-closed.
+                // ★S26-b C-1 — 펜스 옵트인 시 As-Of=마켓시각(market): now−As-Of 가 네트워크 지연 Δt_network 까지
+                //   포함한 데이터의 진짜 나이가 된다. 미옵트인이면 레거시 인제스트 시각(snapAsOf, 후방호환).
+                long asOf = DataFreshnessWindow is not null ? market : snapAsOf;
+                _gateway.Submit(bestSpec, bestF, asOf);   // Candidate ➔ PendingApproval
                 OnChampionPromoted?.Invoke();   // S24-b — 핫패스 dirty 트리거(펌프 RequestFlush, 무할당 Interlocked)
             }
         }

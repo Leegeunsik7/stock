@@ -59,7 +59,14 @@ namespace StockManager.Common
                     var c = candles[start + i];
                     if (c is null) return 0;      // 불완전 원소 → 통째 드롭(부분 오염 차단)
                     var b = buffer[i];            // 재사용 인스턴스 필드 덮어쓰기
-                    b.Date   = c.Date;
+                    // S26-b C-1 시간 도메인 정준화 — 코어 신선도 펜스는 마켓시각을 UTC wall-clock 과 비교한다.
+                    //   · Local: ToUniversalTime 으로 '같은 순간'의 UTC 로 변환(틱이 UTC 오프셋만큼 이동 — 의도된 정정).
+                    //   · Unspecified/Utc: SpecifyKind(Utc) 로 라벨만 부여(틱 불변).
+                    //   (KST 가 Unspecified 로 들어오는 라벨 누락 스큐는 틱이 안 옮겨져 +9h 미래틱이 되며, 코어 펜스의
+                    //    미래-데이터 양면 바운드가 fail-closed 로 포착한다.)
+                    b.Date   = c.Date.Kind == DateTimeKind.Local
+                                   ? c.Date.ToUniversalTime()
+                                   : DateTime.SpecifyKind(c.Date, DateTimeKind.Utc);
                     b.Open   = c.Open;
                     b.High   = c.High;
                     b.Low    = c.Low;
