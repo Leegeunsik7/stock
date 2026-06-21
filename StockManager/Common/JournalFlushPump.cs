@@ -82,6 +82,7 @@ namespace StockManager.Common
 
         public long Flushes     => Interlocked.Read(ref _flushes);
         public long FlushErrors => Interlocked.Read(ref _flushErrors);
+        public long DirtyGen    => Interlocked.Read(ref _dirtyGen);   // S24-c 진단 — 다중 소스 누적 요청 수(손실 0 검증)
         public bool Running     => _running;
 
         /// <summary>동기 진입점(단일 호출자 전제). (A)캡처→(B)수집·기록→(C)성공시 전진. lost-update 0.</summary>

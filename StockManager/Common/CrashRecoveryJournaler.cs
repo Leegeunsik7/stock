@@ -46,8 +46,13 @@ namespace StockManager.Common
             => s == JournalStatus.Inaccessible;
     }
 
-    /// <summary>크래시 복구 저널 1건(unmanaged · 참조 0 · 블리터블). 기본값(Seq=0)='없음'.</summary>
-    [StructLayout(LayoutKind.Sequential)]
+    /// <summary>
+    /// 크래시 복구 저널 1건(unmanaged · 참조 0 · 블리터블). 기본값(Seq=0)='없음'.
+    /// S24-c — Pack=1: 정렬 패딩 바이트를 제거해 와이어 포맷을 완전히 결정론화한다. 패딩이 있으면
+    /// MemoryMarshal.Write 가 정의되지 않은 패딩 비트까지 직렬화해 CRC32 가 부팅마다 튈 여지가 생긴다.
+    /// (x64 Windows 전용 — Pack=1 의 비정렬 접근 비용은 가끔 읽는 저널 레코드엔 무시 가능.)
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public readonly struct JournalRecord
     {
         public readonly long Seq;
@@ -95,7 +100,7 @@ namespace StockManager.Common
     {
         public const  uint MagicHead = 0x4D533243u;     // "MS2C"
         public const  uint MagicTail = 0x4A524E4Cu;     // "JRNL"
-        public const  int  Version   = 1;
+        public const  int  Version   = 2;               // S24-c — Pack=1 레이아웃(이전 v1 패딩 포맷과 비호환)
         public const  int  HeaderSize = 16;             // head(4)+ver(4)+count(4)+crc(4)
         public static readonly int RecordSize = Unsafe.SizeOf<JournalRecord>();
 
@@ -134,7 +139,10 @@ namespace StockManager.Common
             if (head != MagicHead) return JournalStatus.BadMagic;
 
             int ver = BinaryPrimitives.ReadInt32LittleEndian(src.Slice(4));
-            if (ver != Version) return JournalStatus.BadMagic;               // 버전 미상 → 보수적
+            // S24-c — 매직은 맞으나 버전이 다르면 '우리 구 포맷'(양성 스큐)이지 torn/변조 오염이 아니다.
+            // 저널은 에페메럴 복구 보조이지 권위 게이팅 상태가 아니므로, 구 포맷은 폐기하고 클린 부팅(무동결).
+            // (S24-b 사상 일관: 내용 증거 오염만 동결, 양성 신호는 비동결 — 포맷 업그레이드가 거래를 동결시키면 자가당착.)
+            if (ver != Version) return JournalStatus.Empty;
 
             int n = BinaryPrimitives.ReadInt32LittleEndian(src.Slice(8));
             if (n < 0) return JournalStatus.Truncated;

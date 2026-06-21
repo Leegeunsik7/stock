@@ -64,6 +64,9 @@ namespace StockManager.Common
         /// <summary>S23-c — 비가역 거부 포렌식 감사기(옵션). 임계구역 내 무할당 박제. null이면 미기록.</summary>
         public RejectionForensicAuditor? Forensics     { get; init; }
 
+        /// <summary>S24-c — 원장 상태 전이(승인·활성·거부) 직후 호출(플러시 펌프 RequestFlush 결속용). null이면 무동작.</summary>
+        public Action? OnLedgerChanged                 { get; init; }
+
         private DateTime Now() => (Clock ?? (static () => DateTime.UtcNow))();
 
         public PromotionGateway(
@@ -142,6 +145,7 @@ namespace StockManager.Common
                 Audit(State, PromotionState.Approved, "Approve",
                     string.IsNullOrWhiteSpace(note) ? "인간 서명 승인" : note.Trim());
                 _stateInt = (int)PromotionState.Approved;
+                OnLedgerChanged?.Invoke();   // S24-c — 승인 전이 직후 플러시 트리거
                 return true;
             }
         }
@@ -171,6 +175,7 @@ namespace StockManager.Common
                 slot.Swap(_current.Spec);   // ⚛ 원자 핫스왑
                 Audit(State, PromotionState.Active, "Activate", $"핫스왑 적용 (gen={slot.Generation})");
                 _stateInt = (int)PromotionState.Active;
+                OnLedgerChanged?.Invoke();   // S24-c — 비가역 핫스왑 성공 직후 플러시 트리거
                 return true;
             }
         }
@@ -221,6 +226,7 @@ namespace StockManager.Common
             if (c is null || Forensics is null) return;
             long win = ProposalFreshnessWindow is TimeSpan w ? w.Ticks : 0L;
             Forensics.Record(stage, c.AsOfTicks, Now().Ticks, win, c.Fitness, c.Spec.Id);
+            OnLedgerChanged?.Invoke();   // S24-c — 나노초 거부 박제 직후 플러시 트리거(Interlocked·무할당)
         }
 
         private void Audit(PromotionState from, PromotionState to, string action, string detail)

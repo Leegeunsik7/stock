@@ -96,7 +96,11 @@ namespace StockManager.Blazor
             }
 
             // S19 #3/#4/#5 — 승급 게이트웨이 + 격리 배양 온실 + 원자 핫스왑 슬롯 + 집행 안전 게이트
-            var promotionGateway = new PromotionGateway(db, attestation) { Forensics = rejectionForensics };
+            var promotionGateway = new PromotionGateway(db, attestation)
+            {
+                Forensics      = rejectionForensics,
+                OnLedgerChanged = flushPump is null ? (Action?)null : flushPump.RequestFlush,   // S24-c 전방위 트리거(승인·활성·거부)
+            };
             var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared)
             {
                 Sentinel = sentinel,   // S19 #5 — 실시간 마찰 피드 결속(ProxyMeanAbsZ 제거)

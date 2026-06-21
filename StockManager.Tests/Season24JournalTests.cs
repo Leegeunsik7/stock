@@ -241,6 +241,39 @@ namespace StockManager.Tests
         }
 
         [Fact]
+        public void Codec_VersionSkew_TreatedAsEmpty_NotCorrupt()
+        {
+            // S24-c — 매직 맞고 버전만 다른 '구 포맷'은 양성 스큐 → Empty(무동결). torn/변조 오염과 분리.
+            var buf = new byte[JournalCodec.RequiredBytes(3)];
+            JournalCodec.Encode(Recs(3), buf);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(4), 99);   // 다른 버전
+            var st = JournalCodec.Decode(buf, new JournalRecord[8], out _);
+            Assert.Equal(JournalStatus.Empty, st);
+            Assert.False(st.IsCorrupt());
+        }
+
+        [Fact]
+        public void Journaler_VersionSkewFile_NoFreeze()
+        {
+            // 포맷 업그레이드가 멀쩡한 시스템을 부팅 동결시키지 않는다(자가당착 차단).
+            string path = TempPath();
+            try
+            {
+                var j = new CrashRecoveryJournaler(path, capacity: 16);
+                j.Persist(Recs(3));
+                var bytes = File.ReadAllBytes(path);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(4), 1);   // 구 버전 위장
+                File.WriteAllBytes(path, bytes);
+
+                var att = new OrderAttestationService();
+                var st  = j.RecoverOrFreeze(att, new JournalRecord[16], out _);
+                Assert.Equal(JournalStatus.Empty, st);
+                Assert.NotEqual(GatingMode.EmergencyFreeze, att.Mode);   // 동결 안 함
+            }
+            finally { TryDelete(path); }
+        }
+
+        [Fact]
         public void Journaler_TornTail_FailsClosed()
         {
             // 미션2 — 불결한 크래시(torn write·후미 소실)는 동결한다.
