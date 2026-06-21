@@ -156,9 +156,10 @@
     <div class="cc-shadow-rows">
         <div><span>실 틱 유입</span><b>@Shadow.TicksReceived.ToString("N0") 틱 · @Shadow.TicksPerSecond.ToString("F1")/s</b></div>
         <div><span>실측 마찰 Z</span><b>@Shadow.LastZ.ToString("F4")</b></div>
-        <div><span>물리 발주 차단</span><b>@Shadow.BlockedOrders.ToString("N0") 건 · 와이어 송신 0%</b></div>
+        <div><span>발주 차단 / 실위임</span><b>@Shadow.BlockedOrders.ToString("N0") 차단 · @Shadow.Delegated.ToString("N0") 위임</b></div>
+        <div><span>마스터 플래그</span><b>@(Shadow.LiveArmed ? "ARMED ⚠️" : "OFF (실거래 0)")</b></div>
     </div>
-    <div class="cc-shadow-note">🔒 발주부 물리 단절 — 온실은 실 시장으로 회전하되 손은 묶여 있음</div>
+    <div class="cc-shadow-note">🔒 2중 게이트(마스터 플래그 + 점화 허용) — 마스터 OFF 인 한 와이어 송신 0%</div>
 </div>
 
 @* ── 🔑 점화 제어반 (조종석 — 방아쇠 잠김) ──────────────────────────────────── *@

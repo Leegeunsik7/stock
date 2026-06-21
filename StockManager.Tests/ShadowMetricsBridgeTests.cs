@@ -169,6 +169,103 @@ namespace StockManager.Tests
             sm.Attach(bridge);
             Assert.False(sm.Connected);              // 프록시 미연결 → 미연동
         }
+
+        // ════════════════════════ §5 v5.0.0-c 안전형 2중 게이트 ═══════════════════
+
+        private static ShadowMetricsBridge Valve(IBroker? real, IgnitionLock? ign, bool armed)
+            => new ShadowMetricsBridge(new RingBufferCore<TickPayload>(64), null, real, ign, armed);
+
+        private static IgnitionLock ArmedIgnition(IgnitionStage stage)
+        {
+            var ign = new IgnitionLock(s => s == "OK");
+            ign.Arm(stage, "OK");
+            return ign;
+        }
+
+        [Fact]
+        public void DualGate_BothPass_DelegatesToRealBroker()
+        {
+            var real = new RecBroker();
+            var sm = Valve(real, ArmedIgnition(IgnitionStage.MasterIgnited), armed: true);
+            var (ok, _) = sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            Assert.True(ok);
+            Assert.Equal(1, real.PlaceCount);
+            Assert.Equal(1, sm.Delegated);
+        }
+
+        [Fact]
+        public void DualGate_MasterOff_Blocks_AndDoesNotConsumeProbe()
+        {
+            // 마스터 플래그 OFF → 단락 평가로 TryConsumePhysical 미호출 → 점화 상태 불변
+            var real = new RecBroker();
+            var ign  = ArmedIgnition(IgnitionStage.ProbeReady);
+            var sm   = Valve(real, ign, armed: false);
+
+            sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+
+            Assert.Equal(0, real.PlaceCount);                       // 차단
+            Assert.Equal(0, sm.Delegated);
+            Assert.Equal(IgnitionStage.ProbeReady, ign.Stage);      // 점화 미소비
+            Assert.Equal(1, ign.ProbeRemaining);
+        }
+
+        [Fact]
+        public void DualGate_IgnitionLocked_Blocks()
+        {
+            var real = new RecBroker();
+            var sm = Valve(real, new IgnitionLock(s => s == "OK"), armed: true);   // 점화 Locked(기본)
+            sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            Assert.Equal(0, real.PlaceCount);
+        }
+
+        [Fact]
+        public void DualGate_NoIgnition_Blocks()
+        {
+            var real = new RecBroker();
+            var sm = Valve(real, null, armed: true);   // 점화 게이트 미결속
+            sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            Assert.Equal(0, real.PlaceCount);
+        }
+
+        [Fact]
+        public void DualGate_NoBroker_Blocks()
+        {
+            var sm = Valve(null, ArmedIgnition(IgnitionStage.MasterIgnited), armed: true);   // 실 브로커 미결속
+            var (ok, _) = sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            Assert.True(ok);                  // 그림자 ack
+            Assert.Equal(0, sm.Delegated);
+        }
+
+        [Fact]
+        public void DualGate_Probe_DelegatesOnce_ThenAutoBlocks()
+        {
+            var real = new RecBroker();
+            var sm = Valve(real, ArmedIgnition(IgnitionStage.ProbeReady), armed: true);
+
+            sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+
+            Assert.Equal(1, real.PlaceCount);   // 1주 프로브 — 단 1회 위임 후 자동 잠금
+            Assert.Equal(1, sm.Delegated);
+            Assert.Equal(1, sm.BlockedOrders);  // 2번째는 차단
+        }
+
+        [Fact]
+        public void Attempted_EqualsDelegatedPlusBlocked()
+        {
+            var sm = Valve(new RecBroker(), ArmedIgnition(IgnitionStage.MasterIgnited), armed: true);
+            for (int i = 0; i < 5; i++)
+                sm.Place(PaperAsset.Stock, "A005930", "삼성", PaperSide.Buy, PaperKind.Market, 1m, 0m, 70000m);
+            Assert.Equal(5, sm.Attempted);
+            Assert.Equal(sm.Attempted, sm.Delegated + sm.BlockedOrders);
+        }
+
+        [Fact]
+        public void IsLive_ReflectsLiveArmed()
+        {
+            Assert.True(Valve(new RecBroker(), ArmedIgnition(IgnitionStage.MasterIgnited), armed: true).IsLive);
+            Assert.False(new ShadowMetricsBridge(new RingBufferCore<TickPayload>(64)).IsLive);
+        }
     }
 
     file sealed class RecBroker : IBroker

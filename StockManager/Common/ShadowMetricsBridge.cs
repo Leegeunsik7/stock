@@ -30,25 +30,31 @@ namespace StockManager.Common
 {
     public sealed class ShadowMetricsBridge : IBroker, IDisposable
     {
-        // 단방향 밸브 박제 — true 인 한 물리 발주 통로는 원천 차단된다(코드 변경 없인 못 엶).
-        private static readonly bool BlockPhysicalOrder = true;
-
+        // v5.0.0-c(안전형) — 2중 런타임 게이트 인터록이 정적 차단막을 대체한다.
+        // 실 위임 = (_liveArmed 마스터 플래그) AND (_ignition 런타임 점화 허용) AND (실 브로커 결속).
+        // _liveArmed 기본 false → 호스트는 실거래 0(최종 플래그 flip 전까지 비가역 선 미교차).
         private readonly RingBufferCore<TickPayload>       _ring;
         private readonly SlippageSentinel?                 _sentinel;
-        private readonly IBroker?                          _realBroker;   // 밸브 개방 시에만 위임(현재 도달 불가)
+        private readonly IBroker?                          _realBroker;   // 게이트 통과 시에만 위임
+        private readonly IgnitionLock?                     _ignition;     // 런타임 점화 게이트
+        private readonly bool                              _liveArmed;    // 마스터 플래그(기본 false)
         private readonly ConcurrentDictionary<long, double> _lastPrice = new();
 
         private KiwoomBridgeClient? _source;
-        private long _ticks, _blocked, _firstRecvTicks, _lastRecvTicks;
+        private long _ticks, _attempted, _delegated, _blocked, _firstRecvTicks, _lastRecvTicks;
 
         public ShadowMetricsBridge(
             RingBufferCore<TickPayload> ring,
             SlippageSentinel?           sentinel   = null,
-            IBroker?                    realBroker = null)
+            IBroker?                    realBroker = null,
+            IgnitionLock?               ignition   = null,
+            bool                        liveArmed  = false)
         {
             _ring       = ring ?? throw new ArgumentNullException(nameof(ring));
             _sentinel   = sentinel;
             _realBroker = realBroker;
+            _ignition   = ignition;
+            _liveArmed  = liveArmed;
         }
 
         // ── 와이어 태핑 (구독/해제) ────────────────────────────────────────────
@@ -94,7 +100,10 @@ namespace StockManager.Common
         // ── 메트릭 (관제탑 가시성) ─────────────────────────────────────────────
         public bool   Connected     => _source?.IsProxyAlive ?? false;
         public long   TicksReceived => Interlocked.Read(ref _ticks);
+        public long   Attempted     => Interlocked.Read(ref _attempted);
+        public long   Delegated     => Interlocked.Read(ref _delegated);   // 실 위임 건수(호스트=0)
         public long   BlockedOrders => Interlocked.Read(ref _blocked);
+        public bool   LiveArmed     => _liveArmed;                          // 마스터 플래그 상태
         public double LastZ         => _sentinel?.LastZ ?? 0.0;
 
         public double TicksPerSecond
@@ -110,21 +119,25 @@ namespace StockManager.Common
             }
         }
 
-        // ── IBroker — 단방향 물리 밸브 ─────────────────────────────────────────
+        // ── IBroker — 2중 런타임 게이트 핫-밸브 ────────────────────────────────
         public string Name   => "ShadowValve";
-        public bool   IsLive => false;   // 실거래 아님 — 그림자
+        public bool   IsLive => _liveArmed;   // 마스터 플래그가 켜졌을 때만 라이브 가능
 
         public (bool ok, string msg) Place(
             PaperAsset a, string s, string n, PaperSide sd, PaperKind k,
             decimal q, decimal lp, decimal cp)
         {
+            Interlocked.Increment(ref _attempted);
+            // 2중 게이트 인터록: 마스터 플래그 AND 런타임 점화 허용 AND 실 브로커 결속.
+            // && 단락 평가로 마스터 OFF 시 TryConsumePhysical(부수효과) 미호출 → 점화 상태 불변.
+            if (_liveArmed && _realBroker is not null && _ignition is not null && _ignition.TryConsumePhysical())
+            {
+                Interlocked.Increment(ref _delegated);
+                return _realBroker.Place(a, s, n, sd, k, q, lp, cp);   // ⚠️ 실 위임 — 비가역 와이어
+            }
+            // 게이트 하나라도 미충족 → 차단(그림자). 와이어 송신 0.
             Interlocked.Increment(ref _blocked);
-            if (BlockPhysicalOrder)
-                return (true, "[SHADOW] 물리 발주 차단 — 와이어 송신 0%");
-            // 밸브 개방 시에만 실 브로커로 위임 — BlockPhysicalOrder=true 박제 하에선 도달 불가.
-            return _realBroker is not null
-                ? _realBroker.Place(a, s, n, sd, k, q, lp, cp)
-                : (false, "밸브 개방이나 실 브로커 미결속");
+            return (true, "[SHADOW] 발주 차단 — 와이어 송신 0% (2중 게이트 미충족)");
         }
 
         public void    Cancel(string id) { }
