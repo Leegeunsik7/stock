@@ -61,6 +61,9 @@ namespace StockManager.Common
         /// <summary>테스트용 주입 클록. null이면 UtcNow.</summary>
         public Func<DateTime>? Clock                   { get; init; }
 
+        /// <summary>S23-c — 비가역 거부 포렌식 감사기(옵션). 임계구역 내 무할당 박제. null이면 미기록.</summary>
+        public RejectionForensicAuditor? Forensics     { get; init; }
+
         private DateTime Now() => (Clock ?? (static () => DateTime.UtcNow))();
 
         public PromotionGateway(
@@ -129,6 +132,7 @@ namespace StockManager.Common
                 // S23-b 규칙3 — As-Of 신선도 만료(유령 데이터로 만든 챔피언)는 서명이 올바라도 Rejected 로 튕김
                 if (IsProposalStale())
                 {
+                    RecordRejection(RejectionStage.Approve);   // S23-c — 임계구역 내 무할당 박제(_current=null 이전)
                     Audit(State, PromotionState.Rejected, "Approve거부", "As-Of 신선도 만료 — stale 챔피언 차단");
                     RaiseCompliance("stale 챔피언 승인 차단 — 제안 As-Of 신선도 만료(유령 데이터)");
                     _stateInt = (int)PromotionState.Rejected;
@@ -157,6 +161,7 @@ namespace StockManager.Common
                 // 승인 후 마켓 타임이 흘러 신선도가 만료됐으면, 서명이 올발랐어도 swap 대신 Rejected.
                 if (IsProposalStale())
                 {
+                    RecordRejection(RejectionStage.Activate);   // S23-c — 비가역 swap 직전 무할당 박제
                     Audit(State, PromotionState.Rejected, "Activate거부", "As-Of 신선도 만료(승인→활성 갭) — 핫스왑 차단");
                     RaiseCompliance("stale 챔피언 활성화 차단 — 승인-활성 갭 사이 데이터 열화");
                     _stateInt = (int)PromotionState.Rejected;
@@ -207,6 +212,15 @@ namespace StockManager.Common
             if (c is null || c.AsOfTicks == 0)             return false;   // As-Of 미박제 → 게이팅 없음
             if (ProposalFreshnessWindow is not TimeSpan w) return false;   // 윈도우 미설정 → 게이팅 없음
             return Now() - new DateTime(c.AsOfTicks, DateTimeKind.Utc) > w;
+        }
+
+        // S23-c — 임계구역(_lock) 내 무할당 포렌식 박제. 문자열 결합·인스턴스 생성 없음(SpecId 는 기존 참조).
+        private void RecordRejection(RejectionStage stage)
+        {
+            var c = _current;
+            if (c is null || Forensics is null) return;
+            long win = ProposalFreshnessWindow is TimeSpan w ? w.Ticks : 0L;
+            Forensics.Record(stage, c.AsOfTicks, Now().Ticks, win, c.Fitness, c.Spec.Id);
         }
 
         private void Audit(PromotionState from, PromotionState to, string action, string detail)

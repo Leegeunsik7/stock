@@ -116,27 +116,38 @@ namespace StockManager.Common
 
     public sealed class SystemStatusAggregator
     {
-        private readonly OrderAttestationService? _attestation;
-        private readonly MemoryLeakGuard?         _memGuard;
-        private readonly AdaptiveExecutionTuner?  _tuner;
-        private readonly KiwoomBridgeClient?      _bridge;
-        private readonly PromotionGateway?        _gateway;
+        private readonly OrderAttestationService?   _attestation;
+        private readonly MemoryLeakGuard?           _memGuard;
+        private readonly AdaptiveExecutionTuner?    _tuner;
+        private readonly KiwoomBridgeClient?        _bridge;
+        private readonly PromotionGateway?          _gateway;
+        private readonly RejectionForensicAuditor?  _forensics;
 
         /// <summary>
         /// 모든 센서는 선택적. null이면 해당 사분면은 안전 기본값(Notice·미배선)으로 폴백한다.
         /// </summary>
         public SystemStatusAggregator(
-            OrderAttestationService? attestation = null,
-            MemoryLeakGuard?         memGuard    = null,
-            AdaptiveExecutionTuner?  tuner       = null,
-            KiwoomBridgeClient?      bridge      = null,
-            PromotionGateway?        gateway     = null)
+            OrderAttestationService?   attestation = null,
+            MemoryLeakGuard?           memGuard    = null,
+            AdaptiveExecutionTuner?    tuner       = null,
+            KiwoomBridgeClient?        bridge      = null,
+            PromotionGateway?          gateway     = null,
+            RejectionForensicAuditor?  forensics   = null)
         {
             _attestation = attestation;
             _memGuard    = memGuard;
             _tuner       = tuner;
             _bridge      = bridge;
             _gateway     = gateway;
+            _forensics   = forensics;
+        }
+
+        /// <summary>S23-c — 최신 비가역 거부 포렌식을 락-프리(seqlock)로 독출. 미배선·거부 없음 시 false.</summary>
+        public bool TryGetLatestRejection(out RejectionRecord rec)
+        {
+            var f = _forensics;
+            if (f is null) { rec = default; return false; }
+            return f.TryGetLatest(out rec);
         }
 
         /// <summary>

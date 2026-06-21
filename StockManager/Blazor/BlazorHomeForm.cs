@@ -80,8 +80,12 @@ namespace StockManager.Blazor
             services.AddSingleton(tuner);
             services.AddSingleton(compliance);
 
+            // S23-c — 비가역 거부 포렌식 감사기(임계구역 내 무할당 박제·락-프리 독출). 게이트웨이·관제탑 공유.
+            var rejectionForensics = new RejectionForensicAuditor();
+            services.AddSingleton(rejectionForensics);
+
             // S19 #3/#4/#5 — 승급 게이트웨이 + 격리 배양 온실 + 원자 핫스왑 슬롯 + 집행 안전 게이트
-            var promotionGateway = new PromotionGateway(db, attestation);
+            var promotionGateway = new PromotionGateway(db, attestation) { Forensics = rejectionForensics };
             var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared)
             {
                 Sentinel = sentinel,   // S19 #5 — 실시간 마찰 피드 결속(ProxyMeanAbsZ 제거)
@@ -134,7 +138,7 @@ namespace StockManager.Blazor
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(
-                attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway));
+                attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway, rejectionForensics));
 
             var view = new BlazorWebView
             {

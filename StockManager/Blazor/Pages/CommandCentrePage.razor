@@ -168,6 +168,17 @@
     {
         <div class="cc-gh-idle">현재 상태: @GreenhouseLabel(_snap.Promotion) — 승인 대기 변이체 없음</div>
     }
+
+    @* S23-c — 비가역 거부 포렌식: 올바른 서명에도 1ms 단위 타이밍 만료로 튕긴 찰나를 정직하게 분별 *@
+    @if (Agg.TryGetLatestRejection(out var _rej) && _rej.HasValue)
+    {
+        <div class="cc-gh-forensic">
+            ❌ 스왑 거부 #@_rej.Seq (@RejectionStageLabel(_rej.Stage)) —
+            승인 시점 대비 마켓 As-Of <b>@(_rej.LagMs.ToString("N0"))ms</b> 지연 감지
+            (신선도 한도 @(_rej.WindowMs.ToString("N0"))ms 초과).
+            <span class="cc-gh-forensic-note">시스템 오작동 아님 — 하드웨어 타이밍 만료(fail-closed). 게놈 @ShortId(_rej.SpecId)</span>
+        </div>
+    }
 </div>
 
 @* ── 👁️ 그림자 파이프라인: 실시간 연동 (눈 뜨고 손 묶임) ─────────────────────── *@
@@ -334,6 +345,13 @@
     private static string ShortId(string? id) =>
         string.IsNullOrEmpty(id) ? "—" : (id.Length > 12 ? id[..12] : id);
 
+    private static string RejectionStageLabel(RejectionStage s) => s switch
+    {
+        RejectionStage.Approve  => "승인 관문",
+        RejectionStage.Activate => "활성 관문(비가역 직전)",
+        _                       => "—",
+    };
+
     // ── 점화 제어반 (IgnitionLock 직접 호출 — 검증된 FSM 위임. 밸브 미결속 = 실거래 0) ──
     private string  _ignSignature = "";
     private string? _ignMsg;
@@ -448,6 +466,10 @@
     .cc-gh-input { background:#0b0e1a; border:1px solid #3a4252; border-radius:6px; padding:6px 10px; color:var(--fg,#e2e8f0); font-size:12px; min-width:180px; }
     .cc-gh-reject { opacity:.85; }
     .cc-gh-msg { margin-top:11px; font-size:12px; color:#c084fc; }
+    .cc-gh-forensic { margin-top:13px; padding:9px 13px; border-radius:7px; font-size:11.5px;
+                      color:#fca5a5; background:#1f1113; border:1px solid #5b2230; line-height:1.6; }
+    .cc-gh-forensic b { color:#fde68a; font-variant-numeric:tabular-nums; }
+    .cc-gh-forensic-note { display:block; margin-top:4px; font-size:10.5px; color:#94a3b8; }
 
     /* ── 👁️ 그림자 파이프라인 ──────────────────────────────────────────────── */
     .cc-shadow {

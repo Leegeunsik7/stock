@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.20.0</Version>
-    <AssemblyVersion>4.20.0.0</AssemblyVersion>
-    <FileVersion>4.20.0.0</FileVersion>
+    <Version>4.21.0</Version>
+    <AssemblyVersion>4.21.0.0</AssemblyVersion>
+    <FileVersion>4.21.0.0</FileVersion>
+    <!-- v4.21.0 — S23-c: 비가역 거부 포렌식 (RejectionForensicAuditor·값타입 링버퍼+단일라이터 seqlock·임계구역 내 무할당 박제·락-프리 독출). PromotionGateway.Forensics 옵트인 Approve/Activate 거부 기록. SystemStatusAggregator.TryGetLatestRejection 락-프리. 관제탑 [❌ 스왑 거부: As-Of Xms 지연] 텔레메트리. S23cForensicTests 12(torn-read 내성 포함). 옵트인 기본 OFF → 무파손. liveArmed 불변 -->
     <!-- v4.20.0 — S23-b: 라이브 피드 결속 안전 코어 (3대 비대칭 규칙·전부 옵트인 기본 OFF). 규칙1 isDirty 숏서킷(GreenhouseService.SkipUnchanged)+LiveCandleFeed 단일 재사용 버퍼. 규칙2 staleness fail-closed(StalenessWindow)+피드 검증(단조·OHLC). 규칙3 As-Of 락아웃(PromotionGateway.AsOfTicks·Approve/Activate 원자 신선도 검문·승인→활성 레이스 방어). S23bLiveFeedTests 19. 라이브 provider 바인딩은 문서화 후속(미배선). liveArmed 불변 -->
     <!-- v4.19.0 — Season 23: 자율 배양 엔진 점등 (GreenhouseActivator·DefaultSeeds·BootstrapCandles[결정론 참조 시리즈]·호스트 부팅 시 Activate[Greenhouse.AutoStart 게이트, 기본 true]·관제탑 자율배양 LIVE 스트립·종료 시 Stop·GreenhouseActivatorTests 10). 안전: 제안 전용·dry-run+밸브·liveArmed:false → 실거래 0%. EmergencyFreeze fail-closed -->
     <!-- v4.18.0 — S22 PathA: LAN 포트 교차-호스트 결속 (LanStatusServer 원시 파싱→RuntimeConfig 검증 경로·BootConfigSpecs 에 Lan.Port 편입[SSOT 4스펙]·트레이 호스트에 cfg 주입·부팅 감사 자동 포함·테스트 +1). 인프라 설정 파이프라인 단일화. liveArmed 불변 -->
