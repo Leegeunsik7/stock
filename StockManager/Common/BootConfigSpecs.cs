@@ -38,6 +38,10 @@ namespace StockManager.Common
         public const int    LanPortMin                   = 1;
         public const int    LanPortMax                   = 65535;
 
+        // 온실 자율 배양 부팅 자동 점등 — false 로 비활성(운영자 제어). 거래 불가(제안 전용).
+        public const string GreenhouseAutoStartKey      = "Greenhouse.AutoStart";
+        public const bool   GreenhouseAutoStartDefault   = true;
+
         /// <summary>감사 대상 = 라우팅 대상. 항상 1:1로 일치한다.</summary>
         public static IReadOnlyList<ConfigSpec> All { get; } = new[]
         {
@@ -56,6 +60,10 @@ namespace StockManager.Common
             new ConfigSpec(LanPortKey, ConfigKind.Int,
                 LanPortDefault.ToString(),
                 LanPortMin, LanPortMax, "LAN 포트"),
+
+            new ConfigSpec(GreenhouseAutoStartKey, ConfigKind.Bool,
+                GreenhouseAutoStartDefault ? "true" : "false",
+                Label: "온실 자동점등"),
         };
     }
 }

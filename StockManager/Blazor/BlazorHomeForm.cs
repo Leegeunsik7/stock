@@ -98,6 +98,16 @@ namespace StockManager.Blazor
             services.AddSingleton(strategySlot);
             services.AddSingleton(algoGate);
 
+            // S23 — 자율 배양 엔진 점등(부팅 시). Greenhouse.AutoStart=false 면 휴면 유지(운영자 제어).
+            // ⚠️ 안전: 온실은 '제안'만(PromotionGateway 승인 대기). 실행은 인간 승인 → 슬롯 → algoGate
+            //    (IsDryRun=true) → ShadowMetricsBridge(liveArmed=false)를 거쳐야 하므로 실거래 0%.
+            //    EmergencyFreeze 시 배양 자동 정지(fail-closed). 종료 시 스레드 합류.
+            var greenhouseActivator = new GreenhouseActivator(greenhouse);
+            if (cfg.GetBool(BootConfigSpecs.GreenhouseAutoStartKey, BootConfigSpecs.GreenhouseAutoStartDefault))
+                greenhouseActivator.Activate(Market.KRX_KOSPI);
+            services.AddSingleton(greenhouseActivator);
+            FormClosed += (_, _) => greenhouseActivator.Deactivate();
+
             // S20 #4 — 드라이런 종단 조립체: 게이트 + 가상 멀티계좌 메시 결속.
             // 기본 단일 가상계좌(primary) — 다중 동시 전략 활성화 시 메시를 확장한다.
             var accountMesh  = new MultiAccountMesh(new[] { new SubAccountSpec("primary", 1m) });

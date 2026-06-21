@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.18.0</Version>
-    <AssemblyVersion>4.18.0.0</AssemblyVersion>
-    <FileVersion>4.18.0.0</FileVersion>
+    <Version>4.19.0</Version>
+    <AssemblyVersion>4.19.0.0</AssemblyVersion>
+    <FileVersion>4.19.0.0</FileVersion>
+    <!-- v4.19.0 — Season 23: 자율 배양 엔진 점등 (GreenhouseActivator·DefaultSeeds·BootstrapCandles[결정론 참조 시리즈]·호스트 부팅 시 Activate[Greenhouse.AutoStart 게이트, 기본 true]·관제탑 자율배양 LIVE 스트립·종료 시 Stop·GreenhouseActivatorTests 10). 안전: 제안 전용·dry-run+밸브·liveArmed:false → 실거래 0%. EmergencyFreeze fail-closed -->
     <!-- v4.18.0 — S22 PathA: LAN 포트 교차-호스트 결속 (LanStatusServer 원시 파싱→RuntimeConfig 검증 경로·BootConfigSpecs 에 Lan.Port 편입[SSOT 4스펙]·트레이 호스트에 cfg 주입·부팅 감사 자동 포함·테스트 +1). 인프라 설정 파이프라인 단일화. liveArmed 불변 -->
     <!-- v4.17.0 — S22 #3-b: 잔여 싱크 밀봉 (ScrubbingTextWriter·Console.SetOut/SetError 래핑→서드파티 stdout/stderr 차폐·ScrubbingTextWriterTests 9). 검증: LiveAuditService 무비밀·무영속(스크럽 불요), HTTP 아웃바운드 마스킹 불가(인증)·로깅은 Log/Console 경유(차폐). S22 보안 3부작 완결 -->
     <!-- v4.16.0 — S22 #3: 로그 비밀 차폐 전수 (LogRedactor·2겹 방어[등록 실비밀 정확일치+라벨패턴]·Log.Write 단일 초크포인트 마스킹·Program.cs 부팅 등록[KIS/Gemini/Upbit/Telegram/계좌번호]·LogRedactorTests 20). 예외 덤프 평문 누출 차단 -->
