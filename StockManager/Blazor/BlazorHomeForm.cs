@@ -23,8 +23,25 @@ namespace StockManager.Blazor
             services.AddSingleton(db);
             // 설정 격리·런타임 보안 파사드 — precedence: 환경변수 → DB 설정 → (호출자 폴백).
             // 검증·바운드·fail-safe 접근. ⚠️ liveArmed 는 의도적으로 미노출(코드 게이트 전용).
-            services.AddSingleton(new RuntimeConfig(key =>
-                Environment.GetEnvironmentVariable(key) ?? db.GetSetting(key)));
+            Func<string, string?> rawConfig = key => Environment.GetEnvironmentVariable(key) ?? db.GetSetting(key);
+            var cfg = new RuntimeConfig(rawConfig);
+            services.AddSingleton(cfg);
+
+            // S22 #2 — 부팅 설정 무결성 감사: 무위험 설정의 출처를 검사해 redacted 스냅샷을 원장에 남기고,
+            // 잘못된 값이 안전 폴백/클램프됐으면(이상) 관제탑에 [⚠️ 설정 복구] 경보를 점등한다.
+            // ConfigAuditor 는 RuntimeConfig 와 '동일 provider'를 공유 → 감사 스냅샷 = 런타임 실효값.
+            var configAudit = new ConfigAuditor(rawConfig).Audit(BootConfigSpecs.All);
+            Log.Info($"[BOOT] 설정 무결성 — {configAudit.Summary()}");
+            if (configAudit.HasAnomaly)
+            {
+                foreach (var c in configAudit.Coerced)
+                    Log.Warn($"[BOOT] ⚠️ 설정 복구: {c.Label}({c.Key}) — {c.Detail} → 안전값 {c.Display}");
+                AlertCenter.Instance.RaiseSystem("설정 복구",
+                    $"{configAudit.CoercedCount}개 설정이 잘못되어 안전 값으로 클램프됐습니다. /command 에서 확인하세요.",
+                    AlertLevel.Warning);
+            }
+            services.AddSingleton(configAudit);
+
             services.AddSingleton<DashboardService>();
             services.AddSingleton<BithumbProvider>();
             services.AddSingleton<NewsService>();
@@ -41,7 +58,7 @@ namespace StockManager.Blazor
 
             // S18 #1 — 콜드 하든: 부팅 무결성 검사를 브로커 파이프라인 구성 '이전'에 수행.
             // 이전 세션이 비상 동결이었거나 스냅샷이 손상되었으면 여기서 fail-closed 동결된다.
-            var hydration = WireBootIntegrity(attestation);
+            var hydration = WireBootIntegrity(attestation, cfg);
 
             var (broker, bridge) = ExecutionBridgeBroker.Create(attestation);
             services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
@@ -68,6 +85,9 @@ namespace StockManager.Blazor
             var greenhouse       = new GreenhouseService(promotionGateway, attestation, MemoryLeakGuard.Shared)
             {
                 Sentinel = sentinel,   // S19 #5 — 실시간 마찰 피드 결속(ProxyMeanAbsZ 제거)
+                CycleIntervalMs = cfg.GetInt(BootConfigSpecs.GreenhouseCycleMsKey,   // S22 #2 — 검증 경로 라우팅
+                    BootConfigSpecs.GreenhouseCycleMsDefault,
+                    BootConfigSpecs.GreenhouseCycleMsMin, BootConfigSpecs.GreenhouseCycleMsMax),
             };
             var strategySlot = new StrategySlot();
             // ⚠️ IsDryRun=true 하드 박제 — 라이브 발주는 코드 변경 없이는 도달 불가(§7 안전 경계).
@@ -124,8 +144,16 @@ namespace StockManager.Blazor
         /// 손상·동결 스냅샷이면 브로커 파이프라인 구성 전에 fail-closed 동결시키고,
         /// 이후 60초 주기로 게이팅 모드를 MMF 에 영속화한다.
         /// </summary>
-        private StateHydrationEngine WireBootIntegrity(OrderAttestationService attestation)
+        private StateHydrationEngine WireBootIntegrity(OrderAttestationService attestation, RuntimeConfig cfg)
         {
+            // S22 #2 — 무위험 부팅 튜너블을 검증 경로로 라우팅(BootConfigSpecs 와 동일 키·폴백·바운드).
+            int freshnessHours = cfg.GetInt(BootConfigSpecs.FreshnessWindowHoursKey,
+                BootConfigSpecs.FreshnessWindowHoursDefault,
+                BootConfigSpecs.FreshnessWindowHoursMin, BootConfigSpecs.FreshnessWindowHoursMax);
+            int snapshotSec    = cfg.GetInt(BootConfigSpecs.SnapshotIntervalSecKey,
+                BootConfigSpecs.SnapshotIntervalSecDefault,
+                BootConfigSpecs.SnapshotIntervalSecMin, BootConfigSpecs.SnapshotIntervalSecMax);
+
             var stateDir = System.IO.Path.Combine(
                 System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
                 "StockManager");
@@ -142,7 +170,7 @@ namespace StockManager.Blazor
             try
             {
                 var report = BootIntegrityChecker.CheckAndHydrate(
-                    hydration, attestation, gatingSlot, System.TimeSpan.FromHours(12));
+                    hydration, attestation, gatingSlot, System.TimeSpan.FromHours(freshnessHours));
                 Log.Info($"[BOOT] 무결성={report.Status} 모드={report.RecoveredMode} " +
                          $"동결적용={report.FrozeOnBoot} — {report.Detail}");
 
@@ -167,10 +195,11 @@ namespace StockManager.Blazor
             // 다음 스냅샷(60초) 전 재충돌 시의 fail-open 창을 제거한다.
             try { hydration.Snapshot(); } catch { }
 
-            // 60초 주기 상태 스냅샷 (게이팅 모드 변화를 영속화)
+            // 주기적 상태 스냅샷 (게이팅 모드 변화를 영속화) — 주기는 검증 경로에서 라우팅(기본 60초)
+            int snapshotMs = snapshotSec * 1000;
             _snapshotTimer = new System.Threading.Timer(
                 _ => { try { hydration.Snapshot(); } catch { } },
-                null, 60_000, 60_000);
+                null, snapshotMs, snapshotMs);
 
             FormClosed += (_, _) =>
             {

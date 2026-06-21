@@ -4,7 +4,9 @@
 @inject PromotionGateway Gw
 @inject ShadowMetricsBridge Shadow
 @inject IgnitionLock Ignition
+@inject ConfigAuditReport ConfigAudit
 @using System.Threading
+@using StockManager.Common
 
 @* ═══════════════════════════════════════════════════════════════════════════
    CommandCentrePage — S18 #2: 전체 관제 탑 (v3.96.0)
@@ -186,6 +188,35 @@
     {
         <div class="cc-ign-msg">@_ignMsg</div>
     }
+</div>
+
+@* ── 🛡️ 설정 무결성 (S22 #2 — 부팅 감사 스냅샷) ─────────────────────────────── *@
+<div class="cc-cfg @(ConfigAudit.HasAnomaly ? "cc-cfg-warn" : "")">
+    <div class="cc-cfg-hd">
+        <span class="cc-cfg-icon">🛡️</span> 설정 무결성
+        <span class="cc-cfg-badge">
+            @(ConfigAudit.HasAnomaly ? $"⚠️ 설정 복구 {ConfigAudit.CoercedCount}건" : "✓ 정상")
+        </span>
+    </div>
+    @if (ConfigAudit.HasAnomaly)
+    {
+        <div class="cc-cfg-banner">
+            ⚠️ 잘못된 설정이 안전 값으로 클램프됐습니다 — 의도한 값이 무시됐을 수 있습니다.
+        </div>
+        @foreach (var c in ConfigAudit.Coerced)
+        {
+            <div class="cc-cfg-anomaly">· <b>@c.Label</b> (@c.Key) — @c.Detail → 안전값 <b>@c.Display</b></div>
+        }
+    }
+    <div class="cc-cfg-snap">
+        @foreach (var e in ConfigAudit.Entries)
+        {
+            <span class="cc-cfg-chip cc-cfg-@(e.Status.ToString().ToLowerInvariant())" title="@e.Detail">
+                @e.Label: <b>@e.Display</b>
+            </span>
+        }
+    </div>
+    <div class="cc-cfg-note">env → DB → 폴백 검증 경로 · 비밀 마스킹 · liveArmed 미노출(코드 게이트 전용)</div>
 </div>
 
 @code {
@@ -433,6 +464,26 @@
     .ign-timebox .cc-ign-stage { color:#fb923c; }
     .ign-master  { border-left-color:#ff4444; background:#240b0b; }
     .ign-master  .cc-ign-stage { color:#ff6060; }
+
+    /* ── 🛡️ 설정 무결성 카드 ───────────────────────────────────────────────── */
+    .cc-cfg { margin-top:16px; padding:15px 18px; border:1px solid #2a3344; border-left:3px solid #44c66a;
+              border-radius:9px; background:#0e1424; }
+    .cc-cfg-warn { border-left-color:#e6a23c; background:#1a160c; }
+    .cc-cfg-hd { display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:700; color:var(--fg,#e2e8f0); }
+    .cc-cfg-icon { font-size:16px; }
+    .cc-cfg-badge { margin-left:auto; font-size:11px; font-weight:800; color:#6ee7b7; }
+    .cc-cfg-warn .cc-cfg-badge { color:#fbbf24; }
+    .cc-cfg-banner { margin-top:10px; font-size:11.5px; font-weight:700; color:#fbbf24;
+                     background:#241d0c; border-radius:6px; padding:7px 11px; }
+    .cc-cfg-anomaly { margin-top:6px; font-size:11.5px; color:#fcd9a0; }
+    .cc-cfg-snap { display:flex; flex-wrap:wrap; gap:7px; margin-top:11px; }
+    .cc-cfg-chip { font-size:10.5px; color:var(--sub,#94a3b8); background:#0b0e1a; border:1px solid #2a3344;
+                   border-radius:5px; padding:3px 8px; font-variant-numeric:tabular-nums; }
+    .cc-cfg-chip b { color:var(--fg,#e2e8f0); }
+    .cc-cfg-valid     { border-color:#2a4a32; }
+    .cc-cfg-defaulted { border-color:#2a3344; opacity:.82; }
+    .cc-cfg-coerced   { border-color:#7a5a1a; background:#1a160c; }
+    .cc-cfg-note { margin-top:11px; font-size:10.5px; color:#64748b; }
 
     /* ── 심각도 색상 체계 ──────────────────────────────────────────────────── */
     /* 정상 = 녹색 */
