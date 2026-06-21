@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.13.0</Version>
-    <AssemblyVersion>4.13.0.0</AssemblyVersion>
-    <FileVersion>4.13.0.0</FileVersion>
+    <Version>4.14.0</Version>
+    <AssemblyVersion>4.14.0.0</AssemblyVersion>
+    <FileVersion>4.14.0.0</FileVersion>
+    <!-- v4.14.0 — S22 #1: 설정 격리·런타임 보안 파사드 (RuntimeConfig·env→DB precedence·검증/바운드/fail-safe·비밀 Redact·LiveTradingConfigurable=false 안전 불변식·RuntimeConfigTests 38). liveArmed 미노출(코드 게이트 전용) -->
     <!-- v4.13.0 — v5.0.0-c(안전형)/S21 #3: 2중 게이트 핫-밸브 (정적 차단막 → liveArmed 마스터 + IgnitionLock 런타임 게이트). 호스트 liveArmed:false 박제 — 실거래 0. 5.0.0은 최종 flip 시 -->
     <!-- v4.12.0 — v5.0.0-b: 관제탑 점화 제어반 UI (조종석·단계표시·서명입력·후퇴·StageLabel/Css). 방아쇠(-c) 여전히 잠금 -->
     <!-- v4.11.0 — v5.0.0-a: 점화 제어반 두뇌 (IgnitionLock FSM·서명게이트·자동후퇴·IgnitionLockTests 20개). 방아쇠(-c 실위임) 잠금 — 5.0.0은 라이브 결속·점화 시 확정 -->

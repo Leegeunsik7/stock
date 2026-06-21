@@ -21,6 +21,10 @@ namespace StockManager.Blazor
             services.AddWindowsFormsBlazorWebView();
             services.AddSingleton<IQuoteProvider>(provider);
             services.AddSingleton(db);
+            // 설정 격리·런타임 보안 파사드 — precedence: 환경변수 → DB 설정 → (호출자 폴백).
+            // 검증·바운드·fail-safe 접근. ⚠️ liveArmed 는 의도적으로 미노출(코드 게이트 전용).
+            services.AddSingleton(new RuntimeConfig(key =>
+                Environment.GetEnvironmentVariable(key) ?? db.GetSetting(key)));
             services.AddSingleton<DashboardService>();
             services.AddSingleton<BithumbProvider>();
             services.AddSingleton<NewsService>();
