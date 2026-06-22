@@ -19,12 +19,12 @@ namespace StockManager.Common
                 "SELECT * FROM Transactions WHERE Symbol=@s ORDER BY ExecutedAt",
                 new() { ["@s"] = symbol });
 
-            int qty = 0;
+            decimal qty = 0;          // v4.30.0 int→decimal (코인 소수점 수량)
             decimal cost = 0;
             foreach (System.Data.DataRow r in dt.Rows)
             {
                 var t = (TransactionType)Safe.Int(r["Type"]);
-                var q = Safe.Int(r["Quantity"]);
+                var q = Safe.Dec(r["Quantity"]);
                 var p = Safe.Dec(r["Price"]);
                 if (t == TransactionType.Buy)
                 {
@@ -33,8 +33,11 @@ namespace StockManager.Common
                 }
                 else if (t == TransactionType.Sell)
                 {
-                    if (qty == 0) continue;               // 매도할 수량 없음 (이상)
-                    if (qty == q) { cost = 0; qty = 0; }  // 전량 매도 시 평단 0 (0/0 방지)
+                    if (qty <= 0) continue;               // 매도할 수량 없음 (이상)
+                    // v4.30.0 decimal — 전량(또는 초과) 매도 시 평탄. '==' 정확일치는 double 라운드트립 후
+                    //   비트 불일치로 dust 잔량(예: 1e-16)을 남겨 'Quantity>0' 보유 목록에 유령 행을 띄울 수 있어
+                    //   '>=' 로 견고화(AsOfPortfolio.Reconstruct 와 동일 규약).
+                    if (q >= qty) { cost = 0; qty = 0; }
                     else
                     {
                         cost = cost * (qty - q) / qty;    // 이동평균법: 평단 유지, 원가 비례 차감

@@ -150,7 +150,7 @@
             bool isKrw = h.Symbol.Length == 6 && char.IsDigit(h.Symbol[0]);
             double price = (double)h.CurrentPrice;
             if (!isKrw) price = (double)Fx.ToKrw((decimal)price);
-            return price * h.Quantity;
+            return price * (double)h.Quantity;
         }).ToArray();
 
         double total = mv.Sum();

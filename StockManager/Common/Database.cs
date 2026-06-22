@@ -249,7 +249,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                       Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t",
                 new() {
                     ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market,
-                    ["@c"] = (int)h.Currency, ["@q"] = h.Quantity, ["@a"] = (double)h.AvgPrice,
+                    ["@c"] = (int)h.Currency, ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
                     ["@p"] = (double)h.CurrentPrice, ["@d"] = h.FirstBuyDate.ToString("o"),
                     ["@b"] = h.BrokerAccount, ["@me"] = h.Memo, ["@t"] = string.Join(",", h.Tags)
                 });
@@ -274,7 +274,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                     Name = Safe.Str(r["Name"]),
                     Market = (Market)Safe.Int(r["Market"]),
                     Currency = (Currency)Safe.Int(r["Currency"]),
-                    Quantity = Safe.Int(r["Quantity"]),
+                    Quantity = Safe.Dec(r["Quantity"]),   // v4.30.0 코인 소수점 — int 읽기 절삭 방지
                     AvgPrice = Safe.Dec(r["AvgPrice"]),
                     CurrentPrice = Safe.Dec(r["CurrentPrice"]),
                     FirstBuyDate = Safe.DT(r["FirstBuyDate"]),
@@ -308,7 +308,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                                         VALUES(@s,@ty,@q,@p,@c,@tx,@e,@b,@m)";
                     cmd.Parameters.AddWithValue("@s",  t.Symbol        ?? "");
                     cmd.Parameters.AddWithValue("@ty", (int)t.Type);
-                    cmd.Parameters.AddWithValue("@q",  t.Quantity);
+                    cmd.Parameters.AddWithValue("@q",  (double)t.Quantity);   // v4.30.0 REAL 저장(소수점 코인)
                     cmd.Parameters.AddWithValue("@p",  (double)t.Price);
                     cmd.Parameters.AddWithValue("@c",  (double)t.Commission);
                     cmd.Parameters.AddWithValue("@tx", (double)t.Tax);

@@ -59,7 +59,7 @@ namespace StockManager.Common
                 {
                     Symbol = Safe.Str(r["Symbol"]),
                     Type = (TransactionType)Safe.Int(r["Type"]),
-                    Quantity = Safe.Int(r["Quantity"]),
+                    Quantity = Safe.Dec(r["Quantity"]),   // v4.30.0 코인 소수점
                     Price = Safe.Dec(r["Price"]),
                     Commission = Safe.Dec(r["Commission"]),
                     Tax = Safe.Dec(r["Tax"]),

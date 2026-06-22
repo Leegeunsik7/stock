@@ -12,19 +12,19 @@ using System.Linq;
 
 namespace StockManager.Common
 {
-    public sealed record AsOfTx(string Symbol, TransactionType Type, int Quantity, decimal Price, DateTime ExecutedAt);
+    public sealed record AsOfTx(string Symbol, TransactionType Type, decimal Quantity, decimal Price, DateTime ExecutedAt);
 
-    public sealed record AsOfHolding(string Symbol, int Quantity, decimal AvgCost, decimal CostBasis);
+    public sealed record AsOfHolding(string Symbol, decimal Quantity, decimal AvgCost, decimal CostBasis);
 
     public static class AsOfPortfolio
     {
         public static List<AsOfHolding> Reconstruct(IReadOnlyList<AsOfTx> txs, DateTime asOf)
         {
-            var bySym = new Dictionary<string, (int qty, decimal cost)>(StringComparer.OrdinalIgnoreCase);
+            var bySym = new Dictionary<string, (decimal qty, decimal cost)>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var t in txs.Where(x => x.ExecutedAt <= asOf).OrderBy(x => x.ExecutedAt))
             {
-                var cur = bySym.TryGetValue(t.Symbol, out var v) ? v : (qty: 0, cost: 0m);
+                var cur = bySym.TryGetValue(t.Symbol, out var v) ? v : (qty: 0m, cost: 0m);
 
                 if (t.Type == TransactionType.Buy)
                 {

@@ -18,9 +18,10 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.29.0</Version>
-    <AssemblyVersion>4.29.0.0</AssemblyVersion>
-    <FileVersion>4.29.0.0</FileVersion>
+    <Version>4.30.0</Version>
+    <AssemblyVersion>4.30.0.0</AssemblyVersion>
+    <FileVersion>4.30.0.0</FileVersion>
+    <!-- v4.30.0 — 코인 소수점 수량 + 평균단가 천단위 표시. Holding.Quantity·Transaction.Quantity·TaxScenario.Quantity·AsOfTx/AsOfHolding.Quantity int→decimal. DB 저장 (double) REAL(소수 보존), 읽기 Safe.Dec(절삭 방지). PortfolioService.RecomputeAverage decimal + 전량매도 판정 '=='→'>='(double 라운드트립 dust 유령행 방지, AsOf 와 동일 규약). PortfolioPage 폼/표 decimal + FmtQty(정수 콤마·소수 8자리, N0 반올림 사고 제거) + 수량/단가 step=any + 평균단가·매입금액 콤마 미리보기. 회귀 테스트 3(소수 라운드트립·전량매도 dust-free·AsOf 분수). 한계(정직·후속): RetroCoach/SyncService/CausalJournal·PortfolioContext 표시/HealthCheck/WinForms/Paper·Shadow 브로커는 여전히 int(2차 기능 — 코인 소수 절삭, 포트폴리오 본경로는 전부 decimal). liveArmed:false 불변 -->
     <!-- v4.29.0 — UX: 종목·코인 검색→자동 채움 + 코인 포트폴리오 통합. SymbolCatalog(내장 대표주 KRX/US + 코인 폴백·랭크 검색, 외부의존0). SymbolPicker.razor 재사용 컴포넌트(이름으로 검색→코드·시장·통화 자동 채움, 업비트 라이브 마켓 세션1회 병합·실패시 폴백). PortfolioPage 직접등록·매수/매도 폼에 결속, Market.CRYPTO 보유는 업비트 배치 시세로 가격 갱신(KRW). UpbitProvider DI 싱글톤. SymbolCatalogTests 9. 한계(정직): Holding.Quantity 가 int 라 소수점 코인 수량 미지원(후속 모델 변경 필요)·KRX 전종목 아닌 대표주 번들(미수록은 수동 입력 폴백)·라이브 시세 CI 미검증. liveArmed:false 불변 -->
     <!-- v4.28.0 — S26-b: Horizon C-1 — 시간 도메인 3분할 두-갈래 신선도 펜스(Market/Mono/Wall, 옵트인 기본 OFF). GreenhouseService 에 _lastMarketTicks(캔들 마켓시각=As-Of 근거)+_lastIngestMono(단조) 추가, Prime 발행(쓰기 candles→fresh→market→mono). RunCycleOnce 역순 독출 체인(mono→market→snap, release-acquire fail-closed). 펜스① 데이터 시장-나이(now−마켓시각>W_data, 미래데이터<−허용오차 도메인스큐 양면바운드)·펜스② 단조 liveness(NTP 면역). As-Of=마켓시각(Δt_network 자동반영)·미옵트인 레거시. BulkheadCandleSource UTC Kind 정준화. 호스트 결속: liveFeed ON 시 DataFreshnessWindow/LivenessWindow 활성(Greenhouse.DataFreshSec/LiveSec, dead-path 해소). ★적대적 리뷰(major) 수정: 펜스② monoΔ<0(클록 역행·TSC 미동기·VM 마이그레이션)을 fail-closed 트립(과거 fail-open)+임계값 정수 도메인. minor: _market cycle-start 포획·Local-kind 정준화 주석/테스트·"틱보존" 범위 정정. 결정론 클록 하네스 9 테스트. ⚠️ 라이브 provider 왕복 CI 미검증(펜스 로직만 결정론 검증). liveArmed:false 불변 -->
     <!-- v4.27.0 — S25-c: Horizon A — 복구 요새 통합 검증 (헤르메틱 가상 MMF 카오스 + Lock-Free Catch-Up). IJournalStore 추상화(MmfJournalStore 프로덕션/InMemoryJournalStore 디스크0 가상)·CrashRecoveryJournaler 가 _store 위임[경로 생성자 후방호환]·카오스 인젝션(torn 절단/후미0/비트플립/부재/IO락)→무디스크 결정론 freeze 검증·Store_Equivalence 바이트 트윈 증명. GreenhouseService.RunCycleOnce 단일 Volatile.Read catch-up. ★적대적 리뷰(major) 수정: 챔피언 As-Of 를 사이클 끝 재독출→cycle-start snapAsOf 역순 독출(release-acquire fail-closed 편향)로 과대신선 fail-OPEN 봉인. minor: vacuous 절단단언→이진 길이가드 전수증명·역방향 섹터독립 테스트·섹터독립 주석 범위 정정. 신규 테스트 13. liveArmed:false 불변 — 통합 검증 CI 영속, 펌프 활성은 옵트인 -->

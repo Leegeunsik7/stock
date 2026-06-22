@@ -27,7 +27,7 @@
             <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" placeholder="005930 / AAPL" /></div>
             <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
             <div><label class="flbl">거래일시</label><input class="fin" type="datetime-local" @bind="_tf.ExecutedAt" @bind:format="yyyy-MM-ddTHH:mm" /></div>
-            <div><label class="flbl">수량 *</label><input class="fin" type="number" @bind="_tf.Qty" /></div>
+            <div><label class="flbl">수량 *</label><input class="fin" type="number" step="any" @bind="_tf.Qty" placeholder="2.555" /></div>
             <div><label class="flbl">단가 *</label><input class="fin" type="number" step="0.01" @bind="_tf.Price" /></div>
             <div><label class="flbl">수수료</label><input class="fin" type="number" step="0.01" @bind="_tf.Commission" /></div>
             <div><label class="flbl">세금</label><input class="fin" type="number" step="0.01" @bind="_tf.Tax" /></div>
@@ -66,9 +66,17 @@
                 <select class="fin" @bind="_f.Currency">
                     <option value="@Currency.KRW">KRW</option><option value="@Currency.USD">USD</option>
                 </select></div>
-            <div><label class="flbl">수량</label><input class="fin" type="number" @bind="_f.Quantity" /></div>
-            <div><label class="flbl">평균단가</label><input class="fin" type="number" @bind="_f.AvgPrice" /></div>
+            <div><label class="flbl">수량</label><input class="fin" type="number" step="any" @bind="_f.Quantity" placeholder="2.555 (코인 소수점 가능)" /></div>
+            <div><label class="flbl">평균단가</label><input class="fin" type="number" step="any" @bind="_f.AvgPrice" placeholder="20000000" /></div>
         </div>
+        @if (_f.AvgPrice > 0 || _f.Quantity > 0)
+        {
+            <div style="margin-top:10px;color:var(--sub);font-size:13px">
+                평균단가 <b style="color:var(--ink)">@_f.AvgPrice.ToString("N0")원</b>
+                · 수량 <b style="color:var(--ink)">@FmtQty(_f.Quantity)</b>
+                · 매입금액 <b style="color:var(--ink)">@((_f.AvgPrice * _f.Quantity).ToString("N0"))원</b>
+            </div>
+        }
         <div style="margin-top:14px;display:flex;gap:10px">
             <button class="addbtn" @onclick="Save">@(_editId>0?"수정 저장":"등록")</button>
             <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ResetForm">초기화</button>
@@ -123,7 +131,7 @@
             {
                 <tr>
                     <td><b>@a.Symbol</b></td>
-                    <td class="num" style="text-align:right">@a.Quantity.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@FmtQty(a.Quantity)</td>
                     <td class="num" style="text-align:right">@a.AvgCost.ToString("N0")</td>
                     <td class="num" style="text-align:right">@a.CostBasis.ToString("N0")</td>
                 </tr>
@@ -157,7 +165,7 @@ else
                 <tr>
                     <td><b>@h.Name</b><br/><small class="sub">@h.Symbol</small></td>
                     <td><small class="sub">@h.Market@(h.Currency == Currency.USD ? " · USD" : "")</small></td>
-                    <td class="num" style="text-align:right">@h.Quantity.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
                     <td class="num" style="text-align:right">@Formatter.Money(h.AvgPrice, h.Currency)</td>
                     <td class="num" style="text-align:right">@Formatter.Money(h.CurrentPrice, h.Currency)</td>
                     <td class="num" style="text-align:right">@((h.CurrentPrice * h.Quantity * fxr).ToString("N0"))</td>
@@ -190,7 +198,7 @@ else if (_tab == "tx")
                     <td style="font-size:12px;color:var(--sub);white-space:nowrap">@t.At.ToString("yyyy-MM-dd HH:mm")</td>
                     <td><b>@t.Sym</b></td>
                     <td><span class="pill @(t.Type==TransactionType.Buy?"r":"b")" style="font-size:11px">@t.Type</span></td>
-                    <td class="num" style="text-align:right">@t.Qty.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@FmtQty(t.Qty)</td>
                     <td class="num" style="text-align:right">@t.Price.ToString("N0")</td>
                     <td class="num" style="text-align:right">@((t.Qty * t.Price).ToString("N0"))</td>
                     <td class="num sub" style="text-align:right">@t.Comm.ToString("N0")</td>
@@ -216,7 +224,7 @@ else if (_tab == "tax")
             {
                 <tr>
                     <td><b>@h.Symbol</b> <small class="sub">@h.Name</small></td>
-                    <td class="num" style="text-align:right">@h.Quantity.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
                     <td class="num" style="text-align:right">@Formatter.Money(h.AvgPrice, h.Currency)</td>
                     <td class="num" style="text-align:right">@Formatter.Money(h.CurrentPrice, h.Currency)</td>
                     <td class="num" style="text-align:right">@sim.UnrealizedGain.ToString("N0")</td>
@@ -314,7 +322,7 @@ else if (_tab == "corr")
         ("div","💸 배당 캘린더"), ("corr","🔗 상관관계") };
 
     // ----- 직접 등록 폼 -----
-    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public int Quantity; public decimal AvgPrice; }
+    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public decimal Quantity; public decimal AvgPrice; }
     private Form _f = new();
 
     // 검색→자동 채움 — SymbolPicker 가 고른 종목을 폼에 채운다(코드·이름·시장·통화). 수량/단가만 입력하면 됨.
@@ -325,15 +333,18 @@ else if (_tab == "corr")
     }
     private void ApplyPickToTx(SymbolEntry e) { _tf.Symbol = e.Code; _tf.Name = e.Name; }
 
+    // 수량 표시 — 정수면 천단위 콤마(N0), 소수(코인)면 최대 8자리 절사 표기. (N0 단독은 코인 2.555→"3" 반올림 사고)
+    private static string FmtQty(decimal q) => q == decimal.Truncate(q) ? q.ToString("N0") : q.ToString("0.########");
+
     // ----- 매수/매도 거래 기록 폼 -----
-    private class TxForm { public string Symbol = ""; public string Name = ""; public DateTime ExecutedAt = DateTime.Now; public int Qty; public decimal Price; public decimal Commission; public decimal Tax; public string Broker = ""; public string Memo = ""; }
+    private class TxForm { public string Symbol = ""; public string Name = ""; public DateTime ExecutedAt = DateTime.Now; public decimal Qty; public decimal Price; public decimal Commission; public decimal Tax; public string Broker = ""; public string Memo = ""; }
     private TxForm _tf = new();
     private TransactionType _txType = TransactionType.Buy;
     private readonly string[] _brokers = { "키움증권", "한국투자증권", "삼성증권", "토스증권", "NH투자증권", "미래에셋" };
     private decimal TxTotal => _tf.Qty * _tf.Price + _tf.Commission + _tf.Tax;   // 매도여도 + (원본 UpdateTotal 룰)
 
     // ----- 거래 이력 -----
-    private record TxRow(DateTime At, string Sym, TransactionType Type, int Qty, decimal Price, decimal Comm, decimal Tax);
+    private record TxRow(DateTime At, string Sym, TransactionType Type, decimal Qty, decimal Price, decimal Comm, decimal Tax);
     private List<TxRow> _txs = new();
 
     // ----- 배당 -----
@@ -363,7 +374,7 @@ else if (_tab == "corr")
         {
             var txs = Db.Query("SELECT * FROM Transactions").Rows.Cast<DataRow>()
                 .Select(r => new AsOfTx(Safe.Str(r["Symbol"]), (TransactionType)Safe.Int(r["Type"]),
-                    Safe.Int(r["Quantity"]), Safe.Dec(r["Price"]), Safe.DT(r["ExecutedAt"]))).ToList();
+                    Safe.Dec(r["Quantity"]), Safe.Dec(r["Price"]), Safe.DT(r["ExecutedAt"]))).ToList();
             _asof = AsOfPortfolio.Reconstruct(txs, AsOfCtx.AsOf!.Value);
         }
         catch { _asof = new(); }
@@ -473,7 +484,7 @@ else if (_tab == "corr")
             _txs = dt.Rows.Cast<DataRow>().Select(r => new TxRow(
                 Safe.DT(r["ExecutedAt"]), Safe.Str(r["Symbol"]),
                 (TransactionType)Safe.Int(r["Type"]),
-                Safe.Int(r["Quantity"]), Safe.Dec(r["Price"]),
+                Safe.Dec(r["Quantity"]), Safe.Dec(r["Price"]),
                 Safe.Dec(r["Commission"]), Safe.Dec(r["Tax"]))).ToList();
         }
         catch { _txs = new(); }

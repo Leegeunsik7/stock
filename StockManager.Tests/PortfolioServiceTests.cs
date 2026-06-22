@@ -90,6 +90,50 @@ namespace StockManager.Tests
             Assert.Equal(4000m, avg);
         });
 
+        // ── v4.30.0 코인 소수점 수량 (int→decimal 마이그레이션 회귀) ──────────────────
+        private static decimal ReadQty(LocalDatabase db, string sym)
+        {
+            var dt = db.Query("SELECT Quantity FROM Holdings WHERE Symbol=@s", new() { ["@s"] = sym });
+            return dt.Rows.Count == 0 ? 0m : Safe.Dec(dt.Rows[0]["Quantity"]);
+        }
+
+        [Fact]
+        public void Crypto_FractionalQuantity_RoundTrips_NotTruncated() => WithDb(db =>
+        {
+            // 핵심 회귀 — 과거 int 라 2.555 가 2 로 절삭됐다. 이제 소수점 보존 + 가중평단 정확.
+            db.AddTransaction(new Transaction { Symbol = "KRW-ETH", Type = TransactionType.Buy, Quantity = 1.5m,   Price = 2_000_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            db.AddTransaction(new Transaction { Symbol = "KRW-ETH", Type = TransactionType.Buy, Quantity = 1.055m, Price = 3_000_000m, ExecutedAt = _baseAt.AddMinutes(2) });
+            PortfolioService.RecomputeAverage(db, "KRW-ETH");
+
+            var (_, avg) = Read(db, "KRW-ETH");
+            decimal qty = ReadQty(db, "KRW-ETH");
+            Assert.Equal(2.555m, qty, 3);                 // 1.5+1.055 — 절삭 없이 보존(과거 버그면 2)
+            Assert.True(qty > 2.5m);                       // 정수 절삭 아님 명시
+            Assert.Equal(6_165_000m / 2.555m, avg, 2);     // 가중평단 = (1.5·2M + 1.055·3M)/2.555
+        });
+
+        [Fact]
+        public void Crypto_FullSell_FractionalParts_FlattensNoDust() => WithDb(db =>
+        {
+            // 분할 소수 매수 후 합산 수량을 전량 매도 → double 라운드트립에도 dust 없이 0 (>= 견고화).
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy,  Quantity = 0.3m,  Price = 90_000_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy,  Quantity = 0.255m, Price = 95_000_000m, ExecutedAt = _baseAt.AddMinutes(2) });
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Sell, Quantity = 0.555m, Price = 98_000_000m, ExecutedAt = _baseAt.AddMinutes(3) });
+            PortfolioService.RecomputeAverage(db, "KRW-BTC");
+
+            decimal qty = ReadQty(db, "KRW-BTC");
+            Assert.Equal(0m, qty);                         // 잔량 dust 0 (GetAllHoldings 의 Quantity>0 유령행 방지)
+        });
+
+        [Fact]
+        public void AsOf_FractionalQuantity_Reconstructs() =>
+            Assert.Equal(2.555m,
+                AsOfPortfolio.Reconstruct(new[]
+                {
+                    new AsOfTx("KRW-ETH", TransactionType.Buy, 1.5m,   2_000_000m, _baseAt.AddMinutes(1)),
+                    new AsOfTx("KRW-ETH", TransactionType.Buy, 1.055m, 3_000_000m, _baseAt.AddMinutes(2)),
+                }, _baseAt.AddHours(1))[0].Quantity, 3);
+
         [Fact]
         public void Symbols_AreIndependent() => WithDb(db =>
         {

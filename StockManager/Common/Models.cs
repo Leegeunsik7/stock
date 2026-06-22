@@ -94,7 +94,7 @@ namespace StockManager.Common
         public Market Market { get; set; }
         public Currency Currency { get; set; }
 
-        public int Quantity { get; set; }             // 보유 수량
+        public decimal Quantity { get; set; }         // 보유 수량 (코인 소수점 지원 — v4.30.0 int→decimal)
         public decimal AvgPrice { get; set; }         // 평균 매입가
         public decimal CurrentPrice { get; set; }     // 현재가 (실시간 업데이트)
 
@@ -123,7 +123,7 @@ namespace StockManager.Common
         public int Id { get; set; }
         public string Symbol { get; set; } = "";
         public TransactionType Type { get; set; }
-        public int Quantity { get; set; }
+        public decimal Quantity { get; set; }          // 코인 소수점 지원 — v4.30.0 int→decimal
         public decimal Price { get; set; }
         public decimal Commission { get; set; }       // 수수료
         public decimal Tax { get; set; }              // 세금 (양도세, 증권거래세)

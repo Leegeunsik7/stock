@@ -63,7 +63,7 @@ namespace StockManager.Common
     public class TaxScenario
     {
         public string Symbol { get; set; } = "";
-        public int Quantity { get; set; }
+        public decimal Quantity { get; set; }          // 코인 소수점 — v4.30.0 int→decimal
         public decimal CurrentPrice { get; set; }
         public decimal AvgCost { get; set; }
         public decimal UnrealizedGain { get; set; }
