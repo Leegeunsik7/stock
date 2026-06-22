@@ -1,6 +1,7 @@
 @* /portfolio 라우트는 PortfolioHub가 소유 — 이 페이지는 허브의 '보유·배분' 탭(자식)으로 강등 *@
 @inject LocalDatabase Db
 @inject IQuoteProvider Provider
+@inject UpbitProvider Upbit
 @inject FxConverter Fx
 @inject AsOfContext AsOfCtx
 @implements IDisposable
@@ -18,6 +19,10 @@
 {
     <div style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_txType==TransactionType.Buy?"var(--up)":"var(--down)");border-radius:var(--radius);padding:18px">
         <div style="font-weight:700;margin-bottom:14px">@(_txType==TransactionType.Buy?"📈 매수 거래 기록":"📉 매도 거래 기록")</div>
+        <div style="margin-bottom:12px">
+            <label class="flbl">🔎 종목·코인 검색 (이름으로 찾기)</label>
+            <SymbolPicker OnPick="ApplyPickToTx" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
+        </div>
         <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:end">
             <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" placeholder="005930 / AAPL" /></div>
             <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
@@ -45,6 +50,11 @@
 {
     <div style="margin:0 28px 18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px">
         <div style="font-weight:700;margin-bottom:14px">@(_editId>0?"종목 수정":"종목 등록")</div>
+        @* 검색→자동 채움 — 코드를 몰라도 이름으로 찾는다(주식+코인 통합). 아래 칸은 선택 후 미세조정용 *@
+        <div style="margin-bottom:12px">
+            <label class="flbl">🔎 종목·코인 검색 (이름으로 찾기 — 주식·비트코인 모두)</label>
+            <SymbolPicker OnPick="ApplyPickToForm" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
+        </div>
         <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:end">
             <div><label class="flbl">종목코드</label><input class="fin" @bind="_f.Symbol" placeholder="005930" /></div>
             <div><label class="flbl">종목명</label><input class="fin" @bind="_f.Name" placeholder="삼성전자" /></div>
@@ -307,6 +317,14 @@ else if (_tab == "corr")
     private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public int Quantity; public decimal AvgPrice; }
     private Form _f = new();
 
+    // 검색→자동 채움 — SymbolPicker 가 고른 종목을 폼에 채운다(코드·이름·시장·통화). 수량/단가만 입력하면 됨.
+    private void ApplyPickToForm(SymbolEntry e)
+    {
+        _f.Symbol = e.Code; _f.Name = e.Name; _f.Market = e.Market; _f.Currency = e.Currency;
+        _formMsg = $"'{e.Name}' 선택됨 — 수량·평균단가만 입력하세요.";
+    }
+    private void ApplyPickToTx(SymbolEntry e) { _tf.Symbol = e.Code; _tf.Name = e.Name; }
+
     // ----- 매수/매도 거래 기록 폼 -----
     private class TxForm { public string Symbol = ""; public string Name = ""; public DateTime ExecutedAt = DateTime.Now; public int Qty; public decimal Price; public decimal Commission; public decimal Tax; public string Broker = ""; public string Memo = ""; }
     private TxForm _tf = new();
@@ -420,12 +438,28 @@ else if (_tab == "corr")
 
     private async Task UpdatePricesAsync()
     {
-        foreach (var h in _holdings)
+        // 코인(Market.CRYPTO): 업비트 배치 시세(KRW). Symbol 은 "KRW-BTC" 형식 — 주식 provider 와 별도 경로.
+        var coins = _holdings.Where(h => h.Market == Market.CRYPTO).ToList();
+        if (coins.Count > 0)
         {
             try
             {
+                var ticks = await Upbit.GetTickersAsync(coins.Select(h => h.Symbol));
+                var map = ticks.Where(t => t.Price > 0)
+                    .ToDictionary(t => t.Market, t => t.Price, StringComparer.OrdinalIgnoreCase);
+                foreach (var h in coins)
+                    if (map.TryGetValue(h.Symbol, out var p)) { h.CurrentPrice = p; Db.SaveHolding(h); }
+            }
+            catch { }
+        }
+        // 주식: 기존 provider 경로(실패 시 저장가 유지 — 원본 룰)
+        foreach (var h in _holdings)
+        {
+            if (h.Market == Market.CRYPTO) continue;
+            try
+            {
                 var q = await Provider.GetQuoteAsync(h.Symbol, h.Market);
-                if (q != null && q.Price > 0) { h.CurrentPrice = q.Price; Db.SaveHolding(h); }   // 실패 시 저장가 유지 (원본 룰)
+                if (q != null && q.Price > 0) { h.CurrentPrice = q.Price; Db.SaveHolding(h); }
             }
             catch { }
         }

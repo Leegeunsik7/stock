@@ -44,6 +44,8 @@ namespace StockManager.Blazor
 
             services.AddSingleton<DashboardService>();
             services.AddSingleton<BithumbProvider>();
+            services.AddSingleton<UpbitProvider>();   // 종목 검색(SymbolPicker)·코인 시세(포트폴리오) 공유
+
             services.AddSingleton<NewsService>();
             services.AddSingleton<AiService>();
             services.AddSingleton<FxConverter>();   // ⚠️ Singleton 필수 — 10분 환율 캐시가 수명에 의존

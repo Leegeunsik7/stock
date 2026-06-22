@@ -1,0 +1,91 @@
+@* SymbolPicker — 이름/코드로 종목·코인을 검색해 선택하면 폼을 자동 채우는 재사용 컴포넌트.
+   초보자가 코드를 몰라도 "삼성전자"·"비트코인"으로 찾는다. 코인은 업비트 라이브 마켓(전 종목)과
+   내장 카탈로그를 병합 검색하고, 라이브 실패 시 내장 폴백으로 그레이스풀 강등한다. *@
+@inject UpbitProvider Upbit
+
+<div class="sympick">
+    <input class="fin sympick-in" placeholder="@Placeholder" value="@_q"
+           @oninput="OnInput" @onfocus="() => _show = true" />
+    @if (_show && _results.Count > 0)
+    {
+        <div class="sympick-pop">
+            @foreach (var r in _results)
+            {
+                <div class="sympick-row" @onmousedown:preventDefault="true" @onclick="() => Pick(r)">
+                    <span class="sympick-name">@r.Name</span>
+                    <span class="sympick-code">@r.Code</span>
+                    <span class="sympick-badge @(r.IsCrypto ? "is-coin" : "")">@r.MarketLabel</span>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public EventCallback<SymbolEntry> OnPick { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "종목·코인 검색 (이름 또는 코드)";
+
+    // 업비트 라이브 마켓을 앱 세션당 1회 로드해 모든 인스턴스가 공유(네트워크 1회).
+    private static List<SymbolEntry>? _liveCrypto;
+    private static bool _loadTried;
+
+    private string _q = "";
+    private bool   _show;
+    private List<SymbolEntry> _results = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!_loadTried)
+        {
+            _loadTried = true;
+            try
+            {
+                var markets = await Upbit.GetMarketsAsync();
+                if (markets.Count > 0)
+                    _liveCrypto = markets
+                        .Select(m => new SymbolEntry(m.Market,
+                            string.IsNullOrWhiteSpace(m.KoreanName) ? m.Market : m.KoreanName,
+                            Market.CRYPTO, Currency.KRW, true))
+                        .ToList();
+            }
+            catch { /* 라이브 실패 → 내장 폴백 유지(SymbolCatalog 기본) */ }
+        }
+        _results = SymbolCatalog.Search("", 8, _liveCrypto);
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        _q = e.Value?.ToString() ?? "";
+        _show = true;
+        _results = SymbolCatalog.Search(_q, 9, _liveCrypto);
+    }
+
+    private async Task Pick(SymbolEntry s)
+    {
+        _q = "";
+        _show = false;
+        _results = SymbolCatalog.Search("", 8, _liveCrypto);
+        await OnPick.InvokeAsync(s);
+    }
+}
+
+<style>
+    .sympick { position:relative; }
+    .sympick-in { width:100%; }
+    .sympick-pop {
+        position:absolute; z-index:40; left:0; right:0; top:calc(100% + 4px);
+        background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+        box-shadow:0 12px 32px rgba(0,0,0,.28); max-height:320px; overflow-y:auto; padding:4px;
+    }
+    .sympick-row {
+        display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; cursor:pointer;
+    }
+    .sympick-row:hover { background:var(--card-2,#181f31); }
+    .sympick-name { font-weight:600; color:var(--ink); flex:0 0 auto; }
+    .sympick-code { color:var(--sub); font-size:12px; font-family:ui-monospace,monospace; }
+    .sympick-badge {
+        margin-left:auto; font-size:10px; font-weight:700; letter-spacing:.04em;
+        padding:2px 7px; border-radius:999px; background:var(--card-2,#202840); color:var(--sub);
+    }
+    .sympick-badge.is-coin { background:rgba(240,160,40,.16); color:#f0a028; }
+</style>
