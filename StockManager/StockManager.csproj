@@ -18,9 +18,19 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.34.0</Version>
-    <AssemblyVersion>4.34.0.0</AssemblyVersion>
-    <FileVersion>4.34.0.0</FileVersion>
+    <Version>4.35.0</Version>
+    <AssemblyVersion>4.35.0.0</AssemblyVersion>
+    <FileVersion>4.35.0.0</FileVersion>
+    <!-- v4.35.0 — S27-d 멀티-자산 척추(QMultiAsset.cs). QTickRegistry: FrozenDictionary<long,(symbol,QTickSpec)>,
+         FNV-1a 키·불변·락-프리·무할당. TryGet(string)은 심볼 검증(string.Equals)으로 FNV 충돌·미등록 silent-skew 차단
+         (fail-closed). 빌드 키충돌 fail-fast. QFxRate/QFxQuote/QFxBounds + QFxGuard.TryConvertOrFreeze: 매수 Ask 올림·
+         매도 Bid 내림(거래소 유리), 바운드(필수)·역전·음수·스프레드·오버플로 → ForceFreeze. 테스트 15. ★적대적 리뷰
+         (9차, major×4): (1)FX 역산 검사가 동일환율 forward+back 항등이라 '절대 발화 불가 죽은 검사' → 제거(오버플로는
+         catch 담당·wrong-scale 은 바운드 담당, 정직 표기). (2)degenerate(0) 바운드가 wrong-scale 유일방어 무력화 →
+         바운드 필수화(무효 → fail-closed). (3)FNV 충돌 silent-skew → 심볼 검증 추가. (4)혼재 워크로드 공허(전부 정렬·
+         정확곱) → 비정렬 서브틱 방향 케이스($213.925 매수641.79/매도641.76) + 단일전역 왜곡 대조(tick=1→101 vs cent→100.10)
+         실행 단언. string 무할당은 per-call 0 입증(일회성 JIT 노이즈 허용). 정직: 코어 스캐폴드 — ShadowCutoverGate/라이브
+         미배선(레지스트리 호출처 테스트뿐). liveArmed:false 불변 -->
     <!-- v4.34.0 — S27-c 단계적 섀도우 컷오버 게이트(스캐폴드·옵트인 기본 OFF=INERT). ShadowCutoverGate.Clear: 라이브
          반환 항상 레거시(naive decimal·컷오버 전·liveArmed:false), enabled 면 신 QFixed 병렬 대조(ShadowClearingTracer)+
          역전/발산 동결. 공유상태 Interlocked long 3개(락-프리 다중라이터). DI 옵트인 등록(Clearing.ShadowCutover 기본 OFF).
