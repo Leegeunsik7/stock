@@ -18,9 +18,19 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.36.0</Version>
-    <AssemblyVersion>4.36.0.0</AssemblyVersion>
-    <FileVersion>4.36.0.0</FileVersion>
+    <Version>4.37.0</Version>
+    <AssemblyVersion>4.37.0.0</AssemblyVersion>
+    <FileVersion>4.37.0.0</FileVersion>
+    <!-- v4.37.0 — 거래 기록 버그 3건 수정 + 증권사 수수료/세금 자동 추정. 지휘관 피드백:
+         (A) 코인(0.13 BTC) 저장 실패 — 근본원인은 거래일시 datetime-local @bind:format 깨짐으로 ExecutedAt가
+             default→ValidateTransaction '거래일시 없음' 거부. value+onchange 수동 파싱으로 견고화(default 저장 구조적 불가).
+         (B) 수정 시 수수료/세금/증권사 안 보임 — 이들은 '거래' 단위라 보유 집계엔 없음. 거래 이력에 증권사 컬럼 추가 +
+             직접등록 폼에 '거래 단위' 안내. (holding에 증권사 편집은 UNIQUE(Symbol,BrokerAccount) 중복행 위험으로 보류)
+         (C) 코인이 RecomputeAverage에서 US_NASDAQ로 오분류 — 'KRW-' 접두 추론 + 픽커 권위 marketHint/currencyHint(신규 보유만).
+         (D) BrokerFeeSchedule: 증권사별 수수료율 + KRX/US 매도 거래세 + 코인 0.05% 추정 자동 채움(사용자 수정 가능).
+             Picked 권위 leak(코인 선택 후 주식코드 수동입력) fail-open 차단.
+         테스트 +8(BrokerFeeSchedule 6 + 코인 시장추론/힌트 2). ⚠️ 수수료/세금은 약정·이벤트·연도별 거래세로 달라지는 추정치.
+         증권사별 '오늘의 환율'(E)은 공개 데이터 소스 부재로 보류 — 평가는 단일 시장 FX(FxConverter) 유지. liveArmed:false 불변 -->
     <!-- v4.36.0 — UX: 종목 검색 전 종목 라이브화. 지휘관 피드백(검색에 코스피·코스닥·미국 다 안 나옴) — 큐레이트
          내장(~60)의 롱테일 누락 해소. NaverSymbolSearch(ISymbolSearch): m.stock.naver.com 자동완성으로 코스피·코스닥·
          NASDAQ/NYSE/AMEX 전 종목 이름→코드 실시간 검색(한글명). typeCode→Market/Currency 매핑, category!=stock·미상

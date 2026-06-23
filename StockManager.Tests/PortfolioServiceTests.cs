@@ -134,6 +134,50 @@ namespace StockManager.Tests
                     new AsOfTx("KRW-ETH", TransactionType.Buy, 1.055m, 3_000_000m, _baseAt.AddMinutes(2)),
                 }, _baseAt.AddHours(1))[0].Quantity, 3);
 
+        // ── v4.37.0 코인 시장 추론 + 픽커 권위 힌트 (US_NASDAQ 오분류 회귀) ──────────────
+        private static (Market mkt, Currency ccy) ReadMarketCcy(LocalDatabase db, string sym)
+        {
+            var dt = db.Query("SELECT Market, Currency FROM Holdings WHERE Symbol=@s", new() { ["@s"] = sym });
+            return dt.Rows.Count == 0 ? (Market.KRX_KOSPI, Currency.KRW)
+                : ((Market)Safe.Int(dt.Rows[0]["Market"]), (Currency)Safe.Int(dt.Rows[0]["Currency"]));
+        }
+
+        [Fact]
+        public void Crypto_Symbol_InfersCryptoMarket_NotUsStock() => WithDb(db =>
+        {
+            // KRW-BTC(7자)는 6자리 숫자가 아니라 과거엔 US_NASDAQ/USD로 오분류됐다 — 'KRW-' 접두 추론으로 CRYPTO/KRW.
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 99_000_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "KRW-BTC");
+            var (mkt, ccy) = ReadMarketCcy(db, "KRW-BTC");
+            Assert.Equal(Market.CRYPTO, mkt);
+            Assert.Equal(Currency.KRW, ccy);
+        });
+
+        [Fact]
+        public void MarketHint_OverridesInference_ForNewHolding() => WithDb(db =>
+        {
+            // 심볼 추론과 '다른' 힌트라야 두 축 모두 정직히 검증된다. '005930'은 6자리→추론상 KOSPI/KRW지만
+            //   픽커 권위 힌트 US_NYSE/USD가 시장·통화 둘 다를 이겨야 한다(둘 다 추론값과 불일치 → 동어반복 아님).
+            db.AddTransaction(new Transaction { Symbol = "005930", Type = TransactionType.Buy, Quantity = 1, Price = 600_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "005930", null, Market.US_NYSE, Currency.USD);
+            var (mkt, ccy) = ReadMarketCcy(db, "005930");
+            Assert.Equal(Market.US_NYSE, mkt);   // 추론(KOSPI)을 이김
+            Assert.Equal(Currency.USD, ccy);     // 추론(KRW)을 이김 — 통화축도 비공허
+        });
+
+        [Fact]
+        public void Hint_Ignored_WhenHoldingExists_PreservesStored() => WithDb(db =>
+        {
+            // 힌트는 '신규 보유'에만 적용된다는 규약 검증 — 기존 보유엔 충돌 힌트를 넘겨도 저장값이 보존돼야 한다.
+            db.AddTransaction(new Transaction { Symbol = "005930", Type = TransactionType.Buy, Quantity = 10, Price = 70_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "005930");   // 신규 → KOSPI/KRW 확립(has=true)
+            db.AddTransaction(new Transaction { Symbol = "005930", Type = TransactionType.Buy, Quantity = 5, Price = 80_000m, ExecutedAt = _baseAt.AddMinutes(2) });
+            PortfolioService.RecomputeAverage(db, "005930", null, Market.US_NYSE, Currency.USD);   // 충돌 힌트
+            var (mkt, ccy) = ReadMarketCcy(db, "005930");
+            Assert.Equal(Market.KRX_KOSPI, mkt);   // 힌트 무시 — 기존 보존
+            Assert.Equal(Currency.KRW, ccy);
+        });
+
         [Fact]
         public void Symbols_AreIndependent() => WithDb(db =>
         {
