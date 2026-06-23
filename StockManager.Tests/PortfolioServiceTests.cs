@@ -178,6 +178,63 @@ namespace StockManager.Tests
             Assert.Equal(Currency.KRW, ccy);
         });
 
+        // ── v4.38.0 보유 수수료/세금은 '수동 필드'(거래로 안 덮음) + Id 기준 수정(중복행 방지) ──────────────
+        [Fact]
+        public void RecomputeAverage_PreservesManualHoldingFees_NotDerivedFromTransactions() => WithDb(db =>
+        {
+            // 직접 등록 보유에 수동 누적 수수료/세금 설정.
+            db.SaveHolding(new Holding { Symbol = "005930", Name = "삼성전자", Market = Market.KRX_KOSPI, Currency = Currency.KRW, Quantity = 10, AvgPrice = 70_000m, CurrentPrice = 70_000m, FirstBuyDate = _baseAt, BrokerAccount = "키움증권", Commission = 5000m, Tax = 1234m });
+            // 자체 수수료 150짜리 거래를 추가하고 재계산 → 수동값이 거래값으로 덮이면 안 된다(보존: fail-open 차단).
+            db.AddTransaction(new Transaction { Symbol = "005930", Type = TransactionType.Buy, Quantity = 5, Price = 80_000m, Commission = 150m, Tax = 9m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "005930");
+            var dt = db.Query("SELECT Commission, Tax FROM Holdings WHERE Symbol=@s", new() { ["@s"] = "005930" });
+            Assert.Equal(5000m, Safe.Dec(dt.Rows[0]["Commission"]));   // 수동값 보존 (거래 150으로 덮지 않음)
+            Assert.Equal(1234m, Safe.Dec(dt.Rows[0]["Tax"]));
+        });
+
+        [Fact]
+        public void RecomputeAverage_NewHolding_FeesZero_FirstBuyDateFromEarliestTx() => WithDb(db =>
+        {
+            // 신규(거래기반) 보유: 수수료/세금은 0(거래 합계가 아님 — 거래별 비용은 Transactions/거래 이력에).
+            db.AddTransaction(new Transaction { Symbol = "000660", Type = TransactionType.Buy, Quantity = 3, Price = 120_000m, Commission = 54m, Tax = 0m, ExecutedAt = _baseAt.AddMinutes(5) });
+            PortfolioService.RecomputeAverage(db, "000660");
+            var dt = db.Query("SELECT Commission, Tax, FirstBuyDate FROM Holdings WHERE Symbol=@s", new() { ["@s"] = "000660" });
+            Assert.Equal(0m, Safe.Dec(dt.Rows[0]["Commission"]));
+            Assert.Equal(0m, Safe.Dec(dt.Rows[0]["Tax"]));
+            Assert.NotEqual(default, Safe.DT(dt.Rows[0]["FirstBuyDate"]));               // 0001-01-01 default 아님
+            Assert.Equal(_baseAt.AddMinutes(5), Safe.DT(dt.Rows[0]["FirstBuyDate"]));    // 최초 거래일 반영
+        });
+
+        [Fact]
+        public void RecomputeAverage_PreservesMemoAndTags_OnTransactionRecord() => WithDb(db =>
+        {
+            // 거래 1건만 기록해도 RecomputeAverage→SaveHolding ON CONFLICT가 메모·태그를 빈값으로 파괴하던 회귀 차단.
+            db.SaveHolding(new Holding { Symbol = "005930", Name = "삼성전자", Market = Market.KRX_KOSPI, Currency = Currency.KRW, Quantity = 10, AvgPrice = 70_000m, CurrentPrice = 70_000m, FirstBuyDate = _baseAt, BrokerAccount = "", Memo = "장기보유 핵심", Tags = new[] { "반도체", "코어" } });
+            db.AddTransaction(new Transaction { Symbol = "005930", Type = TransactionType.Buy, Quantity = 5, Price = 80_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "005930");
+            var dt = db.Query("SELECT Memo, Tags FROM Holdings WHERE Symbol=@s", new() { ["@s"] = "005930" });
+            Assert.Equal("장기보유 핵심", Safe.Str(dt.Rows[0]["Memo"]));   // 메모 보존
+            Assert.Equal("반도체,코어", Safe.Str(dt.Rows[0]["Tags"]));      // 태그 보존
+        });
+
+        [Fact]
+        public void UpdateHoldingById_EditsRow_NoDuplicate_PersistsBrokerNameMarketFees() => WithDb(db =>
+        {
+            // 직접 등록(증권사 빈값)으로 1행 생성.
+            db.SaveHolding(new Holding { Symbol = "012860", Name = "모베이스전자", Market = Market.KRX_KOSPI, Currency = Currency.KRW, Quantity = 100, AvgPrice = 2600m, CurrentPrice = 2600m, FirstBuyDate = _baseAt, BrokerAccount = "" });
+            int id = Safe.Int(db.Query("SELECT Id FROM Holdings WHERE Symbol=@s", new() { ["@s"] = "012860" }).Rows[0]["Id"]);
+
+            // 증권사·수수료·세금 + 종목명·시장 변경(ON CONFLICT 경로는 종목명/시장/증권사를 못 바꾸던 한계도 검증).
+            db.UpdateHoldingById(new Holding { Id = id, Symbol = "012860", Name = "모베이스", Market = Market.KRX_KOSDAQ, Currency = Currency.KRW, Quantity = 100, AvgPrice = 2600m, CurrentPrice = 2600m, BrokerAccount = "키움증권", Commission = 39m, Tax = 0m });
+
+            var dt = db.Query("SELECT Name, Market, BrokerAccount, Commission FROM Holdings WHERE Symbol=@s", new() { ["@s"] = "012860" });
+            Assert.Equal(1, dt.Rows.Count);                                       // 중복행 없음(Id UPDATE)
+            Assert.Equal("모베이스", Safe.Str(dt.Rows[0]["Name"]));                 // 종목명 변경 반영
+            Assert.Equal((int)Market.KRX_KOSDAQ, Safe.Int(dt.Rows[0]["Market"]));  // 시장 변경 반영
+            Assert.Equal("키움증권", Safe.Str(dt.Rows[0]["BrokerAccount"]));        // 증권사 반영
+            Assert.Equal(39m, Safe.Dec(dt.Rows[0]["Commission"]));                // 수수료 반영
+        });
+
         [Fact]
         public void Symbols_AreIndependent() => WithDb(db =>
         {

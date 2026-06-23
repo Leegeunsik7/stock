@@ -69,6 +69,10 @@
                 </select></div>
             <div><label class="flbl">수량</label><input class="fin" type="number" step="any" @bind="_f.Quantity" placeholder="2.555 (코인 소수점 가능)" /></div>
             <div><label class="flbl">평균단가</label><input class="fin" type="number" step="any" @bind="_f.AvgPrice" placeholder="20000000" /></div>
+            <div><label class="flbl">증권사</label><input class="fin" list="brokerListF" @bind="_f.Broker" @bind:after="OnFormBrokerChanged" />
+                <datalist id="brokerListF">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
+            <div><label class="flbl">수수료(누적)</label><input class="fin" type="number" step="any" @bind="_f.Commission" /></div>
+            <div><label class="flbl">세금(누적)</label><input class="fin" type="number" step="any" @bind="_f.Tax" /></div>
         </div>
         @if (_f.AvgPrice > 0 || _f.Quantity > 0)
         {
@@ -83,7 +87,7 @@
             <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ResetForm">초기화</button>
             @if (!string.IsNullOrEmpty(_formMsg)) { <span style="align-self:center;color:var(--sub)">@_formMsg</span> }
         </div>
-        <div style="margin-top:8px;color:var(--sub);font-size:12px">ℹ️ 이 화면은 보유 <b>합계</b>(수량·평단)를 직접 보정합니다. 수수료·세금·증권사·거래일시는 <b>거래 단위</b> 정보라 <b>📈 매수/📉 매도 기록</b>으로 입력하고 <b>📝 거래 이력</b>에서 확인하세요(증권사 선택 시 수수료·세금 자동 추정).</div>
+        <div style="margin-top:8px;color:var(--sub);font-size:12px">ℹ️ 이 화면은 보유 <b>합계</b>(수량·평단·증권사·누적 수수료/세금)를 직접 보정합니다. 증권사를 바꾸면 수수료가 자동 추정됩니다(직접 수정 가능). 개별 거래의 거래일시·건별 수수료/세금은 <b>📈 매수/📉 매도 기록</b>으로 넣고 <b>📝 거래 이력</b>에서 확인합니다(보유 합계 수수료/세금은 거래로 자동 덮어쓰지 않으므로 이 화면에서 직접 관리).</div>
     </div>
 }
 
@@ -325,7 +329,7 @@ else if (_tab == "corr")
         ("div","💸 배당 캘린더"), ("corr","🔗 상관관계") };
 
     // ----- 직접 등록 폼 -----
-    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public decimal Quantity; public decimal AvgPrice; }
+    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public decimal Quantity; public decimal AvgPrice; public string Broker=""; public decimal Commission; public decimal Tax; }
     private Form _f = new();
 
     // 검색→자동 채움 — SymbolPicker 가 고른 종목을 폼에 채운다(코드·이름·시장·통화). 수량/단가만 입력하면 됨.
@@ -592,7 +596,7 @@ else if (_tab == "corr")
     // ===== 거래 기록 → 평단 재계산 연쇄 =====
     private void OpenTx(TransactionType t)
     {
-        _txType = t; _showTxForm = true; _showForm = false;
+        _txType = t; _showTxForm = true; _showForm = false; _editId = 0;   // 거래 폼 전환 시 직접등록 편집 상태 해제
         _txMsg = ""; _tf = new(); _feesDirty = false; _lastBroker = "";
     }
 
@@ -629,14 +633,39 @@ else if (_tab == "corr")
     }
 
     // ===== 직접 등록 (기존 기능) =====
-    private void ToggleForm() { _showForm = !_showForm; _showTxForm = false; if (_showForm && _editId == 0) ResetForm(); }
-    private void ResetForm() { _f = new(); _editId = 0; _formMsg = ""; }
+    // '직접 등록' 버튼은 항상 '신규 등록'을 연다 → 열 때마다 ResetForm으로 이전 수정 상태(_editId/_f)를 비운다.
+    //   (이전엔 수정 후 닫고 다시 열면 _editId가 잔류해, 새 종목을 입력·저장하면 엉뚱한 보유를 덮어쓰는 치명 버그)
+    private void ToggleForm()
+    {
+        _showForm = !_showForm;
+        _showTxForm = false;
+        if (_showForm) ResetForm();   // 열 때 신규 등록으로 초기화
+        else _editId = 0;             // 닫을 때 편집 상태 해제
+    }
+    private void ResetForm() { _f = new(); _editId = 0; _formMsg = ""; _fLastBroker = ""; }
 
     private void Edit(Holding h)
     {
         _editId = h.Id;
-        _f = new() { Symbol = h.Symbol, Name = h.Name, Market = h.Market, Currency = h.Currency, Quantity = h.Quantity, AvgPrice = h.AvgPrice };
+        _f = new() { Symbol = h.Symbol, Name = h.Name, Market = h.Market, Currency = h.Currency,
+                     Quantity = h.Quantity, AvgPrice = h.AvgPrice,
+                     Broker = h.BrokerAccount, Commission = h.Commission, Tax = h.Tax };
+        _fLastBroker = (h.BrokerAccount ?? "").Trim();   // 진입 시 자동추정이 기존 수수료를 덮지 않도록 기준 맞춤
         _showForm = true; _showTxForm = false; _formMsg = ""; _tab = "hold";
+    }
+
+    // 수정 폼에서 증권사가 '실제로' 바뀐 경우에만 수수료를 재추정(매수 기준 — 보유는 순매수 포지션, 거래세 없음).
+    //   같은 증권사 재편집이면 손대지 않아 사용자가 직접 입력한 수수료를 보존한다. 시장은 폼의 권위값(_f.Market) 사용.
+    //   Edit()에서 _fLastBroker를 기존 증권사로 맞춰두므로 수정 화면을 '열 때' 불려와도 즉시 덮어쓰지 않는다.
+    private string _fLastBroker = "";
+    private void OnFormBrokerChanged()
+    {
+        var b = (_f.Broker ?? "").Trim();
+        if (b == _fLastBroker) return;
+        _fLastBroker = b;
+        if (string.IsNullOrWhiteSpace(b)) return;
+        var (c, _) = BrokerFeeSchedule.Estimate(b, _f.Market, TransactionType.Buy, _f.Quantity, _f.AvgPrice);
+        _f.Commission = c;
     }
 
     private async Task Save()
@@ -644,11 +673,19 @@ else if (_tab == "corr")
         if (string.IsNullOrWhiteSpace(_f.Symbol) || _f.Quantity <= 0) { _formMsg = "종목코드와 수량을 입력하세요."; return; }
         var h = new Holding
         {
+            Id = _editId,
             Symbol = _f.Symbol.Trim(), Name = string.IsNullOrWhiteSpace(_f.Name) ? _f.Symbol.Trim() : _f.Name.Trim(),
             Market = _f.Market, Currency = _f.Currency, Quantity = _f.Quantity, AvgPrice = _f.AvgPrice,
-            CurrentPrice = _f.AvgPrice, FirstBuyDate = DateTime.Now, BrokerAccount = ""
+            CurrentPrice = _f.AvgPrice, FirstBuyDate = DateTime.Now,
+            BrokerAccount = (_f.Broker ?? "").Trim(), Commission = _f.Commission, Tax = _f.Tax
         };
-        try { Db.SaveHolding(h); _formMsg = "저장되었습니다."; ResetForm(); _showForm = false; await LoadAsync(); }
+        try
+        {
+            // 수정(Id 존재)은 행 단위 UPDATE — 종목명·시장·통화·증권사 변경 반영 + (Symbol,BrokerAccount) 중복행 방지.
+            //   신규 등록은 기존 upsert 경로 유지.
+            if (_editId > 0) Db.UpdateHoldingById(h); else Db.SaveHolding(h);
+            _formMsg = "저장되었습니다."; ResetForm(); _showForm = false; await LoadAsync();
+        }
         catch (Exception ex) { _formMsg = "저장 실패: " + ex.Message; }
     }
 

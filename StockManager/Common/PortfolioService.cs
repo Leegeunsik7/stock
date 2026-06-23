@@ -73,6 +73,19 @@ namespace StockManager.Common
                 // 시세 조회 실패 시 평가액이 0이 되는 회귀를 막기 위해 저장된 현재가를 보존
                 CurrentPrice = has ? Safe.Dec(dtH.Rows[0]["CurrentPrice"]) : 0m,
                 BrokerAccount = has ? Safe.Str(dtH.Rows[0]["BrokerAccount"]) : "",
+                // Memo/Tags 보존 — SaveHolding ON CONFLICT가 Memo=@me, Tags=@t를 덮으므로 여기서 기존값을 실어주지
+                //   않으면 거래 1건만 기록해도 사용자 메모·태그가 빈값으로 파괴된다(거래 경로의 무단 덮어쓰기 차단).
+                Memo = has ? Safe.Str(dtH.Rows[0]["Memo"]) : "",
+                Tags = has ? Safe.Str(dtH.Rows[0]["Tags"]).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                           : Array.Empty<string>(),
+                // 신규 보유는 최초 거래일을 최초매수일로(거래는 ExecutedAt 오름차순이라 첫 행이 최초). 기존 보유는
+                //   SaveHolding ON CONFLICT가 FirstBuyDate를 갱신하지 않으므로 무엇을 넘기든 보존된다.
+                FirstBuyDate = has ? Safe.DT(dtH.Rows[0]["FirstBuyDate"])
+                                   : (dt.Rows.Count > 0 ? Safe.DT(dt.Rows[0]["ExecutedAt"]) : default),
+                // 수수료/세금은 '수동 보유 필드'다 — 거래 합계로 덮지 않는다(수동 보정 보존). 기존값 보존, 신규는 0.
+                //   거래별 수수료/세금은 Transactions에 남아 거래 이력에서 확인한다(아래 주석의 fail-open 회귀 차단).
+                Commission = (has && dtH.Columns.Contains("Commission")) ? Safe.Dec(dtH.Rows[0]["Commission"]) : 0m,
+                Tax        = (has && dtH.Columns.Contains("Tax"))        ? Safe.Dec(dtH.Rows[0]["Tax"])        : 0m,
             };
             db.SaveHolding(h);
         }

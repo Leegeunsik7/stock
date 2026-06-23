@@ -103,6 +103,11 @@ namespace StockManager.Common
         public string Memo { get; set; } = "";
         public string[] Tags { get; set; } = Array.Empty<string>(); // 태그 (섹터, 전략 등)
 
+        // 누적 수수료·세금 (v4.38.0). 직접 등록 종목은 수정 폼에서 직접 보정, 매수/매도로 기록한 종목은
+        //   거래 이력 합계가 RecomputeAverage에서 자동 반영된다.
+        public decimal Commission { get; set; }
+        public decimal Tax { get; set; }
+
         // 계산 속성
         public decimal TotalCost => Quantity * AvgPrice;
         public decimal MarketValue => Quantity * CurrentPrice;

@@ -18,9 +18,21 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.37.0</Version>
-    <AssemblyVersion>4.37.0.0</AssemblyVersion>
-    <FileVersion>4.37.0.0</FileVersion>
+    <Version>4.38.0</Version>
+    <AssemblyVersion>4.38.0.0</AssemblyVersion>
+    <FileVersion>4.38.0.0</FileVersion>
+    <!-- v4.38.0 — 수정 폼에 증권사·수수료·세금 입력 추가(지휘관 재요청: "수정 자체에 증권사/수수료/세금이 없다").
+         Holdings에 Commission·Tax 컬럼 추가(CREATE + 기존 DB ALTER 마이그레이션). 수정 폼(_f)에 증권사(datalist)·
+         수수료·세금 칸 + 증권사 선택 시 빈 값일 때만 수수료 자동 추정(매수 기준). 저장은 Id 기준 UpdateHoldingById로
+         전환 — 종목명·시장·통화·증권사 변경 반영 + UNIQUE(Symbol,BrokerAccount) 중복행 방지(기존 ON CONFLICT가
+         종목명/시장/증권사를 갱신 못 하던 잠재 버그 동시 해결). CurrentPrice/Memo/Tags/FirstBuyDate는 미갱신(보존).
+         수수료/세금은 '수동 보유 필드' — RecomputeAverage가 거래로 덮지 않고 기존값 보존(건별은 거래 이력에).
+         적대적 리뷰 후 수정: (CRITICAL) 수정 후 닫고 다시 열 때 _editId 잔류로 엉뚱한 보유를 덮어쓰던 버그 →
+         ToggleForm/OpenTx에서 편집상태 초기화. (MAJOR) UpdateHoldingById가 Memo를 빈값으로 파괴 → SET에서 제외/
+         Id≤0 가드. 거래 수수료 합산이 수동값을 덮던 fail-open → 합산 철회. OnFormBrokerChanged '빈값일때만' 결함 →
+         _fLastBroker 실제변경 비교 + 권위 _f.Market. ALTER 실패 시 hard-throw → GetAllHoldings 컬럼 존재 가드.
+         (MINOR) 신규 보유 FirstBuyDate=최초 거래일. 테스트 +3(수동 수수료 보존·신규 0·최초일, Id 수정 무중복).
+         ⚠️ 수수료는 추정치(약정·이벤트로 상이)·사용자 수정 가능. liveArmed:false 불변 -->
     <!-- v4.37.0 — 거래 기록 버그 3건 수정 + 증권사 수수료/세금 자동 추정. 지휘관 피드백:
          (A) 코인(0.13 BTC) 저장 실패 — 근본원인은 거래일시 datetime-local @bind:format 깨짐으로 ExecutedAt가
              default→ValidateTransaction '거래일시 없음' 거부. value+onchange 수동 파싱으로 견고화(default 저장 구조적 불가).

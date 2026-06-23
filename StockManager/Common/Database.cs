@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS Holdings (
     Market INTEGER, Currency INTEGER,
     Quantity INTEGER, AvgPrice REAL, CurrentPrice REAL,
     FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT,
+    Commission REAL DEFAULT 0, Tax REAL DEFAULT 0,
     UNIQUE(Symbol, BrokerAccount)
 );
 
@@ -154,6 +155,9 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             // v3.92.0: 기존 설치 하위 호환 스키마 마이그레이션 (컬럼 이미 존재 시 SQLite 에러 무시)
             try { Execute("ALTER TABLE FraudAlerts ADD COLUMN Severity TEXT DEFAULT 'HIGH'");  } catch { }
             try { Execute("ALTER TABLE FraudAlerts ADD COLUMN ReviewedAt TEXT");               } catch { }
+            // v4.38.0: 보유 종목에 누적 수수료·세금 (수정 폼에서 보정 / 거래 합계 자동 반영)
+            try { Execute("ALTER TABLE Holdings ADD COLUMN Commission REAL DEFAULT 0");        } catch { }
+            try { Execute("ALTER TABLE Holdings ADD COLUMN Tax REAL DEFAULT 0");               } catch { }
         }
 
         // ── DB 동시성 방어 (v3.5.0) ──────────────────────────────────────
@@ -243,15 +247,44 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             if (!vr.IsValid)
                 throw new ArgumentException($"보유 종목 검증 실패: {vr.Summary()}");
 
-            Execute(@"INSERT INTO Holdings(Symbol,Name,Market,Currency,Quantity,AvgPrice,CurrentPrice,FirstBuyDate,BrokerAccount,Memo,Tags)
-                      VALUES(@s,@n,@m,@c,@q,@a,@p,@d,@b,@me,@t)
+            Execute(@"INSERT INTO Holdings(Symbol,Name,Market,Currency,Quantity,AvgPrice,CurrentPrice,FirstBuyDate,BrokerAccount,Memo,Tags,Commission,Tax)
+                      VALUES(@s,@n,@m,@c,@q,@a,@p,@d,@b,@me,@t,@cm,@tx)
                       ON CONFLICT(Symbol,BrokerAccount) DO UPDATE SET
-                      Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t",
+                      Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t, Commission=@cm, Tax=@tx",
                 new() {
                     ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market,
                     ["@c"] = (int)h.Currency, ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
                     ["@p"] = (double)h.CurrentPrice, ["@d"] = h.FirstBuyDate.ToString("o"),
-                    ["@b"] = h.BrokerAccount, ["@me"] = h.Memo, ["@t"] = string.Join(",", h.Tags)
+                    ["@b"] = h.BrokerAccount, ["@me"] = h.Memo, ["@t"] = string.Join(",", h.Tags),
+                    ["@cm"] = (double)h.Commission, ["@tx"] = (double)h.Tax
+                });
+        }
+
+        /// <summary>수정 폼 전용 — Id로 정확히 한 행을 갱신(모든 필드). ON CONFLICT 경로를 거치지 않으므로
+        /// 종목명·시장·통화·증권사 변경도 반영되고 (Symbol,BrokerAccount) 중복행이 새로 생기지 않는다.
+        /// 단, 증권사 변경이 같은 종목의 다른 보유와 (Symbol,BrokerAccount)로 충돌하면 UNIQUE 제약 위반으로 throw.</summary>
+        public void UpdateHoldingById(Holding h)
+        {
+            if (h.Id <= 0)   // Id는 AUTOINCREMENT(1+) — 0/음수면 'WHERE Id=0'으로 0행 무음 갱신될 수 있어 명시 차단
+                throw new ArgumentException($"UpdateHoldingById에는 양수 Id가 필요합니다 (받은 값: {h.Id})");
+
+            var vr = StockValidator.ValidateHolding(h);
+            if (!vr.IsValid)
+                throw new ArgumentException($"보유 종목 검증 실패: {vr.Summary()}");
+
+            // CurrentPrice/Memo/Tags/FirstBuyDate는 갱신하지 않는다 — 수정 폼이 다루지 않는 필드라 DB의 기존 값을
+            //   보존한다(특히 Memo: 폼에 칸이 없어 갱신하면 동기화로 들어온 메모를 빈 문자열로 파괴함). CurrentPrice도
+            //   라이브 시세를 평단으로 덮지 않도록 제외(직후 LoadAsync 갱신과 무충돌).
+            Execute(@"UPDATE Holdings SET
+                        Symbol=@s, Name=@n, Market=@m, Currency=@c,
+                        Quantity=@q, AvgPrice=@a,
+                        BrokerAccount=@b, Commission=@cm, Tax=@tx
+                      WHERE Id=@id",
+                new() {
+                    ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market, ["@c"] = (int)h.Currency,
+                    ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
+                    ["@b"] = h.BrokerAccount,
+                    ["@cm"] = (double)h.Commission, ["@tx"] = (double)h.Tax, ["@id"] = h.Id
                 });
         }
 
@@ -280,7 +313,11 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                     FirstBuyDate = Safe.DT(r["FirstBuyDate"]),
                     BrokerAccount = Safe.Str(r["BrokerAccount"]),
                     Memo = Safe.Str(r["Memo"]),
-                    Tags = Safe.Str(r["Tags"]).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    Tags = Safe.Str(r["Tags"]).Split(',', StringSplitOptions.RemoveEmptyEntries),
+                    // 컬럼 존재 가드 — 마이그레이션 ALTER가 어떤 이유로든 실패해 컬럼이 없을 때 r["Commission"] 인덱싱이
+                    //   throw하는 것을 막는다(부재 시 0). 가산 마이그레이션 후엔 항상 존재.
+                    Commission = dt.Columns.Contains("Commission") ? Safe.Dec(r["Commission"]) : 0m,
+                    Tax        = dt.Columns.Contains("Tax")        ? Safe.Dec(r["Tax"])        : 0m
                 });
             }
             return list;
