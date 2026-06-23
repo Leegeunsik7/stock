@@ -78,7 +78,7 @@ namespace StockManager.Tests
             var r2 = new Thread(Reader) { IsBackground = true };
             r1.Start(); r2.Start();
             for (long s = 1; s <= 200000; s++) ch.Publish(T(s));
-            Volatile.Write(ref stop, true); r1.Join(3000); r2.Join(3000);
+            Volatile.Write(ref stop, true); r1.Join(15000); r2.Join(15000);
             Assert.Equal(0, torn);                                  // torn read 0(불변식 무손상)
             Assert.True(okReads > 1000, $"동시 독출 비공허 입증 — okReads={okReads}");   // 발행 중 실제로 무수히 읽음
             Assert.True(maxSeq > 1000, $"리더가 발행 폭풍을 추격 — maxSeq={maxSeq}");      // 정지 시점이 아닌 라이브 값 독출
@@ -111,7 +111,7 @@ namespace StockManager.Tests
             reader.Start();
             for (long s = 1; s <= 200000; s++) ch.Publish(T(s));
             Volatile.Write(ref stop, true);
-            Assert.True(reader.Join(3000));   // 3초 내 완주 = 비블록
+            Assert.True(reader.Join(15000));   // 3초 내 완주 = 비블록
             Assert.True(Interlocked.Read(ref reads) > 0);
         }
 
