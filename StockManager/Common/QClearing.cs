@@ -22,6 +22,7 @@
 //  진짜 '다른 정렬규칙의 구 엔진'을 갖게 되면 그 출력을 naive 자리에 주입하면 된다.
 // ============================================================================
 using System;
+using System.Threading;
 
 namespace StockManager.Common
 {
@@ -122,7 +123,11 @@ namespace StockManager.Common
             return true;
         }
 
-        /// <summary>회귀 밴드 — 신 보수 명목이 구 naive 곱 대비 정렬+반올림 델타(band)를 넘어 발산하면 동결.</summary>
+        /// <summary>회귀 밴드 — 신 보수 명목이 구 naive 곱 대비 정렬+반올림 델타(band)를 넘어 발산하면 동결.
+        /// ★Math.Abs(부호 무시) — 매수는 가격↑·수량↓ 상반 정렬이라 신&lt;구(플랫폼 불리) 미세 역전이 밴드 내면 흡수되고
+        /// (매도는 양쪽 내림이라 구조적 신≤구). 방향 보증은 naive 가 아닌 '정렬 exact 대비'(CompareConservativeOrFreeze)가
+        /// 담당하므로 안전하며, 섀도우 비권위(Clear 는 항상 legacy 반환)라 무영향. 섀도우가 권위가 되면 naive 대비 부호
+        /// 있는 검문이 필요하다(독립 구 엔진 출력 대조).</summary>
         public static bool CompareLegacyBandOrFreeze(decimal shadowDec, decimal naiveLegacy, decimal band,
                                                      OrderAttestationService? att)
         {
@@ -132,5 +137,50 @@ namespace StockManager.Common
         }
 
         private static void Freeze(OrderAttestationService? att, string msg) { try { att?.ForceFreeze(msg); } catch { } }
+    }
+
+    /// <summary>
+    /// S27-c — 단계적 섀도우 컷오버 게이트(스캐폴드). enabled 일 때 신 QFixed 엔진을 신·구 병렬 대조하고 역전/발산
+    /// 시 ForceFreeze. 라이브 반환값은 항상 레거시(naive decimal·컷오버 전·liveArmed:false). 기본 OFF = 완전 INERT
+    /// (섀도우 미수행·att 무접촉·무할당·테스트 무영향).
+    ///
+    /// ★적대적 리뷰 정직 한정:
+    ///  · 락-프리/δ=0 은 '패리티(무분기) 경로' 한정. 동결 경로(분기/poison)는 att.ForceFreeze 가 OrderAttestationService
+    ///    _lock 으로 동시 호출자를 직렬화하고 감사 레코드를 ~56B 할당한다(동결은 핫패스가 아니므로 의도된 비용).
+    ///  · '병렬 납땜'은 미실현 — 라이브 청산 경로도 관측 표면(관제탑)도 아직 Clear()/카운터를 소비하지 않는다(등록만).
+    ///    실 컷오버 시 Clear() 결속 + 자산별 spec + 관제탑 독출 배선이 필요하다.
+    /// </summary>
+    public sealed class ShadowCutoverGate
+    {
+        private readonly bool _enabled;
+        private readonly QTickSpec _spec;
+        private readonly OrderAttestationService? _att;
+        private long _observed, _frozen, _lastDivBits;
+
+        public ShadowCutoverGate(bool enabled, QTickSpec spec, OrderAttestationService? attestation = null)
+        { _enabled = enabled; _spec = spec; _att = attestation; }
+
+        public bool   Enabled        => _enabled;
+        public long   Observed       => Interlocked.Read(ref _observed);
+        public long   FrozenCount    => Interlocked.Read(ref _frozen);
+        /// <summary>최근 신−구 명목 차(관측 텔레메트리, double). 락-프리 Interlocked 단일값 발행.</summary>
+        public double LastDivergence => BitConverter.Int64BitsToDouble(Interlocked.Read(ref _lastDivBits));
+
+        /// <summary>
+        /// 청산 신호 처리. 항상 레거시(naive decimal 곱) 반환. enabled 면 신 엔진 병렬 대조 + 분기 시 동결.
+        /// OFF 면 즉시 레거시 반환(INERT) — 섀도우·att·할당 0. 동시 호출 안전(Interlocked만 공유).
+        /// </summary>
+        public decimal Clear(decimal priceDec, decimal qtyDec, OrderSide side)
+        {
+            decimal legacy = priceDec * qtyDec;   // 라이브 경로(현행) — 컷오버 전엔 이 값이 권위
+            if (!_enabled) return legacy;          // ★INERT — 무영향·무할당·무동결
+            Interlocked.Increment(ref _observed);
+            // 신 QFixed 엔진(보수 정렬+오버플로/스케일 트랩) 병렬 대조. 역전/발산/오염 → 이미 ForceFreeze.
+            if (ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, _spec, _att, out var shadow))
+                Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
+            else
+                Interlocked.Increment(ref _frozen);
+            return legacy;
+        }
     }
 }
