@@ -6,8 +6,11 @@
 @implements IDisposable
 
 <div class="sympick">
-    <input class="fin sympick-in" placeholder="@Placeholder" value="@_q"
-           @oninput="OnInput" @onfocus="() => _show = true" />
+    @* ⚠️ IME(한글) 안전: value를 바인딩하지 않는 '비제어 입력'. value="@_q"로 제어하면 입력 중 비동기 재렌더가
+       조합 중인 한글을 리셋해 글자가 깨지거나 자동으로 다시 쳐지는 버그가 났다. _q는 oninput으로만 읽고, 선택 후
+       비우기는 @key(_inputKey) 증가로 입력 요소를 재생성해 처리한다(타이핑 중엔 _inputKey 불변 → 리셋 없음). *@
+    <input class="fin sympick-in" @key="_inputKey" placeholder="@Placeholder"
+           @oninput="OnInput" @onfocus="() => _show = true" @onblur="OnBlur" />
     @if (_show && _results.Count > 0)
     {
         <div class="sympick-pop">
@@ -33,6 +36,7 @@
 
     private string _q = "";
     private bool   _show;
+    private int    _inputKey;   // 선택 후 입력 요소를 재생성(비우기)하기 위한 @key
     private List<SymbolEntry> _results = new();
     private CancellationTokenSource? _cts;   // 라이브 검색 디바운스/취소
 
@@ -63,6 +67,7 @@
         _results = SymbolCatalog.Search(_q, 9, _liveCrypto);   // 즉시 로컬(큐레이트 + 코인) — 먼저 표시
 
         _cts?.Cancel();
+        _cts?.Dispose();   // 이전 CTS 해제 — 키 입력마다 누수되던 CTS·타이머 등록 정리
         var cts = new CancellationTokenSource();
         _cts = cts;
         string q = _q;
@@ -91,11 +96,19 @@
     private async Task Pick(SymbolEntry s)
     {
         _cts?.Cancel();
+        _cts?.Dispose();   // 선택 시 진행 중 디바운스 CTS 해제(누수 방지)
+        _cts = null;
         _q = "";
+        // 입력 요소 재생성 → 검색창 비움(비제어 입력이라 이 방식으로 클리어). 포커스는 의도적으로 폼(수량·단가)으로
+        //   이동한다 — 선택 후엔 검색이 끝났고 다음 입력은 수량/단가이므로 검색창 재포커스는 불필요.
+        _inputKey++;
         _show = false;
         _results = SymbolCatalog.Search("", 8, _liveCrypto);
         await OnPick.InvokeAsync(s);
     }
+
+    // 검색창 밖을 클릭하면 드롭다운 닫기. 드롭다운 행은 @onmousedown:preventDefault라 blur가 안 나 선택은 정상 동작.
+    private void OnBlur() => _show = false;
 
     public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
 }

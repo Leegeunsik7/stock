@@ -235,6 +235,27 @@ namespace StockManager.Tests
             Assert.Equal(39m, Safe.Dec(dt.Rows[0]["Commission"]));                // 수수료 반영
         });
 
+        // ── v4.40.0 회귀: 매수 폼 BTC 저장 → 보유행 + 3분류 코인 카운트까지 끝단 재현 ──────────
+        [Fact]
+        public void TxFormBtcSave_CreatesCryptoHolding_ShowsInBreakdown() => WithDb(db =>
+        {
+            // SaveTx 가 하는 그대로: 거래 추가 + 픽커 권위 힌트(CRYPTO/KRW)로 재계산.
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 97_299_615m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "KRW-BTC", "비트코인", Market.CRYPTO, Currency.KRW);
+
+            // GetAllHoldings(보유 목록과 동일 경로)에 KRW-BTC 가 떠야 한다(Quantity>0).
+            var hs = db.GetAllHoldings();
+            var btc = hs.Find(h => h.Symbol == "KRW-BTC");
+            Assert.NotNull(btc);
+            Assert.Equal(Market.CRYPTO, btc!.Market);
+            Assert.Equal(0.13m, btc.Quantity);
+
+            // 3분류 집계의 코인 버킷 카운트 1(스크린샷의 '0 종목' 회귀 차단).
+            btc.CurrentPrice = 100_000_000m;   // 시세 갱신 후 가정
+            var cats = PortfolioBreakdown.Compute(db.GetAllHoldings(), 1380m);
+            Assert.Equal(1, cats[(int)AssetClass.Crypto].Count);
+        });
+
         [Fact]
         public void Symbols_AreIndependent() => WithDb(db =>
         {
