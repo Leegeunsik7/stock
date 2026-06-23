@@ -18,9 +18,13 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.40.0</Version>
-    <AssemblyVersion>4.40.0.0</AssemblyVersion>
-    <FileVersion>4.40.0.0</FileVersion>
+    <Version>4.41.0</Version>
+    <AssemblyVersion>4.41.0.0</AssemblyVersion>
+    <FileVersion>4.41.0.0</FileVersion>
+    <!-- v4.41.0 — 비트코인 미저장 진짜 원인: 검색창에 이름만 타이핑하고 드롭다운을 '선택'하지 않아 종목코드가
+         빈 채로 저장 시도(검증 거부)된 것(지휘관 스크린샷: 종목코드 placeholder=빈값). SymbolPicker UX 보강:
+         (1) Enter로 첫(최상위 관련도) 결과 선택 — "비트코인"+Enter면 KRW-BTC 즉시 채움. IME 조합확정 Enter는 무시.
+         (2) 드롭다운에 '클릭/Enter로 선택해야 코드가 채워진다' 안내 + 첫 행 강조. 코어·검색매칭은 이상 없음 확인. -->
     <!-- v4.40.0 — 입력 버퍼링(IME) 버그 수정 + 단가 천단위 콤마. 지휘관 피드백.
          (1) ★IME 버그: SymbolPicker 검색창이 value="@_q" 제어 입력이라, 입력 중 라이브검색 비동기 재렌더가 조합 중
              한글을 리셋해 '글자가 깨지고 원치 않은 글자가 자동 입력'됐다. → 비제어 입력 전환(value 바인딩 제거) +

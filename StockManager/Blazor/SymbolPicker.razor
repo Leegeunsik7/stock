@@ -10,13 +10,15 @@
        조합 중인 한글을 리셋해 글자가 깨지거나 자동으로 다시 쳐지는 버그가 났다. _q는 oninput으로만 읽고, 선택 후
        비우기는 @key(_inputKey) 증가로 입력 요소를 재생성해 처리한다(타이핑 중엔 _inputKey 불변 → 리셋 없음). *@
     <input class="fin sympick-in" @key="_inputKey" placeholder="@Placeholder"
-           @oninput="OnInput" @onfocus="() => _show = true" @onblur="OnBlur" />
+           @oninput="OnInput" @onfocus="() => _show = true" @onblur="OnBlur" @onkeydown="OnKeyDown" />
     @if (_show && _results.Count > 0)
     {
         <div class="sympick-pop">
-            @foreach (var r in _results)
+            <div class="sympick-hint">목록에서 <b>클릭</b>하거나 <b>Enter</b>로 선택하세요 — 선택해야 종목코드가 채워집니다</div>
+            @for (int i = 0; i < _results.Count; i++)
             {
-                <div class="sympick-row" @onmousedown:preventDefault="true" @onclick="() => Pick(r)">
+                var r = _results[i];
+                <div class="sympick-row @(i == 0 ? "top" : "")" @onmousedown:preventDefault="true" @onclick="() => Pick(r)">
                     <span class="sympick-name">@r.Name</span>
                     <span class="sympick-code">@r.Code</span>
                     <span class="sympick-badge @(r.IsCrypto ? "is-coin" : "")">@r.MarketLabel</span>
@@ -110,6 +112,14 @@
     // 검색창 밖을 클릭하면 드롭다운 닫기. 드롭다운 행은 @onmousedown:preventDefault라 blur가 안 나 선택은 정상 동작.
     private void OnBlur() => _show = false;
 
+    // Enter → 첫(최상위 관련도) 결과 선택. "비트코인" 타이핑 후 Enter면 KRW-BTC가 바로 채워진다(클릭 없이도 채움).
+    //   한글 IME 조합 확정 Enter는 key가 "Enter"가 아니라 무시되므로, 조합 후 한 번 더 누른 Enter에만 선택된다.
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && _show && _results.Count > 0)
+            await Pick(_results[0]);
+    }
+
     public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
 }
 
@@ -124,7 +134,10 @@
     .sympick-row {
         display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; cursor:pointer;
     }
+    .sympick-hint { padding:6px 12px 8px; font-size:11px; color:var(--sub); border-bottom:1px solid var(--line); margin-bottom:2px; }
     .sympick-row:hover { background:var(--card-2,#181f31); }
+    .sympick-row.top { background:color-mix(in srgb,var(--accent,#5b8cff) 12%,transparent); }
+    .sympick-row.top:hover { background:color-mix(in srgb,var(--accent,#5b8cff) 20%,transparent); }
     .sympick-name { font-weight:600; color:var(--ink); flex:0 0 auto; }
     .sympick-code { color:var(--sub); font-size:12px; font-family:ui-monospace,monospace; }
     .sympick-badge {
