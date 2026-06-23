@@ -1,7 +1,9 @@
 @* SymbolPicker — 이름/코드로 종목·코인을 검색해 선택하면 폼을 자동 채우는 재사용 컴포넌트.
-   초보자가 코드를 몰라도 "삼성전자"·"비트코인"으로 찾는다. 코인은 업비트 라이브 마켓(전 종목)과
-   내장 카탈로그를 병합 검색하고, 라이브 실패 시 내장 폴백으로 그레이스풀 강등한다. *@
+   초보자가 코드를 몰라도 "삼성전자"·"비트코인"으로 찾는다. 주식은 네이버 라이브(코스피·코스닥·미국 전 종목),
+   코인은 업비트 라이브(전 종목)를 병합 검색하고, 라이브 실패 시 내장 카탈로그로 그레이스풀 폴백한다. *@
 @inject UpbitProvider Upbit
+@inject ISymbolSearch Search
+@implements IDisposable
 
 <div class="sympick">
     <input class="fin sympick-in" placeholder="@Placeholder" value="@_q"
@@ -32,6 +34,7 @@
     private string _q = "";
     private bool   _show;
     private List<SymbolEntry> _results = new();
+    private CancellationTokenSource? _cts;   // 라이브 검색 디바운스/취소
 
     protected override async Task OnInitializedAsync()
     {
@@ -53,20 +56,48 @@
         _results = SymbolCatalog.Search("", 8, _liveCrypto);
     }
 
-    private void OnInput(ChangeEventArgs e)
+    private async Task OnInput(ChangeEventArgs e)
     {
         _q = e.Value?.ToString() ?? "";
         _show = true;
-        _results = SymbolCatalog.Search(_q, 9, _liveCrypto);
+        _results = SymbolCatalog.Search(_q, 9, _liveCrypto);   // 즉시 로컬(큐레이트 + 코인) — 먼저 표시
+
+        _cts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        string q = _q;
+        try
+        {
+            await Task.Delay(250, cts.Token);                  // 디바운스(키 입력 폭주 방지)
+            var live = await Search.SearchAsync(q, cts.Token); // 네이버 라이브 전 종목(코스피·코스닥·미국)
+            if (cts.IsCancellationRequested || q != _q) return;
+            MergeLive(live);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* 라이브 실패 → 로컬 결과 유지(그레이스풀) */ }
+    }
+
+    // 라이브 주식(전 종목) + 로컬(코인·큐레이트 보완)을 코드 기준 중복 제거 병합. UI 보조라 할당 무관.
+    private void MergeLive(List<SymbolEntry> live)
+    {
+        var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<SymbolEntry>(live.Count + _results.Count);
+        foreach (var s in live)     if (s.HasValue && seen.Add(s.Code)) merged.Add(s);
+        foreach (var s in _results) if (s.HasValue && seen.Add(s.Code)) merged.Add(s);
+        _results = merged.Count > 14 ? merged.GetRange(0, 14) : merged;
     }
 
     private async Task Pick(SymbolEntry s)
     {
+        _cts?.Cancel();
         _q = "";
         _show = false;
         _results = SymbolCatalog.Search("", 8, _liveCrypto);
         await OnPick.InvokeAsync(s);
     }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
 }
 
 <style>

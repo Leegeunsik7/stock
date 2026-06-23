@@ -45,6 +45,7 @@ namespace StockManager.Blazor
             services.AddSingleton<DashboardService>();
             services.AddSingleton<BithumbProvider>();
             services.AddSingleton<UpbitProvider>();   // 종목 검색(SymbolPicker)·코인 시세(포트폴리오) 공유
+            services.AddSingleton<ISymbolSearch, NaverSymbolSearch>();   // 라이브 전 종목 검색(코스피·코스닥·미국) — SymbolPicker
 
             services.AddSingleton<NewsService>();
             services.AddSingleton<AiService>();
