@@ -221,6 +221,28 @@
   .kpi .k-row{display:flex;align-items:center;gap:8px}
   .k-spark{position:absolute;right:14px;bottom:13px;width:88px;height:24px;opacity:.9;pointer-events:none}
 
+  /* 5b) 자산군 3분류 카드 (국내주식·해외주식·코인) */
+  .catgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .catcard{background:var(--card);border:1px solid var(--hairline);border-radius:12px;padding:13px 15px;
+           display:flex;flex-direction:column;gap:7px;border-left:3px solid var(--sub)}
+  .catcard.c-dom{border-left-color:#3b82f6}
+  .catcard.c-for{border-left-color:#22c55e}
+  .catcard.c-cry{border-left-color:#f0a028}
+  .catcard .cat-h{display:flex;align-items:center;gap:8px;font-size:13px}
+  .catcard .cat-ic{font-size:15px}
+  .catcard .cat-lab{font-weight:700;color:var(--ink)}
+  .catcard .cat-cnt{margin-left:auto;font-size:11px;color:var(--sub)}
+  .catcard .cat-val{font-size:20px;font-weight:700;letter-spacing:-.3px}
+  .catcard .cat-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-variant-numeric:tabular-nums}
+  .catcard .cat-row .up{color:var(--up)} .catcard .cat-row .down{color:var(--down)}
+  .catcard .cat-wt{color:var(--sub)}
+  .catcard .cat-bar{height:5px;border-radius:999px;background:var(--hairline);overflow:hidden}
+  .catcard .cat-bar-fill{height:100%;border-radius:999px;background:var(--sub)}
+  .catcard.c-dom .cat-bar-fill{background:#3b82f6}
+  .catcard.c-for .cat-bar-fill{background:#22c55e}
+  .catcard.c-cry .cat-bar-fill{background:#f0a028}
+  @media (max-width: 820px){ .catgrid{grid-template-columns:1fr} }
+
   /* 6) 델타 pill (상승/하락) */
   .delta{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
   .delta.pos{color:var(--up);background:color-mix(in srgb,var(--up) 16%,transparent)}

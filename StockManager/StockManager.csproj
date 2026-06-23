@@ -18,9 +18,18 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.38.0</Version>
-    <AssemblyVersion>4.38.0.0</AssemblyVersion>
-    <FileVersion>4.38.0.0</FileVersion>
+    <Version>4.39.0</Version>
+    <AssemblyVersion>4.39.0.0</AssemblyVersion>
+    <FileVersion>4.39.0.0</FileVersion>
+    <!-- v4.39.0 — 자산군 3분류 집계(국내주식·해외주식·비트코인) + 비트코인 저장 버그 근본 수정. 지휘관 피드백.
+         (1) 3분류 패널: PortfolioBreakdown(순수)가 보유를 국내(KRX)/해외(US)/코인(CRYPTO)로 묶어 KRW 환산 평가·손익·
+             수익률·비중 카드 표시(KPI 아래). USD만 ×환율(LoadAsync 산식과 동일). 테스트 3(분류·환산집계·빈목록).
+         (2) ★BTC 저장 버그 근본원인: 종목 수정 화면에서 SymbolPicker로 비트코인을 고르면 _editId가 편집 중이던
+             주식에 남아 저장 시 UpdateHoldingById가 그 주식을 BTC로 '덮어써' BTC는 새로 안 보이고 기존 종목이 소실됐다.
+             → ApplyPickToForm이 종목 선택 시 _editId=0(신규 등록 전환). 같은 종목 재선택은 upsert로 중복 없음.
+         (3) 저장 견고화: SaveTx/Save가 'DB 저장'과 '저장 후 시세 갱신'을 분리 — 시세 조회 예외가 '저장 실패'로
+             둔갑하지 않게 함. 성공 시 _flash 확인 배너(폼 닫힌 뒤에도 표시)로 피드백 명시.
+         ⚠️ 수수료/환율은 추정·근사치. liveArmed:false 불변 -->
     <!-- v4.38.0 — 수정 폼에 증권사·수수료·세금 입력 추가(지휘관 재요청: "수정 자체에 증권사/수수료/세금이 없다").
          Holdings에 Commission·Tax 컬럼 추가(CREATE + 기존 DB ALTER 마이그레이션). 수정 폼(_f)에 증권사(datalist)·
          수수료·세금 칸 + 증권사 선택 시 빈 값일 때만 수수료 자동 추정(매수 기준). 저장은 Id 기준 UpdateHoldingById로

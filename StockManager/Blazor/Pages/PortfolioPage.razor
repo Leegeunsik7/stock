@@ -114,6 +114,37 @@
     </div>
 </div>
 
+@* ===== 자산군 3분류 집계 (국내주식 · 해외주식 · 비트코인) — 총평가의 구성 ===== *@
+<div style="padding:0 28px 16px">
+    <div style="font-size:12.5px;color:var(--sub);margin-bottom:8px">📊 자산군 구성 — 국내주식 · 해외주식 · 코인 (KRW 환산)</div>
+    <div class="catgrid">
+        @foreach (var c in _cats)
+        {
+            <div class="catcard @CatClass(c.Class)">
+                <div class="cat-h">
+                    <span class="cat-ic">@CatIcon(c.Class)</span>
+                    <span class="cat-lab">@c.Label</span>
+                    <span class="cat-cnt">@c.Count 종목</span>
+                </div>
+                <div class="cat-val">₩@c.ValueKrw.ToString("N0")</div>
+                <div class="cat-row">
+                    <span class="@(c.PnlKrw>=0?"up":"down")">@c.PnlKrw.ToString("+#,##0;-#,##0;0") (@c.ReturnPct.ToString("+0.0;-0.0")%)</span>
+                    <span class="cat-wt">비중 @c.WeightPct(_totalValue).ToString("0.0")%</span>
+                </div>
+                <div class="cat-bar"><div class="cat-bar-fill" style="width:@WeightWidth(c)"></div></div>
+            </div>
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_flash))
+{
+    <div style="margin:0 28px 14px;padding:10px 14px;border-radius:10px;background:color-mix(in srgb,var(--up) 14%,transparent);border:1px solid var(--up);font-size:13px;display:flex;align-items:center;gap:8px">
+        <span>@_flash</span>
+        <button class="addbtn" style="margin-left:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);padding:3px 10px" @onclick="() => _flash = string.Empty">확인</button>
+    </div>
+}
+
 <div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap">
     @foreach (var (key, label) in _tabDefs)
     {
@@ -318,10 +349,22 @@ else if (_tab == "corr")
     private List<Holding> _holdings = new();
     private bool _showForm, _showTxForm;
     private int _editId;
-    private string _ts = "", _formMsg = "", _txMsg = "";
+    private string _ts = "", _formMsg = "", _txMsg = "", _flash = "";   // _flash: 저장 성공 확인 배너(폼 닫힌 뒤에도 표시)
     private decimal _totalValue, _totalPnl, _totalRet;
     private decimal _usdKrw = 1380m;   // 환율 실패 시 직전 캐시값 유지 (원본 룰)
+    private List<CategoryAgg> _cats = new();   // 자산군 3분류 집계(국내·해외·코인)
     private CancellationTokenSource? _cts;
+
+    private static string CatIcon(AssetClass c) => c switch
+    { AssetClass.DomesticStock => "🇰🇷", AssetClass.ForeignStock => "🇺🇸", AssetClass.Crypto => "₿", _ => "•" };
+    private static string CatClass(AssetClass c) => c switch
+    { AssetClass.DomesticStock => "c-dom", AssetClass.ForeignStock => "c-for", AssetClass.Crypto => "c-cry", _ => "" };
+    // 비중 막대 너비 — CSS용이라 InvariantCulture(소수점 '.')로 고정, 0~100% 클램프.
+    private string WeightWidth(CategoryAgg c)
+    {
+        var w = Math.Max(0m, Math.Min(100m, c.WeightPct(_totalValue)));
+        return w.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    }
 
     private string _tab = "hold";
     private readonly (string key, string label)[] _tabDefs = {
@@ -333,10 +376,16 @@ else if (_tab == "corr")
     private Form _f = new();
 
     // 검색→자동 채움 — SymbolPicker 가 고른 종목을 폼에 채운다(코드·이름·시장·통화). 수량/단가만 입력하면 됨.
+    //   ⚠️ 데이터 손상 차단: 어떤 종목을 '고르는' 행위는 곧 '그 종목을 신규 등록'한다는 뜻이므로 편집 모드(_editId)를
+    //   해제한다. (이전엔 종목 수정 화면에서 비트코인을 고르면 _editId가 편집 중이던 주식에 남아, 저장 시 그 주식을
+    //   BTC로 덮어써 BTC는 안 보이고 기존 종목이 사라지던 버그.) 같은 종목을 다시 고르면 SaveHolding upsert가
+    //   (Symbol,BrokerAccount) 기준으로 기존 행을 갱신하므로 중복도 안 생긴다.
     private void ApplyPickToForm(SymbolEntry e)
     {
+        _editId = 0;
         _f.Symbol = e.Code; _f.Name = e.Name; _f.Market = e.Market; _f.Currency = e.Currency;
-        _formMsg = $"'{e.Name}' 선택됨 — 수량·평균단가만 입력하세요.";
+        _fLastBroker = (_f.Broker ?? "").Trim();   // 자동추정 기준 동기화(기존 수수료 보존)
+        _formMsg = $"'{e.Name}' 선택됨 — 신규 등록으로 전환. 수량·평균단가를 입력하세요.";
     }
     private void ApplyPickToTx(SymbolEntry e)
     {
@@ -456,7 +505,7 @@ else if (_tab == "corr")
 
     private void SwitchTab(string key)
     {
-        _tab = key;
+        _tab = key; _flash = "";   // 탭 전환 → 이전 확인배너 정리
         if (key == "tx") LoadTransactions();
         else if (key == "div") LoadDividends();
     }
@@ -508,6 +557,7 @@ else if (_tab == "corr")
         var cost = _holdings.Sum(h => h.AvgPrice * h.Quantity * (h.Currency == Currency.USD ? _usdKrw : 1m));
         _totalPnl = _totalValue - cost;
         _totalRet = cost > 0 ? _totalPnl / cost * 100m : 0m;
+        _cats = PortfolioBreakdown.Compute(_holdings, _usdKrw);   // 국내·해외·코인 3분류 집계
         _ts = DateTime.Now.ToString("HH:mm:ss");
     }
 
@@ -597,7 +647,7 @@ else if (_tab == "corr")
     private void OpenTx(TransactionType t)
     {
         _txType = t; _showTxForm = true; _showForm = false; _editId = 0;   // 거래 폼 전환 시 직접등록 편집 상태 해제
-        _txMsg = ""; _tf = new(); _feesDirty = false; _lastBroker = "";
+        _txMsg = ""; _flash = ""; _tf = new(); _feesDirty = false; _lastBroker = "";   // 새 작업 시작 → 이전 확인배너 정리
     }
 
     private async Task SaveTx()
@@ -618,6 +668,7 @@ else if (_tab == "corr")
             BrokerAccount = _tf.Broker,
             Memo = _tf.Memo
         };
+        // 1) 저장(DB) — 이 단계 실패만 '저장 실패'로 보고한다.
         try
         {
             Db.AddTransaction(tx);
@@ -625,11 +676,14 @@ else if (_tab == "corr")
             //   미국주식으로 오분류되지 않게 함. 직접 타이핑이면 null → 심볼 기반 추론(코인 접두 포함).
             PortfolioService.RecomputeAverage(Db, tx.Symbol, _tf.Name,
                 _tf.Picked ? _tf.Market : (Market?)null, _tf.Picked ? _tf.Currency : (Currency?)null);
-            _showTxForm = false; _tf = new(); _feesDirty = false; _lastBroker = "";
-            await LoadAsync();
-            LoadTransactions();
         }
-        catch (Exception ex) { _txMsg = "저장 실패: " + ex.Message; }
+        catch (Exception ex) { _txMsg = "저장 실패: " + ex.Message; return; }   // 저장 자체 실패 → 폼 유지
+
+        // 2) 저장 성공 — 확인 배너를 띄우고 폼을 닫는다. 이후 시세 갱신 실패는 저장에 영향 없음(별도 try).
+        string nm = string.IsNullOrWhiteSpace(_tf.Name) ? tx.Symbol : _tf.Name;
+        _flash = $"✅ '{nm}' {(_txType == TransactionType.Buy ? "매수" : "매도")} 거래가 저장되었습니다.";
+        _showTxForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
+        try { await LoadAsync(); LoadTransactions(); } catch { /* 시세 갱신 실패는 저장과 무관 — 다음 새로고침에 반영 */ }
     }
 
     // ===== 직접 등록 (기존 기능) =====
@@ -638,7 +692,7 @@ else if (_tab == "corr")
     private void ToggleForm()
     {
         _showForm = !_showForm;
-        _showTxForm = false;
+        _showTxForm = false; _flash = "";   // 새 작업 시작 → 이전 확인배너 정리
         if (_showForm) ResetForm();   // 열 때 신규 등록으로 초기화
         else _editId = 0;             // 닫을 때 편집 상태 해제
     }
@@ -651,7 +705,7 @@ else if (_tab == "corr")
                      Quantity = h.Quantity, AvgPrice = h.AvgPrice,
                      Broker = h.BrokerAccount, Commission = h.Commission, Tax = h.Tax };
         _fLastBroker = (h.BrokerAccount ?? "").Trim();   // 진입 시 자동추정이 기존 수수료를 덮지 않도록 기준 맞춤
-        _showForm = true; _showTxForm = false; _formMsg = ""; _tab = "hold";
+        _showForm = true; _showTxForm = false; _formMsg = ""; _flash = ""; _tab = "hold";
     }
 
     // 수정 폼에서 증권사가 '실제로' 바뀐 경우에만 수수료를 재추정(매수 기준 — 보유는 순매수 포지션, 거래세 없음).
@@ -679,18 +733,20 @@ else if (_tab == "corr")
             CurrentPrice = _f.AvgPrice, FirstBuyDate = DateTime.Now,
             BrokerAccount = (_f.Broker ?? "").Trim(), Commission = _f.Commission, Tax = _f.Tax
         };
-        try
-        {
-            // 수정(Id 존재)은 행 단위 UPDATE — 종목명·시장·통화·증권사 변경 반영 + (Symbol,BrokerAccount) 중복행 방지.
-            //   신규 등록은 기존 upsert 경로 유지.
-            if (_editId > 0) Db.UpdateHoldingById(h); else Db.SaveHolding(h);
-            _formMsg = "저장되었습니다."; ResetForm(); _showForm = false; await LoadAsync();
-        }
-        catch (Exception ex) { _formMsg = "저장 실패: " + ex.Message; }
+        // 1) 저장(DB) — 실패 시 폼 유지하고 메시지만. 수정(Id>0)은 행 단위 UPDATE(중복행 방지), 신규는 upsert.
+        bool edited = _editId > 0;
+        try { if (edited) Db.UpdateHoldingById(h); else Db.SaveHolding(h); }
+        catch (Exception ex) { _formMsg = "저장 실패: " + ex.Message; return; }
+
+        // 2) 저장 성공 — 확인 배너 후 폼 닫기. 시세 갱신 실패는 저장과 무관(별도 try).
+        _flash = $"✅ '{h.Name}' {(edited ? "수정" : "등록")}되었습니다.";
+        ResetForm(); _showForm = false;
+        try { await LoadAsync(); } catch { /* 시세 갱신 실패는 저장과 무관 */ }
     }
 
     private async Task Delete(Holding h)
     {
+        _flash = "";   // 삭제도 새 작업 → 이전 확인배너 정리
         try { Db.DeleteHolding(h.Symbol, h.BrokerAccount); await LoadAsync(); } catch { }
     }
 
