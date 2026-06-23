@@ -86,6 +86,9 @@ namespace StockManager.Blazor
             // S23-c — 비가역 거부 포렌식 감사기(임계구역 내 무할당 박제·락-프리 독출). 게이트웨이·관제탑 공유.
             var rejectionForensics = new RejectionForensicAuditor();
             services.AddSingleton(rejectionForensics);
+            // S26-c(Horizon B) — 락-프리 텔레메트리 채널. 펌프(단일 라이터)가 발행, /command UI 가 무할당 독출.
+            var forensicTelemetry = new ForensicTelemetryChannel();
+            services.AddSingleton(forensicTelemetry);
 
             // S24-b — 비동기 플러시 펌프(옵트인 기본 OFF). 핫패스는 RequestFlush(Interlocked) 한 줄만,
             //   격리 백그라운드가 ring→MMF 영속화. OFF면 펌프 null → 저널 미기록 → 부팅 항상 Empty(후방호환).
@@ -96,6 +99,7 @@ namespace StockManager.Blazor
                 // 사전 할당 스크래치 클로저 → per-flush 무할당. 펌프 백그라운드 단일 스레드에서만 실행.
                 var scratchRej     = new RejectionRecord[recoveryJournaler.Capacity];
                 var scratchJournal = new JournalRecord[recoveryJournaler.Capacity];
+                long telePersistSeq = 0;   // S26-c — 단일 라이터(펌프 스레드) 전용 카운터, 잠금 불요
                 flushPump = new JournalFlushPump(() =>
                 {
                     int n = rejectionForensics.SnapshotSession(scratchRej, out var genome);   // ★원자 세션(split-brain 봉인)
@@ -105,7 +109,16 @@ namespace StockManager.Blazor
                         scratchJournal[i] = new JournalRecord(r.Seq, RecoveryKind.Rejection, (byte)r.Stage, 0,
                             r.AsOfTicks, r.NowTicks, r.WindowTicks, r.Fitness, JournalRecord.HashId(r.SpecId));
                     }
-                    return recoveryJournaler.PersistComposite(genome, scratchJournal.AsSpan(0, n));
+                    bool ok = recoveryJournaler.PersistComposite(genome, scratchJournal.AsSpan(0, n));
+                    // S26-c — 텔레메트리 발행(펌프 스레드 = 단일 라이터). 무할당 seqlock 슬롯에 값 타입 복사.
+                    telePersistSeq++;
+                    long lagTicks = genome.HasValue ? System.Math.Max(0L, System.DateTime.UtcNow.Ticks - genome.AsOfTicks) : 0L;
+                    forensicTelemetry.Publish(new ForensicTelemetry(
+                        telePersistSeq, System.Diagnostics.Stopwatch.GetTimestamp(), rejectionForensics.Version,
+                        lagTicks, n, ok ? 100 : 0,
+                        unchecked((uint)genome.GenomeHash),
+                        unchecked((uint)(n > 0 ? scratchJournal[n - 1].GenomeHash : genome.Seq))));
+                    return ok;
                 });
                 flushPump.Start();
                 services.AddSingleton(flushPump);

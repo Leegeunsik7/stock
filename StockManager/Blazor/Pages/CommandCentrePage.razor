@@ -6,6 +6,7 @@
 @inject IgnitionLock Ignition
 @inject ConfigAuditReport ConfigAudit
 @inject GreenhouseService Greenhouse
+@inject ForensicTelemetryChannel Telemetry
 @using System.Threading
 @using StockManager.Common
 
@@ -38,6 +39,22 @@
         <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.TunerSeverity)" title="어댑티브 튜너"></span>
         <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.BridgeSeverity)" title="파이프 연결"></span>
         <span class="cc-pip @SystemStatusAggregator.SeverityCssClass(_snap.GreenhouseSeverity)" title="유전자 온실"></span>
+    </div>
+</div>
+
+@* ── S26-c 포렌식 텔레메트리 스트립 (락-프리 채널 · UI 무할당 독출) ─────────────── *@
+<div class="cc-tele">
+    <div class="cc-tele-hd">🛰 포렌식 텔레메트리 <span class="cc-tele-tag">LOCK-FREE</span>
+        <span class="cc-tele-note">@(_teleEver ? "복합 저널 펌프 발행 중" : "발행 대기 — 펌프 가동 + 챔피언 승격 후 표시")</span>
+    </div>
+    <div class="cc-tele-grid">
+        <div class="cc-tele-cell"><span>영속화 주기</span><b>@_tele.PersistSeq.ToString("N0")</b></div>
+        <div class="cc-tele-cell"><span>포렌식 레코드</span><b>@_tele.ForensicCount.ToString("N0")</b></div>
+        <div class="cc-tele-cell"><span>무결성 점수</span><b class="@(_tele.IntegrityScore >= 100 ? "ok" : _teleEver ? "warn" : "")">@_tele.IntegrityScore / 100</b></div>
+        <div class="cc-tele-cell"><span>신선도 Lag</span><b>@_tele.FreshnessLagMs.ToString("N1") ms</b></div>
+        <div class="cc-tele-cell"><span>Seqlock 커서</span><b>v@_tele.ForensicSeqlockVersion.ToString("N0")</b></div>
+        <div class="cc-tele-cell"><span>게놈 지문</span><b>@_tele.GenomeFp.ToString("X8")</b></div>
+        <div class="cc-tele-cell"><span>포렌식 지문</span><b>@_tele.ForensicFp.ToString("X8")</b></div>
     </div>
 </div>
 
@@ -251,6 +268,20 @@
     <div class="cc-cfg-note">env → DB → 폴백 검증 경로 · 로그 비밀 차폐 @(LogRedactor.Shared.Count)건 활성 · liveArmed 미노출(코드 게이트 전용)</div>
 </div>
 
+<style>
+    .cc-tele { margin:0 0 16px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:14px 18px; }
+    .cc-tele-hd { font-weight:700; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .cc-tele-tag { font-size:9px; font-weight:800; letter-spacing:.1em; color:#fff; background:#3b82f6; border-radius:4px; padding:2px 6px; }
+    .cc-tele-note { margin-left:auto; font-size:11px; color:var(--sub); font-weight:500; }
+    .cc-tele-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:10px; }
+    .cc-tele-cell { background:var(--card-2,#181f31); border-radius:8px; padding:9px 11px; display:flex; flex-direction:column; gap:4px; }
+    .cc-tele-cell span { font-size:10.5px; color:var(--sub); }
+    .cc-tele-cell b { font-size:15px; font-family:ui-monospace,monospace; color:var(--ink); }
+    .cc-tele-cell b.ok { color:var(--up,#22c55e); }
+    .cc-tele-cell b.warn { color:var(--down,#ef4444); }
+    @@media (max-width:1100px){ .cc-tele-grid { grid-template-columns:repeat(3,1fr); } }
+</style>
+
 @code {
     private SystemHealthSnapshot _snap;
 
@@ -290,10 +321,15 @@
 
     private void RefreshNow() { Refresh(); StateHasChanged(); }
 
+    private ForensicTelemetry _tele;   // S26-c — 락-프리 텔레메트리(경합 시 직전 프레임 유지 → 코어 무블록)
+    private bool _teleEver;
+
     private void Refresh()
     {
         if (_disposed) return;
         try { _snap = Agg.Capture(); } catch { }
+        // 코어를 절대 기다리지 않음 — TryRead 가 경합으로 false 면 _tele 를 갱신하지 않고 직전 프레임 유지.
+        if (Telemetry.TryRead(out var t)) { _tele = t; if (t.HasValue) _teleEver = true; }
     }
 
     private static string OverallIcon(SystemSeverity s) => s switch

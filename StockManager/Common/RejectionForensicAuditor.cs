@@ -64,6 +64,8 @@ namespace StockManager.Common
 
         public int  Capacity => _ring.Length;
         public long Count    => Interlocked.Read(ref _seq);
+        /// <summary>현재 seqlock 버전(짝=안정·홀=쓰기중). S26-c 텔레메트리 — 락-프리 진단 독출.</summary>
+        public long Version  => Volatile.Read(ref _version);
 
         /// <summary>
         /// 거부를 박제한다. 단일 라이터(PromotionGateway._lock 직렬화)에서만 호출 — 할당 0, 나노초.
