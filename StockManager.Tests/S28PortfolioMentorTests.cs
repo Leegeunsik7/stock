@@ -431,6 +431,68 @@ namespace StockManager.Tests
             Assert.Equal(0, pub.FrozenCount);
         }
 
+        // ★S28-b Mission 3 — 자해성 동결 회로 제거 회귀: 24 라이터 극한 경합에서 게이트 패배는 _writerCollisions 로만
+        //   집계되고 _frozen/ForceFreeze 를 건드리지 않는다. 안전성(torn=0)·무자해(FrozenCount=0·EmergencyFreeze 미발화)는
+        //   부하 무관 결정론. 경합 발생(WriterCollisions>0)은 24 라이터·9.6만 시도에선 통계적 확정(게이트가 실제 직렬화
+        //   중이라는 증거이자 테스트 비vacuity 보증) — 기아로 0 될 수 있는 reads>0 류와 달리, 선점 스케줄링상 게이트
+        //   보유자가 잘리면 타 라이터 CAS 가 반드시 실패하므로 경합은 막을 수 없다.
+        [Fact]
+        public void Publisher_HeavyContention_CollisionsCounted_NoSelfFreeze()
+        {
+            var (slots, present) = TwoAssetBook();
+            var att = new OrderAttestationService();
+            var pub = new ScenarioPublisher(slots, present, Assume(2, 0m, 0m), 4, att);
+            pub.Recompute(ShadowMutation.None);
+
+            long totalNone = present[0].Raw + present[1].Raw;
+            long totalMut  = present[0].Raw + QMath_Notional(present[1].Raw, 3m);
+            var allowed = new[] { totalNone, totalMut };
+
+            const int writerCount = 24, iters = 4_000;   // 24 라이터 극한 과부하(작업량 경계 — 시간 아님)
+            int writersLeft = writerCount;
+            int torn = 0;
+
+            var writers = new Thread[writerCount];
+            for (int w = 0; w < writerCount; w++)
+            {
+                bool startMut = (w & 1) == 0;
+                writers[w] = new Thread(() =>
+                {
+                    bool flip = startMut;
+                    for (int i = 0; i < iters; i++)
+                    { pub.Recompute(flip ? ShadowMutation.ScaleClass(AssetClass.Crypto, 3m) : ShadowMutation.None); flip = !flip; }
+                    Interlocked.Decrement(ref writersLeft);
+                }) { IsBackground = true };
+            }
+            var readers = new Thread[4];
+            for (int k = 0; k < readers.Length; k++)
+                readers[k] = new Thread(() =>
+                {
+                    var m = new long[5]; var o = new long[5]; var p = new long[5];
+                    while (Volatile.Read(ref writersLeft) > 0)
+                    {
+                        if (!pub.TryReadFrame(m, o, p)) continue;
+                        long v0 = m[0];
+                        bool consistent = (v0 == allowed[0] || v0 == allowed[1]);
+                        for (int t = 0; t < 5; t++) if (m[t] != v0) consistent = false;
+                        if (!consistent) Interlocked.Increment(ref torn);
+                    }
+                }) { IsBackground = true };
+
+            foreach (var t in writers) t.Start(); foreach (var t in readers) t.Start();
+            foreach (var t in writers) Assert.True(t.Join(60000), "writer join 타임아웃(데드락?)");
+            foreach (var t in readers) Assert.True(t.Join(60000), "reader join 타임아웃(데드락?)");
+
+            Assert.Equal(0, torn);                                       // 안전성(부하 무관) — 찢긴 프레임 0
+            Assert.Equal(0, pub.FrozenCount);                            // ★무자해 — 경합이 _frozen 오염 안 함
+            Assert.NotEqual(GatingMode.EmergencyFreeze, att.Mode);       // ★무자해 — 전역 ForceFreeze 미발화
+            Assert.True(pub.WriterCollisions > 0, "24 라이터 극한 경합인데 WriterCollisions=0 (게이트 직렬화/비vacuity 의심)");
+
+            var fm = new long[5]; var fo = new long[5]; var fp = new long[5];   // 정지 상태 보장 읽기 — 활성성·정합
+            Assert.True(pub.TryReadFrame(fm, fo, fp), "정지 상태 안정 스냅샷 실패");
+            Assert.True(fm[0] == allowed[0] || fm[0] == allowed[1], $"최종 총합 {fm[0]} 허용값 밖");
+        }
+
         // seqlock 락프리 — 단일 라이터가 총합을 토글하며 재산출, 다중 리더는 '찢긴 곡선'을 절대 보지 않는다.
         // ★결정론(부하 무관) — 형제 2-라이터 테스트와 동일 사상: '시간' 아닌 '작업량'으로 경계한다. 라이터는
         //   고정 횟수만 재산출 후 종료하므로 CI 에이전트 과부하에도 join 타임아웃·리더 기아 플레이키가 없다.

@@ -18,9 +18,16 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.48.0</Version>
-    <AssemblyVersion>4.48.0.0</AssemblyVersion>
-    <FileVersion>4.48.0.0</FileVersion>
+    <Version>4.48.1</Version>
+    <AssemblyVersion>4.48.1.0</AssemblyVersion>
+    <FileVersion>4.48.1.0</FileVersion>
+    <!-- v4.48.1 — S28-b 회귀 가드 보강: 게이트 자해성 동결 제거(v4.48.0)를 '증명'하는 24-라이터 극한 경합 회귀
+         테스트 추가(Publisher_HeavyContention_CollisionsCounted_NoSelfFreeze). 테스트가 '강제'하는 불변(부하 무관):
+         torn=0 · FrozenCount=0 · EmergencyFreeze 미발화(OrderAttestationService 실측) · WriterCollisions>0.
+         (>0 은 24 라이터 선점 스케줄링상 경합 불가피라는 비vacuity 보증이며 특정 '크기'를 강제하진 않는다.)
+         비vacuity 실측: 게이트-탈락에 _frozen++ 를 복원하는 변이 시 FrozenCount 단언이 실패함을 확인(회귀 포착 입증).
+         적대적 리뷰 3렌즈(ship; gateloss·metric 무결함, 변이민감도는 본 변이 실측으로 대체). 빌드 0/0, 전체 1458
+         통과(다회 클린런 — 횟수는 환경 측정값). liveArmed:false 불변. -->
     <!-- v4.48.0 — ★S28 동시성 하니스 강건화 + 게이트 자해성 동결 회로 제거. (a) ScenarioPublisher seqlock 스트레스
          테스트(2-라이터·단일-라이터) 부하 무관(load-invariant) 재설계: '시간'(stop 플래그+Join 타임아웃) 경계를
          '작업량'(고정 라이터 반복) 경계로 전환 — full-suite CPU 오버서브스크립션 하 리더 기아로 인한 reads>0/Join
