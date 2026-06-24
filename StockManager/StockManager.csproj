@@ -18,9 +18,26 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.48.1</Version>
-    <AssemblyVersion>4.48.1.0</AssemblyVersion>
-    <FileVersion>4.48.1.0</FileVersion>
+    <Version>4.48.3</Version>
+    <AssemblyVersion>4.48.3.0</AssemblyVersion>
+    <FileVersion>4.48.3.0</FileVersion>
+    <!-- v4.48.3 — 플래키 2종 제거(heartbeat·ZeroGc). ⚠ '전역 0%'는 아직 미달성: 20회 스트레스 census 에서
+         추가 클러스터 발견(ComplianceBridge.Bridge_SentinelAlert_* 4+1회, TwapVwapTunerWiring 1회,
+         ExecutionBridgeBroker_FillReceived 1회 — 모두 비동기 이벤트/콜백 결과의 비결정 동기단언 부류로 추정).
+         v4.48.2 의 "0% 마감"은 6회 표본의 함정이었음(깊이 부족). 본 버전은 아래 2종만 결정론화하고,
+         잔여 클러스터는 후속 작업으로 분리. ①KiwoomBridgeTests.BridgeClient_HeartbeatReceived_PreventsTimeout —
+         실파이프/실타이머 기반이라 CPU 기아 시 거짓 ProxyLost. KiwoomBridgeClient 에 주입 클럭(nowTicks) +
+         타임아웃 판정을 public MarkHeartbeat/IsHeartbeatTimedOut 으로 노출(ReadLoop·HeartbeatWatchAsync 가 동일
+         경로 사용) → 가상 시각으로 결정론 검증(파이프/타이머/서버태스크 0). ②FrictionFeedbackBridgeTests.
+         GetSnapshot_ZeroGcAllocation — GC.GetAllocatedBytesForCurrentThread 가 병렬 풀스레드/측정 루프 OSR 전환에
+         오염. 측정을 '전용 스레드'로 격리 + 동일 루프 워밍업으로 tiered-JIT/OSR settle → delta==0 결정론.
+         production GetSnapshot 은 이미 zero-alloc(무변경). work-bounded 사상([[concurrency-test-work-bounded]]) 적용. -->
+    <!-- v4.48.2 — Path A: 레거시 TWAP cancel 테스트(Cancel_RunningAlgo_StopsBeforeAllSlices) 부하-불변 재작조로
+         전역 플래키 0% 마감. 벽시계(Task.Delay(70)+Join) 의존을 세마포어 '신호' 기반 작업량 경계로 전환 — 슬라이스
+         간격을 테스트가 통제해 'permit 3개만 풀어 정확히 3 발사 → 취소 → 추가 발사 0' 을 결정론 검증(permit≤3이라
+         발사≤3, SliceFired 관측으로 ≥3 → ==3). SliceFired 이벤트 Interlocked 카운트로 List 동시읽기 회피. 취소 후
+         추가 permit 미해제(취소 vs permit 경합 누수 차단 — 초안의 Actual:4 버그 수정). 단독 20회·전체 다회 클린런.
+         S28 스트레스 하네스의 work-bounded 사상([[concurrency-test-work-bounded]])을 마지막 레거시 타이밍 테스트에 적용. -->
     <!-- v4.48.1 — S28-b 회귀 가드 보강: 게이트 자해성 동결 제거(v4.48.0)를 '증명'하는 24-라이터 극한 경합 회귀
          테스트 추가(Publisher_HeavyContention_CollisionsCounted_NoSelfFreeze). 테스트가 '강제'하는 불변(부하 무관):
          torn=0 · FrozenCount=0 · EmergencyFreeze 미발화(OrderAttestationService 실측) · WriterCollisions>0.

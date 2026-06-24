@@ -29,6 +29,8 @@ namespace StockManager.Common
         private readonly string                    _pipeName;
         private readonly int                       _heartbeatTimeoutMs;
         private readonly OrderAttestationService?  _attestation;
+        // [v4.48.3] 주입식 클럭 — 기본은 실제 UtcNow. 테스트가 가상 시각으로 타임아웃 판정을 결정론 검증.
+        private readonly Func<long>                _now;
 
         private NamedPipeClientStream?             _pipe;
         private readonly Channel<BridgeEnvelope>  _queue;
@@ -50,15 +52,29 @@ namespace StockManager.Common
         public KiwoomBridgeClient(
             OrderAttestationService? attestation        = null,
             string                   pipeName           = BridgeSerializer.DefaultPipeName,
-            int                      heartbeatTimeoutMs = DefaultTimeoutMs)
+            int                      heartbeatTimeoutMs = DefaultTimeoutMs,
+            Func<long>?              nowTicks           = null)
         {
             _attestation        = attestation;
             _pipeName           = pipeName;
             _heartbeatTimeoutMs = heartbeatTimeoutMs;
+            _now                = nowTicks ?? (() => DateTime.UtcNow.Ticks);
             _queue = Channel.CreateBounded<BridgeEnvelope>(
                 new BoundedChannelOptions(MaxQueueDepth)
                 { FullMode = BoundedChannelFullMode.DropOldest });
-            _lastHeartbeatTicks = DateTime.UtcNow.Ticks;
+            _lastHeartbeatTicks = _now();
+        }
+
+        // ── 하트비트 타임아웃 판정 (HeartbeatWatchAsync·ReadLoop 의 결정 로직 = 테스트 검증 대상) ──────
+        /// <summary>하트비트 수신 시각(틱)을 기록 → 타임아웃 카운터 리셋. ReadLoop 가 하트비트 메시지마다 호출.</summary>
+        public void MarkHeartbeat(long nowTicks) => Interlocked.Exchange(ref _lastHeartbeatTicks, nowTicks);
+
+        /// <summary>주어진 시각(틱) 기준, 마지막 하트비트 이후 경과가 타임아웃(ms)을 '초과(&gt;)'했는지.
+        ///   주입 클럭을 인자로 받아 부하·벽시계와 무관하게 결정론적으로 판정/검증된다.</summary>
+        public bool IsHeartbeatTimedOut(long nowTicks)
+        {
+            long last = Interlocked.Read(ref _lastHeartbeatTicks);
+            return (nowTicks - last) / (double)TimeSpan.TicksPerMillisecond > _heartbeatTimeoutMs;
         }
 
         // ── 연결 ──────────────────────────────────────────────────────────────
@@ -70,7 +86,7 @@ namespace StockManager.Common
                 PipeDirection.InOut, PipeOptions.Asynchronous);
             await _pipe.ConnectAsync(ct);
             _alive = true;
-            _lastHeartbeatTicks = DateTime.UtcNow.Ticks;
+            MarkHeartbeat(_now());
         }
 
         // ── 주문 전송 (BridgeClient → ProxyHost) ─────────────────────────────
@@ -115,7 +131,7 @@ namespace StockManager.Common
 
                     if (type == BridgeMessageType.Heartbeat)
                     {
-                        Interlocked.Exchange(ref _lastHeartbeatTicks, DateTime.UtcNow.Ticks);
+                        MarkHeartbeat(_now());
                         continue;
                     }
 
@@ -174,9 +190,7 @@ namespace StockManager.Common
                 while (!ct.IsCancellationRequested)
                 {
                     await Task.Delay(checkMs, ct);
-                    long   last      = Interlocked.Read(ref _lastHeartbeatTicks);
-                    double elapsedMs = (DateTime.UtcNow.Ticks - last) / (double)TimeSpan.TicksPerMillisecond;
-                    if (elapsedMs > _heartbeatTimeoutMs)
+                    if (IsHeartbeatTimedOut(_now()))   // 결정 로직 단일화(테스트가 동일 메서드로 검증)
                     {
                         _alive = false;
                         ProxyLost?.Invoke();

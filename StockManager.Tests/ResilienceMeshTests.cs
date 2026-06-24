@@ -155,50 +155,65 @@ namespace StockManager.Tests
         }
 
         [Fact]
-        public async Task Place_AboveMinQty_TwapFiresAllSlices()
+        public void Place_AboveMinQty_TwapFiresAllSlices()
         {
+            // ★work-bounded(부하 무관) — 고정 800ms 대기 대신 AlgoCompleted 이벤트를 기다린다. 부하 하 스케줄러
+            //   지연으로 5 슬라이스가 800ms 안에 못 끝나 Actual 0 으로 터지던 플래키 제거(완료까지 대기, 10s 안전망).
             var spy = new SpyBroker();
+            using var completed = new ManualResetEventSlim(false);
             var executor = new TwapVwapExecutor(spy, delayFactory: FastDelay)
             {
                 DefaultConfig = new AlgoConfig { MinQty = 10m, Slices = 5, Style = AlgoStyle.Twap }
             };
+            executor.AlgoCompleted += _ => completed.Set();
 
             var (ok, msg) = executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, qty: 100m, limitPrice: 85_000m, currentPrice: 0m);
 
             Assert.True(ok);
             Assert.StartsWith("ALGO-", msg);
-
-            await Task.Delay(800);   // 여유 있는 대기: 5 × 1ms + 스케줄러 지연 허용
+            Assert.True(completed.Wait(10_000), "알고 완료 대기 타임아웃");   // 완료 이벤트 happens-before → Calls 읽기 안전
 
             Assert.Equal(5, spy.Calls.Count);
             Assert.Equal(100m, spy.Calls.Sum(c => c.Qty));
         }
 
         [Fact]
-        public async Task Cancel_RunningAlgo_StopsBeforeAllSlices()
+        public void Cancel_RunningAlgo_StopsBeforeAllSlices()
         {
+            // ★work-bounded 재작조(부하 무관 결정론) — 벽시계(Task.Delay(70)+Join) 의존 제거. 슬라이스 간격을
+            //   세마포어 '신호'로 테스트가 통제해, CPU 오버서브스크립션·스레드 기아와 무관하게 '정확히 3개 발사 후
+            //   취소 → 신호를 더 풀어도 추가 발사 0' 을 결정론적으로 검증한다. 타임아웃(10s)은 데드락 안전망일 뿐
+            //   정상 경로의 정확성은 신호 횟수가 강제한다. (과거: Task.Delay(70) 취소가 부하 하 executor 완주 뒤
+            //   도착해 10개 전부 발사 → InRange(1,9) 플레이키.)
             var spy = new SpyBroker();
+            using var gate = new SemaphoreSlim(0);
+            using var completed = new ManualResetEventSlim(false);
+            int fired = 0;
 
-            // 슬라이스 간격 20ms — 취소 전 3-4개만 발사되도록 설계
-            var executor = new TwapVwapExecutor(
-                spy,
-                delayFactory: (ms, ct) => Task.Delay(20, ct))
+            var executor = new TwapVwapExecutor(spy, delayFactory: (ms, ct) => gate.WaitAsync(ct))
             {
                 DefaultConfig = new AlgoConfig { MinQty = 10m, Slices = 10, Style = AlgoStyle.Twap }
             };
+            executor.SliceFired    += _ => Interlocked.Increment(ref fired);   // 스레드 안전 카운트(List 동시읽기 회피)
+            executor.AlgoCompleted += _ => completed.Set();
 
             var (_, msg) = executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, qty: 100m, limitPrice: 85_000m, currentPrice: 0m);
 
-            // 3-4개 발사 예상 시점(70ms)에 executor.Cancel 호출
-            await Task.Delay(70);
-            executor.Cancel(msg);   // 내부 per-algo CTS 취소
+            // 3개 간격 신호만 풀어 정확히 3개 발사 → 루프는 4번째 간격 대기(0 permit)에서 블록.
+            gate.Release(3);
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref fired) >= 3, 10_000), "3 슬라이스 발사 대기 타임아웃");
 
-            // 추가 슬라이스가 발사되지 않도록 기다림
-            await Task.Delay(200);
+            // 취소 — 루프는 4번째 간격 대기(0 permit)에서 블록 중. 취소가 이를 깨 슬라이스 4~10 발사를 막는다.
+            //   ★추가 permit 을 풀지 않는다: 풀면 4번째 대기에서 '취소 vs permit' 경합으로 한 슬라이스가 새어나간다
+            //   (permit 3개만 존재하므로 발사 ≤3, 관측으로 ≥3 보장 → 정확히 3, 부하 무관 결정론).
+            executor.Cancel(msg);
+            Assert.True(completed.Wait(10_000), "취소 후 알고 종료 대기 타임아웃");
 
-            Assert.InRange(spy.Calls.Count, 1, 9);  // 전체 10개 미만
+            // 결정론: 정확히 3개 발사 후 취소 → 전체 10개 미달. (종료 후라 Calls 동시 쓰기 없음 → 읽기 안전.)
+            Assert.Equal(3, Volatile.Read(ref fired));
+            Assert.Equal(3, spy.Calls.Count);
         }
 
         private static Task FastDelay(int _, CancellationToken ct)

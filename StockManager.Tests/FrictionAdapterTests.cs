@@ -7,6 +7,7 @@
 //  §3 TwapVwapExecutor 연결 (3)   — 고마찰→슬라이스 증가, 저마찰→슬라이스 감소, 튜너 없음
 // ============================================================================
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using StockManager.Common;
 using Xunit;
@@ -120,13 +121,26 @@ namespace StockManager.Tests
             FrictionHelpers.PrimeSmall(sentinel, 30);
             sentinel.RecordFill(FrictionHelpers.MakeFill(150_000.0), 100_000.0);
             var bridge = new FrictionFeedbackBridge(sentinel);
-            _ = bridge.GetSnapshot();  // JIT 워밍업
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 100_000; i++) _ = bridge.GetSnapshot();
-            long after  = GC.GetAllocatedBytesForCurrentThread();
+            // ★work-bounded 결정론(부하 무관): 측정을 '전용 스레드'에서 수행 — GC.GetAllocatedBytesForCurrentThread()
+            //   는 per-thread 카운터라, 전용 스레드면 xUnit 병렬 실행/풀 스레드 재사용의 할당이 절대 섞이지 않는다.
+            //   또한 측정 전 '동일 루프'를 충분히 워밍업해 tiered-JIT / OSR(긴 루프 최적화 재컴파일) 전환을 끝낸다.
+            //   (과거 플래키: 단일 호출 워밍업만으론 측정 루프의 OSR 전환이 측정 구간에 섞여 간헐 delta>0.)
+            long delta = -1;
+            int  sink  = 0;   // 결과 누적 → JIT 가 호출/루프를 제거(elide)하지 못하게
+            var th = new Thread(() =>
+            {
+                for (int w = 0; w < 300_000; w++) sink += bridge.GetSnapshot().SampleCount;   // OSR/tier-1 settle
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 100_000; i++) sink += bridge.GetSnapshot().SampleCount;     // 측정(이미 최적화됨)
+                long after  = GC.GetAllocatedBytesForCurrentThread();
+                delta = after - before;
+            }) { IsBackground = true };
+            th.Start();
+            Assert.True(th.Join(TimeSpan.FromSeconds(30)), "제로-할당 측정 스레드 타임아웃");
+            GC.KeepAlive(sink);
 
-            Assert.Equal(0L, after - before);
+            Assert.Equal(0L, delta);
         }
     }
 
@@ -247,7 +261,7 @@ namespace StockManager.Tests
             executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, 10_000m, 85_000m, 85_000m);
 
-            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(30));   // 부하 하 알고 완료 지연 대비 데드락 안전망(완료 즉시 반환)
             Assert.Equal(12, result.Order.Slices);                       // 10 + SliceStepUp(2)
             Assert.Equal(70, (int)result.Order.Duration.TotalSeconds);   // 60 + DurationStep(10)
         }
@@ -274,7 +288,7 @@ namespace StockManager.Tests
             executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, 10_000m, 85_000m, 85_000m);
 
-            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(30));   // 부하 하 알고 완료 지연 대비 데드락 안전망(완료 즉시 반환)
             Assert.Equal(9,  result.Order.Slices);                       // 10 - SliceStepDown(1)
             Assert.Equal(50, (int)result.Order.Duration.TotalSeconds);   // 60 - DurationStep(10)
         }
@@ -293,7 +307,7 @@ namespace StockManager.Tests
             executor.Place(PaperAsset.Stock, "005930", "삼성전자",
                 PaperSide.Buy, PaperKind.Limit, 10_000m, 85_000m, 85_000m);
 
-            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(30));   // 부하 하 알고 완료 지연 대비 데드락 안전망(완료 즉시 반환)
             Assert.Equal(7,  result.Order.Slices);
             Assert.Equal(45, (int)result.Order.Duration.TotalSeconds);
         }

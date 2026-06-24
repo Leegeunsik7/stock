@@ -325,37 +325,28 @@ namespace StockManager.Tests
         }
 
         [Fact]
-        public async Task BridgeClient_HeartbeatReceived_PreventsTimeout()
+        public void BridgeClient_HeartbeatReceived_PreventsTimeout()
         {
-            var pipeName = UniquePipe();
-            bool proxyLostFired = false;
+            // ★work-bounded 결정론(부하 무관): 실파이프·실타이머·Task.Delay·서버태스크를 전부 제거하고,
+            //   하트비트 타임아웃 '판정 로직'을 주입 클럭(가상 시각 ticks)으로 직접 검증한다. 여기서 호출하는
+            //   MarkHeartbeat / IsHeartbeatTimedOut 은 production 의 ReadLoop(하트비트 수신 시 MarkHeartbeat)와
+            //   HeartbeatWatchAsync(IsHeartbeatTimedOut 로 판정)가 그대로 쓰는 '단일 결정 경로'다 → 우회 아님.
+            //   (과거: 100ms송신/500ms타임아웃/600ms 고정대기 → 25% 플레이키. 이후 5000ms 로 늘려도 잔류 —
+            //    부하 의존 타이밍은 인플레이션으로 못 잡는다. 가상 클럭으로 시간을 '결정'해야 0% 가 된다.)
+            const long MS = TimeSpan.TicksPerMillisecond;
+            using var client = new KiwoomBridgeClient(pipeName: "test-virtual", heartbeatTimeoutMs: 500);
 
-            var serverTask = Task.Run(async () =>
-            {
-                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
-                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                await srv.WaitForConnectionAsync();
-                // 200ms마다 하트비트 전송 — 타임아웃(500ms) 방지
-                for (int i = 0; i < 5; i++)
-                {
-                    await srv.WriteAsync(BridgeSerializer.PackHeartbeat(i));
-                    await srv.FlushAsync();
-                    await Task.Delay(100);
-                }
-                await Task.Delay(300);
-            });
+            // 하트비트 수신 직후(t=0). 타임아웃 이내면 살아있음.
+            client.MarkHeartbeat(nowTicks: 0);
+            Assert.False(client.IsHeartbeatTimedOut(400 * MS), "경과 400ms < 500ms → 타임아웃 아님");
+            Assert.False(client.IsHeartbeatTimedOut(500 * MS), "경과 정확히 500ms 는 초과(>) 아님(경계)");
 
-            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 500);
-            client.ProxyLost += () => proxyLostFired = true;
-            await client.ConnectAsync();
-            var loopTask = client.StartAsync();
+            // ★핵심 불변(PreventsTimeout): 새 하트비트가 들어오면 타임아웃 카운터가 리셋되어 다시 살아난다.
+            client.MarkHeartbeat(nowTicks: 450 * MS);
+            Assert.False(client.IsHeartbeatTimedOut(900 * MS), "리셋 후 경과 900-450=450ms < 500ms → 살아있음");
 
-            await Task.Delay(600);  // 하트비트를 받는 동안 대기
-            Assert.False(proxyLostFired, "하트비트가 수신되는 동안 ProxyLost가 발행되어서는 안 됩니다.");
-            Assert.True(client.IsProxyAlive);
-
-            client.Dispose();
-            try { await loopTask.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+            // 반대 케이스: 하트비트 정체 시엔 타임아웃을 발화(판정이 무력하지 않음을 보장).
+            Assert.True(client.IsHeartbeatTimedOut(961 * MS), "경과 961-450=511ms > 500ms → 타임아웃");
         }
 
         [Fact]
