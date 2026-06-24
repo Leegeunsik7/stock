@@ -199,8 +199,15 @@ else
 {
 <div style="padding:0 28px 40px">
   <div class="panel">
-    <div class="panel-h">📊 보유 종목 <span class="sub" style="font-weight:400">· @_holdings.Count 종목</span><span class="tag">HOLDINGS</span></div>
-    <div style="overflow:auto;max-height:calc(100vh - 360px)">
+    <div class="panel-h">📊 보유 종목 <span class="sub" style="font-weight:400">· @FilteredHoldings().Count()/@_holdings.Count 종목</span><span class="tag">HOLDINGS</span></div>
+    @* 자산군 분류 필터 — 전체 / 국내 / 해외 / 코인 (요청: 분류별·전체 보기) *@
+    <div style="display:flex;gap:6px;padding:8px 14px 4px;flex-wrap:wrap">
+        @foreach (var (k, lbl) in _holdFilters)
+        {
+            <button class="pill @(k==_holdFilter?"r":"b")" style="border:0;cursor:pointer;padding:5px 12px;font-size:12px" @onclick="() => _holdFilter = k">@lbl <span style="opacity:.7">@FilterCount(k)</span></button>
+        }
+    </div>
+    <div style="overflow:auto;max-height:calc(100vh - 392px)">
     <table class="ctbl dense">
         <thead><tr>
             <th>종목</th><th>시장</th><th style="text-align:right">수량</th>
@@ -209,7 +216,7 @@ else
             <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:88px">관리</th>
         </tr></thead>
         <tbody>
-            @foreach (var h in _holdings)
+            @foreach (var h in FilteredHoldings())
             {
                 var fxr = h.Currency == Currency.USD ? _usdKrw : 1m;          // 평가액·손익은 KRW 환산 (원본 KrwValue 룰)
                 var pnl = (h.CurrentPrice - h.AvgPrice) * h.Quantity * fxr;
@@ -234,6 +241,7 @@ else
     </table>
     </div>
     @if (_holdings.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">보유 종목이 없습니다. '➕ 매수 기록' 또는 '✎ 직접 등록'으로 시작하세요.</div> }
+    else if (!FilteredHoldings().Any()) { <div style="padding:32px;color:var(--sub);text-align:center">이 분류에 보유 종목이 없습니다. '전체'를 선택하세요.</div> }
   </div>
 </div>
 }
@@ -391,6 +399,17 @@ else if (_tab == "corr")
         RestartPoll();
         if (_pollSec > 0 && AsOfCtx.IsLive && _tab == "hold") { await LoadAsync(persist: false); StateHasChanged(); }
     }
+
+    // ----- 보유 목록 자산군 필터(전체/국내/해외/코인) -----
+    private string _holdFilter = "all";
+    private readonly (string k, string lbl)[] _holdFilters =
+        { ("all", "전체"), ("dom", "🇰🇷 국내주식"), ("for", "🇺🇸 해외주식"), ("crypto", "₿ 코인") };
+    private static string CatKey(AssetClass c) => c switch
+    { AssetClass.DomesticStock => "dom", AssetClass.ForeignStock => "for", AssetClass.Crypto => "crypto", _ => "all" };
+    private IEnumerable<Holding> FilteredHoldings() =>
+        _holdFilter == "all" ? _holdings : _holdings.Where(h => CatKey(PortfolioBreakdown.Classify(h.Market)) == _holdFilter);
+    private int FilterCount(string key) =>
+        key == "all" ? _holdings.Count : _holdings.Count(h => CatKey(PortfolioBreakdown.Classify(h.Market)) == key);
 
     private static string CatIcon(AssetClass c) => c switch
     { AssetClass.DomesticStock => "🇰🇷", AssetClass.ForeignStock => "🇺🇸", AssetClass.Crypto => "₿", _ => "•" };
@@ -800,18 +819,21 @@ else if (_tab == "corr")
         // 2) 저장 성공 — 저장 직후 DB 실제 상태를 조회해 배너에 반영(정상이면 보유수량 확인, 비정상이면 진단 노출).
         //    '저장됐다는데 데이터가 없다'는 신고의 원인을 사용자 환경에서 확정하기 위함. (읽기 쿼리라 락 불필요)
         string nm = string.IsNullOrWhiteSpace(_tf.Name) ? tx.Symbol : _tf.Name;
-        int txCnt = 0; decimal hQty = 0; bool hExists = false;
+        int txCnt = 0; decimal hQty = 0; bool hExists = false; string storedQ = "?";
         try
         {
             var tc = Db.Query("SELECT COUNT(*) AS c FROM Transactions WHERE Symbol=@s", new() { ["@s"] = tx.Symbol });
             txCnt = tc.Rows.Count > 0 ? Safe.Int(tc.Rows[0]["c"]) : 0;
+            // 방금 저장한 거래의 '실제 저장값 + storage class(typeof)' — 0.13이 0/integer로 강제변환됐는지 확정.
+            var sd = Db.Query("SELECT Quantity AS q, typeof(Quantity) AS t FROM Transactions WHERE Symbol=@s ORDER BY Id DESC LIMIT 1", new() { ["@s"] = tx.Symbol });
+            if (sd.Rows.Count > 0) storedQ = $"{Safe.Str(sd.Rows[0]["q"])}/{Safe.Str(sd.Rows[0]["t"])}";
             var hd = Db.Query("SELECT Quantity FROM Holdings WHERE Symbol=@s", new() { ["@s"] = tx.Symbol });
             hExists = hd.Rows.Count > 0;
             if (hExists) hQty = Safe.Dec(hd.Rows[0]["Quantity"]);
         }
         catch { }
         if (!hExists || hQty <= 0)
-            _flash = $"⚠️ '{nm}' 거래는 저장됐으나 보유 항목이 안 잡힘 — 코드 [{tx.Symbol}] · 입력수량 {tx.Quantity} · DB거래 {txCnt}건 · 보유행 {(hExists ? $"있음(수량 {hQty})" : "없음")}. 이 문구를 캡처해 알려주세요.";
+            _flash = $"⚠️ '{nm}' 거래 저장됐으나 보유 미생성 — 코드 [{tx.Symbol}] · 입력 {tx.Quantity} · DB저장값 {storedQ} · 거래 {txCnt}건 · 보유행 {(hExists ? $"있음(수량 {hQty})" : "없음")}. 이 문구를 캡처해 주세요.";
         else
             _flash = $"✅ '{nm}' {(_txType == TransactionType.Buy ? "매수" : "매도")} 저장됨 — 보유수량 {hQty} ({tx.Symbol}).";
         _showTxForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";

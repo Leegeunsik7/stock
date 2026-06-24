@@ -18,9 +18,15 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.43.1</Version>
-    <AssemblyVersion>4.43.1.0</AssemblyVersion>
-    <FileVersion>4.43.1.0</FileVersion>
+    <Version>4.44.0</Version>
+    <AssemblyVersion>4.44.0.0</AssemblyVersion>
+    <FileVersion>4.44.0.0</FileVersion>
+    <!-- v4.44.0 — 보유목록 자산군 필터(전체/국내/해외/코인) + BTC 저장 정밀 진단 강화. 지휘관 요청·재신고.
+         · 보유 종목 패널에 분류 칩(전체·🇰🇷국내·🇺🇸해외·₿코인) + 각 칩에 종목수. PortfolioBreakdown.Classify 재사용.
+         · BTC 미저장 정밀 추적: 새 DB는 0.13을 REAL로 정상 저장 확인(테스트 AddTransaction_FractionalQty_StoredAsReal…
+           typeof=real). 즉 코드는 정상, 지휘관 기존 DB의 Quantity 컬럼이 0.13→0 강제변환 의심. 저장 배너에 'DB저장값+
+           typeof'를 노출해 다음 캡처로 컬럼 storage class를 확정(integer 강제변환 여부) → 확정 후 컬럼 마이그레이션 예정. -->
+
     <!-- v4.43.1 — ★실시간 폴링이 매수폼 입력을 손상시키던 치명 버그 수정. 거래 이력 실측 결과 'KRW-BTC Buy 수량 0'으로
          저장된 게 확인됨(폼엔 0.13로 보였으나). 원인: v4.42.0의 5초 자동 새로고침 StateHasChanged 재렌더가 폼이 열린
          채 발생해, 입력 중인 컨트롤드 입력(수량·단가·거래일시)을 backing 값으로 리셋 → 0.13이 0으로 저장. 수정: 폼 열림

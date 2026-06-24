@@ -257,6 +257,17 @@ namespace StockManager.Tests
         });
 
         [Fact]
+        public void AddTransaction_FractionalQty_StoredAsRealNotCoercedToZero() => WithDb(db =>
+        {
+            // 지휘관 환경 재현 의혹: 0.13 입력이 DB에 0으로 저장됨. 새 DB(현재 스키마)에서 실제 저장 storage class 확인.
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 97_299_615m, ExecutedAt = _baseAt.AddMinutes(1) });
+            var dt = db.Query("SELECT Quantity AS q, typeof(Quantity) AS t FROM Transactions WHERE Symbol=@s", new() { ["@s"] = "KRW-BTC" });
+            Assert.Equal(1, dt.Rows.Count);
+            Assert.Equal(0.13m, Safe.Dec(dt.Rows[0]["q"]), 4);     // 0.13 보존(0으로 강제변환 아님)
+            Assert.Equal("real", Safe.Str(dt.Rows[0]["t"]));        // REAL로 저장(integer 강제변환 아님)
+        });
+
+        [Fact]
         public void DeleteTransaction_Recompute_RecoversNetZeroHolding() => WithDb(db =>
         {
             // 지휘관 상황 재현: 매수 0.13 + (반복 시도 중 섞인) 매도 0.13 → 순수량 0 → 보유 목록에서 사라짐(qty 0).
