@@ -363,6 +363,13 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             }
         }
 
+        /// <summary>거래 1건 삭제(거래 이력 정리용). 호출부는 직후 PortfolioService.RecomputeAverage로 해당 종목
+        /// 평단·수량을 재계산해야 한다(잘못 쌓인 거래로 보유 수량이 0/왜곡된 경우 정리 목적).</summary>
+        public void DeleteTransaction(long id)
+        {
+            Execute("DELETE FROM Transactions WHERE Id=@id", new() { ["@id"] = id });
+        }
+
         // 검증 실패 거래를 FraudAlerts에 조용히 기록 (로거 실패가 원래 예외를 삼키면 안 됨)
         private void _WriteFraudAlert(Transaction t, string reason)
         {

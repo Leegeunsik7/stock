@@ -257,6 +257,23 @@ namespace StockManager.Tests
         });
 
         [Fact]
+        public void DeleteTransaction_Recompute_RecoversNetZeroHolding() => WithDb(db =>
+        {
+            // 지휘관 상황 재현: 매수 0.13 + (반복 시도 중 섞인) 매도 0.13 → 순수량 0 → 보유 목록에서 사라짐(qty 0).
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy,  Quantity = 0.13m, Price = 97_000_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Sell, Quantity = 0.13m, Price = 98_000_000m, ExecutedAt = _baseAt.AddMinutes(2) });
+            PortfolioService.RecomputeAverage(db, "KRW-BTC", "비트코인", Market.CRYPTO, Currency.KRW);
+            Assert.Equal(0m, ReadQty(db, "KRW-BTC"));   // 순수량 0(보유행 수량 0 → Quantity>0 필터에서 빠짐)
+
+            // 거래 이력에서 매도를 삭제 → 재계산 → 0.13 복구(자가 정리 경로).
+            long sellId = Safe.Long(db.Query("SELECT Id FROM Transactions WHERE Symbol=@s AND Type=@t",
+                new() { ["@s"] = "KRW-BTC", ["@t"] = (int)TransactionType.Sell }).Rows[0]["Id"]);
+            db.DeleteTransaction(sellId);
+            PortfolioService.RecomputeAverage(db, "KRW-BTC", "비트코인", Market.CRYPTO, Currency.KRW);
+            Assert.Equal(0.13m, ReadQty(db, "KRW-BTC"), 3);   // 매수만 남아 0.13 복구
+        });
+
+        [Fact]
         public void Symbols_AreIndependent() => WithDb(db =>
         {
             Tx(db, "005930", TransactionType.Buy, 10, 1000, 1);

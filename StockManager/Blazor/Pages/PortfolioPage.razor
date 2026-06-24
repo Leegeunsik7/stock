@@ -4,6 +4,7 @@
 @inject UpbitProvider Upbit
 @inject FxConverter Fx
 @inject AsOfContext AsOfCtx
+@inject Microsoft.JSInterop.IJSRuntime JS
 @implements IDisposable
 @using System.Threading
 @using System.Data
@@ -241,7 +242,7 @@ else if (_tab == "tx")
 {
 <div style="overflow:auto;padding:0 28px 40px">
     <table class="ctbl">
-        <thead><tr><th>일시</th><th>종목</th><th>구분</th><th style="text-align:right">수량</th><th style="text-align:right">단가</th><th style="text-align:right">금액</th><th style="text-align:right">수수료</th><th style="text-align:right">세금</th><th>증권사</th></tr></thead>
+        <thead><tr><th>일시</th><th>종목</th><th>구분</th><th style="text-align:right">수량</th><th style="text-align:right">단가</th><th style="text-align:right">금액</th><th style="text-align:right">수수료</th><th style="text-align:right">세금</th><th>증권사</th><th style="text-align:center">관리</th></tr></thead>
         <tbody>
             @foreach (var t in _txs)
             {
@@ -255,11 +256,13 @@ else if (_tab == "tx")
                     <td class="num sub" style="text-align:right">@t.Comm.ToString("N0")</td>
                     <td class="num sub" style="text-align:right">@t.Tax.ToString("N0")</td>
                     <td class="sub" style="font-size:12px">@t.Broker</td>
+                    <td style="text-align:center"><button class="addbtn" style="background:var(--down);padding:3px 10px;font-size:12px" @onclick="() => DeleteTx(t)">🗑 삭제</button></td>
                 </tr>
             }
         </tbody>
     </table>
     @if (_txs.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">거래 이력이 없습니다.</div> }
+    else { <div style="margin-top:8px;color:var(--sub);font-size:12px">💡 거래를 삭제하면 그 종목의 평균단가·수량이 즉시 재계산됩니다. (잘못 쌓인 거래로 보유 수량이 0이 됐다면 해당 거래들을 삭제 후 다시 기록하세요.)@if (_txs.Count >= 1000) { <b style="color:var(--warn)"> · 최근 1000건만 표시됩니다.</b>}</div> }
 </div>
 }
 else if (_tab == "tax")
@@ -512,8 +515,26 @@ else if (_tab == "corr")
         : (symbol.Length == 6 && char.IsDigit(symbol[0])) ? Market.KRX_KOSPI : Market.US_NASDAQ;
 
     // ----- 거래 이력 -----
-    private record TxRow(DateTime At, string Sym, TransactionType Type, decimal Qty, decimal Price, decimal Comm, decimal Tax, string Broker);
+    private record TxRow(long Id, DateTime At, string Sym, TransactionType Type, decimal Qty, decimal Price, decimal Comm, decimal Tax, string Broker);
     private List<TxRow> _txs = new();
+
+    // 거래 1건 삭제 → 그 종목 평단·수량 즉시 재계산(잘못 쌓인 거래 정리). 삭제 후 보유 목록·집계 갱신.
+    //   재무 기록 영구 삭제이므로 확인창으로 오삭제 방지.
+    private async Task DeleteTx(TxRow t)
+    {
+        bool ok;
+        try { ok = await JS.InvokeAsync<bool>("confirm", $"이 거래를 삭제할까요?\n{t.Sym} · {t.Type} · {FmtQty(t.Qty)} @ {t.Price:N0}\n→ 해당 종목 평단·수량이 재계산됩니다."); }
+        catch { ok = true; }   // JS 미가용 환경 폴백
+        if (!ok) return;
+        try
+        {
+            Db.DeleteTransaction(t.Id);
+            PortfolioService.RecomputeAverage(Db, t.Sym);   // 남은 거래로 재계산(0건이면 수량 0 → 목록에서 사라짐)
+            _flash = $"🗑 거래 삭제됨 — '{t.Sym}' {t.Type} {FmtQty(t.Qty)} @ {t.Price:N0}. 평단·수량 재계산 완료.";
+        }
+        catch (Exception ex) { _flash = "거래 삭제 실패: " + ex.Message; }
+        await LoadAllAsync();
+    }
 
     // ----- 배당 -----
     private List<DividendEvent> _divs = new();
@@ -689,9 +710,9 @@ else if (_tab == "corr")
     {
         try
         {
-            var dt = Db.Query("SELECT * FROM Transactions ORDER BY ExecutedAt DESC LIMIT 200");
+            var dt = Db.Query("SELECT * FROM Transactions ORDER BY ExecutedAt DESC LIMIT 1000");
             _txs = dt.Rows.Cast<DataRow>().Select(r => new TxRow(
-                Safe.DT(r["ExecutedAt"]), Safe.Str(r["Symbol"]),
+                Safe.Long(r["Id"]), Safe.DT(r["ExecutedAt"]), Safe.Str(r["Symbol"]),
                 (TransactionType)Safe.Int(r["Type"]),
                 Safe.Dec(r["Quantity"]), Safe.Dec(r["Price"]),
                 Safe.Dec(r["Commission"]), Safe.Dec(r["Tax"]), Safe.Str(r["BrokerAccount"]))).ToList();

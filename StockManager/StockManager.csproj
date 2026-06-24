@@ -18,9 +18,14 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.42.1</Version>
-    <AssemblyVersion>4.42.1.0</AssemblyVersion>
-    <FileVersion>4.42.1.0</FileVersion>
+    <Version>4.43.0</Version>
+    <AssemblyVersion>4.43.0.0</AssemblyVersion>
+    <FileVersion>4.43.0.0</FileVersion>
+    <!-- v4.43.0 — 거래 이력 개별 삭제 + 평단 재계산 연쇄. 진단(v4.42.1) 결과 'BTC 거래 10건·보유수량 0'으로 확인된
+         원인(누적 거래 순수량 0 → Quantity>0 필터 탈락)의 자가 정리 수단. 📝 거래 이력에 🗑 삭제 버튼 → DeleteTransaction(Id)
+         + RecomputeAverage(종목) → 보유 목록·집계 즉시 갱신. 회귀 테스트: 매수0.13+매도0.13 순0 → 매도 삭제 → 0.13 복구.
+         적대적 리뷰(ship) 후 minor 수정: 삭제 확인창(JS confirm) · LIMIT 200→1000 + 절단 안내 · Id를 Safe.Long으로 일관화. -->
+
     <!-- v4.42.1 — 진단: '비트코인 저장됐다는데 데이터 없음' 신고 추적. SaveTx가 저장 직후 DB 실제 상태(해당 코드의
          거래 건수·보유행 존재·보유수량)를 직접 조회해 배너에 노출. 정상이면 '✅ 저장됨 — 보유수량 X', 비정상이면
          '⚠️ 거래는 저장됐으나 보유 항목 미생성 — 코드/수량/DB거래/보유행' 진단 표시. 코어(AddTransaction+
