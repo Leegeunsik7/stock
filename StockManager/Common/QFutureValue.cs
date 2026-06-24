@@ -134,6 +134,7 @@ namespace StockManager.Common
         private readonly OrderAttestationService? _att;
         private long _version;     // 0=미발행, 짝=안정, 홀=쓰는 중
         private long _frozen;
+        private long _writerCollisions;   // 게이트 경합으로 밀려난 라이터 수 — _frozen(산출 실패)과 분리한 순수 경합 메트릭
         private int  _writerGate;  // 0=free, 1=writing — ★단일 라이터 계약 런타임 강제(CAS)
 
         public ScenarioPublisher(ReadOnlySpan<PortfolioSlot> slots, ReadOnlySpan<QMoney> livePresentBase,
@@ -159,20 +160,24 @@ namespace StockManager.Common
 
         public int  Years       => _years;
         public int  AssetCount  => _n;
-        public long Version     => Volatile.Read(ref _version);
-        public long FrozenCount => Interlocked.Read(ref _frozen);
+        public long Version         => Volatile.Read(ref _version);
+        public long FrozenCount     => Interlocked.Read(ref _frozen);
+        public long WriterCollisions => Interlocked.Read(ref _writerCollisions);   // 라이터 경합 메트릭(자해성 동결과 무관)
 
         /// <summary>
-        /// 변형을 적용해 곡선을 재산출·발행. 무할당(정상). 실패 시 false(곡선 미갱신·_frozen++).
+        /// 변형을 적용해 곡선을 재산출·발행. 무할당(정상). 산출 실패 시 false(곡선 미갱신·_frozen++).
         /// ★단일 라이터 계약을 CAS 로 '런타임 강제': 동시 라이터는 seqlock torn-read 보장을 깨므로 두 번째는 fail-closed 거부.
+        ///   단 경합 거부는 _frozen 이 아니라 _writerCollisions 만 증가시키고 ForceFreeze 하지 않는다(자해성 동결 회로 차단).
         /// ★산술 오염(Overflow·ArgumentOutOfRange·DivideByZero — 음수/대형 배수, 음수 현재가치 등 현 경로의 도달 가능
         ///   예외 전부)을 try/catch 로 흡수해 fail-crash 아닌 fail-closed. 필터 밖 예외원은 현 경로에 없다(있다면 전파).
         /// </summary>
         public bool Recompute(in ShadowMutation m)
         {
             // 단일 라이터 강제 — 점유 실패(동시 라이터)면 버퍼를 건드리지 않고 즉시 fail-closed. 리더는 여전히 무잠금.
+            // ★자해성 동결 회로 제거 — 경합 패배는 게이트가 '안전하게 처리한' 사건이지 산출 결함이 아니다. _frozen/
+            //   ForceFreeze 를 건드리지 않고(전역 거래 동결·로그 폭주 차단) 전용 경합 카운터만 올린 뒤 양보(yield)하고 조용히 거절.
             if (Interlocked.CompareExchange(ref _writerGate, 1, 0) != 0)
-            { Interlocked.Increment(ref _frozen); Freeze("시나리오: 동시 라이터 계약 위반 — fail-closed"); return false; }
+            { Interlocked.Increment(ref _writerCollisions); Thread.Yield(); return false; }
             try
             {
                 Interlocked.Increment(ref _version);            // → 홀수(쓰는 중)

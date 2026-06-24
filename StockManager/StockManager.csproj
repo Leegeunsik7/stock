@@ -18,9 +18,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.47.0</Version>
-    <AssemblyVersion>4.47.0.0</AssemblyVersion>
-    <FileVersion>4.47.0.0</FileVersion>
+    <Version>4.48.0</Version>
+    <AssemblyVersion>4.48.0.0</AssemblyVersion>
+    <FileVersion>4.48.0.0</FileVersion>
+    <!-- v4.48.0 — ★S28 동시성 하니스 강건화 + 게이트 자해성 동결 회로 제거. (a) ScenarioPublisher seqlock 스트레스
+         테스트(2-라이터·단일-라이터) 부하 무관(load-invariant) 재설계: '시간'(stop 플래그+Join 타임아웃) 경계를
+         '작업량'(고정 라이터 반복) 경계로 전환 — full-suite CPU 오버서브스크립션 하 리더 기아로 인한 reads>0/Join
+         플레이키 제거. 안전성(torn==0, 부하 무관 항상 성립)과 활성성(라이터 종료 후 '정지 상태 보장 읽기')을 분리
+         검증. (과거 torn 폭주는 CAS 게이트 도입 전 잔재 — 현 코드는 경합·고읽기 양 체제 + 31회 런 모두 torn=0 측정·재현불가.)
+         (b) 게이트 경합 패배 라이터의 자해 제거: _frozen++/ForceFreeze(전역 거래 동결·로그 폭주) 대신 전용
+         _writerCollisions 카운터만 증가 + Thread.Yield 후 조용히 fail-closed. _frozen 은 순수 '산출 결함'만 의미하도록 정화.
+         빌드 0/0, 전체 1457 통과. liveArmed:false 불변. -->
     <!-- v4.47.0 — ★S28 AI 포트폴리오 멘토 & 미래가치 시뮬레이터 결정론 코어. LLM↔코어 경계(Gemini 룰): LLM은 엔티티
          추출(EntityDraft)·의도 분류(IntentClass)·페르소나 서술만, 숫자는 전부 결정론 고정소수점 코어가 권위.
          M1 QPortfolioMentor — OnboardingCanonicalizer(정준화 fail-closed)+OnboardingPump(누락필드 유도 상태머신,

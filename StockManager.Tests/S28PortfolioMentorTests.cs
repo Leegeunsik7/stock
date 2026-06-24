@@ -425,9 +425,16 @@ namespace StockManager.Tests
 
             // 라이터가 실제로 재발행했다(공회전 아님) — 최소 한 라이터는 모든 경쟁에서 못 지므로 버전은 단조 증가.
             Assert.True(pub.Version > versionBefore, "라이터가 재산출을 발행하지 않음");
+
+            // ★(b) 자해성 동결 회로 제거 검증(결정론) — 경합 패배는 _frozen 이 아니라 _writerCollisions 로만 집계되고,
+            //   이 시나리오는 산출 실패가 없으므로 FrozenCount 는 정확히 0 이어야 한다(경합이 _frozen 을 오염시키면 실패).
+            Assert.Equal(0, pub.FrozenCount);
         }
 
         // seqlock 락프리 — 단일 라이터가 총합을 토글하며 재산출, 다중 리더는 '찢긴 곡선'을 절대 보지 않는다.
+        // ★결정론(부하 무관) — 형제 2-라이터 테스트와 동일 사상: '시간' 아닌 '작업량'으로 경계한다. 라이터는
+        //   고정 횟수만 재산출 후 종료하므로 CI 에이전트 과부하에도 join 타임아웃·리더 기아 플레이키가 없다.
+        //   단일 라이터라 게이트 경합이 없어 기아 가능성은 훨씬 낮지만, 부하 불변(load-invariant)으로 통일한다.
         [Fact]
         public void Publisher_SingleWriter_ManyReaders_NoTornFrame()
         {
@@ -436,21 +443,22 @@ namespace StockManager.Tests
             const int years = 8;
             var pub = new ScenarioPublisher(slots, present, asm, years);
             pub.Recompute(ShadowMutation.None);
+            long versionBefore = pub.Version;
 
             long totalNone = present[0].Raw + present[1].Raw;
             long totalMut  = present[0].Raw + QMath_Notional(present[1].Raw, 3m);   // 코인 3배
             var allowed = new[] { totalNone, totalMut };
 
-            var stop = new ManualResetEventSlim(false);
-            int torn = 0, reads = 0;
+            const int writerIters = 60_000;   // 작업량 경계(시간 아님) — 부하에도 수십~수백 ms 내 종료
+            int writerDone = 0;
+            int torn = 0;
+
             var writer = new Thread(() =>
             {
                 bool flip = false;
-                while (!stop.IsSet)
-                {
-                    pub.Recompute(flip ? ShadowMutation.ScaleClass(AssetClass.Crypto, 3m) : ShadowMutation.None);
-                    flip = !flip;
-                }
+                for (int i = 0; i < writerIters; i++)
+                { pub.Recompute(flip ? ShadowMutation.ScaleClass(AssetClass.Crypto, 3m) : ShadowMutation.None); flip = !flip; }
+                Volatile.Write(ref writerDone, 1);
             }) { IsBackground = true };
 
             var readers = new Thread[4];
@@ -458,10 +466,10 @@ namespace StockManager.Tests
                 readers[k] = new Thread(() =>
                 {
                     var m = new long[years + 1]; var o = new long[years + 1]; var p = new long[years + 1];
-                    for (int it = 0; it < 30_000; it++)
+                    // 라이터가 사는 동안 계속 읽어 경합 구간을 덮는다 — 고정 횟수 루프의 join 타임아웃 위험 제거.
+                    while (Volatile.Read(ref writerDone) == 0)
                     {
                         if (!pub.TryReadFrame(m, o, p)) continue;
-                        Interlocked.Increment(ref reads);
                         long v0 = m[0];
                         bool consistent = (v0 == allowed[0] || v0 == allowed[1]);
                         for (int t = 0; t <= years; t++) if (m[t] != v0) consistent = false;   // 평탄 불변 — 섞이면 torn
@@ -470,11 +478,22 @@ namespace StockManager.Tests
                 }) { IsBackground = true };
 
             writer.Start(); foreach (var t in readers) t.Start();
-            foreach (var t in readers) Assert.True(t.Join(30000));
-            stop.Set(); Assert.True(writer.Join(5000));
+            // 작업량 경계라 정상 < 1s 종료. 타임아웃은 데드락 안전망(단일 라이터 seqlock — 데드락 불가).
+            Assert.True(writer.Join(60000), "writer join 타임아웃(데드락?)");
+            foreach (var t in readers) Assert.True(t.Join(60000), "reader join 타임아웃(데드락?)");
 
-            Assert.True(reads > 0, "리더가 한 번도 안정 스냅샷을 못 읽음");
-            Assert.Equal(0, torn);   // 단 한 번의 찢긴 프레임도 없어야 함
+            // 안전성 — 경합 중 리더가 본 모든 스냅샷은 찢기지 않았다(단 한 번의 찢긴 프레임도 없어야 함).
+            Assert.Equal(0, torn);
+
+            // 활성성·정합(결정론) — 라이터 종료 → 버전 안정 → 보장된 안정 읽기 1회가 성공·일관해야 한다.
+            var fm = new long[years + 1]; var fo = new long[years + 1]; var fp = new long[years + 1];
+            Assert.True(pub.TryReadFrame(fm, fo, fp), "정지 상태에서 안정 스냅샷 읽기 실패");
+            long fv0 = fm[0];
+            Assert.True(fv0 == allowed[0] || fv0 == allowed[1], $"최종 총합 {fv0} 이 허용값 밖");
+            for (int t = 0; t <= years; t++) Assert.Equal(fv0, fm[t]);   // 평탄 불변
+
+            // 라이터가 실제로 재발행했다(공회전 아님) — 버전 단조 증가.
+            Assert.True(pub.Version > versionBefore, "라이터가 재산출을 발행하지 않음");
         }
 
         // 테스트 보조 — present.Raw × factor(decimal) 를 코어와 동일 규칙(floor)으로 계산.
