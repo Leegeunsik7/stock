@@ -33,7 +33,7 @@
             <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" @bind:after="OnSymbolEdited" placeholder="005930 / AAPL" /></div>
             <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
             <div><label class="flbl">거래일시</label><input class="fin" type="datetime-local" value="@ExecAtText" @onchange="OnExecAtChanged" /></div>
-            <div><label class="flbl">수량 *</label><input class="fin" type="number" step="any" @bind="_tf.Qty" @bind:after="AutoFillFees" placeholder="2.555" /></div>
+            <div><label class="flbl">수량 *</label><input class="fin" inputmode="decimal" value="@TxQtyText" @onchange="OnTxQtyChanged" placeholder="2.555 (코인 소수점)" /></div>
             <div><label class="flbl">단가 *</label><input class="fin" inputmode="decimal" value="@TxPriceText" @onchange="OnTxPriceChanged" placeholder="97,299,615" /></div>
             <div><label class="flbl">수수료</label><input class="fin" type="number" step="any" @bind="_tf.Commission" @bind:after="MarkFeesDirty" /></div>
             <div><label class="flbl">세금</label><input class="fin" type="number" step="any" @bind="_tf.Tax" @bind:after="MarkFeesDirty" /></div>
@@ -73,7 +73,7 @@
                 <select class="fin" @bind="_f.Currency">
                     <option value="@Currency.KRW">KRW</option><option value="@Currency.USD">USD</option>
                 </select></div>
-            <div><label class="flbl">수량</label><input class="fin" type="number" step="any" @bind="_f.Quantity" placeholder="2.555 (코인 소수점 가능)" /></div>
+            <div><label class="flbl">수량</label><input class="fin" inputmode="decimal" value="@FormQtyText" @onchange="OnFormQtyChanged" placeholder="2.555 (코인 소수점 가능)" /></div>
             <div><label class="flbl">평균단가</label><input class="fin" inputmode="decimal" value="@FormAvgText" @onchange="OnFormAvgChanged" placeholder="20,000,000" /></div>
             <div><label class="flbl">증권사</label><input class="fin" list="brokerListF" @bind="_f.Broker" @bind:after="OnFormBrokerChanged" />
                 <datalist id="brokerListF">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
@@ -502,6 +502,16 @@ else if (_tab == "corr")
 
     private string FormAvgText => MoneyText(_f.AvgPrice);
     private void OnFormAvgChanged(ChangeEventArgs e) { _f.AvgPrice = ParseMoney(e.Value); }
+
+    // 수량도 단가와 동일한 '텍스트 + InvariantCulture 파싱' 경로 사용. (type=number @bind 경로가 0.13을 0으로
+    //   잃는 현상이 라이브에서 확인됨 — 단가는 이미 텍스트+파싱이라 정상 저장됐고, 수량만 @bind라 깨졌다.)
+    //   콤마 없는 소수 표기(코인 0.13·주식 100 모두 안전). ParseMoney가 '0.13'→0.13 정확 파싱.
+    private static string QtyText(decimal q) =>
+        q == 0 ? "" : q.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture);
+    private string TxQtyText => QtyText(_tf.Qty);
+    private void OnTxQtyChanged(ChangeEventArgs e) { _tf.Qty = ParseMoney(e.Value); AutoFillFees(); }
+    private string FormQtyText => QtyText(_f.Quantity);
+    private void OnFormQtyChanged(ChangeEventArgs e) { _f.Quantity = ParseMoney(e.Value); }
 
     // 사용자가 수수료/세금을 손으로 만진 적이 있으면 true — 자동 추정이 수동 입력을 덮어쓰지 않게 함.
     private bool _feesDirty;

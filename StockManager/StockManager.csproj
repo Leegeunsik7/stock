@@ -18,9 +18,14 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.44.0</Version>
-    <AssemblyVersion>4.44.0.0</AssemblyVersion>
-    <FileVersion>4.44.0.0</FileVersion>
+    <Version>4.45.0</Version>
+    <AssemblyVersion>4.45.0.0</AssemblyVersion>
+    <FileVersion>4.45.0.0</FileVersion>
+    <!-- v4.45.0 — ★BTC 0.13→0 저장 근본 수정. 진단 배너 'DB저장값 0/real'이 결정타: 정수 강제변환이 아니라 입력
+         0.13이 0으로 '잃힌' 것. 비교로 확정 — 단가(텍스트+InvariantCulture 파싱, v4.40.0)는 정상 저장됐고 수량만
+         type=number @bind이라 0.13을 0으로 잃었다(Blazor 숫자입력 소수 바인딩이 이 환경에서 깨짐). 수량 입력(매수폼·
+         직접등록)을 단가와 동일한 텍스트+ParseMoney 경로로 전환 → 0.13 정확 저장. 진단 배너는 유지(정상 시 '보유수량 X'). -->
+
     <!-- v4.44.0 — 보유목록 자산군 필터(전체/국내/해외/코인) + BTC 저장 정밀 진단 강화. 지휘관 요청·재신고.
          · 보유 종목 패널에 분류 칩(전체·🇰🇷국내·🇺🇸해외·₿코인) + 각 칩에 종목수. PortfolioBreakdown.Classify 재사용.
          · BTC 미저장 정밀 추적: 새 DB는 0.13을 REAL로 정상 저장 확인(테스트 AddTransaction_FractionalQty_StoredAsReal…
