@@ -417,11 +417,11 @@ namespace StockManager.Tests
                          PaperSide.Buy, PaperKind.Limit,
                          10m, 85_000m, 85_000m);
 
-            await fillSentTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            // 디스패치 루프가 처리할 시간 대기
-            await Task.Delay(400);
-
-            var held = broker.HeldQty(PaperAsset.Stock, "005930");
+            await fillSentTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // ★디스패치 루프가 체결을 보유에 반영할 때까지 조건 폴링(고정 400ms 대기 제거 — 부하 하 미반영 Actual:0 플레이키 차단).
+            decimal held = 0m;
+            var dl = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < dl) { held = broker.HeldQty(PaperAsset.Stock, "005930"); if (held == 10m) break; await Task.Delay(20); }
             Assert.Equal(10m, held);
 
             broker.Dispose();

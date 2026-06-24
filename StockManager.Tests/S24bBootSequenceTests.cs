@@ -118,7 +118,8 @@ namespace StockManager.Tests
                 pump.Start();
                 Assert.True(pump.Running);
                 pump.RequestFlush();
-                Assert.True(WaitFor(() => pump.Flushes > 0), "백그라운드 플러시 발생");
+                // 부하 하 백그라운드 펌프 스레드 첫 스케줄 지연 대비 넉넉한 데드락 안전망(조건 충족 즉시 반환 → 비용 0).
+                Assert.True(WaitFor(() => pump.Flushes > 0, 8000), "백그라운드 플러시 발생");
                 pump.Stop();
                 Assert.False(pump.Running);   // 합류 완료
             }

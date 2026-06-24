@@ -267,7 +267,7 @@ namespace StockManager.Tests
             return (tuner, sentinel);
         }
 
-        private static bool WaitFor(Func<bool> cond, int timeoutMs = 2000)
+        private static bool WaitFor(Func<bool> cond, int timeoutMs = 8000)   // 부하 하 교차스레드 알림→DB 지연 대비(조건 충족 즉시 반환 → 비용 0)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
             while (DateTime.UtcNow < deadline)
