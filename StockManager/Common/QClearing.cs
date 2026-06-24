@@ -113,6 +113,41 @@ namespace StockManager.Common
             catch (OverflowException) { Freeze(att, "Shadow: 명목 오버플로 — fail-closed"); shadow = default; return false; }
         }
 
+        /// <summary>
+        /// S27-e — 멀티 통화 섀도우. 자산 통화 청산(보수 정렬) → QFxGuard 보수 환산(매수 Ask 올림·매도 Bid 내림) →
+        /// Mission 2 비항등 수렴 검문. 어느 단계든 오염/역전/한계 초과면 fail-closed(out=default). 정상 무할당(δ=0).
+        /// shadowBase 는 base 통화 명목(텔레메트리·대조용). 라이브 반환값은 게이트가 항상 레거시로 처리(비권위).
+        /// </summary>
+        public static bool TraceFxOrFreeze(decimal priceDec, decimal qtyDec, OrderSide side, QTickSpec spec,
+                                           QFxQuote fxQuote, QFxBounds fxBounds, OrderAttestationService? att,
+                                           out QMoney shadowBase)
+        {
+            shadowBase = default;
+            try
+            {
+                if (!QAcl.TryImportPrice(priceDec, att, out var price)) return false;
+                if (!QAcl.TryImportQty(qtyDec, att, out var qty)) return false;
+                if (!QLedgerGuard.TryClearNotional(price, qty, spec.Tick, spec.Step, side, att, out var shadow, out var ap, out var aq))
+                    return false;
+                if (!QScaleGuard.ReconcileOrFreeze(ap, aq, shadow, spec, att)) return false;
+
+                // (1) 자산 통화 레벨 보수 불변식(정렬 exact 대비) — FX 전에 자산 청산 자체를 검증.
+                decimal exactAligned = ap.ToDecimal() * aq.ToDecimal();
+                if (!CompareConservativeOrFreeze(shadow.ToDecimal(), exactAligned, side, att)) return false;
+
+                // (2) 보수 FX 환산(매수 Ask 올림·매도 Bid 내림) + 바운드/스큐/오버플로 동결.
+                if (!QFxGuard.TryConvertOrFreeze(shadow, fxQuote, side, fxBounds, att, out shadowBase))
+                { shadowBase = default; return false; }
+
+                // (3) Mission 2 — FX 수렴 비항등 검문: 정렬명목×환율(독립 exact) 대비 방향·한계 역치.
+                decimal rateDec = (side == OrderSide.Buy ? fxQuote.Ask : fxQuote.Bid).ToDecimal();
+                if (!QFxGuard.VerifyConservativeFxOrFreeze(shadowBase, exactAligned, rateDec, side, att))
+                { shadowBase = default; return false; }
+                return true;
+            }
+            catch (OverflowException) { Freeze(att, "ShadowFx: 명목/환산 오버플로 — fail-closed"); shadowBase = default; return false; }
+        }
+
         /// <summary>보수 반올림 불변식 — 매수 ceil(shadow≥exact)·매도 floor(shadow≤exact)·|Δ|≤1raw. 위반 시 동결.</summary>
         public static bool CompareConservativeOrFreeze(decimal shadowDec, decimal exactAligned, OrderSide side,
                                                        OrderAttestationService? att)
@@ -154,11 +189,17 @@ namespace StockManager.Common
     {
         private readonly bool _enabled;
         private readonly QTickSpec _spec;
+        private readonly QTickRegistry? _registry;   // S27-e — 자산별 격자(설정 시 단일 _spec 대신 심볼 조회)
         private readonly OrderAttestationService? _att;
         private long _observed, _frozen, _lastDivBits;
 
+        /// <summary>단일 전역 spec 게이트(S27-c 호환·DI 기본). Clear(symbol)은 심볼 무시하고 이 spec 사용.</summary>
         public ShadowCutoverGate(bool enabled, QTickSpec spec, OrderAttestationService? attestation = null)
-        { _enabled = enabled; _spec = spec; _att = attestation; }
+        { _enabled = enabled; _spec = spec; _registry = null; _att = attestation; }
+
+        /// <summary>S27-e — 자산별 레지스트리 게이트. Clear(symbol)이 심볼로 격자를 무할당 조회(미등록→fail-closed).</summary>
+        public ShadowCutoverGate(bool enabled, QTickRegistry registry, OrderAttestationService? attestation = null)
+        { _enabled = enabled; _registry = registry ?? throw new ArgumentNullException(nameof(registry)); _spec = default; _att = attestation; }
 
         public bool   Enabled        => _enabled;
         public long   Observed       => Interlocked.Read(ref _observed);
@@ -178,6 +219,55 @@ namespace StockManager.Common
             // 신 QFixed 엔진(보수 정렬+오버플로/스케일 트랩) 병렬 대조. 역전/발산/오염 → 이미 ForceFreeze.
             if (ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, _spec, _att, out var shadow))
                 Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
+            else
+                Interlocked.Increment(ref _frozen);
+            return legacy;
+        }
+
+        // S27-e — 자산별 격자를 심볼로 조회(무할당). 레지스트리 미설정이면 단일 _spec 폴백. 미등록/충돌이면
+        //   fail-closed(false + 동결) — 미검증 자산을 섀도우 통과시키지 않는다.
+        private bool ResolveSpec(string symbol, out QTickSpec spec)
+        {
+            if (_registry is null) { spec = _spec; return true; }
+            if (_registry.TryGet(symbol, out spec)) return true;
+            try { _att?.ForceFreeze("멀티자산 청산: 미등록 심볼 — 섀도우 검증 불가, fail-closed"); } catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// S27-e — 자산별 청산(같은 통화·base 자산). 심볼로 격자 조회 후 신 엔진 병렬 대조. 미등록 심볼은 fail-closed
+        /// 동결(FrozenCount/EmergencyFreeze 트립). 항상 레거시(naive 곱) 반환(liveArmed:false). 등록 핫패스 무할당(δ=0).
+        /// </summary>
+        public decimal Clear(string symbol, decimal priceDec, decimal qtyDec, OrderSide side)
+        {
+            decimal legacy = priceDec * qtyDec;
+            if (!_enabled) return legacy;                              // INERT
+            Interlocked.Increment(ref _observed);
+            if (!ResolveSpec(symbol, out var spec)) { Interlocked.Increment(ref _frozen); return legacy; }
+            if (ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, spec, _att, out var shadow))
+                Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
+            else
+                Interlocked.Increment(ref _frozen);
+            return legacy;
+        }
+
+        /// <summary>
+        /// S27-e — 이종 통화 자산 청산. 심볼로 격자 조회 → 자산 통화 청산 → 보수 FX 환산(매수 Ask·매도 Bid) →
+        /// Mission 2 수렴 검문. 텔레메트리(LastDivergence)는 base 통화. 미등록/FX 오염/수렴 위반 시 fail-closed 동결.
+        /// 라이브 반환은 자산 통화 레거시(비권위·liveArmed:false). 등록·정렬 핫패스 무할당(δ=0).
+        /// </summary>
+        public decimal Clear(string symbol, decimal priceDec, decimal qtyDec, OrderSide side,
+                             QFxQuote fxQuote, QFxBounds fxBounds)
+        {
+            decimal legacy = priceDec * qtyDec;
+            if (!_enabled) return legacy;                              // INERT
+            Interlocked.Increment(ref _observed);
+            if (!ResolveSpec(symbol, out var spec)) { Interlocked.Increment(ref _frozen); return legacy; }
+            if (ShadowClearingTracer.TraceFxOrFreeze(priceDec, qtyDec, side, spec, fxQuote, fxBounds, _att, out var shadowBase))
+            {
+                decimal rateDec = (side == OrderSide.Buy ? fxQuote.Ask : fxQuote.Bid).ToDecimal();
+                Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadowBase.ToDecimal() - legacy * rateDec)));
+            }
             else
                 Interlocked.Increment(ref _frozen);
             return legacy;

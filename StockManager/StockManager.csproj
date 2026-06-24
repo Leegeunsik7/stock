@@ -18,9 +18,19 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.45.2</Version>
-    <AssemblyVersion>4.45.2.0</AssemblyVersion>
-    <FileVersion>4.45.2.0</FileVersion>
+    <Version>4.46.0</Version>
+    <AssemblyVersion>4.46.0.0</AssemblyVersion>
+    <FileVersion>4.46.0.0</FileVersion>
+    <!-- v4.46.0 — ★S27-e 멀티-자산 청산 게이트 실전 결속. ShadowCutoverGate의 단일 전역 spec 철거 → QTickRegistry 주입
+         ctor + Clear(symbol,...) 오버로드(심볼→FNV 키 무할당 격자 조회, 미등록/충돌은 fail-closed 동결). 이종 통화는
+         Clear(symbol,...,QFxQuote,QFxBounds)가 자산통화 청산→보수 FX 환산(매수 Ask 올림·매도 Bid 내림)→base 텔레메트리.
+         Mission2 비항등 수렴 펜스(VerifyConservativeFxOrFreeze): 신 보수명목 got을 '독립 정확값'(정렬명목×환율)과 대조 —
+         방향+누적밴드(1raw×rate+1raw) 1raw 초과 시 동결(과거 동일환율 forward+back '죽은 항등식' 회피). 테스트 +15
+         (등록 패리티·미등록 삼중단언·이종통화 패리티/스큐/degenerate·수렴펜스 발화+통과·혼재워크로드 6스레드·δ=0 무할당).
+         적대적 리뷰(4렌즈·전부 ship) 후속 하드닝: ① VerifyConservativeFxOrFreeze public API 자기방어 — 음수/0 환율을
+         방향 검문 도달 전 fail-closed(Math.Abs 흡수 의존 제거). ② FxClear 정렬-패리티 텔레메트리 단언 <1.0→정확값 0.0 핀
+         (always-0 발산식 회귀 포착). 잔여 minor(레거시 곱 fail-loud 오버플로·서브스텝 dust 0정렬)는 섀도우 비권위·정당
+         무체결로 리뷰 수용. liveArmed:false 성벽 불변 — 라이브 반환은 항상 레거시. -->
     <!-- v4.45.2 — 코인이 해외주식으로 분류·평가손익 -99.9% 폭주 수정(v4.45.1로 저장은 됐으나 시장 오분류 잔존).
          원인: 과거 stale 보유행(KRW-BTC가 US_NASDAQ/USD로 저장)을 RecomputeAverage가 보존하고 SaveHolding ON CONFLICT가
          Market을 갱신조차 안 해 영구 잔존 → 코인 칸 0·해외 칸에 USD 환산으로 평가폭주. 수정: (1) 'KRW-' 접두는 시장/통화

@@ -114,6 +114,37 @@ namespace StockManager.Common
             { Freeze(attestation, "FX: 연산 트랩 — fail-closed"); dst = default; return false; }
         }
 
+        private const decimal OneRaw = 0.00000001m;   // 1 raw = 10^-8 (정준 스케일 최소 단위)
+
+        /// <summary>
+        /// S27-e Mission 2 — FX 환산 보수 수렴 검문(★비항등 한계 역치). 신 보수 명목 got(base raw)을 '독립 정확값'
+        /// exact = alignedNotionalDec × rateDec 와 대조한다(got 의 자기파생이 아님 → 항등식이 아니다):
+        ///   · 방향(보수 편향): 매수 got≥exact(ceil)·매도 got≤exact(floor). 역전(플랫폼 유리)이면 ForceFreeze.
+        ///   · 한계 역치: |got−exact| 이 누적 라운딩 한계(청산 1raw×rate + FX 1raw)를 '1 raw라도' 초과하면 ForceFreeze.
+        /// 정당 경로(신 QFixed 청산→FX)는 두 단계 보수 라운딩이라 항상 방향 보존 + |Δ|≤band 이나, 환율/스케일 오염은
+        /// band 를 finite 하게 초과해 반드시 발화한다(과거의 forward+back 동일환율 역산은 |Δ|&lt;band 가 항상 성립하던
+        /// 죽은 항등식이라 제거됨 — 본 검문은 정렬입력·환율로부터 '독립' 산출한 exact 와 대조해 그 함정을 회피).
+        /// 순수 decimal 값연산 — 무할당(동결 경로만 att 감사 할당).
+        /// </summary>
+        public static bool VerifyConservativeFxOrFreeze(QMoney got, decimal alignedNotionalDec, decimal rateDec,
+                                                        OrderSide side, OrderAttestationService? attestation)
+        {
+            // ★적대적 리뷰(minor) — public 독립 API 자기방어: 음수 환율은 방향 검문(매수 g≥exact·매도 g≤exact)을
+            //   뒤집어 보수성을 무력화한다. 상위 게이트(TryConvertOrFreeze)가 rate>0 을 선검증하지만, 이 메서드를
+            //   직접 호출하는 경로(테스트·미래 확장)에서도 fail-closed 가 깨지지 않도록 부호를 자체 검문한다.
+            if (rateDec <= 0m || alignedNotionalDec < 0m)
+            { Freeze(attestation, "FX수렴: 비양수 환율/음수 명목 — 독립 검문 fail-closed"); return false; }
+            decimal g = got.ToDecimal();
+            decimal exact = alignedNotionalDec * rateDec;
+            if (side == OrderSide.Buy  && g < exact) { Freeze(attestation, "FX수렴: 매수 보수 역전(ceil 위반·플랫폼 유리) — 동결"); return false; }
+            if (side == OrderSide.Sell && g > exact) { Freeze(attestation, "FX수렴: 매도 보수 역전(floor 위반·플랫폼 유리) — 동결"); return false; }
+            // 누적 라운딩 한계 = 청산 잔여(1raw)가 환율배 + FX 잔여(1raw). 환율은 위에서 양수 보증 — Abs 불요.
+            decimal band = OneRaw * rateDec + OneRaw;
+            if (Math.Abs(g - exact) > band)
+            { Freeze(attestation, "FX수렴: 환산 오차 한계 역치 초과 — 스케일/환율 오염, 동결"); return false; }
+            return true;
+        }
+
         private static void Freeze(OrderAttestationService? att, string msg) { try { att?.ForceFreeze(msg); } catch { } }
     }
 }
