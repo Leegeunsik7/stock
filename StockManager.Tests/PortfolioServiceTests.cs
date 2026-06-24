@@ -143,6 +143,37 @@ namespace StockManager.Tests
         }
 
         [Fact]
+        public void RecomputeAverage_CryptoSymbol_CorrectsStaleForeignMarket() => WithDb(db =>
+        {
+            // 과거 버그로 KRW-BTC가 US_NASDAQ/USD로 저장된 stale 보유 — 코인 거래 재계산 시 CRYPTO/KRW로 교정돼야.
+            db.SaveHolding(new Holding { Symbol = "KRW-BTC", Name = "비트코인", Market = Market.US_NASDAQ, Currency = Currency.USD, Quantity = 0.13m, AvgPrice = 97_000_000m, CurrentPrice = 97_000_000m, FirstBuyDate = _baseAt, BrokerAccount = "" });
+            db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 97_000_000m, ExecutedAt = _baseAt.AddMinutes(1) });
+            PortfolioService.RecomputeAverage(db, "KRW-BTC");   // 힌트 없이도 'KRW-' 접두로 확정 교정
+            var (mkt, ccy) = ReadMarketCcy(db, "KRW-BTC");
+            Assert.Equal(Market.CRYPTO, mkt);   // US_NASDAQ → CRYPTO 교정(SaveHolding ON CONFLICT가 Market 갱신)
+            Assert.Equal(Currency.KRW, ccy);
+        });
+
+        [Fact]
+        public void Startup_CorrectsStaleCryptoHoldingMarket()
+        {
+            // 기존 DB에 코인이 US/USD로 잘못 저장돼 있으면 재오픈(InitSchema) 시 KRW- 일괄 교정으로 CRYPTO/KRW.
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "smcryptofix_" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                using (var db = new LocalDatabase(path))
+                    db.SaveHolding(new Holding { Symbol = "KRW-BTC", Name = "비트코인", Market = Market.US_NASDAQ, Currency = Currency.USD, Quantity = 0.13m, AvgPrice = 97_000_000m, CurrentPrice = 97_000_000m, FirstBuyDate = new DateTime(2025, 1, 1), BrokerAccount = "" });
+                using (var db2 = new LocalDatabase(path))
+                {
+                    var dt = db2.Query("SELECT Market, Currency FROM Holdings WHERE Symbol='KRW-BTC'");
+                    Assert.Equal((int)Market.CRYPTO, Safe.Int(dt.Rows[0]["Market"]));
+                    Assert.Equal((int)Currency.KRW, Safe.Int(dt.Rows[0]["Currency"]));
+                }
+            }
+            finally { foreach (var s in new[] { "", "-wal", "-shm" }) { try { System.IO.File.Delete(path + s); } catch { } } }
+        }
+
+        [Fact]
         public void Crypto_Symbol_InfersCryptoMarket_NotUsStock() => WithDb(db =>
         {
             // KRW-BTC(7자)는 6자리 숫자가 아니라 과거엔 US_NASDAQ/USD로 오분류됐다 — 'KRW-' 접두 추론으로 CRYPTO/KRW.

@@ -63,9 +63,13 @@ namespace StockManager.Common
                 Symbol = symbol,
                 Name = has ? Safe.Str(dtH.Rows[0]["Name"])
                            : (string.IsNullOrWhiteSpace(fallbackName) ? symbol : fallbackName!.Trim()),
-                Market = has ? (Market)Safe.Int(dtH.Rows[0]["Market"])
+                // 코인('KRW-' 접두)은 시장/통화가 '확정적'(KRW-BTC=CRYPTO/KRW)이므로 기존 보유의 잘못된 시장
+                //   (과거 버그로 US_NASDAQ로 저장된 경우)을 '교정'한다. 그 외에는 기존 보유 보존 / 신규는 힌트·추론.
+                Market = crypto ? Market.CRYPTO
+                       : has ? (Market)Safe.Int(dtH.Rows[0]["Market"])
                              : (marketHint ?? inferMkt),
-                Currency = has ? (Currency)Safe.Int(dtH.Rows[0]["Currency"])
+                Currency = crypto ? Currency.KRW
+                         : has ? (Currency)Safe.Int(dtH.Rows[0]["Currency"])
                                : (currencyHint ?? inferCcy),
                 Quantity = qty,
                 AvgPrice = avg,

@@ -18,9 +18,14 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.45.1</Version>
-    <AssemblyVersion>4.45.1.0</AssemblyVersion>
-    <FileVersion>4.45.1.0</FileVersion>
+    <Version>4.45.2</Version>
+    <AssemblyVersion>4.45.2.0</AssemblyVersion>
+    <FileVersion>4.45.2.0</FileVersion>
+    <!-- v4.45.2 — 코인이 해외주식으로 분류·평가손익 -99.9% 폭주 수정(v4.45.1로 저장은 됐으나 시장 오분류 잔존).
+         원인: 과거 stale 보유행(KRW-BTC가 US_NASDAQ/USD로 저장)을 RecomputeAverage가 보존하고 SaveHolding ON CONFLICT가
+         Market을 갱신조차 안 해 영구 잔존 → 코인 칸 0·해외 칸에 USD 환산으로 평가폭주. 수정: (1) 'KRW-' 접두는 시장/통화
+         확정(CRYPTO/KRW)으로 stale 교정. (2) SaveHolding ON CONFLICT에 Name/Market/Currency 추가(교정 반영). (3) 시작 시
+         KRW- 보유 일괄 CRYPTO/KRW 교정(기존 잘못 저장분 자동 복구). 테스트 +2(재계산 교정·재오픈 교정). liveArmed:false 불변 -->
     <!-- v4.45.1 — ★BTC 0.13→0 진짜 근본수정: Quantity 컬럼 INTEGER→REAL 마이그레이션. 진단 'DB저장값 0/real'로
          확정 — 입력은 0.13인데 기존 DB의 Transactions/Holdings.Quantity(INTEGER 친화도)가 소수를 0으로 저장(Price는
          REAL이라 정상). 스키마를 REAL로 바꾸고(신규설치), 기존 DB는 InitSchema에서 테이블 재구성(create→copy→drop→

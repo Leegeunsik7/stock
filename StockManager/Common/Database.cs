@@ -161,6 +161,9 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             // v4.45.1: Quantity 컬럼 INTEGER 친화도 → REAL 재구성. 일부 기존 DB에서 INTEGER 컬럼이 소수(코인 0.13)를
             //   0으로 저장(친화도 변환)하던 치명 버그 — 컬럼을 REAL로 바꿔 영구 해결(Price처럼). 이미 REAL이면 스킵.
             _MigrateQuantityColumnToReal();
+            // v4.45.2: 'KRW-' 접두(업비트 코인)인데 과거 버그로 US/주식으로 저장된 보유를 CRYPTO/KRW로 일괄 교정.
+            //   (Market.CRYPTO=5, Currency.KRW=0) 코인이 해외주식 칸에 잡히고 USD 환산으로 평가손익이 폭주하던 문제 해결.
+            try { Execute("UPDATE Holdings SET Market=5, Currency=0 WHERE Symbol LIKE 'KRW-%' AND (Market<>5 OR Currency<>0)"); } catch { }
         }
 
         // Transactions/Holdings 의 Quantity 컬럼이 INTEGER 친화도면 REAL로 재구성(create→copy→drop→rename, 원자적).
@@ -316,10 +319,12 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             if (!vr.IsValid)
                 throw new ArgumentException($"보유 종목 검증 실패: {vr.Summary()}");
 
+            // ON CONFLICT 에 Name/Market/Currency 도 포함 — RecomputeAverage가 코인 시장 오분류(과거 US 저장)를
+            //   교정해도 반영되도록(이전엔 Market 미갱신이라 stale 시장이 영구 잔존). FirstBuyDate는 의도적 보존(미갱신).
             Execute(@"INSERT INTO Holdings(Symbol,Name,Market,Currency,Quantity,AvgPrice,CurrentPrice,FirstBuyDate,BrokerAccount,Memo,Tags,Commission,Tax)
                       VALUES(@s,@n,@m,@c,@q,@a,@p,@d,@b,@me,@t,@cm,@tx)
                       ON CONFLICT(Symbol,BrokerAccount) DO UPDATE SET
-                      Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t, Commission=@cm, Tax=@tx",
+                      Name=@n, Market=@m, Currency=@c, Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t, Commission=@cm, Tax=@tx",
                 new() {
                     ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market,
                     ["@c"] = (int)h.Currency, ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
@@ -341,6 +346,12 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             if (!vr.IsValid)
                 throw new ArgumentException($"보유 종목 검증 실패: {vr.Summary()}");
 
+            // 코인('KRW-' 접두)은 시장/통화 확정 — 수정 폼에서 실수로 US 등으로 바꿔도 CRYPTO/KRW로 고정(USD 환산
+            //   평가 폭주 재발 차단). RecomputeAverage·시작 교정과 동일 규약.
+            bool crypto = h.Symbol.StartsWith("KRW-", StringComparison.OrdinalIgnoreCase);   // 위 ValidateHolding 통과로 non-null·non-empty
+            int mkt = crypto ? (int)Market.CRYPTO : (int)h.Market;
+            int ccy = crypto ? (int)Currency.KRW : (int)h.Currency;
+
             // CurrentPrice/Memo/Tags/FirstBuyDate는 갱신하지 않는다 — 수정 폼이 다루지 않는 필드라 DB의 기존 값을
             //   보존한다(특히 Memo: 폼에 칸이 없어 갱신하면 동기화로 들어온 메모를 빈 문자열로 파괴함). CurrentPrice도
             //   라이브 시세를 평단으로 덮지 않도록 제외(직후 LoadAsync 갱신과 무충돌).
@@ -350,7 +361,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                         BrokerAccount=@b, Commission=@cm, Tax=@tx
                       WHERE Id=@id",
                 new() {
-                    ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market, ["@c"] = (int)h.Currency,
+                    ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = mkt, ["@c"] = ccy,
                     ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
                     ["@b"] = h.BrokerAccount,
                     ["@cm"] = (double)h.Commission, ["@tx"] = (double)h.Tax, ["@id"] = h.Id
