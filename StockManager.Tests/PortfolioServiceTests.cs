@@ -268,6 +268,83 @@ namespace StockManager.Tests
         });
 
         [Fact]
+        public void Schema_QuantityColumns_AreReal() => WithDb(db =>
+        {
+            // 신규 DB는 Quantity 컬럼이 REAL이어야 한다(소수 코인 수량 보존 — INTEGER 친화도 강제변환 회피).
+            foreach (var t in new[] { "Transactions", "Holdings" })
+            {
+                var info = db.Query($"SELECT type AS t FROM pragma_table_info('{t}') WHERE lower(name)='quantity'");
+                Assert.Equal(1, info.Rows.Count);
+                Assert.Contains("REAL", Safe.Str(info.Rows[0]["t"]).ToUpperInvariant());
+            }
+        });
+
+        [Fact]
+        public void Migration_IntegerQuantityColumn_RebuiltToReal_PreservesData()
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "smmig_" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                // 옛 스키마 모사: Quantity INTEGER 로 테이블 생성 + 데이터.
+                using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+                {
+                    c.Open();
+                    using var cmd = c.CreateCommand();
+                    cmd.CommandText = @"
+                        CREATE TABLE Transactions (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Type INTEGER NOT NULL, Quantity INTEGER, Price REAL, Commission REAL DEFAULT 0, Tax REAL DEFAULT 0, ExecutedAt TEXT NOT NULL, BrokerAccount TEXT, Memo TEXT);
+                        CREATE TABLE Holdings (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Name TEXT, Market INTEGER, Currency INTEGER, Quantity INTEGER, AvgPrice REAL, CurrentPrice REAL, FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT, UNIQUE(Symbol, BrokerAccount));
+                        INSERT INTO Transactions(Symbol,Type,Quantity,Price,ExecutedAt) VALUES('005930',0,10,1000,'2025-01-01T09:00:00');";
+                    cmd.ExecuteNonQuery();
+                }
+                // LocalDatabase 열기 → InitSchema가 Quantity INTEGER→REAL 재구성.
+                using (var db = new LocalDatabase(path))
+                {
+                    foreach (var t in new[] { "Transactions", "Holdings" })
+                    {
+                        var info = db.Query($"SELECT type AS t FROM pragma_table_info('{t}') WHERE lower(name)='quantity'");
+                        Assert.Equal(1, info.Rows.Count);
+                        Assert.Contains("REAL", Safe.Str(info.Rows[0]["t"]).ToUpperInvariant());   // REAL로 전환
+                    }
+                    Assert.Equal(10m, Safe.Dec(db.Query("SELECT Quantity FROM Transactions WHERE Symbol='005930'").Rows[0]["Quantity"]));   // 기존 데이터 보존
+                    db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 97_000_000m, ExecutedAt = new DateTime(2025, 1, 1, 9, 1, 0) });
+                    Assert.Equal(0.13m, Safe.Dec(db.Query("SELECT Quantity FROM Transactions WHERE Symbol='KRW-BTC'").Rows[0]["Quantity"]), 4);   // 재구성 후 소수 저장
+                }
+            }
+            finally { foreach (var s in new[] { "", "-wal", "-shm" }) { try { System.IO.File.Delete(path + s); } catch { } } }
+        }
+
+        [Fact]
+        public void Migration_VeryOldTransactions_MissingColumns_DoesNotSilentlyFail()
+        {
+            // 아주 오래된 스키마: Transactions에 Commission/Tax/BrokerAccount/Memo 가 없고 Quantity가 INTEGER.
+            //   복사 컬럼을 '실제 존재하는 것만'으로 동적 구성하지 않으면 INSERT...SELECT가 'no such column'으로
+            //   throw→롤백→마이그레이션 영영 미완료(0.13→0 버그 잔존)된다. 그 회귀를 차단함을 검증.
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "smmig2_" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+                {
+                    c.Open();
+                    using var cmd = c.CreateCommand();
+                    cmd.CommandText = @"
+                        CREATE TABLE Transactions (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Type INTEGER NOT NULL, Quantity INTEGER, Price REAL, ExecutedAt TEXT NOT NULL);
+                        CREATE TABLE Holdings (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Name TEXT, Market INTEGER, Currency INTEGER, Quantity INTEGER, AvgPrice REAL, CurrentPrice REAL, FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT, UNIQUE(Symbol, BrokerAccount));
+                        INSERT INTO Transactions(Symbol,Type,Quantity,Price,ExecutedAt) VALUES('005930',0,7,1000,'2025-01-01T09:00:00');";
+                    cmd.ExecuteNonQuery();
+                }
+                using (var db = new LocalDatabase(path))
+                {
+                    var info = db.Query("SELECT type AS t FROM pragma_table_info('Transactions') WHERE lower(name)='quantity'");
+                    Assert.Contains("REAL", Safe.Str(info.Rows[0]["t"]).ToUpperInvariant());   // 누락 컬럼이 있어도 REAL 전환 완료
+                    Assert.Equal(7m, Safe.Dec(db.Query("SELECT Quantity FROM Transactions WHERE Symbol='005930'").Rows[0]["Quantity"]));   // 데이터 보존
+                    db.AddTransaction(new Transaction { Symbol = "KRW-BTC", Type = TransactionType.Buy, Quantity = 0.13m, Price = 97_000_000m, ExecutedAt = new DateTime(2025, 1, 1, 9, 1, 0) });
+                    Assert.Equal(0.13m, Safe.Dec(db.Query("SELECT Quantity FROM Transactions WHERE Symbol='KRW-BTC'").Rows[0]["Quantity"]), 4);   // 소수 저장
+                }
+            }
+            finally { foreach (var s in new[] { "", "-wal", "-shm" }) { try { System.IO.File.Delete(path + s); } catch { } } }
+        }
+
+        [Fact]
         public void DeleteTransaction_Recompute_RecoversNetZeroHolding() => WithDb(db =>
         {
             // 지휘관 상황 재현: 매수 0.13 + (반복 시도 중 섞인) 매도 0.13 → 순수량 0 → 보유 목록에서 사라짐(qty 0).

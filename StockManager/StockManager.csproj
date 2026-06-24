@@ -18,9 +18,15 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.45.0</Version>
-    <AssemblyVersion>4.45.0.0</AssemblyVersion>
-    <FileVersion>4.45.0.0</FileVersion>
+    <Version>4.45.1</Version>
+    <AssemblyVersion>4.45.1.0</AssemblyVersion>
+    <FileVersion>4.45.1.0</FileVersion>
+    <!-- v4.45.1 — ★BTC 0.13→0 진짜 근본수정: Quantity 컬럼 INTEGER→REAL 마이그레이션. 진단 'DB저장값 0/real'로
+         확정 — 입력은 0.13인데 기존 DB의 Transactions/Holdings.Quantity(INTEGER 친화도)가 소수를 0으로 저장(Price는
+         REAL이라 정상). 스키마를 REAL로 바꾸고(신규설치), 기존 DB는 InitSchema에서 테이블 재구성(create→copy→drop→
+         rename, RunInTransaction 원자적, 이미 REAL이면 스킵). 데이터·Id 보존. 테스트: INTEGER DB 열기→REAL 전환·보존·
+         소수 저장 검증 + 신규 스키마 REAL 검증. pragma_table_info 함수형으로 친화도 점검(PRAGMA 전체 로드는 dflt_value 충돌). -->
+
     <!-- v4.45.0 — ★BTC 0.13→0 저장 근본 수정. 진단 배너 'DB저장값 0/real'이 결정타: 정수 강제변환이 아니라 입력
          0.13이 0으로 '잃힌' 것. 비교로 확정 — 단가(텍스트+InvariantCulture 파싱, v4.40.0)는 정상 저장됐고 수량만
          type=number @bind이라 0.13을 0으로 잃었다(Blazor 숫자입력 소수 바인딩이 이 환경에서 깨짐). 수량 입력(매수폼·

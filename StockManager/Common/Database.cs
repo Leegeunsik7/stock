@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS Holdings (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     Symbol TEXT NOT NULL, Name TEXT,
     Market INTEGER, Currency INTEGER,
-    Quantity INTEGER, AvgPrice REAL, CurrentPrice REAL,
+    Quantity REAL, AvgPrice REAL, CurrentPrice REAL,
     FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT,
     Commission REAL DEFAULT 0, Tax REAL DEFAULT 0,
     UNIQUE(Symbol, BrokerAccount)
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS Holdings (
 CREATE TABLE IF NOT EXISTS Transactions (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     Symbol TEXT NOT NULL, Type INTEGER NOT NULL,
-    Quantity INTEGER, Price REAL,
+    Quantity REAL, Price REAL,
     Commission REAL DEFAULT 0, Tax REAL DEFAULT 0,
     ExecutedAt TEXT NOT NULL, BrokerAccount TEXT, Memo TEXT
 );
@@ -158,6 +158,75 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             // v4.38.0: 보유 종목에 누적 수수료·세금 (수정 폼에서 보정 / 거래 합계 자동 반영)
             try { Execute("ALTER TABLE Holdings ADD COLUMN Commission REAL DEFAULT 0");        } catch { }
             try { Execute("ALTER TABLE Holdings ADD COLUMN Tax REAL DEFAULT 0");               } catch { }
+            // v4.45.1: Quantity 컬럼 INTEGER 친화도 → REAL 재구성. 일부 기존 DB에서 INTEGER 컬럼이 소수(코인 0.13)를
+            //   0으로 저장(친화도 변환)하던 치명 버그 — 컬럼을 REAL로 바꿔 영구 해결(Price처럼). 이미 REAL이면 스킵.
+            _MigrateQuantityColumnToReal();
+        }
+
+        // Transactions/Holdings 의 Quantity 컬럼이 INTEGER 친화도면 REAL로 재구성(create→copy→drop→rename, 원자적).
+        //   일부 기존 DB에서 INTEGER 컬럼이 0.13 같은 소수를 0으로 저장하던 버그의 영구 해결. 이미 REAL이면 각 테이블 스킵.
+        private void _MigrateQuantityColumnToReal()
+        {
+            (string table, string createNew, string[] wantCols, string idx)[] specs =
+            {
+                ("Transactions",
+                 "CREATE TABLE Transactions__r (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Type INTEGER NOT NULL, Quantity REAL, Price REAL, Commission REAL DEFAULT 0, Tax REAL DEFAULT 0, ExecutedAt TEXT NOT NULL, BrokerAccount TEXT, Memo TEXT)",
+                 new[] { "Id", "Symbol", "Type", "Quantity", "Price", "Commission", "Tax", "ExecutedAt", "BrokerAccount", "Memo" },
+                 "CREATE INDEX IF NOT EXISTS IX_Tx_Symbol ON Transactions(Symbol); CREATE INDEX IF NOT EXISTS IX_Tx_Date ON Transactions(ExecutedAt);"),
+                ("Holdings",
+                 "CREATE TABLE Holdings__r (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Name TEXT, Market INTEGER, Currency INTEGER, Quantity REAL, AvgPrice REAL, CurrentPrice REAL, FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT, Commission REAL DEFAULT 0, Tax REAL DEFAULT 0, UNIQUE(Symbol, BrokerAccount))",
+                 new[] { "Id", "Symbol", "Name", "Market", "Currency", "Quantity", "AvgPrice", "CurrentPrice", "FirstBuyDate", "BrokerAccount", "Memo", "Tags", "Commission", "Tax" },
+                 ""),
+            };
+            foreach (var s in specs)
+            {
+                try
+                {
+                    if (_QuantityIsReal(s.table)) continue;   // 이미 REAL → 재구성 불필요
+                    // 복사 컬럼은 '옛 테이블에 실제 존재하는' 것만 — 아주 오래된 스키마(Commission/Tax 등 누락)에서
+                    //   INSERT...SELECT가 'no such column'으로 실패해 마이그레이션이 영영 미완료되는 것을 막는다.
+                    //   누락 컬럼은 새 테이블 DEFAULT(0)/NULL로 채워진다.
+                    var existing = _ColumnNames(s.table);
+                    var sbCols = new System.Text.StringBuilder();
+                    foreach (var c in s.wantCols)
+                        if (existing.Contains(c)) { if (sbCols.Length > 0) sbCols.Append(','); sbCols.Append(c); }
+                    string copy = sbCols.ToString();
+                    if (copy.Length == 0) continue;   // 비정상(컬럼 매칭 0) → 건드리지 않음
+
+                    RunInTransaction(() =>
+                    {
+                        Execute(s.createNew);
+                        Execute($"INSERT INTO {s.table}__r ({copy}) SELECT {copy} FROM {s.table}");
+                        Execute($"DROP TABLE {s.table}");
+                        Execute($"ALTER TABLE {s.table}__r RENAME TO {s.table}");
+                        if (s.idx.Length > 0) Execute(s.idx);
+                    });
+                }
+                catch { /* 마이그레이션 실패 시 원자적 롤백 — 기존 테이블 보존(안전) */ }
+            }
+        }
+
+        // 해당 테이블의 Quantity 컬럼 선언 친화도가 REAL 인지.
+        //   PRAGMA table_info(...) 전체 로드는 dflt_value 컬럼이 혼합형이라 DataTable에서 throw → 함수형
+        //   pragma_table_info(...)로 'type' 컬럼만 SELECT(테이블명은 하드코딩이라 주입 위험 없음).
+        private bool _QuantityIsReal(string table)
+        {
+            try
+            {
+                var dt = Query($"SELECT type AS t FROM pragma_table_info('{table}') WHERE lower(name)='quantity'");
+                if (dt.Rows.Count == 0) return true;   // 컬럼 없음 → 재구성 안 함
+                return Safe.Str(dt.Rows[0]["t"]).ToUpperInvariant().Contains("REAL");
+            }
+            catch { return true; }   // 불확실하면 재구성 안 함(안전)
+        }
+
+        // 테이블의 실제 컬럼명 집합(대소문자 무시). pragma_table_info 함수형으로 name만 SELECT(dflt_value 충돌 회피).
+        private HashSet<string> _ColumnNames(string table)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try { foreach (DataRow r in Query($"SELECT name FROM pragma_table_info('{table}')").Rows) set.Add(Safe.Str(r["name"])); }
+            catch { }
+            return set;
         }
 
         // ── DB 동시성 방어 (v3.5.0) ──────────────────────────────────────
