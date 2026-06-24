@@ -774,9 +774,23 @@ else if (_tab == "corr")
         }
         catch (Exception ex) { _txMsg = "저장 실패: " + ex.Message; return; }   // 저장 자체 실패 → 폼 유지
 
-        // 2) 저장 성공 — 확인 배너를 띄우고 폼을 닫는다. 이후 시세 갱신 실패는 저장에 영향 없음(별도 try).
+        // 2) 저장 성공 — 저장 직후 DB 실제 상태를 조회해 배너에 반영(정상이면 보유수량 확인, 비정상이면 진단 노출).
+        //    '저장됐다는데 데이터가 없다'는 신고의 원인을 사용자 환경에서 확정하기 위함. (읽기 쿼리라 락 불필요)
         string nm = string.IsNullOrWhiteSpace(_tf.Name) ? tx.Symbol : _tf.Name;
-        _flash = $"✅ '{nm}' {(_txType == TransactionType.Buy ? "매수" : "매도")} 거래가 저장되었습니다.";
+        int txCnt = 0; decimal hQty = 0; bool hExists = false;
+        try
+        {
+            var tc = Db.Query("SELECT COUNT(*) AS c FROM Transactions WHERE Symbol=@s", new() { ["@s"] = tx.Symbol });
+            txCnt = tc.Rows.Count > 0 ? Safe.Int(tc.Rows[0]["c"]) : 0;
+            var hd = Db.Query("SELECT Quantity FROM Holdings WHERE Symbol=@s", new() { ["@s"] = tx.Symbol });
+            hExists = hd.Rows.Count > 0;
+            if (hExists) hQty = Safe.Dec(hd.Rows[0]["Quantity"]);
+        }
+        catch { }
+        if (!hExists || hQty <= 0)
+            _flash = $"⚠️ '{nm}' 거래는 저장됐으나 보유 항목이 안 잡힘 — 코드 [{tx.Symbol}] · 입력수량 {tx.Quantity} · DB거래 {txCnt}건 · 보유행 {(hExists ? $"있음(수량 {hQty})" : "없음")}. 이 문구를 캡처해 알려주세요.";
+        else
+            _flash = $"✅ '{nm}' {(_txType == TransactionType.Buy ? "매수" : "매도")} 저장됨 — 보유수량 {hQty} ({tx.Symbol}).";
         _showTxForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
         try { await LoadAsync(); LoadTransactions(); } catch { /* 시세 갱신 실패는 저장과 무관 — 다음 새로고침에 반영 */ }
     }

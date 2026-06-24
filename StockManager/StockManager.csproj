@@ -18,9 +18,14 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.42.0</Version>
-    <AssemblyVersion>4.42.0.0</AssemblyVersion>
-    <FileVersion>4.42.0.0</FileVersion>
+    <Version>4.42.1</Version>
+    <AssemblyVersion>4.42.1.0</AssemblyVersion>
+    <FileVersion>4.42.1.0</FileVersion>
+    <!-- v4.42.1 — 진단: '비트코인 저장됐다는데 데이터 없음' 신고 추적. SaveTx가 저장 직후 DB 실제 상태(해당 코드의
+         거래 건수·보유행 존재·보유수량)를 직접 조회해 배너에 노출. 정상이면 '✅ 저장됨 — 보유수량 X', 비정상이면
+         '⚠️ 거래는 저장됐으나 보유 항목 미생성 — 코드/수량/DB거래/보유행' 진단 표시. 코어(AddTransaction+
+         RecomputeAverage+GetAllHoldings)는 단위 테스트(TxFormBtcSave) 통과 — 라이브 DB 실측으로 간극 확정 목적. -->
+
     <!-- v4.42.0 — 포트폴리오 실시간 자동 새로고침(토스류). 지휘관 요청: 시세가 바로바로 들어와 현재 상황을 전체적으로.
          · 자동 새로고침 주기 선택(끄기/3/5/10/30초, 기본 5초) + 헤더 '● LIVE N초' 펄스. 기존 30초 고정 → 사용자 제어.
          · 주식 시세 '병렬' fetch(동시 6, Task.WhenAll) — provider에 배치 없어 18종목 순차 9~18초였던 것을 수초로. 코인은
