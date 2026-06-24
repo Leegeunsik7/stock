@@ -18,9 +18,14 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.43.0</Version>
-    <AssemblyVersion>4.43.0.0</AssemblyVersion>
-    <FileVersion>4.43.0.0</FileVersion>
+    <Version>4.43.1</Version>
+    <AssemblyVersion>4.43.1.0</AssemblyVersion>
+    <FileVersion>4.43.1.0</FileVersion>
+    <!-- v4.43.1 — ★실시간 폴링이 매수폼 입력을 손상시키던 치명 버그 수정. 거래 이력 실측 결과 'KRW-BTC Buy 수량 0'으로
+         저장된 게 확인됨(폼엔 0.13로 보였으나). 원인: v4.42.0의 5초 자동 새로고침 StateHasChanged 재렌더가 폼이 열린
+         채 발생해, 입력 중인 컨트롤드 입력(수량·단가·거래일시)을 backing 값으로 리셋 → 0.13이 0으로 저장. 수정: 폼 열림
+         (_showTxForm/_showForm) 중에는 폴링 재렌더를 건너뛴다. 코어 저장/재계산은 정상이었음(단위 테스트 통과). -->
+
     <!-- v4.43.0 — 거래 이력 개별 삭제 + 평단 재계산 연쇄. 진단(v4.42.1) 결과 'BTC 거래 10건·보유수량 0'으로 확인된
          원인(누적 거래 순수량 0 → Quantity>0 필터 탈락)의 자가 정리 수단. 📝 거래 이력에 🗑 삭제 버튼 → DeleteTransaction(Id)
          + RecomputeAverage(종목) → 보유 목록·집계 즉시 갱신. 회귀 테스트: 매수0.13+매도0.13 순0 → 매도 삭제 → 0.13 복구.

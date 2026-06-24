@@ -570,9 +570,10 @@ else if (_tab == "corr")
     }
     private void OnAsOf() { if (!AsOfCtx.IsLive) _tab = "hold"; LoadAsOf(); InvokeAsync(StateHasChanged); }   // AS-OF 진입 시 보유탭 고정(다른 탭의 현재가 누수 차단)
 
-    // 자동 새로고침 폴링. 주기는 _pollSec(초). 끄기(0)·과거시점(AS-OF)·보유 탭 아님이면 시세 폴링을 건너뛴다.
-    //   자동 폴링은 persist:false 로 'DB 저장 없이' 메모리 시세만 갱신 → 5초 폴링에도 DB 쓰기 폭주 없음(저장은
-    //   초기 로드·수동 새로고침 때만). 시세 fetch는 UpdatePricesAsync에서 병렬화돼 18종목도 수초 내 완료.
+    // 자동 새로고침 폴링. 주기는 _pollSec(초). 끄기(0)·과거시점(AS-OF)·보유 탭 아님·폼 입력 중이면 건너뛴다.
+    //   ★폼 입력 중(_showTxForm/_showForm) 폴링 금지 — 폴링의 StateHasChanged 재렌더가 입력 중인 컨트롤드 입력
+    //     (수량·단가·거래일시)을 리셋해 '0.13 입력이 0으로 저장'되던 치명 버그를 막는다.
+    //   자동 폴링은 persist:false 로 'DB 저장 없이' 메모리 시세만 갱신(저장은 초기·수동 때만). 시세 fetch는 병렬.
     private async Task Loop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -580,7 +581,8 @@ else if (_tab == "corr")
             int sec = _pollSec > 0 ? _pollSec : 15;   // 끄기 상태에선 15초마다 깨어 재확인만(부하 0)
             try { await Task.Delay(sec * 1000, ct); } catch { return; }
             if (ct.IsCancellationRequested) return;
-            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold") continue;   // 폴링 조건 미충족 → 건너뜀
+            // 폴링 조건 미충족(끄기·과거시점·보유탭 아님·폼 입력 중) → 재렌더 건너뜀
+            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold" || _showTxForm || _showForm) continue;
             await LoadAsync(persist: false);
             await InvokeAsync(StateHasChanged);
         }
