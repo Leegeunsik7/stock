@@ -18,9 +18,21 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.48.4</Version>
-    <AssemblyVersion>4.48.4.0</AssemblyVersion>
-    <FileVersion>4.48.4.0</FileVersion>
+    <Version>4.49.0</Version>
+    <AssemblyVersion>4.49.0.0</AssemblyVersion>
+    <FileVersion>4.49.0.0</FileVersion>
+    <!-- v4.49.0 — ★Path B: QFixed 청산 척추를 실 브로커 파이프라인에 '유선 납땜'(스캐폴드→결속). 신규
+         ShadowClearingBroker(IBroker 데코레이터) — Place 시 ShadowCutoverGate.Clear(symbol,..)로 신 고정소수점
+         청산을 '병렬 섀도우 관측'한다. BrokerHub.Create(db, shadowGate=null) 오버로드가 생성 브로커를 래핑(게이트
+         제공 시). liveArmed:false 와 동일 사상의 staged 컷오버 — '도려내기'(레거시 decimal 권위 교체)는 불변식상
+         금지, 대신 병렬 대조만. 안전 불변 3종: ①게이트 INERT(기본)면 Clear 미호출(완전 통과·무할당) ②관측 결과는
+         버림(레거시 inner 가 권위, 반환 불변) ③관측 중 어떤 예외/동결도 try/catch+위임으로 inner.Place 를 절대
+         막지 못함(ObservationFreeze_DoesNotBlockInner 박제). 활성화(enabled=true) 전제는 정직 표기: 자산별 정확
+         QTickSpec 레지스트리(KRW 정수 spec 의 USD/소수단가 침묵왜곡 회피). 적대적 리뷰(2렌즈 ship) 후속 하드닝 —
+         DI 게이트(BlazorHomeForm)에 '전용 섀도우 attestation' 주입: 라이브 OrderAttestationService 공유 시 옵트인+배선
+         후 섀도우 발산 ForceFreeze 가 라이브 실주문(ExecutionBridgeBroker.AssertNormal)을 동결시키는 잠복 footgun 차단
+         (섀도우 동결은 gate.FrozenCount/전용 att 로만 관측). 현재는 BrokerHub.Create(db) 기본이 gate=null 이라 미배선
+         (후방호환·INERT). 테스트 +5(통과/INERT/관측/동결격리/위임/널가드). 빌드 0/0. liveArmed:false 불변. -->
     <!-- v4.48.4 — Path A 전역 플래키 0% 마감(v4.48.3 cc2509c 'TWAP WIP' 완결: 잔여 클러스터 ComplianceBridge·
          LiveTrading·S24b 결정론화 추가분). 사용자가 지목한 'TWAP cancel 단일 주범' 가정을 TRX census(반복 실행
          실측)로 반증 — 실은 '벽시계 타이밍 의존 비동기 테스트 패밀리'였다. 발견·제거 전수(census 25→15→12회로 0 수렴):

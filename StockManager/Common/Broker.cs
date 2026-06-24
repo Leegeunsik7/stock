@@ -51,12 +51,15 @@ namespace StockManager.Common
         public static void SetMaxOrderKrw(LocalDatabase db, decimal v) => db.SetSetting("Broker.MaxOrderKrw", ((long)v).ToString());
 
         /// <summary>현재 모드/무장 상태에 맞는 브로커.
-        /// 모의 → PaperBroker, 실전·미무장 → 거부 스텁, 실전·무장 → 실거래 라우터(금액 상한 적용).</summary>
-        public static IBroker Create(LocalDatabase db)
+        /// 모의 → PaperBroker, 실전·미무장 → 거부 스텁, 실전·무장 → 실거래 라우터(금액 상한 적용).
+        /// Path B — shadowGate 제공 시 ShadowClearingBroker 로 래핑해 신 QFixed 청산을 '병렬 관측'(레거시 권위 불변,
+        /// 게이트 INERT 면 완전 통과). gate=null(기본)은 후방호환 — 기존 호출부 거동 무변경.</summary>
+        public static IBroker Create(LocalDatabase db, ShadowCutoverGate? shadowGate = null)
         {
-            if (!IsLive(db)) return new PaperBroker(db);
-            if (!IsArmed(db)) return new LiveBrokerStub();
-            return new LiveRouterBroker(db);
+            IBroker inner = !IsLive(db) ? new PaperBroker(db)
+                          : !IsArmed(db) ? new LiveBrokerStub()
+                          : (IBroker)new LiveRouterBroker(db);
+            return shadowGate is null ? inner : new ShadowClearingBroker(inner, shadowGate);
         }
     }
 
