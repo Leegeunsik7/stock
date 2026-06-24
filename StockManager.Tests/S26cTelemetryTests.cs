@@ -77,7 +77,10 @@ namespace StockManager.Tests
             var r1 = new Thread(Reader) { IsBackground = true };
             var r2 = new Thread(Reader) { IsBackground = true };
             r1.Start(); r2.Start();
-            for (long s = 1; s <= 200000; s++) ch.Publish(T(s));
+            // 라이터 발행 루프가 너무 빨라(수 ms) 리더 스레드가 시작·스케줄되기 전에 끝나면 okReads가 임계치 미달로
+            //   플래키했다(불변식 torn==0 은 항상 견고). 주기적 Thread.Yield 로 리더에 CPU를 양보해 '발행 폭풍
+            //   한가운데서 무수히 읽음'을 결정론적으로 보장 — 동시성 강도·비공허성은 그대로(여전히 라이브 동시 독출).
+            for (long s = 1; s <= 200000; s++) { ch.Publish(T(s)); if ((s & 0x3FF) == 0) Thread.Yield(); }
             Volatile.Write(ref stop, true); r1.Join(15000); r2.Join(15000);
             Assert.Equal(0, torn);                                  // torn read 0(불변식 무손상)
             Assert.True(okReads > 1000, $"동시 독출 비공허 입증 — okReads={okReads}");   // 발행 중 실제로 무수히 읽음

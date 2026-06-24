@@ -18,9 +18,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.41.0</Version>
-    <AssemblyVersion>4.41.0.0</AssemblyVersion>
-    <FileVersion>4.41.0.0</FileVersion>
+    <Version>4.42.0</Version>
+    <AssemblyVersion>4.42.0.0</AssemblyVersion>
+    <FileVersion>4.42.0.0</FileVersion>
+    <!-- v4.42.0 — 포트폴리오 실시간 자동 새로고침(토스류). 지휘관 요청: 시세가 바로바로 들어와 현재 상황을 전체적으로.
+         · 자동 새로고침 주기 선택(끄기/3/5/10/30초, 기본 5초) + 헤더 '● LIVE N초' 펄스. 기존 30초 고정 → 사용자 제어.
+         · 주식 시세 '병렬' fetch(동시 6, Task.WhenAll) — provider에 배치 없어 18종목 순차 9~18초였던 것을 수초로. 코인은
+           업비트 배치 1콜. 자동 폴링은 메모리만 갱신(DB 저장 분리) → 5초 폴링에도 SaveHolding 폭주 없음(저장은 초기·수동).
+         · 현재가 틱 플래시(상승 초록/하락 빨강, @key 재생성). AsOf(과거시점)·보유탭 아님·끄기면 폴링 일시정지.
+         · 적대적 리뷰 수정: (MAJOR) 폴링·수동 LoadAsync 인터리브로 한 사이클 총평가 오류 → SemaphoreSlim(1) 직렬화(큐잉).
+           (MAJOR) AS-OF에서 LIVE KPI·자산군 카드·탭이 현재가 노출 → @if(IsLive) 가드 + AS-OF 진입 시 보유탭 고정.
+         아키텍처는 사전 탐색(scout) 워크플로로 매핑 후 설계. ⚠️ 라이브 시세 CI 미검증·근사. liveArmed:false 불변 -->
     <!-- v4.41.0 — 비트코인 미저장 진짜 원인: 검색창에 이름만 타이핑하고 드롭다운을 '선택'하지 않아 종목코드가
          빈 채로 저장 시도(검증 거부)된 것(지휘관 스크린샷: 종목코드 placeholder=빈값). SymbolPicker UX 보강:
          (1) Enter로 첫(최상위 관련도) 결과 선택 — "비트코인"+Enter면 KRW-BTC 즉시 채움. IME 조합확정 Enter는 무시.
