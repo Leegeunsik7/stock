@@ -18,9 +18,23 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.49.0</Version>
-    <AssemblyVersion>4.49.0.0</AssemblyVersion>
-    <FileVersion>4.49.0.0</FileVersion>
+    <Version>4.50.0</Version>
+    <AssemblyVersion>4.50.0.0</AssemblyVersion>
+    <FileVersion>4.50.0.0</FileVersion>
+    <!-- v4.50.0 — ★Path C(S29): SPMC 락-프리 주문 디스패치 링버퍼 개통. 검증된 RingBufferCore<T>(S20 #1·seqlock
+         SPMC) 위에 고정소수점 OrderProposal(unmanaged 값 타입: OrderId·GenomeId·SymbolCode·Side·Kind·PriceRaw
+         (QPrice)·QtyRaw(QQty)·Ticks)을 얹어 챔피언 제안을 단일 생산자→다중 소비자(브릿지·감사·텔레메트리)로 무잠금
+         분배. OrderDispatchRing(Publish 단일생산자·CreateConsumer 독립커서) + GatedOrderDispatcher(무장 술어 주입 —
+         armed+미동결일 때만 송출 콜백, 아니면 GatedOut 카운트만). ★liveArmed:false 불변: 링은 '전송 전용', 실 송출은
+         무장 게이트가 결정 → 술어 false(기본 자세)면 송출 수학적 0(제안은 감사/텔레메트리로만 흐름). 실 무장 배선
+         (BrokerHub.IsArmed·IgnitionLock·attestation)은 앱 레벨 옵트인 — 스캐폴드는 술어 주입으로 계약만 고정.
+         ★정직 경계(RingBufferCore 헤더 계승): 명분은 ns 거래지연 아님(키움 왕복 ~100ms+ 지배·AOT 차단) — 실익은
+         재사용 분배 코어+백테스트/리플레이 처리량+생산-소비 분리. 적대적 리뷰(2렌즈 ship) 후속 하드닝: ①무장 술어가
+         throw(예: BrokerHub.IsArmed 의 db I/O 예외)하면 Drain 이 fail-closed — 미무장 간주·송출 안 함·GatedOut 계상·
+         예외 미전파(제안 증발 차단). ②단일 생산자 계약을 CAS 게이트(EnterPublish)로 런타임 강제 — 동시 발행 진입은
+         슬롯/시퀀스 손상 대신 즉시 throw(오해 유발하던 _nextOrderId Interlocked 제거). 테스트 +9(고정소수점 라운드트립·
+         SPMC 팬아웃·추월 드롭 계측·단일생산자 4소비자 torn=0 동시성[작업량 경계]·무장 게이트 disarmed/armed/런타임후퇴·
+         술어 throw fail-closed·게이트 해제·널가드). 빌드 0/0, 전체 1472 통과(동시성 6회 연속 torn=0). liveArmed:false 불변. -->
     <!-- v4.49.0 — ★Path B: QFixed 청산 척추를 실 브로커 파이프라인에 '유선 납땜'(스캐폴드→결속). 신규
          ShadowClearingBroker(IBroker 데코레이터) — Place 시 ShadowCutoverGate.Clear(symbol,..)로 신 고정소수점
          청산을 '병렬 섀도우 관측'한다. BrokerHub.Create(db, shadowGate=null) 오버로드가 생성 브로커를 래핑(게이트
