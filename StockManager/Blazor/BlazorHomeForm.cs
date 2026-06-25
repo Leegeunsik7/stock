@@ -51,7 +51,10 @@ namespace StockManager.Blazor
             services.AddSingleton<AiService>();
             services.AddSingleton<FxConverter>();   // ⚠️ Singleton 필수 — 10분 환율 캐시가 수명에 의존
             services.AddSingleton<ToastService>();  // 액션형 전역 토스트 (어느 페이지에서나 주입)
-            services.AddSingleton<CommandPaletteController>();  // Mission C — 명령 팔레트 순수 C# 열기 브로커(JS 홉 제거)
+            services.AddSingleton<CommandPaletteController>();  // 명령 팔레트 순수 C# 열기 브로커(JS 홉 제거)
+            // S28 Mission B — AI 비서 컴플라이언스 페르소나 가드(sticky 락). 단일 사용자 WebView → 싱글톤 =
+            //   '앱 세션' 잠금 의미론(비정상 의도 1회 → 세션 봉인, 앱 재시작 시 초기화). AdvisorPage 가 분류→Admit.
+            services.AddSingleton<ComplianceGate>();
             services.AddSingleton<SymbolContext>();  // 전역 활성 종목 (연구 도구 횡이동 시드)
             services.AddSingleton<AsOfContext>();    // 전역 시점(As-Of) — 글로벌 타임-스크러버
             services.AddSingleton<GlobalIndexService>(); // 전세계 주요 지수 60초 폴링

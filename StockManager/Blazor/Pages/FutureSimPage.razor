@@ -1,0 +1,288 @@
+@* ============================================================================
+   FutureSimPage — S28 Mission C: Sliders→Seqlock 실시간 카오스 변이 파이프라인
+   리밸런싱 레버(bp)·카오스 스위치 → 무할당 ShadowMutation → ScenarioPublisher.Recompute(단일 라이터·δ=0),
+   PeriodicTimer(150ms) + 무잠금 TryReadFrame 버스트 독출 → 찢김이면 직전 프레임 유지, 유효 프레임만 SVG 자산곡선 재렌더.
+   ★결정론: FutureValueEngine 의 closed-form 복리 + k·σ·√t 밴드(난수/몬테카를로 사칭 없음·매 연차 floor 하향 편향).
+   ============================================================================ *@
+@page "/future/sim"
+@implements IAsyncDisposable
+@using System.Threading
+
+<div class="top">
+    <div class="hello">
+        <h1>🌀 미래가치 시뮬 <span class="tag">SLIDERS → SEQLOCK</span></h1>
+        <p>리밸런싱 레버·거시 충격을 실시간 변이 → 락-프리 곡선. 결정론 복리(난수 아님)·하향 편향 밴드 — 정보 제공이며 예언이 아닙니다.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 36px;max-width:1000px">
+
+    @* ── 카오스 스위치 ── *@
+    <div class="panel" style="margin-bottom:14px">
+        <div class="panel-h">🌪 거시 충격 (Chaos)</div>
+        <div class="panel-b" style="padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap">
+            @foreach (var s in _storms)
+            {
+                var ss = s;
+                <button class="@(_chaos == ss ? "addbtn" : "ghost")" style="font-size:12.5px"
+                        @onclick="() => OnChaos(ss)">@StormLabel(ss)</button>
+            }
+        </div>
+    </div>
+
+    @* ── 리밸런싱 레버 ── *@
+    <div class="panel" style="margin-bottom:14px">
+        <div class="panel-h">⚖️ 리밸런싱 레버 (basis point · 10000 = 1.000× 중립)</div>
+        <div class="panel-b" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <span class="sub" style="font-size:12px">대상 자산군</span>
+                @foreach (var c in _targets)
+                {
+                    var cc = c;
+                    <button class="@(_target == cc ? "addbtn" : "ghost")" style="font-size:12.5px"
+                            @onclick="() => OnTarget(cc)">@ClassLabel(cc)</button>
+                }
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+                <input type="range" min="0" max="@RebalanceLever.MaxLeverBp" step="500" style="flex:1"
+                       value="@_leverBp" @oninput="OnLeverInput" />
+                <span style="font-family:var(--mono);font-size:14px;font-weight:700;min-width:84px;text-align:right">
+                    @((_leverBp / 10000m).ToString("0.000"))× <span class="sub" style="font-weight:400">(@_leverBp bp)</span>
+                </span>
+            </div>
+            <div class="sub" style="font-size:11.5px">
+                각 변이는 <b>기준 포트폴리오에 대한 단일 what-if 배수</b>입니다(엔진은 한 번에 하나의 ShadowMutation 을 기준값에 적용 —
+                최근 조작이 반영). 범위 이탈(>5.000×)·음수 레버는 fail-closed(곡선 미갱신).
+            </div>
+        </div>
+    </div>
+
+    @* ── 자산 곡선 ── *@
+    <div class="panel" style="margin-bottom:14px">
+        <div class="panel-h">📈 @(Years)년 미래가치 곡선 <span class="tag">SEQLOCK v@(_version)</span></div>
+        <div class="panel-b" style="padding:14px 16px">
+            @if (_hasFrame)
+            {
+                @((MarkupString)CurveSvg())
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--sub)">
+                    <span><span style="display:inline-block;width:12px;height:8px;background:color-mix(in srgb,var(--accent) 16%,transparent);vertical-align:middle"></span> 낙관–비관 밴드(k≈1.645·단측95%)</span>
+                    <span><span style="display:inline-block;width:14px;height:2px;background:var(--accent);vertical-align:middle"></span> 중앙값(복리)</span>
+                    <span style="margin-left:auto">현재 ₩@FmtKrw(_median[0]) → @(Years)년 ₩@FmtKrw(_median[Years])</span>
+                </div>
+            }
+            else
+            {
+                <div style="text-align:center;padding:36px;color:var(--sub);font-size:13px">계산 대기… (레버를 움직이거나 충격을 선택하세요)</div>
+            }
+        </div>
+    </div>
+
+    @* ── 진단 + 계기 ── *@
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr)">
+        <div class="kpi"><div class="k-lab">집중도(최대 자산군)</div><div class="k-val">@_diag.ConcentrationPct.ToString("0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">방어 점수</div><div class="k-val @(_diag.DefenseScorePct >= 50 ? "up" : "down")">@_diag.DefenseScorePct.ToString("0.0")</div></div>
+        <div class="kpi"><div class="k-lab">최악 낙폭(@StormLabel(_diag.WorstScenario))</div><div class="k-val down">-@_diag.WorstDrawdownPct.ToString("0.0")%</div></div>
+        <div class="kpi"><div class="k-lab">라이터 경합</div><div class="k-val @(_writerCollisions > 0 ? "down" : "")">@_writerCollisions</div></div>
+        <div class="kpi"><div class="k-lab">산출 동결</div><div class="k-val @(_frozen > 0 ? "down" : "")">@_frozen</div></div>
+    </div>
+    <div class="sub" style="font-size:11.5px;margin-top:10px">
+        ℹ️ 곡선은 결정론적 복리 <b>V = Σ Aᵢ(1+rᵢ)ᵗ</b> + 닫힌형 분위 밴드(kσ√t)입니다 — 난수 시뮬(몬테카를로)을 사칭하지 않으며,
+        매 연차 floor 절사로 <b>미래가치를 결코 과대 표시하지 않습니다</b>(하향 보수 편향). 슬라이더 변이는 무할당 구조체 패킷으로
+        seqlock 단일 라이터에 주입되고, 본 화면은 150ms 주기 무잠금 독출(찢김 시 직전 프레임 유지)로 코어를 절대 블록하지 않습니다.
+    </div>
+</div>
+
+@code {
+    private const int Years = 20;
+    private const int N = 3;
+
+    // 기준 포트폴리오(대표 표본·base KRW). 라이브 보유 연동은 후속 — 본 화면은 what-if 샌드박스.
+    private PortfolioSlot[]    _slots       = Array.Empty<PortfolioSlot>();
+    private QMoney[]           _baseLive    = Array.Empty<QMoney>();
+    private AssetClass[]       _classes     = Array.Empty<AssetClass>();
+    private GrowthAssumption[] _assumptions = Array.Empty<GrowthAssumption>();
+
+    private ScenarioPublisher? _pub;
+
+    // 무잠금 독출 버퍼(사전할당·재사용) + 표시 프레임.
+    private readonly long[] _mBuf = new long[Years + 1], _oBuf = new long[Years + 1], _pBuf = new long[Years + 1];
+    private readonly long[] _median = new long[Years + 1], _opt = new long[Years + 1], _pess = new long[Years + 1];
+    private bool _hasFrame;
+    private long _version, _writerCollisions, _frozen;
+
+    private AssetClass _target = AssetClass.Crypto;
+    private int _leverBp = RebalanceLever.NeutralBp;
+    private ChaosScenario _chaos = ChaosScenario.None;
+    private DiagnosisReport _diag;
+
+    private readonly ChaosScenario[] _storms =
+        { ChaosScenario.None, ChaosScenario.Gfc2008, ChaosScenario.RateSpike, ChaosScenario.InflationShock, ChaosScenario.CryptoWinter };
+    private readonly AssetClass[] _targets =
+        { AssetClass.DomesticStock, AssetClass.ForeignStock, AssetClass.Crypto };
+
+    private PeriodicTimer? _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized()
+    {
+        Seed();
+        BuildPublisher(_baseLive);                 // 기준(무충격)으로 발행자 구성
+        _diag = PortfolioDiagnosis.Diagnose(_baseLive, _classes);
+        ApplyLever();                              // 초기 곡선 발행(중립 레버)
+        _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(150));
+        _ = PollLoopAsync(_cts.Token);
+    }
+
+    // 대표 3자산 시드(국내주식·해외주식·코인). 모든 현재가치는 base 통화(KRW) raw.
+    private void Seed()
+    {
+        _slots = new[]
+        {
+            new PortfolioSlot("005930", AssetClass.DomesticStock, Currency.KRW, QQty.Of(100m), QPrice.Of(70_000m), SlotField.All),
+            new PortfolioSlot("AAPL",   AssetClass.ForeignStock,  Currency.KRW, QQty.Of(50m),  QPrice.Of(220_000m), SlotField.All),
+            new PortfolioSlot("KRW-BTC",AssetClass.Crypto,        Currency.KRW, QQty.Of(0.2m), QPrice.Of(100_000_000m), SlotField.All),
+        };
+        _baseLive = new[] { QMoney.Of(50_000_000m), QMoney.Of(30_000_000m), QMoney.Of(20_000_000m) };
+        _classes  = new[] { AssetClass.DomesticStock, AssetClass.ForeignStock, AssetClass.Crypto };
+        _assumptions = new[]
+        {
+            GrowthAssumption.Of(0.06m, 0.18m),   // 국내주식
+            GrowthAssumption.Of(0.08m, 0.20m),   // 해외주식
+            GrowthAssumption.Of(0.15m, 0.55m),   // 코인(고드리프트·고변동)
+        };
+    }
+
+    private void BuildPublisher(QMoney[] present)
+        => _pub = new ScenarioPublisher(_slots, present, _assumptions, Years);
+
+    // ★슬라이더 핫패스 — bp → ShadowMutation(무할당 구조체) → Recompute(δ=0 단일 라이터). 범위 이탈은 fail-closed.
+    private void ApplyLever()
+    {
+        if (_pub is null) return;
+        if (RebalanceLever.TryScaleClass(_target, _leverBp, out var mut))
+            _pub.Recompute(in mut);
+        // TryScaleClass false(>5.000×/음수) → Recompute 미호출(곡선 미갱신·거짓 낙관 금지)
+    }
+
+    private void OnLeverInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var bp)) { _leverBp = bp; ApplyLever(); }
+    }
+
+    private void OnTarget(AssetClass c) { _target = c; ApplyLever(); }
+
+    // 카오스 스위치(콜드 패스) — ApplyStress 로 폭풍-후 현재가치를 산출해 발행자를 재구성, 현 레버 재적용.
+    private void OnChaos(ChaosScenario s)
+    {
+        _chaos = s;
+        if (s == ChaosScenario.None) { BuildPublisher(_baseLive); ApplyLever(); return; }
+        var stressed = new QMoney[N];
+        if (!ChaosEngine.ApplyStress(_baseLive, _classes, s, stressed)) return;   // fail-closed(poison)
+        BuildPublisher(stressed);
+        ApplyLever();
+    }
+
+    // 150ms 주기 무잠금 독출 — 유효 프레임만 표시·재렌더, 찢김/미발행이면 직전 프레임 유지(비블록·코어 무간섭).
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                var pub = _pub;   // 카오스 재구성과의 레이스 차단(지역 캡처·참조 원자)
+                if (pub is null) continue;
+                if (pub.TryReadFrame(_mBuf, _oBuf, _pBuf))
+                {
+                    Array.Copy(_mBuf, _median, Years + 1);
+                    Array.Copy(_oBuf, _opt,    Years + 1);
+                    Array.Copy(_pBuf, _pess,   Years + 1);
+                    _version          = pub.Version;
+                    _writerCollisions = pub.WriterCollisions;
+                    _frozen           = pub.FrozenCount;
+                    _hasFrame         = true;
+                    await InvokeAsync(StateHasChanged).ConfigureAwait(false);
+                }
+                // TryReadFrame == false(찢김/미발행) → 직전 프레임 유지·재렌더 생략(무할당·비블록)
+            }
+        }
+        catch (OperationCanceledException) { /* Dispose 정상 탈출 */ }
+    }
+
+    // ===== 자산 곡선 SVG (FuturePage.ConeSvg 사상 — StringBuilder·MarkupString) =====
+    private string CurveSvg()
+    {
+        double w = 940, h = 300, padL = 8, padR = 64, padT = 12, padB = 22;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+
+        double maxV = 0, minV = double.MaxValue;
+        for (int t = 0; t <= Years; t++)
+        {
+            double o = _opt[t] / (double)QMath.Scale, p = _pess[t] / (double)QMath.Scale;
+            if (o > maxV) maxV = o;
+            if (p < minV) minV = p;
+        }
+        if (minV > 0) minV = 0;                       // 0 기준 포함
+        double range = maxV - minV; if (range < 1e-6) range = 1;
+
+        double X(int t) => padL + (Years == 0 ? 0 : t / (double)Years * plotW);
+        double Y(double v) => padT + plotH - (v - minV) / range * plotH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:300px;display:block'>");
+
+        for (int g = 0; g <= 4; g++)
+        {
+            double vv = maxV - range * g / 4.0;
+            double gy = padT + plotH * g / 4.0;
+            sb.Append($"<line x1='{padL:F1}' y1='{gy:F1}' x2='{padL + plotW:F1}' y2='{gy:F1}' stroke='var(--line)' stroke-width='1' opacity='0.55'/>");
+            sb.Append($"<text x='{padL + plotW + 4:F1}' y='{gy + 3:F1}' fill='var(--sub)' font-size='10' font-family='var(--mono)'>{FmtKrwShort((decimal)vv)}</text>");
+        }
+
+        // 낙관–비관 밴드(opt 위 → pess 아래 되돌이).
+        var band = new System.Text.StringBuilder();
+        for (int t = 0; t <= Years; t++) band.Append($"{X(t):F1},{Y(_opt[t] / (double)QMath.Scale):F1} ");
+        for (int t = Years; t >= 0; t--) band.Append($"{X(t):F1},{Y(_pess[t] / (double)QMath.Scale):F1} ");
+        sb.Append($"<polygon points='{band}' fill='color-mix(in srgb,var(--accent) 16%,transparent)' stroke='none'/>");
+
+        // 중앙값 폴리라인.
+        var mid = new System.Text.StringBuilder();
+        for (int t = 0; t <= Years; t++) mid.Append($"{X(t):F1},{Y(_median[t] / (double)QMath.Scale):F1} ");
+        sb.Append($"<polyline points='{mid}' fill='none' stroke='var(--accent)' stroke-width='2'/>");
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private static string FmtKrw(long raw) => (raw / (decimal)QMath.Scale).ToString("N0");
+    private static string FmtKrwShort(decimal v)
+    {
+        if (v >= 100_000_000m) return (v / 100_000_000m).ToString("0.0") + "억";
+        if (v >= 10_000m)      return (v / 10_000m).ToString("0") + "만";
+        return v.ToString("0");
+    }
+
+    private static string ClassLabel(AssetClass c) => c switch
+    {
+        AssetClass.DomesticStock => "국내주식",
+        AssetClass.ForeignStock  => "해외주식",
+        AssetClass.Crypto        => "코인",
+        _ => c.ToString(),
+    };
+
+    private static string StormLabel(ChaosScenario s) => s switch
+    {
+        ChaosScenario.None           => "무충격",
+        ChaosScenario.Gfc2008        => "2008 금융위기",
+        ChaosScenario.RateSpike      => "금리 급등",
+        ChaosScenario.InflationShock => "인플레 쇼크",
+        ChaosScenario.CryptoWinter   => "크립토 윈터",
+        _ => s.ToString(),
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync().ConfigureAwait(false);
+        _timer?.Dispose();
+        _cts.Dispose();
+    }
+}

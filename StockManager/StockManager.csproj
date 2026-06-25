@@ -18,10 +18,33 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.57.0</Version>
-    <AssemblyVersion>4.57.0.0</AssemblyVersion>
-    <FileVersion>4.57.0.0</FileVersion>
-    <!-- v4.57.0 — ★Mission A(v4.56.0)+B+C(v4.57.0): 자산별 격자 기본 레지스트리 + 3중 안전 게이트 실 무장 술어 +
+    <Version>4.58.0</Version>
+    <AssemblyVersion>4.58.0.0</AssemblyVersion>
+    <FileVersion>4.58.0.0</FileVersion>
+    <!-- v4.58.0 — ★S28 고도화 Mission A/B/C: 점진적 치유 + 컴플라이언스 UI 방화벽 + Sliders→Seqlock 시뮬 페이지.
+         ★정직 회계: 세 미션의 '백엔드 코어'(Canonicalizer/SlotField/Merge, ComplianceGate/RefusalNotice, ScenarioPublisher.
+         Recompute/TryReadFrame·RebalanceLever·ChaosScenario·FutureValueEngine)는 S28 에서 이미 완비됐었다 — 본 단계는
+         빠진 결속/UI + 진짜 갭(통짜 거절·UI 미배선) 보강. QFutureValue.cs/QChaos.cs 무변경.
+         [Mission A] 점진적 치유 — OnboardingCanonicalizer.CanonicalizePartial + PartialDraft + OnboardingPump.IngestPartial/
+         NextGap 신설. 기존 TryCanonicalize(통짜)는 '심볼·수량·단가 중 하나만 불량이어도 전체 거절'이라 식별된 자산을
+         잃었다(사용자 이탈). 치유 경로는 심볼이 해석되면(필수) 수량/단가가 누락이거나 '존재하나 불량'(0/음수/서브스케일
+         절사/오버플로)이어도 그 자산을 부분 슬롯(Known=식별 필드만)으로 보존한다. ★불량 값은 0으로 강제하지 않고 '버린다'
+         (fail-closed on field — 오염 0 미반영) + 사유(QtyReject/PriceReject) 보고 → NextGap(out slot)이 '어느 자산의 무슨
+         필드'인지 짚어 AI 핀포인트 재질문 지원. EntityDraft(4-positional)·TryCanonicalize·Ingest·Merge·NextElicitation 불변(순수 추가).
+         [Mission B] 컴플라이언스 UI 방화벽 — ComplianceClassifier(결정론 룰 기반 IntentClass 분류·탈옥 불가 1차 방어선,
+         정상 자문 질문은 통과시키는 보수적 고정밀) + ComplianceGate.IsLocked + DI 싱글톤(단일 사용자 WebView = 앱 세션 락).
+         AdvisorPage: 질의를 분류→Admit '먼저' 수행, 비정상/잠김이면 LLM 호출 자체를 드롭(원본 텍스트 DOM 미도달)하고
+         RefusalNotice 발화 + sticky 락 → 대화 영역 전체를 하드코딩 법적 고지 오버레이(position:absolute inset:0)로 봉인.
+         [Mission C] Sliders→Seqlock 시뮬 페이지 — 신규 FutureSimPage.razor(@page "/future/sim"). 리밸런싱 레버(bp)·카오스
+         스위치 → 무할당 ShadowMutation → ScenarioPublisher.Recompute(δ=0 단일 라이터·UI 스레드). PeriodicTimer(150ms) +
+         무잠금 TryReadFrame 버스트 독출(타이머 스레드 단일 리더) → 찢김/미발행이면 직전 프레임 유지·재렌더 생략(비블록),
+         유효 프레임만 SVG 자산곡선(FuturePage.ConeSvg 사상) 재렌더. 카오스는 ApplyStress 재구성(콜드 패스). 결정론(난수
+         없음)·매 연차 floor 하향 편향·몬테카를로 미사칭(UI 고지). NavMenu "🌀 미래가치 시뮬" 추가.
+         테스트 +18(부분 치유 심볼 보존·불량값 버림·미해석 격자 불변·핀포인트 NextGap·분류기 매핑/거짓양성 가드·sticky 락·
+         레버 곡선 상승/경합0/동결0·레버 범위 fail-closed·음수 배수 직전 프레임 유지). 빌드 0/0, 전체 1546 통과.
+         적대적 리뷰 5렌즈(refute) 전부 결함 0: A 페일클로즈드·B 방화벽·C seqlock 스레딩·결정론 정직·테스트 비공허. liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.57.0 — ★Mission A(v4.56.0)+B+C(v4.57.0): 자산별 격자 기본 레지스트리 + 3중 안전 게이트 실 무장 술어 +
          명령 팔레트 순수 C# 열기. ★정직 회계: Mission A 의 '타입 골격'(QTickRegistry·registry ctor·Clear(symbol,..)
          보수정렬·미등록 ForceFreeze)은 S27-d/e/S29 에서 이미 완비됐었다 — 본 단계는 '빌드'가 아니라 빠진 결속/엔트리셋.
          [Mission A — v4.56.0] BuiltInTickSpecs.BuildDefaultRegistry() 신설 — KRW 정수 호가(가격대 근사·삼성100·

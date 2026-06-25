@@ -2,13 +2,34 @@
 @inject AiService Ai
 @inject FxConverter Fx
 @inject LocalDatabase Db
+@inject ComplianceGate Compliance
 
 <div class="top">
     <div class="hello"><h1>🤖 AI 투자 비서</h1><p>내 포트폴리오·시그널·거래 데이터 기반 자연어 질의 (환율 @_usdKrw.ToString("N0"))</p></div>
     <button class="addbtn" style="background:var(--warn);margin:0 6px" disabled="@_busy" @onclick="Brief">🌅 아침 브리핑</button>
 </div>
 
-<div style="padding:0 28px 40px;max-width:760px">
+<div style="padding:0 28px 40px;max-width:760px;position:relative">
+    @* ══ Mission B — 컴플라이언스 방화벽 오버레이. sticky 락 감지 시 대화 영역을 하드코딩 법적 고지로 완전히 덮는다.
+       LLM 원본 텍스트(과거 버블 포함)를 물리적으로 가려 위험 발화가 화면에 도달하지 못하게 한다(fail-closed). ══ *@
+    @if (Compliance.IsLocked)
+    {
+        <div style="position:absolute;inset:0;z-index:50;background:color-mix(in srgb,var(--bg,#111) 96%,transparent);
+                    backdrop-filter:blur(3px);border:2px solid var(--down,#e34d4d);border-radius:12px;
+                    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;gap:14px">
+            <div style="font-size:40px">🛑</div>
+            <div style="font-size:18px;font-weight:800;color:var(--down,#e34d4d)">컴플라이언스 보호 — 세션 잠금</div>
+            <div style="font-size:13.5px;color:var(--ink);line-height:1.75;max-width:560px">
+                @ComplianceGate.RefusalNotice
+            </div>
+            <div style="font-size:12px;color:var(--sub);line-height:1.7;max-width:560px">
+                본 서비스는 자본시장법상 <b>투자자문업·투자일임업 인가</b>를 받지 않았습니다. 확정 수익 보장,
+                개별 종목 매매 일임, 또는 시스템 지침 우회 요청은 처리하지 않습니다. 이 잠금은 안전을 위해
+                <b>현재 세션 동안 해제되지 않습니다</b>(앱 재시작 시 초기화).
+            </div>
+        </div>
+    }
+
     <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:14px">
         ℹ️ 답변은 <b>로컬 DB의 실제 수치</b>만 근거로 생성됩니다(없는 값은 추측 안 함). <b>정보 제공이며 투자 권유가 아닙니다.</b>
     </div>
@@ -112,7 +133,20 @@
         if (_busy || string.IsNullOrWhiteSpace(question)) return;
         var qt = question.Trim();
         _chat.Add(new Msg("user", qt));
-        _q = ""; _busy = true; StateHasChanged();
+        _q = "";
+
+        // ★Mission B — 컴플라이언스 방화벽: 결정론 의도 분류 → Admit. 비정상 의도(확정수익 보장·유사투자자문·탈옥)
+        //   또는 이미 잠긴 세션이면 LLM 호출 '자체'를 차단(드롭)하고 고정 고지문만 발화한다. LLM 원본은 화면에 절대
+        //   도달하지 못한다(fail-closed). Admit 이 비정상 의도에 sticky 락을 걸면 오버레이가 점등되어 세션을 봉인.
+        var intent = ComplianceClassifier.Classify(qt);
+        if (!Compliance.Admit(intent))
+        {
+            _chat.Add(new Msg("ai", ComplianceGate.RefusalNotice));
+            StateHasChanged();
+            return;   // LLM 미호출 — 위험 발화 원천 차단
+        }
+
+        _busy = true; StateHasChanged();
         if (_useMemory)
         {
             var r = await Ai.AskWithMemoryAsync(qt, _usdKrw);
@@ -127,7 +161,7 @@
 
     private async Task Brief()
     {
-        if (_busy) return;
+        if (_busy || Compliance.IsLocked) return;   // 세션 잠금 시 브리핑 발화도 차단(오버레이가 화면을 덮음)
         _busy = true; StateHasChanged();
         var text = await Ai.MorningBriefAsync(_usdKrw, pushTelegram: false);
         _chat.Add(new Msg("ai", "🌅 아침 브리핑\n" + text));
