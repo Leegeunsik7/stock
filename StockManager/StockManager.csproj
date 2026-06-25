@@ -18,10 +18,19 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.53.0</Version>
-    <AssemblyVersion>4.53.0.0</AssemblyVersion>
-    <FileVersion>4.53.0.0</FileVersion>
-    <!-- v4.53.0 — ★Path Gamma(S29): SPMC 링 → UI 락-프리 단방향 텔레메트리. v4.50 OrderDispatchRing/
+    <Version>4.54.0</Version>
+    <AssemblyVersion>4.54.0.0</AssemblyVersion>
+    <FileVersion>4.54.0.0</FileVersion>
+    <!-- v4.54.0 — ★Path Alpha-FX(S29-c 후속): 이종통화 청산 권위 역전(base 통화 계약). 신규 ShadowCutoverGate.
+         ClearBase() — QFixedPrimary 면 shadowBase(보수 FX 환산·수렴검문 통과값)가 base 통화 권위, 아니면 legacyBase
+         (naive 자산명목×환율). 레거시 base 는 후방 백스톱(밴드/오버플로/수렴위반 → TraceFxOrFreeze EmergencyFreeze →
+         권위 오염 대신 정지·degraded legacyBase). ★반환 단위 = base 통화(자산통화 Clear 와 다름·명시 계약) — 그래서
+         기존 자산통화 FX Clear 는 권위 역전 미적용으로 '불변'(S27-e 계약·단위 보존, AssetCurrencyFxClear_Ignores
+         Authority 박제). v4.52.0 이 미뤄둔 'base-currency 권위 계약'을 본 단계에서 명시 충족. 미등록/FX 오염 fail-closed.
+         테스트 +7(S29cFxAuthorityTests): Legacy naive base·QFixed 정렬 shadowBase 승격·매도 Bid·FX 스큐 백스톱 동결·
+         미등록 fail-closed·자산통화 Clear 후방호환 불변·무할당 50k. 빌드 0/0. liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.53.0 — ★Path Gamma(S29): SPMC 링 → UI 락-프리 단방향 텔레메트리. v4.50 OrderDispatchRing/
          GatedOrderDispatcher 의 실시간 지표(처리량·무장송출·게이트차단·추월드롭·CAS 낙방)를 UI 렌더링 스레드로
          무할당·락-프리 전달. ①OrderDispatchRing 에 _writerCollisions 신설 — EnterPublish CAS 낙방(동시 생산자 위반)을
          throw 전 계상(정상 단일 생산자 경로 0 유지·핫패스 무영향) + WriterCollisions 프로퍼티. ②신규 RingTelemetry

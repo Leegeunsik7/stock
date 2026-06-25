@@ -303,9 +303,31 @@ namespace StockManager.Common
             }
             else
                 Interlocked.Increment(ref _frozen);
-            // S29-c 정직 한정 — FX(이종통화) 경로는 권위 역전 미적용: 반환은 '자산통화 legacy' 불변이다. QFixed 역전 시
-            //   권위값은 shadowBase(base 통화)라 반환 단위가 바뀌어 호출 계약을 깬다 → base-currency 권위 계약 명시 후 별도 단계.
+            // S29-c — FX 의 '자산통화' Clear 는 권위 역전 미적용(반환 단위 불변·후방호환). base 통화 권위가 필요하면
+            //   ClearBase 를 쓸 것(권위값 단위가 base 라 별도 계약 — 아래).
             return legacy;
+        }
+
+        /// <summary>
+        /// S29-c FX 권위 역전(base 통화 계약). 이종통화 청산의 'base 통화' 권위값을 반환한다. QFixedPrimary 면
+        /// shadowBase(보수 FX 환산·수렴검문 통과값)가 권위, 아니면 legacyBase(naive 자산명목 × 환율)가 권위. 레거시
+        /// base 는 후방 백스톱 — 밴드/오버플로/수렴위반 시 TraceFxOrFreeze 가 EmergencyFreeze → 권위 오염 대신 정지
+        /// (degraded legacyBase 반환). ★반환 단위는 base 통화(자산통화 Clear 와 다름 — 명시 계약). 미등록/오염 fail-closed.
+        /// liveArmed:false 불변. 등록·정렬 핫패스 무할당(δ=0·동결 경로만 att 할당).
+        /// </summary>
+        public decimal ClearBase(string symbol, decimal priceDec, decimal qtyDec, OrderSide side,
+                                 QFxQuote fxQuote, QFxBounds fxBounds)
+        {
+            decimal rateDec    = (side == OrderSide.Buy ? fxQuote.Ask : fxQuote.Bid).ToDecimal();
+            decimal legacyBase = priceDec * qtyDec * rateDec;   // base 통화 백스톱(naive 자산명목 × 환율)
+            var auth = _authority;
+            if (!_enabled && auth == ClearingAuthority.LegacyPrimary) return legacyBase;   // INERT(불변)
+            Interlocked.Increment(ref _observed);
+            if (!ResolveSpec(symbol, out var spec)) { Interlocked.Increment(ref _frozen); return legacyBase; }
+            bool ok = ShadowClearingTracer.TraceFxOrFreeze(priceDec, qtyDec, side, spec, fxQuote, fxBounds, _att, out var shadowBase);
+            if (ok) Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadowBase.ToDecimal() - legacyBase)));
+            else    Interlocked.Increment(ref _frozen);
+            return Authoritative(auth, ok, legacyBase, shadowBase);
         }
     }
 }
