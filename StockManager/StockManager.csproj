@@ -18,10 +18,26 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.51.0</Version>
-    <AssemblyVersion>4.51.0.0</AssemblyVersion>
-    <FileVersion>4.51.0.0</FileVersion>
-    <!-- v4.51.0 — ★Path Beta(S29): 멀티-자산 펌프 진입 검문(흐름 제어 Seam). S27-d 의 QTickRegistry/QFxGuard
+    <Version>4.52.0</Version>
+    <AssemblyVersion>4.52.0.0</AssemblyVersion>
+    <FileVersion>4.52.0.0</FileVersion>
+    <!-- v4.52.0 — ★Path Alpha(S29-c): 청산 연산 권위 역전(Authority Inversion). ShadowCutoverGate.Clear()의 반환
+         권위를 레거시 naive decimal → QFixed 정렬 청산값(shadow.ToDecimal())으로 가역 전환. 신규 ClearingAuthority
+         enum(LegacyPrimary=0 기본·섀도우 모드 불변 / QFixedPrimary=1 역전). QFixedPrimary 면 QFixed 정렬값이 권위가
+         되고 레거시 decimal 은 '후방 백스톱'으로 상시 대조(TraceOrFreeze 의 보수불변식+레거시밴드+오버플로 트랩이
+         밴드 초과/폭주 포착 → EmergencyFreeze → 권위 오염 대신 파이프라인 정지·degraded legacy 반환). ★무할당 가역
+         스위치: private volatile ClearingAuthority _authority(단일 enum/int 원자 스왑) + SetAuthority(volatile 쓰기,
+         박싱·할당 0). 권위 분기는 인라인 정적 헬퍼 Authoritative(AggressiveInlining)로 — IClearingEngine 류 인터페이스
+         디스패치(VTable·박싱) 거부, 값타입 enum + if 만. Clear 마다 _authority 단일 volatile read(토글 중 분기/반환
+         일치). ★후방호환 절대보존: 기본 LegacyPrimary → 기존 Clear 반환·INERT 의미론 1비트 불변(생성자 4번째 인자
+         선택·기본값). ★정직 한정: FX(이종통화) Clear 는 역전 미적용 — 권위값 shadowBase 가 base 통화라 반환 단위가
+         바뀌어 호출 계약을 깬다(자산통화 legacy 반환 불변, base-currency 권위 계약 명시 후 별도 단계). 멀티자산 안전은
+         Path Beta(v4.51.0 QAdmissionGate 자산별 격자 검문) 선결로 충족 — 단일 전역 spec silent skew 가 권위 경로로
+         진입 불가. 테스트 +10(S29cAuthorityInversionTests): 기본 Legacy 후방호환·disabled INERT·QFixed 정렬값 승격·
+         disabled 에서도 QFixed 계산·오버플로 백스톱 동결·off-grid poison 비오염 수렴·런타임 가역 스왑·무할당 50k 토글·
+         자산별 심볼·매수올림/매도내림 방향 권위. 빌드 0/0(TreatWarningsAsErrors). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.51.0 — ★Path Beta(S29): 멀티-자산 펌프 진입 검문(흐름 제어 Seam). S27-d 의 QTickRegistry/QFxGuard
          스캐폴드를 '실제 주문 진입로'(OrderDispatchRing 생산자)에 인라인 결속. 신규 QAdmissionGate — 단일 펌프
          진입에서 USD 소수/KRW 정수 자산이 교차할 때 자산별 격자(tick/step)에 '정확 정렬'된 제안만 통과, 비정렬
          서브틱은 '스냅하지 않고' fail-closed 거부(+ForceFreeze). ★ShadowClearingTracer 와 역할 분리(중복 아님):

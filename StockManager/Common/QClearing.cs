@@ -22,6 +22,7 @@
 //  진짜 '다른 정렬규칙의 구 엔진'을 갖게 되면 그 출력을 naive 자리에 주입하면 된다.
 // ============================================================================
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace StockManager.Common
@@ -174,10 +175,24 @@ namespace StockManager.Common
         private static void Freeze(OrderAttestationService? att, string msg) { try { att?.ForceFreeze(msg); } catch { } }
     }
 
+    /// <summary>청산 연산 주권 — 어느 엔진의 값을 Clear() 반환(권위)으로 쓸지. 기본 LegacyPrimary(후방호환·기존 의미론 불변).</summary>
+    public enum ClearingAuthority
+    {
+        /// <summary>레거시 naive decimal 이 권위(S27 섀도우 모드). QFixed 는 병렬 관측만.</summary>
+        LegacyPrimary = 0,
+        /// <summary>QFixed 정렬 청산이 권위(S29-c 역전). 레거시는 후방 백스톱(밴드 위반/오버플로 시 EmergencyFreeze).</summary>
+        QFixedPrimary = 1,
+    }
+
     /// <summary>
     /// S27-c — 단계적 섀도우 컷오버 게이트(스캐폴드). enabled 일 때 신 QFixed 엔진을 신·구 병렬 대조하고 역전/발산
-    /// 시 ForceFreeze. 라이브 반환값은 항상 레거시(naive decimal·컷오버 전·liveArmed:false). 기본 OFF = 완전 INERT
-    /// (섀도우 미수행·att 무접촉·무할당·테스트 무영향).
+    /// 시 ForceFreeze. 기본 OFF = 완전 INERT(섀도우 미수행·att 무접촉·무할당·테스트 무영향).
+    ///
+    /// S29-c 권위 역전(Authority Inversion): ClearingAuthority 로 Clear() 반환 권위를 가역 전환한다. LegacyPrimary
+    /// (기본)면 라이브 반환은 레거시(naive decimal·섀도우 모드 불변). QFixedPrimary 면 QFixed 정렬값(shadow)이 권위가
+    /// 되고 레거시 decimal 은 '후방 백스톱'으로 상시 대조된다(밴드 초과/오버플로 → TraceOrFreeze 가 EmergencyFreeze →
+    /// 권위 오염 대신 파이프라인 정지·백스톱 legacy 반환). 스위치는 volatile(런타임 가역·무할당). liveArmed:false 불변:
+    /// 본 게이트는 '청산 가치 권위'만 정하며 실 송출 무장과 무관하다.
     ///
     /// ★적대적 리뷰 정직 한정:
     ///  · 락-프리/δ=0 은 '패리티(무분기) 경로' 한정. 동결 경로(분기/poison)는 att.ForceFreeze 가 OrderAttestationService
@@ -192,20 +207,37 @@ namespace StockManager.Common
         private readonly QTickRegistry? _registry;   // S27-e — 자산별 격자(설정 시 단일 _spec 대신 심볼 조회)
         private readonly OrderAttestationService? _att;
         private long _observed, _frozen, _lastDivBits;
+        // S29-c — 청산 연산 주권. volatile = 런타임 가역 스위치(boot 컨텍스트/설정 토글, 무할당). 기본 LegacyPrimary(불변).
+        private volatile ClearingAuthority _authority;
 
         /// <summary>단일 전역 spec 게이트(S27-c 호환·DI 기본). Clear(symbol)은 심볼 무시하고 이 spec 사용.</summary>
-        public ShadowCutoverGate(bool enabled, QTickSpec spec, OrderAttestationService? attestation = null)
-        { _enabled = enabled; _spec = spec; _registry = null; _att = attestation; }
+        public ShadowCutoverGate(bool enabled, QTickSpec spec, OrderAttestationService? attestation = null,
+                                 ClearingAuthority authority = ClearingAuthority.LegacyPrimary)
+        { _enabled = enabled; _spec = spec; _registry = null; _att = attestation; _authority = authority; }
 
         /// <summary>S27-e — 자산별 레지스트리 게이트. Clear(symbol)이 심볼로 격자를 무할당 조회(미등록→fail-closed).</summary>
-        public ShadowCutoverGate(bool enabled, QTickRegistry registry, OrderAttestationService? attestation = null)
-        { _enabled = enabled; _registry = registry ?? throw new ArgumentNullException(nameof(registry)); _spec = default; _att = attestation; }
+        public ShadowCutoverGate(bool enabled, QTickRegistry registry, OrderAttestationService? attestation = null,
+                                 ClearingAuthority authority = ClearingAuthority.LegacyPrimary)
+        { _enabled = enabled; _registry = registry ?? throw new ArgumentNullException(nameof(registry)); _spec = default; _att = attestation; _authority = authority; }
 
         public bool   Enabled        => _enabled;
         public long   Observed       => Interlocked.Read(ref _observed);
         public long   FrozenCount    => Interlocked.Read(ref _frozen);
         /// <summary>최근 신−구 명목 차(관측 텔레메트리, double). 락-프리 Interlocked 단일값 발행.</summary>
         public double LastDivergence => BitConverter.Int64BitsToDouble(Interlocked.Read(ref _lastDivBits));
+        /// <summary>현재 청산 권위(LegacyPrimary=섀도우 모드 / QFixedPrimary=역전). volatile 읽기.</summary>
+        public ClearingAuthority Authority => _authority;
+
+        /// <summary>런타임 가역 권위 스위치 — volatile 쓰기(무할당·무박싱). QFixedPrimary 로 올리면 Clear 가 QFixed 정렬값을
+        /// 권위로 반환(레거시는 백스톱), LegacyPrimary 로 되돌리면 섀도우 모드 복귀. 단일 enum(int) 원자 스왑.</summary>
+        public void SetAuthority(ClearingAuthority authority) => _authority = authority;
+
+        // S29-c — 권위 분기(★인라인·무VTable·무박싱: IClearingEngine 같은 인터페이스 디스패치 대신 값타입 enum + if).
+        //   QFixed 권위 + 엔진 성공 → shadow(정렬 권위), 실패(동결 트립) → legacy 백스톱(파이프라인은 EmergencyFreeze 로
+        //   정지하므로 권위 오염 대신 정직한 degraded). 레거시 권위(섀도우 모드) → 항상 legacy(불변).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static decimal Authoritative(ClearingAuthority auth, bool engineOk, decimal legacy, QMoney shadow)
+            => auth == ClearingAuthority.QFixedPrimary ? (engineOk ? shadow.ToDecimal() : legacy) : legacy;
 
         /// <summary>
         /// 청산 신호 처리. 항상 레거시(naive decimal 곱) 반환. enabled 면 신 엔진 병렬 대조 + 분기 시 동결.
@@ -213,15 +245,15 @@ namespace StockManager.Common
         /// </summary>
         public decimal Clear(decimal priceDec, decimal qtyDec, OrderSide side)
         {
-            decimal legacy = priceDec * qtyDec;   // 라이브 경로(현행) — 컷오버 전엔 이 값이 권위
-            if (!_enabled) return legacy;          // ★INERT — 무영향·무할당·무동결
+            decimal legacy = priceDec * qtyDec;   // 백스톱(섀도우 모드에선 권위)
+            var auth = _authority;                 // ★단일 volatile read — 메서드 전체 일관(토글 중 분기/반환 일치 보장)
+            if (!_enabled && auth == ClearingAuthority.LegacyPrimary) return legacy;   // ★INERT(불변) — 무영향·무할당·무동결
             Interlocked.Increment(ref _observed);
-            // 신 QFixed 엔진(보수 정렬+오버플로/스케일 트랩) 병렬 대조. 역전/발산/오염 → 이미 ForceFreeze.
-            if (ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, _spec, _att, out var shadow))
-                Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
-            else
-                Interlocked.Increment(ref _frozen);
-            return legacy;
+            // 신 QFixed 엔진(보수 정렬+오버플로/스케일 트랩) 대조 — 레거시 백스톱과 밴드 초과 시 이미 ForceFreeze.
+            bool ok = ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, _spec, _att, out var shadow);
+            if (ok) Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
+            else    Interlocked.Increment(ref _frozen);
+            return Authoritative(auth, ok, legacy, shadow);   // S29-c — 권위에 따라 shadow(QFixed) 또는 legacy
         }
 
         // S27-e — 자산별 격자를 심볼로 조회(무할당). 레지스트리 미설정이면 단일 _spec 폴백. 미등록/충돌이면
@@ -241,14 +273,15 @@ namespace StockManager.Common
         public decimal Clear(string symbol, decimal priceDec, decimal qtyDec, OrderSide side)
         {
             decimal legacy = priceDec * qtyDec;
-            if (!_enabled) return legacy;                              // INERT
+            var auth = _authority;
+            if (!_enabled && auth == ClearingAuthority.LegacyPrimary) return legacy;   // INERT(불변)
             Interlocked.Increment(ref _observed);
+            // 미등록 심볼은 fail-closed — QFixed 권위라도 검증 불가 자산을 권위로 통과시키지 않는다(백스톱 legacy + 동결).
             if (!ResolveSpec(symbol, out var spec)) { Interlocked.Increment(ref _frozen); return legacy; }
-            if (ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, spec, _att, out var shadow))
-                Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
-            else
-                Interlocked.Increment(ref _frozen);
-            return legacy;
+            bool ok = ShadowClearingTracer.TraceOrFreeze(priceDec, qtyDec, side, spec, _att, out var shadow);
+            if (ok) Interlocked.Exchange(ref _lastDivBits, BitConverter.DoubleToInt64Bits((double)(shadow.ToDecimal() - legacy)));
+            else    Interlocked.Increment(ref _frozen);
+            return Authoritative(auth, ok, legacy, shadow);
         }
 
         /// <summary>
@@ -270,6 +303,8 @@ namespace StockManager.Common
             }
             else
                 Interlocked.Increment(ref _frozen);
+            // S29-c 정직 한정 — FX(이종통화) 경로는 권위 역전 미적용: 반환은 '자산통화 legacy' 불변이다. QFixed 역전 시
+            //   권위값은 shadowBase(base 통화)라 반환 단위가 바뀌어 호출 계약을 깬다 → base-currency 권위 계약 명시 후 별도 단계.
             return legacy;
         }
     }
