@@ -56,4 +56,27 @@ namespace StockManager.Common
             }
         }
     }
+
+    /// <summary>
+    /// v4.59.0 — 디스패처 무장 술어 '진공관 결속' 팩토리. config 옵트인(Dispatch.LiveArmingWired)에 따라
+    /// GatedOrderDispatcher 에 주입할 Func&lt;bool&gt; 을 결정한다:
+    ///   · wired=false → 상수 () =&gt; false (수학적 0·완전 격리, liveArmed:false 박제 보존)
+    ///   · wired=true  → 실 게이트 평가 LiveArmingGate.IsArmed (att→ignition→broker 단락 AND·fail-closed)
+    /// ★스위치를 BlazorHomeForm 인라인 삼항에서 분리해 결정론 단위테스트 가능한 1급 시민으로 승격(LiveArmingGate 와 동일 사상) —
+    ///   호스트가 호출하는 '바로 그 경로'를 테스트가 검증(복제본 검증의 공허함 회피).
+    /// ★할당: 격리 경로는 캐시된 정적 상수 델리게이트(재할당 0); 켜짐 경로는 메서드그룹→델리게이트 1회(부팅 1회). '평시 평가'(반복
+    ///   호출)는 LiveArmingGate.IsArmed 의 단락·무할당 계약을 그대로 계승해 δ=0 — 본 팩토리는 술어 '선택'만 1회 수행.
+    /// </summary>
+    public static class DispatchArming
+    {
+        // 격리(미배선) 술어 — 단일 캐시 인스턴스. wired=false 경로가 매번 새 클로저를 만들지 않도록 정적 상수로 고정.
+        private static readonly Func<bool> AlwaysFalse = static () => false;
+
+        /// <param name="gate">옵트인 시 평가할 실 무장 게이트(미배선이라도 호스트는 항상 구성 — 비-null 계약).</param>
+        public static Func<bool> ResolvePredicate(bool wired, LiveArmingGate gate)
+        {
+            if (gate is null) throw new ArgumentNullException(nameof(gate));
+            return wired ? gate.IsArmed : AlwaysFalse;   // 켜짐만 실 게이트, 아니면 수학적 0
+        }
+    }
 }

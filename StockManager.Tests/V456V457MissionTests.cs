@@ -185,5 +185,44 @@ namespace StockManager.Tests
             Assert.Throws<ArgumentNullException>(() => new LiveArmingGate(ign, null!, () => true));
             Assert.Throws<ArgumentNullException>(() => new LiveArmingGate(ign, att, null!));
         }
+
+        // ── v4.59.0: Dispatch.LiveArmingWired 진공관 결속 스위치(DispatchArming.ResolvePredicate) ──────────
+        //   BlazorHomeForm 이 호출하는 '바로 그 팩토리'를 검증한다(복제본이 아닌 실 경로). 게이트는 '무장 가능
+        //   (all-true)'으로 구성 — 실 평가되면 true 를 낼 게이트이므로, OFF 에서 false 면 격리가, ON 에서 true 면
+        //   실 파이프라인 진입이 각각 결정론적으로 입증된다. 스텁 브로커 프로브 호출 계상으로 '제어 흐름 진입'을 박제.
+
+        private static LiveArmingGate WouldArmGate(int[] brokerCalls)
+        {
+            var att = new OrderAttestationService();          // Normal
+            var ign = ArmedIgnition(att);                     // MasterIgnited → AllowPhysical()=true
+            return new LiveArmingGate(ign, att, () => { brokerCalls[0]++; return true; });   // 브로커 무장 + 호출 계상
+        }
+
+        [Fact]
+        public void LiveArmingWired_ConfigFalse_ReturnsConstantFalse()
+        {
+            var calls = new int[1];
+            var gate = WouldArmGate(calls);
+            var pred = DispatchArming.ResolvePredicate(wired: false, gate);
+
+            Assert.False(pred());                 // 게이트가 무장 가능해도 항상 false(수학적 0)
+            Assert.False(pred());                 // 반복 호출도 false(상수 술어)
+            Assert.Equal(0, calls[0]);            // ★게이트 평가 자체 미진입 — 브로커 프로브 미호출(완전 격리)
+        }
+
+        [Fact]
+        public void LiveArmingWired_ConfigTrue_ExecutesRealGateEvaluation()
+        {
+            var calls = new int[1];
+            var gate = WouldArmGate(calls);
+            var pred = DispatchArming.ResolvePredicate(wired: true, gate);
+
+            Assert.True(pred());                  // 실 게이트 평가 진입 → all-true → true
+            Assert.True(calls[0] >= 1);           // ★브로커 프로브까지 제어 흐름 진입(att→ignition→broker 파이프라인 실행 증명)
+        }
+
+        [Fact]
+        public void DispatchArming_NullGate_Throws()
+            => Assert.Throws<ArgumentNullException>(() => DispatchArming.ResolvePredicate(true, null!));
     }
 }

@@ -265,9 +265,10 @@ namespace StockManager.Blazor
             //   (Dispatch.LiveArmingWired)가 켜질 때만 실 술어, 아니면 수학적 0(()=>false). 옵트인 ON 이라도 송출은
             //   BrokerHub.IsArmed(기본 0)+점화 Locked 라 여전히 0 — 그리고 실 onSend/드레인 루프는 미배선(별도 단계).
             var armingGate = new LiveArmingGate(ignition, attestation, () => BrokerHub.IsArmed(db));
-            Func<bool> armedPredicate = cfg.GetBool("Dispatch.LiveArmingWired", false)
-                ? armingGate.IsArmed
-                : () => false;
+            // v4.59.0 — 진공관 결속: 스위치 결정을 테스트 가능한 DispatchArming.ResolvePredicate 로 분리(인라인 삼항 제거).
+            //   기본(미옵트인) → 상수 ()=>false(수학적 0). 옵트인 ON 일 때만 armingGate.IsArmed 결속. 술어 선택은 부팅 1회.
+            Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
+                cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate);
             var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation);
             var ringChannel    = new RingTelemetryChannel();
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel);

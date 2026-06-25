@@ -18,10 +18,25 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.58.1</Version>
-    <AssemblyVersion>4.58.1.0</AssemblyVersion>
-    <FileVersion>4.58.1.0</FileVersion>
-    <!-- v4.58.1 — 진격 프로토콜 3종 예외 가드 박제 + Release 풀스위트 플래키 0% 하드닝. (a) 사용자 지정 3 테스트를
+    <Version>4.59.0</Version>
+    <AssemblyVersion>4.59.0.0</AssemblyVersion>
+    <FileVersion>4.59.0.0</FileVersion>
+    <!-- v4.59.0 — 진공관 결속: GatedOrderDispatcher 무장 술어 스위치를 테스트 가능한 1급 팩토리로 승격.
+         ★정직 회계: 실 무장 배선(cfg Dispatch.LiveArmingWired ? LiveArmingGate.IsArmed : ()=>false)은 v4.57.0 에
+         이미 BlazorHomeForm 인라인으로 존재했다. 본 단계의 갱신은 (1) 그 인라인 삼항을 순수 정적 팩토리
+         DispatchArming.ResolvePredicate(bool wired, LiveArmingGate gate)로 분리 — 호스트가 호출하는 '바로 그 경로'를
+         결정론 단위테스트로 검증 가능하게 함(복제본 검증의 공허함 회피·LiveArmingGate 승격과 동일 사상), (2) 사용자
+         지정 2 스위치 테스트 박제. ResolvePredicate: wired=false→캐시 정적 상수 ()=>false(격리 경로 재할당 0),
+         wired=true→gate.IsArmed(메서드그룹 델리게이트 부팅 1회). 거동 불변(삼항과 의미 동일·싱글톤 수명 무파손·
+         armingGate/ringDispatcher 각 1 인스턴스). BlazorHomeForm 은 ResolvePredicate 1회 호출로 술어 선택.
+         테스트 +3(V456V457MissionTests): LiveArmingWired_ConfigFalse_ReturnsConstantFalse(무장가능 게이트라도 OFF면
+         항상 false·브로커 프로브 미호출=완전 격리), LiveArmingWired_ConfigTrue_ExecutesRealGateEvaluation(ON 시 실
+         파이프라인 att→ignition→broker 진입·스텁 프로브 호출 계상으로 입증), DispatchArming_NullGate_Throws.
+         빌드 0/0, 전체 1552 통과(Release 2회 연속 0 실패). 적대적 리뷰 3렌즈 결함 0(거동보존·liveArmed/δ=0/fail-closed·
+         테스트 변이민감[삼항 반전 변이가 두 스위치 테스트를 죽임 실증]). ★liveArmed:false 박제 보존: 기본 OFF →
+         수학적 0. 옵트인 ON 이라도 BrokerHub.IsArmed 기본 0·점화 Locked·Drain 프로덕션 미호출이라 실주문 0.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.58.1 — 진격 프로토콜 3종 예외 가드 박제 + Release 풀스위트 플래키 0% 하드닝. (a) 사용자 지정 3 테스트를
          S28PortfolioMentorTests 에 추가: ComplianceLocked_DropsLlmStream_AndDisplaysOverlay(스티키 락 시 LLM 스트림
          드롭+고지문/오버레이 점등 결정 로직), PartialDraft_SavesValidFields_AndTriggersTargetedQuestion(불량 필드는
          버리고 식별 자산 보존+NextGap 핀포인트), SeqlockRead_TornRead_RetainsPreviousFrame(찢김 시 예외 0·torn 0·직전
