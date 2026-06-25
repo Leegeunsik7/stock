@@ -18,10 +18,24 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.52.0</Version>
-    <AssemblyVersion>4.52.0.0</AssemblyVersion>
-    <FileVersion>4.52.0.0</FileVersion>
-    <!-- v4.52.0 — ★Path Alpha(S29-c): 청산 연산 권위 역전(Authority Inversion). ShadowCutoverGate.Clear()의 반환
+    <Version>4.53.0</Version>
+    <AssemblyVersion>4.53.0.0</AssemblyVersion>
+    <FileVersion>4.53.0.0</FileVersion>
+    <!-- v4.53.0 — ★Path Gamma(S29): SPMC 링 → UI 락-프리 단방향 텔레메트리. v4.50 OrderDispatchRing/
+         GatedOrderDispatcher 의 실시간 지표(처리량·무장송출·게이트차단·추월드롭·CAS 낙방)를 UI 렌더링 스레드로
+         무할당·락-프리 전달. ①OrderDispatchRing 에 _writerCollisions 신설 — EnterPublish CAS 낙방(동시 생산자 위반)을
+         throw 전 계상(정상 단일 생산자 경로 0 유지·핫패스 무영향) + WriterCollisions 프로퍼티. ②신규 RingTelemetry
+         (블리터블 값타입: Published·Forwarded·GatedOut·Dropped·WriterCollisions·ThroughputPerSec) + RingTelemetryChannel
+         — ForensicTelemetryChannel 검증 seqlock idiom 계승(홀→payload→짝·캐시라인 격리·DEBUG 단일라이터 가드·8회
+         재시도 후 직전프레임 유지). ★제네릭 미사용: [StructLayout(Explicit)] Cell 의 구체 Data 에 FieldOffset 을 박아야
+         해 제네릭 불가 → 링 전용 미러링(재발명 아님). ③RingTelemetryPublisher — 링/디스패처 카운터를 주기 스냅샷해
+         채널 발행하는 '단일 라이터' 샘플러(CAS 가드·무할당). 처리량은 직전 샘플 대비 발행 델타/경과초(Stopwatch 단위·
+         주입 가능 → 결정론 테스트). UI 는 채널만 TryRead(단방향) — 코어 무블록, 경합 시 직전 프레임 유지(비대칭 안전).
+         테스트 +11(S29GammaRingTelemetryTests): seqlock round-trip·발행전 default 안정·버전 단조·torn 멸절(200k 동시·
+         비공허 okReads/maxSeq)·무할당 50k·비블록·캐시라인 레이아웃 가드·★_writerCollisions Barrier 동시진입 정확계상
+         (counter==예외수 1:1·비공허>0)·퍼블리셔 스냅샷·주입클럭 처리량·널가드. 빌드 0/0. liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.52.0 — ★Path Alpha(S29-c): 청산 연산 권위 역전(Authority Inversion). ShadowCutoverGate.Clear()의 반환
          권위를 레거시 naive decimal → QFixed 정렬 청산값(shadow.ToDecimal())으로 가역 전환. 신규 ClearingAuthority
          enum(LegacyPrimary=0 기본·섀도우 모드 불변 / QFixedPrimary=1 역전). QFixedPrimary 면 QFixed 정렬값이 권위가
          되고 레거시 decimal 은 '후방 백스톱'으로 상시 대조(TraceOrFreeze 의 보수불변식+레거시밴드+오버플로 트랩이

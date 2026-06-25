@@ -51,7 +51,8 @@ namespace StockManager.Common
     {
         private readonly RingBufferCore<OrderProposal> _ring;
         private long _nextOrderId;
-        private int  _publishing;   // 0=idle,1=publishing — ★단일 생산자 계약 런타임 강제(CAS)
+        private int  _publishing;        // 0=idle,1=publishing — ★단일 생산자 계약 런타임 강제(CAS)
+        private long _writerCollisions;  // S29 Gamma — CAS 게이트 낙방(동시 생산자 위반) 누적 계측
 
         /// <param name="capacity">2 이상의 2의 거듭제곱(기본 1024).</param>
         public OrderDispatchRing(int capacity = 1024) => _ring = new RingBufferCore<OrderProposal>(capacity);
@@ -59,13 +60,19 @@ namespace StockManager.Common
         public int  Capacity  => _ring.Capacity;
         /// <summary>최고 발행 시퀀스(-1 = 미발행).</summary>
         public long Published  => _ring.Published;
+        /// <summary>S29 Gamma — 단일 생산자 CAS 게이트 낙방 누적(동시 발행 진입 위반 횟수). 0 이 정상.</summary>
+        public long WriterCollisions => Interlocked.Read(ref _writerCollisions);
 
         // ★적대적 리뷰(minor) — RingBufferCore.Publish 는 단일 라이터 전용(비원자 seq++). 계약을 주석에만 두지 않고
         //   CAS 로 런타임 강제: 동시 생산자 진입은 슬롯/시퀀스 손상 대신 즉시 fail-closed throw. 정당 단일 생산자는 비경합.
+        //   S29 Gamma — throw 전에 낙방을 계상(텔레메트리). 정상 단일 생산자 경로는 비경합이라 0 유지(핫패스 무영향).
         private void EnterPublish()
         {
             if (Interlocked.CompareExchange(ref _publishing, 1, 0) != 0)
+            {
+                Interlocked.Increment(ref _writerCollisions);
                 throw new InvalidOperationException("OrderDispatchRing: 동시 생산자 위반 — Publish 는 단일 생산자 전용");
+            }
         }
 
         /// <summary>챔피언 제안 발행(단일 생산자 전용·게이트 강제). OrderId 자동 증가, 발행 id 반환. 무할당.</summary>
