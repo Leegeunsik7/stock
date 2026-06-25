@@ -18,10 +18,24 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.50.0</Version>
-    <AssemblyVersion>4.50.0.0</AssemblyVersion>
-    <FileVersion>4.50.0.0</FileVersion>
-    <!-- v4.50.0 — ★Path C(S29): SPMC 락-프리 주문 디스패치 링버퍼 개통. 검증된 RingBufferCore<T>(S20 #1·seqlock
+    <Version>4.51.0</Version>
+    <AssemblyVersion>4.51.0.0</AssemblyVersion>
+    <FileVersion>4.51.0.0</FileVersion>
+    <!-- v4.51.0 — ★Path Beta(S29): 멀티-자산 펌프 진입 검문(흐름 제어 Seam). S27-d 의 QTickRegistry/QFxGuard
+         스캐폴드를 '실제 주문 진입로'(OrderDispatchRing 생산자)에 인라인 결속. 신규 QAdmissionGate — 단일 펌프
+         진입에서 USD 소수/KRW 정수 자산이 교차할 때 자산별 격자(tick/step)에 '정확 정렬'된 제안만 통과, 비정렬
+         서브틱은 '스냅하지 않고' fail-closed 거부(+ForceFreeze). ★ShadowClearingTracer 와 역할 분리(중복 아님):
+         Tracer=관측(ConservativeAlign 스냅으로 명목 산출·레거시 대조), AdmissionGate=입장 통제(진입 스냅 금지 —
+         그 스냅이 곧 Silent Skew 원천: 잘못된 단일 전역 spec 1원격자가 $100.10→101 왜곡, S27-d 박제). AdmitResult
+         5종(Admitted/Poison/Unregistered/NegOverflow/Misaligned) + 사유별 Interlocked 카운터(락-프리 텔레메트리).
+         AdmitAndPublish 가 통과분만 링에 발행(거부 시 -1·미발행) → 오염 제안이 펌프/브릿지/감사/텔레메트리로 새는
+         것을 진입로에서 차단. ★liveArmed:false 불변: 게이트는 '진입 형식'만 검문, 무장과 무관(송출은 여전히
+         GatedOrderDispatcher 무장 술어가 결정). 통과 경로 무할당(δ=0 — FrozenDictionary 룩업+값타입 import/정렬검사,
+         거부 동결 경로만 att 할당). 테스트 +12(혼재 자산 통과·격자 보존·서브틱/분할수량 거부·거친격자 silent skew
+         거부 박제·미등록/빈심볼/음수 fail-closed·링 진입 결속[통과분만 발행·시퀀스 불변]·널가드·무할당 50k·카운터
+         정확). 후속 Path Alpha(권위 역전)의 멀티자산 안전 전제 충족(자산별 spec 검문 선결). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.50.0 — ★Path C(S29): SPMC 락-프리 주문 디스패치 링버퍼 개통. 검증된 RingBufferCore<T>(S20 #1·seqlock
          SPMC) 위에 고정소수점 OrderProposal(unmanaged 값 타입: OrderId·GenomeId·SymbolCode·Side·Kind·PriceRaw
          (QPrice)·QtyRaw(QQty)·Ticks)을 얹어 챔피언 제안을 단일 생산자→다중 소비자(브릿지·감사·텔레메트리)로 무잠금
          분배. OrderDispatchRing(Publish 단일생산자·CreateConsumer 독립커서) + GatedOrderDispatcher(무장 술어 주입 —
