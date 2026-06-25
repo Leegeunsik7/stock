@@ -329,5 +329,28 @@ namespace StockManager.Common
             else    Interlocked.Increment(ref _frozen);
             return Authoritative(auth, ok, legacyBase, shadowBase);
         }
+
+        /// <summary>
+        /// v4.61.0 Load-bearing 컷오버 지원 — QFixed 보수 정렬된 (단가, 수량)을 '분리' 노출한다. 기존 Clear/ClearBase 는
+        /// 명목 decimal 만 반환해 주문 필드 치환에 쓸 수 없었다(정직: ClearBase 는 base 통화 명목 — price/qty 분해 불가).
+        /// 등록 격자(registry/spec)로 QLedgerGuard.TryClearNotional 을 호출해 alignedPrice(매수 ceil·매도 floor)와
+        /// alignedQty(step 내림)를 산출한다. 미등록·음수·오버플로면 false(+_att ForceFreeze·_frozen++) — 호출자
+        /// (ShadowClearingBroker)가 이를 받아 fail-closed(실주문 차단)를 '강제'한다. 성공 경로 무할당(값 타입·정렬 연산만).
+        /// ★권위(Authority)와 무관한 순수 연산 프리미티브 — 권위 적용 여부(반환값 채택)는 전적으로 호출자 책임.
+        /// </summary>
+        public bool TryClearAligned(string symbol, decimal priceDec, decimal qtyDec, OrderSide side,
+                                    out QPrice alignedPrice, out QQty alignedQty)
+        {
+            alignedPrice = default; alignedQty = default;
+            Interlocked.Increment(ref _observed);
+            if (!ResolveSpec(symbol, out var spec))   // 미등록 → ResolveSpec 이 _att 동결
+            { Interlocked.Increment(ref _frozen); return false; }
+            if (!QAcl.TryImportPrice(priceDec, _att, out var price) || !QAcl.TryImportQty(qtyDec, _att, out var qty))
+            { Interlocked.Increment(ref _frozen); return false; }   // 음수/오버플로 import → 경계 동결
+            if (!QLedgerGuard.TryClearNotional(price, qty, spec.Tick, spec.Step, side, _att,
+                                               out _, out alignedPrice, out alignedQty))
+            { Interlocked.Increment(ref _frozen); return false; }   // 명목 오버플로 등 → 동결
+            return true;
+        }
     }
 }

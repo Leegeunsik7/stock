@@ -18,10 +18,31 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.60.0</Version>
-    <AssemblyVersion>4.60.0.0</AssemblyVersion>
-    <FileVersion>4.60.0.0</FileVersion>
-    <!-- v4.60.0 — Path Alpha: ClearingAuthority 권위 역전 컷오버 배선. QClearing.cs 의 SetAuthority 스펙(v4.52)은
+    <Version>4.61.0</Version>
+    <AssemblyVersion>4.61.0.0</AssemblyVersion>
+    <FileVersion>4.61.0.0</FileVersion>
+    <!-- v4.61.0 — 무장 전야 하드닝: ShadowClearingBroker 권위 채택(load-bearing) 가드 + 청산 정렬 프리미티브.
+         ★정직 회계: 스펙(IBroker.Place(OrderProposal) 의 price/qty 를 ClearBase 반환값으로 강제 교체)은 5중으로
+         '코드상 불가'였다 — (1)IBroker.Place 는 9-positional primitive(OrderProposal 아님) (2)OrderProposal 은
+         readonly struct(불변·Place 에 미전달) (3)Clear/ClearBase 는 단일 decimal 명목만 반환(분리된 QPrice/QQty 노출
+         없음) (4)ClearBase 는 FX 전용(base 통화·동일통화 주문에 부적합) (5)데코레이터엔 attestation 부재+게이트 _att 는
+         전용 섀도우(v4.49 격리)+LiveRouter 경로엔 AssertNormal 게이트 없음. 따라서 의도를 '안전·정타입'으로 교정 구현:
+         ①QClearing 신규 TryClearAligned(symbol,price,qty,side,out QPrice,out QQty) — 레지스트리+QAcl+QLedgerGuard 로
+         보수 정렬(매수 ceil·매도 floor·수량 step 내림) 분리 노출. 미등록/오염/오버플로 → false(+_att 동결·_frozen++).
+         ②ShadowClearingBroker 권위 분기: LegacyPrimary=기존 '병렬 관측·삼킴·RAW 위임'(v4.60 바이트 동일·footgun 무재발),
+         QFixedPrimary=PlaceQFixedAuthoritative — TryClearAligned 로 단가/수량을 권위 정렬값으로 치환해 inner.Place 송출;
+         청산 실패(미등록/오염/정렬후 수량 0)면 inner.Place 절대 미호출 + 옵션 라이브 attestation ForceFreeze + Invalid
+         OperationException 으로 하드 단절(데코레이터 자신이 하드 게이트 — 다운스트림 AssertNormal 의존 없음). 신규 옵션
+         ctor 인자 liveAttestation=null(기본 null → throw 만으로 단절·섀도우↔라이브 동결 결합 footgun 미발생; 명시 주입
+         시에만 라이브 동결 에스컬레이션). ③BrokerHub.Create 에 liveAttestation 옵션 인자 추가(데코레이터로 스레드).
+         ★liveArmed:false 박제 보존: 실주문 mutation 도달은 3중 옵트인(게이트 주입 + QFixedPrimary + IsLive&IsArmed) 동시
+         성립 필요 — 어느 프로덕션 호출부도 기본 미배선(Launcher 단일 인자·BlazorHomeForm 은 게이트 DI 등록만, 실 컷오버
+         미배선). 비가역 라이브 결속은 의도적 미수행(자동 배선 금지). 테스트 +5(Legacy 삼킴·RAW 통과/QFixed 정렬 치환
+         70001·10/QFixed 청산실패 fail-closed throw+inner 미호출+라이브 동결/무 liveAtt throw/Legacy+liveAtt footgun 무동결).
+         빌드 0/0, 전체 1560 통과(Release 연속 0 실패). 적대적 리뷰 4렌즈 결함 0(liveArmed/default-OFF·fail-closed 벽·
+         footgun 무재발/Legacy 불변·정렬 정확/변이민감). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.60.0 — Path Alpha: ClearingAuthority 권위 역전 컷오버 배선. QClearing.cs 의 SetAuthority 스펙(v4.52)은
          이미 존재했으나 앱 기동 시 config 연동 진입 배선이 누락 — 본 단계가 그 갭을 채운다. BlazorHomeForm 에서
          익명 등록되던 ShadowCutoverGate 를 로컬로 호이스팅 후, cfg.GetBool("Clearing.QFixedPrimary.Enabled", false) 가
          옵트인일 때만 shadowGate.SetAuthority(ClearingAuthority.QFixedPrimary) 호출(volatile int 무할당 가역 스위치).

@@ -21,16 +21,22 @@ using System;
 
 namespace StockManager.Common
 {
-    /// <summary>IBroker 데코레이터 — Place 시 ShadowCutoverGate 로 신 QFixed 청산을 병렬 관측(레거시 권위 불변).</summary>
+    /// <summary>IBroker 데코레이터 — 게이트 권위에 따라 분기: LegacyPrimary=병렬 관측(레거시 권위 불변),
+    /// QFixedPrimary=완전 집권(보수 정렬값으로 주문 치환 + 청산 실패 시 fail-closed 하드 단절).</summary>
     public sealed class ShadowClearingBroker : IBroker
     {
-        private readonly IBroker            _inner;
-        private readonly ShadowCutoverGate  _gate;
+        private readonly IBroker                   _inner;
+        private readonly ShadowCutoverGate         _gate;
+        // v4.61.0 — QFixedPrimary 'load-bearing' fail-closed 시 라이브 파이프라인을 동결할 attestation(옵션·기본 null).
+        //   null 이면 throw 만으로 하드 단절(섀도우↔라이브 동결 결합 footgun 미발생). 명시 주입 시에만 라이브 동결 에스컬레이션.
+        private readonly OrderAttestationService?   _liveAtt;
 
-        public ShadowClearingBroker(IBroker inner, ShadowCutoverGate gate)
+        public ShadowClearingBroker(IBroker inner, ShadowCutoverGate gate,
+                                    OrderAttestationService? liveAttestation = null)
         {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _gate  = gate  ?? throw new ArgumentNullException(nameof(gate));
+            _inner   = inner ?? throw new ArgumentNullException(nameof(inner));
+            _gate    = gate  ?? throw new ArgumentNullException(nameof(gate));
+            _liveAtt = liveAttestation;
         }
 
         public string Name   => $"Shadow({_inner.Name})";
@@ -39,7 +45,11 @@ namespace StockManager.Common
         public (bool ok, string msg) Place(PaperAsset asset, string symbol, string name,
             PaperSide side, PaperKind kind, decimal qty, decimal limitPrice, decimal currentPrice)
         {
-            // 1) 섀도우 관측 — 게이트 INERT 면 호출조차 안 함(완전 통과). 활성 시에만 신 엔진 병렬 대조.
+            // ★v4.61 권위 분기 — QFixedPrimary 는 'load-bearing'(게이트 정렬값이 실주문 권위), 그 외(LegacyPrimary)는 기존 '병렬 관측'.
+            if (_gate.Authority == ClearingAuthority.QFixedPrimary)
+                return PlaceQFixedAuthoritative(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
+
+            // ── LegacyPrimary(안전 모드·기존 계약 1비트 불변) — 관측만·결과 버림·예외 삼킴·RAW 위임 ──
             if (_gate.Enabled)
             {
                 try
@@ -53,9 +63,39 @@ namespace StockManager.Common
                 }
                 catch { /* ★섀도우 관측은 실주문을 절대 방해하지 않는다(결함 격리) */ }
             }
-
-            // 2) 권위 경로 — 레거시 브로커가 그대로 체결/거부를 결정. 데코레이터는 1:1 위임.
             return _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
+        }
+
+        // ★QFixedPrimary 완전 집권 — 게이트 보수 정렬값으로 주문을 '치환'해 송출. 청산 실패(미등록/격자 오염/오버플로)
+        //   시 fail-closed: inner.Place 절대 미호출 + 라이브 attestation ForceFreeze(옵션) + InvalidOperationException
+        //   으로 파이프라인 하드 단절(자산 오염 차단). LegacyPrimary 의 '삼킴+통과' 계약과 정반대 — 권위가 넘어왔으므로.
+        private (bool ok, string msg) PlaceQFixedAuthoritative(PaperAsset asset, string symbol, string name,
+            PaperSide side, PaperKind kind, decimal qty, decimal limitPrice, decimal currentPrice)
+        {
+            decimal px = kind == PaperKind.Market ? currentPrice : limitPrice;
+            var oside  = side == PaperSide.Buy ? OrderSide.Buy : OrderSide.Sell;
+
+            bool cleared; QPrice ap = default; QQty aq = default;
+            try { cleared = _gate.TryClearAligned(symbol, px, qty, oside, out ap, out aq); }
+            catch { cleared = false; }   // 예상외 산술 오염도 fail-closed(절대 raw 송출로 폴백하지 않음)
+
+            if (!cleared) throw FailClosed(symbol);   // ★미등록/오염 → inner 미호출 + 라이브 동결 + throw
+
+            // 권위 치환 — 수량은 항상 정렬(step 내림); 지정가만 정렬 단가 적용(시장가는 단가 미사용).
+            decimal newQty   = aq.ToDecimal();
+            decimal newLimit = kind == PaperKind.Limit ? ap.ToDecimal() : limitPrice;
+            if (newQty <= 0m) throw FailClosed(symbol);   // 서브-스텝 절사로 수량 0 → 송출 금지(오염 0 미반영)
+
+            return _inner.Place(asset, symbol, name, side, kind, newQty, newLimit, currentPrice);
+        }
+
+        // 라이브 동결(옵션) 후 하드 단절 예외 생성. _liveAtt null 이면 throw 만으로 단절(footgun 미발생).
+        private InvalidOperationException FailClosed(string symbol)
+        {
+            try { _liveAtt?.ForceFreeze("ShadowClearingBroker QFixed 청산 실패 — fail-closed 실주문 차단: " + symbol); }
+            catch { /* 동결 실패해도 throw 로 하드 단절은 유지 */ }
+            return new InvalidOperationException(
+                "[CLEARING FAIL-CLOSED] QFixed 권위 청산 실패 — 실주문 차단(미등록/격자 오염): " + symbol);
         }
 
         public void    Cancel(string orderId)               => _inner.Cancel(orderId);

@@ -52,14 +52,18 @@ namespace StockManager.Common
 
         /// <summary>현재 모드/무장 상태에 맞는 브로커.
         /// 모의 → PaperBroker, 실전·미무장 → 거부 스텁, 실전·무장 → 실거래 라우터(금액 상한 적용).
-        /// Path B — shadowGate 제공 시 ShadowClearingBroker 로 래핑해 신 QFixed 청산을 '병렬 관측'(레거시 권위 불변,
-        /// 게이트 INERT 면 완전 통과). gate=null(기본)은 후방호환 — 기존 호출부 거동 무변경.</summary>
-        public static IBroker Create(LocalDatabase db, ShadowCutoverGate? shadowGate = null)
+        /// Path B — shadowGate 제공 시 ShadowClearingBroker 로 래핑(게이트 LegacyPrimary=병렬 관측·레거시 권위 불변,
+        /// QFixedPrimary=정렬값 치환+fail-closed 단절). gate=null(기본)은 후방호환 — 기존 호출부 거동 무변경.
+        /// v4.61.0 — liveAttestation(옵션·기본 null): QFixedPrimary 청산 실패 시 데코레이터가 동결할 '라이브'
+        /// attestation. null 이면 throw 만으로 하드 단절(섀도우↔라이브 동결 결합 footgun 미발생). ★실 컷오버(이 인자를
+        /// 채워 무장 경로에 결속)는 비가역 단계 — 본 팩토리는 '수용 가능'하게만 보강하고 자동 배선하지 않는다(liveArmed:false).</summary>
+        public static IBroker Create(LocalDatabase db, ShadowCutoverGate? shadowGate = null,
+                                     OrderAttestationService? liveAttestation = null)
         {
             IBroker inner = !IsLive(db) ? new PaperBroker(db)
                           : !IsArmed(db) ? new LiveBrokerStub()
                           : (IBroker)new LiveRouterBroker(db);
-            return shadowGate is null ? inner : new ShadowClearingBroker(inner, shadowGate);
+            return shadowGate is null ? inner : new ShadowClearingBroker(inner, shadowGate, liveAttestation);
         }
     }
 
