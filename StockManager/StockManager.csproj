@@ -18,10 +18,37 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.55.0</Version>
-    <AssemblyVersion>4.55.0.0</AssemblyVersion>
-    <FileVersion>4.55.0.0</FileVersion>
-    <!-- v4.55.0 — ★Mission A+B(S29): GatedOrderDispatcher fail-closed 하드닝 + Path Gamma UI 배선 완결.
+    <Version>4.57.0</Version>
+    <AssemblyVersion>4.57.0.0</AssemblyVersion>
+    <FileVersion>4.57.0.0</FileVersion>
+    <!-- v4.57.0 — ★Mission A(v4.56.0)+B+C(v4.57.0): 자산별 격자 기본 레지스트리 + 3중 안전 게이트 실 무장 술어 +
+         명령 팔레트 순수 C# 열기. ★정직 회계: Mission A 의 '타입 골격'(QTickRegistry·registry ctor·Clear(symbol,..)
+         보수정렬·미등록 ForceFreeze)은 S27-d/e/S29 에서 이미 완비됐었다 — 본 단계는 '빌드'가 아니라 빠진 결속/엔트리셋.
+         [Mission A — v4.56.0] BuiltInTickSpecs.BuildDefaultRegistry() 신설 — KRW 정수 호가(가격대 근사·삼성100·
+         카카오50·ETF5)·USD 센트(0.01)·코인 사토시(1e-8) 12 대표 엔트리(FNV 키 유일·spec 유효 검증). BlazorHomeForm 의
+         ShadowCutoverGate 를 단일 전역 spec(KRW정수 전용·USD/코인 침묵왜곡) → registry ctor 로 전환(전용 섀도우
+         attestation 유지 = 미등록 동결이 라이브 격리). ⚠️ KRX 호가는 가격대별이라 symbol→단일 spec 은 '근사' —
+         가격대 이탈 비정렬은 QAdmissionGate 가 스냅 않고 fail-closed 거부(침묵왜곡 0). 게이트 기본 OFF(INERT)·
+         라이브 미배선이라 성벽 무영향. ★A 검증 경계 정직: 라이브 청산 결속·전체 유니버스 등록은 본 범위 밖.
+         [Mission B — v4.57.0] LiveArmingGate 신설 — GatedOrderDispatcher._isArmed 스캐폴드를 테스트 가능한 1급
+         술어로 승격. IsArmed() = att.Mode==Normal ∧ ignition.AllowPhysical() ∧ brokerArmed() (정정: 스펙의
+         BrokerHub.IsArmed → static IsArmed(db), Attestation.GatingMode → .Mode==GatingMode.Normal, AllowPhysical()
+         정확). ★fail-closed: 평가 중 예외 전부 false 흡수(catch→false) + 디스패처 Drain 외곽 try/catch→GatedOut++
+         이중 벽. 단락 순서(att→ignition→broker)로 정상 미무장 핫패스 db-I/O 0·할당 0(δ=0). BlazorHomeForm: 실
+         술어를 config 옵트인(Dispatch.LiveArmingWired 기본 false→()=>false)로 결속 — ★liveArmed:false 박제 보존
+         (기본 OFF·BrokerHub.IsArmed 기본 0·점화 Locked·Drain 미배선). Drain 의 술어-throw→armed=false→GatedOut++
+         구조는 v4.55 부터 이미 존재(본 단계는 술어 '내용'만 실체화).
+         [Mission C] CommandPaletteController 신설(순수 C# 싱글톤 브로커·event OpenRequested/RequestOpen) — NavMenu
+         검색바 클릭이 JS 홉 없이 팔레트를 연다. CommandPalette 가 구독(OnInitialized)·해지(Dispose). ★정직: 스펙이
+         가정한 'dashboard.setFocus 콘솔에러 버그'는 v3.5.3(6a2c576)에서 이미 dashboard.openPalette 로 수정됨(에러 0) —
+         본 단계는 스펙이 가정한 'CommandPalette.OpenPalette C# 호출 인터페이스'를 실체화(JSInvokable-only → 순수 C#)
+         + window._cmdRef 미설정 시 무동작 취약성 제거. Ctrl+K(JS 핫키) 미변경. NavMenu 의 IJSRuntime 주입 제거(미사용).
+         테스트 +13(BuiltInTickSpecs 격자·등록 정렬 거짓동결 0·미등록 fail-closed·INERT·보수정렬 매수↑매도↓·
+         LiveArming 3중 AND·각 항 false·throw fail-closed·단락 비호출·널가드). 빌드 0/0, 전체 1528 통과.
+         적대적 리뷰(5렌즈 refute, 전부 결함 0): liveArmed 불변·레지스트리 격리·δ=0/fail-closed·팔레트 무누수·테스트 비공허.
+         liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.55.0 — ★Mission A+B(S29): GatedOrderDispatcher fail-closed 하드닝 + Path Gamma UI 배선 완결.
          [Mission A] GatedOrderDispatcher.Drain onSend fail-closed 벽 — 브로커 단절·네트워크 오류가 onSend throw
          를 유발하면: ①Interlocked.Increment(_sendErrors) 원자 계상 ②OrderAttestationService.ForceFreeze("Gated
          OrderDispatcher downstream throw: "+ex.Message) 즉시 비상 동결(fail-open 절대 금지) ③break(추가 처리 차단·

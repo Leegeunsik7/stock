@@ -5,6 +5,7 @@
 @inject SymbolContext SymCtx
 @inject AsOfContext AsOfCtx
 @inject LocalDatabase Db
+@inject CommandPaletteController Palette
 @implements IDisposable
 
 @if (_open)
@@ -53,7 +54,12 @@
         Mod("🧪", "모의투자", "Paper"); Mod("🧠", "복합 알림", "Composite");
         Mod("⚙️", "거래 설정", "BrokerSettings"); Mod("⚙️", "설정", "Settings");
         _all.Add(new Cmd("🌗", "테마 전환 (라이트/다크)", "보기", ToggleTheme));
+
+        // Mission C — 순수 C# 열기 경로 구독(NavMenu 검색바 클릭 등). UI 스레드 마샬링 후 기존 OpenPalette 재사용.
+        Palette.OpenRequested += OnOpenRequested;
     }
+
+    private void OnOpenRequested() => InvokeAsync(OpenPalette);
 
     protected override async Task OnAfterRenderAsync(bool first)
     {
@@ -248,5 +254,9 @@
         await JS.InvokeVoidAsync("dashboard.setTheme", mode);
     }
 
-    public void Dispose() => _ref?.Dispose();
+    public void Dispose()
+    {
+        Palette.OpenRequested -= OnOpenRequested;   // Mission C — 구독 해지(누수 차단)
+        _ref?.Dispose();
+    }
 }

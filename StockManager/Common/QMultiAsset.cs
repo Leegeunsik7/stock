@@ -68,6 +68,48 @@ namespace StockManager.Common
         }
     }
 
+    /// <summary>
+    /// v4.56.0 — 대표 자산군 '기본 격자' 엔트리셋. KRW 정수 호가(가격대별 틱)·USD 센트(0.01)·코인 사토시 스텝(1e-8)이
+    /// 동일 QFixed(10^8) 위에서 자산별 격자로 공존하게 한다(ShadowCutoverGate/QAdmissionGate 의 registry ctor 에 주입).
+    /// <para>
+    /// ⚠️ 정직 한계(스펙이 가린 함정): ① KRX 호가단위는 '심볼당 단일'이 아니라 '현재 가격대별'(예: 2천원 미만 1원,
+    /// 2천~5천 5원, 5천~2만 10원, 2만~5만 50원, 5만~20만 100원, 20만~50만 500원, 50만↑ 1000원)이다. 본 맵은
+    /// 'symbol→단일 QTickSpec' 모델상 등록 시점 가격대 기준 '근사'다. 가격대 이탈 시 — AdmissionGate 의 '정확 정렬'
+    /// 검문이 비정렬 서브틱을 <b>스냅하지 않고 fail-closed 거부</b>하므로 침묵 왜곡(silent skew)은 발생하지 않는다
+    /// (거부될 뿐 틀린 명목이 새지 않음). ② ETF 는 5원 틱(가격 무관). ③ 코인 KRW-* 가격 틱도 업비트 가격대별이라 근사.
+    /// 프로덕션은 전체 유니버스를 가격대별로 등록해야 하며, 본 셋은 데모·테스트·부팅 시드용 '대표 표본'이다.
+    /// </para>
+    /// </summary>
+    public static class BuiltInTickSpecs
+    {
+        /// <summary>대표 엔트리로 불변 레지스트리를 빌드(중복/충돌은 ctor 가 fail-fast).</summary>
+        public static QTickRegistry BuildDefaultRegistry() => new(DefaultEntries());
+
+        private static QTickSpec Krw(decimal tickWon) => new(QPrice.Of(tickWon), QQty.Of(1m));            // 정수 호가·1주 스텝
+        private static QTickSpec Usd()                 => new(QPrice.Of(0.01m), QQty.Of(1m));             // 센트 틱·1주 스텝
+        private static QTickSpec Coin(decimal tickWon) => new(QPrice.Of(tickWon), QQty.Of(0.00000001m));  // KRW 가격 틱·사토시 스텝
+
+        /// <summary>대표 표본(가격대 근사·정직 표기). 등록 외 심볼은 게이트에서 fail-closed(미통과·필요 시 동결).</summary>
+        public static IEnumerable<(string symbol, QTickSpec spec)> DefaultEntries()
+        {
+            // ── KRW 코스피 대형주(현재 가격대 호가단위 근사) ──
+            yield return ("005930", Krw(100m));    // 삼성전자  (~8만원대 → 5만~20만 → 100원)
+            yield return ("000660", Krw(500m));    // SK하이닉스 (~20만↑ → 20만~50만 → 500원)
+            yield return ("035420", Krw(100m));    // NAVER     (~5만~20만 → 100원)
+            yield return ("035720", Krw(50m));     // 카카오    (~2만~5만 → 50원)
+            yield return ("005380", Krw(500m));    // 현대차    (~20만~50만 → 500원)
+            yield return ("069500", Krw(5m));      // KODEX 200 ETF (ETF 고정 5원 틱·가격 무관)
+            // ── USD 나스닥(센트 틱) ──
+            yield return ("AAPL", Usd());
+            yield return ("NVDA", Usd());
+            yield return ("MSFT", Usd());
+            yield return ("TSLA", Usd());
+            // ── 코인(업비트 KRW 마켓·가격대 근사·사토시 스텝) ──
+            yield return ("KRW-BTC", Coin(1000m)); // ≥200만원 가격대 → 1000원 틱 근사
+            yield return ("KRW-ETH", Coin(1000m));
+        }
+    }
+
     /// <summary>환율(통화 A→B). 스케일 10^8 raw(예 1330.50 → 133050000000).</summary>
     public readonly record struct QFxRate(long Raw)
     {

@@ -51,6 +51,7 @@ namespace StockManager.Blazor
             services.AddSingleton<AiService>();
             services.AddSingleton<FxConverter>();   // ⚠️ Singleton 필수 — 10분 환율 캐시가 수명에 의존
             services.AddSingleton<ToastService>();  // 액션형 전역 토스트 (어느 페이지에서나 주입)
+            services.AddSingleton<CommandPaletteController>();  // Mission C — 명령 팔레트 순수 C# 열기 브로커(JS 홉 제거)
             services.AddSingleton<SymbolContext>();  // 전역 활성 종목 (연구 도구 횡이동 시드)
             services.AddSingleton<AsOfContext>();    // 전역 시점(As-Of) — 글로벌 타임-스크러버
             services.AddSingleton<GlobalIndexService>(); // 전세계 주요 지수 60초 폴링
@@ -77,9 +78,12 @@ namespace StockManager.Blazor
             //   주입한다. 공유하면 옵트인+배선 시 섀도우 발산 ForceFreeze 가 라이브 OrderAttestationService 를
             //   EmergencyFreeze 로 뒤집어 데코레이터 밖 실주문(ExecutionBridgeBroker.AssertNormal)을 차단할 수 있다.
             //   전용 att 로 격리하면 섀도우 동결은 gate.FrozenCount/전용 att 로만 관측되고 라이브 패닉 상태를 오염시키지 못함.
+            // v4.56.0 — 단일 전역 spec(KRW 정수단가 전용·USD/코인 침묵왜곡) → 자산별 격자 레지스트리 ctor 로 전환.
+            //   ON(옵트인) 시 Clear(symbol,..)가 자산별 tick/step 으로 보수 정렬(매수↑·매도↓)하고 미등록 심볼은
+            //   fail-closed(전용 섀도우 attestation 동결 — 라이브 격리 유지). 기본 OFF(INERT)라 성벽 무영향.
             services.AddSingleton(new ShadowCutoverGate(
                 cfg.GetBool("Clearing.ShadowCutover", false),
-                new QTickSpec(QPrice.Of(1m), QQty.Of(0.00000001m)), new OrderAttestationService()));
+                BuiltInTickSpecs.BuildDefaultRegistry(), new OrderAttestationService()));
             services.AddSingleton(bridge);                 // S14 #1 — KiwoomBridgeClient (하트비트 500ms)
             services.AddSingleton(broker.Audit);           // S14 #2 — LiveAuditService (체결 원장)
             services.AddSingleton(broker);                 // S14 #2 — ExecutionBridgeBroker (IBroker 실거래)
@@ -248,13 +252,23 @@ namespace StockManager.Blazor
             services.AddSingleton(shadowMetrics);
             // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
-            // S29 Path C+Gamma — SPMC 주문 디스패치 링 + Mission A/B 락-프리 UI 텔레메트리 배선.
-            // ⚠️ isArmed: liveArmed:false 박제 — 점화(Arm)·IgnitionLock.MasterIgnited 이전 송출 수학적 0.
-            // Mission A: attestation 주입 → onSend throw 시 동일 ForceFreeze 로 전체 파이프라인 비상 동결.
+            // S29 Path C+Gamma — SPMC 주문 디스패치 링 + 락-프리 UI 텔레메트리 배선.
+            // Mission A(v4.55): attestation 주입 → onSend throw 시 ForceFreeze 로 전체 파이프라인 비상 동결.
             var dispatchRing   = new OrderDispatchRing(1024);
-            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, () => false, attestation);
+
+            // v4.57.0 Mission B — 3중 안전 게이트 실 무장 술어 배선. att.Mode==Normal ∧ ignition.AllowPhysical()
+            //   ∧ BrokerHub.IsArmed(db) — 평가 중 예외는 LiveArmingGate 가 fail-closed(false) 흡수(디스패처 Drain
+            //   외곽 try/catch→GatedOut++ 와 이중 벽). ⚠️ liveArmed:false 박제 보존: 기본 OFF — 옵트인 config
+            //   (Dispatch.LiveArmingWired)가 켜질 때만 실 술어, 아니면 수학적 0(()=>false). 옵트인 ON 이라도 송출은
+            //   BrokerHub.IsArmed(기본 0)+점화 Locked 라 여전히 0 — 그리고 실 onSend/드레인 루프는 미배선(별도 단계).
+            var armingGate = new LiveArmingGate(ignition, attestation, () => BrokerHub.IsArmed(db));
+            Func<bool> armedPredicate = cfg.GetBool("Dispatch.LiveArmingWired", false)
+                ? armingGate.IsArmed
+                : () => false;
+            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation);
             var ringChannel    = new RingTelemetryChannel();
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel);
+            services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(dispatchRing);
             services.AddSingleton(ringDispatcher);
             services.AddSingleton(ringChannel);    // TelemetryMonitor.razor 주입 대상

@@ -1,13 +1,14 @@
 @implements IDisposable
 @inject NavigationManager Nav
 @inject LocalDatabase Db
+@inject CommandPaletteController Palette
 
 <aside class="side">
     <div class="brand">
         <div class="logo">₩</div>
         <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · v4.45.2</div></div>
     </div>
-    <div class="kbar" @onclick='() => JS.InvokeVoidAsync("dashboard.openPalette")'>
+    <div class="kbar" @onclick="() => Palette.RequestOpen()">
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
     </div>
 
@@ -47,8 +48,7 @@
 </aside>
 
 @code {
-    [Inject] private Microsoft.JSInterop.IJSRuntime JS { get; set; } = null!;
-
+    // Mission C — 검색바(kbar) 클릭은 이제 CommandPaletteController(순수 C#)로 팔레트를 연다(JS 홉·setFocus 잔재 제거).
     private record Item(string Icon, string Label, string Href, NavLinkMatch Match);
     private record Group(string Id, string Icon, string Label, string Caption, string[] Roots, Item[] Items);
 
