@@ -11,6 +11,7 @@ namespace StockManager.Tests
     // S29 Path Gamma — SPMC 링 → UI 락-프리 단방향 텔레메트리.
     //   §1 seqlock(round-trip·torn 멸절·버전 단조) §2 무할당·비블록 §3 캐시라인 격리 §4 _writerCollisions 계상
     //   §5 퍼블리셔 스냅샷·처리량(주입 클럭)·널가드.
+    [Collection("ConcurrencyStress")]   // v4.58.0 — 헤비 스트레스 직렬화(Barrier 100k·torn 200k 초과 구독 방지)
     public sealed class S29GammaRingTelemetryTests
     {
         // 검증 가능한 필드 간 불변식을 심은 프레임: Forwarded=P*2 ∧ GatedOut=P*3 ∧ Dropped=P*4 ∧ Collisions=P*5.

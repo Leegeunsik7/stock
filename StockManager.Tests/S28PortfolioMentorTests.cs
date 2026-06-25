@@ -9,6 +9,7 @@ namespace StockManager.Tests
     //  M1 제로마찰 온보딩 정준화·인입 펌프·컴플라이언스 락
     //  M2 고정소수점 복리 곡선·분위 밴드·seqlock 락프리 실시간·δ=0
     //  M3 카오스 비대칭 스트레스·진단·리밸런싱 밸브 fail-closed
+    [Collection("ConcurrencyStress")]   // v4.58.0 — 헤비 스트레스 직렬화(CPU 초과 구독·Barrier 기아 방지)
     public sealed class S28PortfolioMentorTests
     {
         // "삼성전자"/"005930", "AAPL"/"애플", "비트코인"/"BTC"/"KRW-BTC" 만 해석. 그 외 미해석(fail-closed).
@@ -698,6 +699,126 @@ namespace StockManager.Tests
             Span<QMoney> outb = stackalloc QMoney[1];
             Assert.True(ChaosEngine.ApplyStress(present, classes, ChaosScenario.CryptoWinter, outb));
             Assert.Equal(0m, outb[0].ToDecimal());
+        }
+
+        // ═══════════════════ v4.58.0 진격 프로토콜 3종 예외 가드 박제 ═══════════════════
+
+        // [B] 스티키 락 발동 시 LLM 스트림이 전면 차단되고 고지문이 뜬다(오버레이 점등 조건).
+        //     AdvisorPage.Ask 의 결정 로직 박제 — Razor @if(Compliance.IsLocked) 오버레이 바인딩은 빌드 검증(bUnit 미사용).
+        [Fact]
+        public void ComplianceLocked_DropsLlmStream_AndDisplaysOverlay()
+        {
+            var gate = new ComplianceGate();
+            const string llmStream = "확정 90% 수익 보장! 지금 풀매수 하세요";   // 위험 LLM 원본 — 절대 화면 도달 금지
+
+            // 페이지 렌더 결정: 분류 → Admit. 거부면 LLM 미호출, RefusalNotice 만 렌더(스트림 드롭).
+            string Render(string q) => gate.Admit(ComplianceClassifier.Classify(q)) ? llmStream : ComplianceGate.RefusalNotice;
+
+            Assert.False(gate.IsLocked);
+            Assert.Equal(llmStream, Render("내 수익률 어때?"));        // 정상 — 스트림 통과(Admit true)
+
+            var shown = Render("원금 보장되는 확정 수익 종목 추천해줘");  // 유사투자자문/확정수익 유도
+            Assert.Equal(ComplianceGate.RefusalNotice, shown);        // LLM 원본 대신 고정 고지문
+            Assert.NotEqual(llmStream, shown);                        // 위험 스트림 물리 차단
+            Assert.True(gate.IsLocked);                               // ★오버레이 점등 조건(PersonaState.ComplianceLocked)
+            Assert.Equal(PersonaState.ComplianceLocked, gate.State);
+
+            // sticky — 이후 정상 질의도 드롭(오버레이 유지·세션 봉인)
+            Assert.Equal(ComplianceGate.RefusalNotice, Render("리밸런싱 조언 줘"));
+            Assert.True(gate.IsLocked);
+        }
+
+        // [A] 일부 필드가 깨졌을 때 정상 자산만 저장되고 올바른 핀포인트 질문 컨텍스트가 생성된다.
+        [Fact]
+        public void PartialDraft_SavesValidFields_AndTriggersTargetedQuestion()
+        {
+            var pump = new OnboardingPump(new TestResolver());
+            // 수량이 서브스케일 절사(0.000000001 → Raw 0)로 깨짐 · 단가는 정상. 통짜 거절이면 삼성전자 자체를 잃는다.
+            Assert.True(pump.IngestPartial(new EntityDraft("삼성전자", 0.000000001m, 70_000m, null), out var partial));
+
+            // ① 정상 필드만 저장 — 심볼·단가 식별, 불량 수량은 미저장(0 강제 아님·오염 미반영)
+            Assert.Equal(1, pump.Count);
+            var slot = pump.Slots[0];
+            Assert.Equal("005930", slot.Symbol);
+            Assert.True(slot.HasAvgPrice);
+            Assert.Equal(70_000m, slot.AvgPrice.ToDecimal());
+            Assert.False(slot.HasQty);
+            Assert.Equal(0L, slot.Qty.Raw);
+            Assert.Equal(CanonReject.BadQuantity, partial.QtyReject);   // 왜 깨졌는지(핀포인트 사유)
+            Assert.True(partial.HasFieldIssue);
+
+            // ② 올바른 핀포인트 질문 컨텍스트 — '어느 자산'의 '무슨 필드'
+            var field = pump.NextGap(out var which);
+            Assert.Equal(ElicitField.Quantity, field);
+            Assert.Equal("005930", which.Symbol);                      // 삼성전자의 수량을 정밀 타격 질문
+
+            // ③ 수량 보정 → 동일 심볼 병합으로 완성(자산 소실 없음)
+            Assert.True(pump.IngestPartial(new EntityDraft("005930", 10m, null, null), out _));
+            Assert.Equal(1, pump.Count);
+            Assert.True(pump.Slots[0].IsComplete);
+        }
+
+        // [C] 시뮬레이터 독출 경합(Torn-Read) 시 에러 없이 직전 프레임을 정상 유지한다.
+        //     ★결정론(부하 무관·작업량 경계 [[concurrency-test-work-bounded]]) — 라이터 고정 횟수 후 종료.
+        //     안전성(찢긴 곡선 0·예외 0·유지 프레임 항상 유효)만 단언하고, 찢김 '발생'(활성성)은 강제하지 않는다(기아 비플레이키).
+        [Fact]
+        public void SeqlockRead_TornRead_RetainsPreviousFrame()
+        {
+            var (slots, present) = TwoAssetBook();
+            var asm = Assume(2, 0m, 0m);   // 평탄 → 일관 프레임은 전 연차 동일값
+            const int years = 8;
+            var pub = new ScenarioPublisher(slots, present, asm, years);
+            pub.Recompute(ShadowMutation.None);
+
+            long totalNone = present[0].Raw + present[1].Raw;
+            long totalMut  = present[0].Raw + QMath_Notional(present[1].Raw, 3m);   // 코인 3배
+            var allowed = new[] { totalNone, totalMut };
+
+            const int writerIters = 50_000;
+            int writerDone = 0, torn = 0, prevInvalid = 0, exceptions = 0;
+
+            var writer = new Thread(() =>
+            {
+                bool flip = false;
+                for (int i = 0; i < writerIters; i++)
+                { pub.Recompute(flip ? ShadowMutation.ScaleClass(AssetClass.Crypto, 3m) : ShadowMutation.None); flip = !flip; }
+                Volatile.Write(ref writerDone, 1);
+            }) { IsBackground = true };
+
+            var reader = new Thread(() =>
+            {
+                var cur = new long[years + 1]; var o = new long[years + 1]; var p = new long[years + 1];
+                var prev = new long[years + 1]; bool havePrev = false;
+                try
+                {
+                    while (Volatile.Read(ref writerDone) == 0)
+                    {
+                        if (pub.TryReadFrame(cur, o, p))
+                        {
+                            long v0 = cur[0];
+                            bool ok = (v0 == allowed[0] || v0 == allowed[1]);
+                            for (int t = 0; t <= years; t++) if (cur[t] != v0) ok = false;   // 평탄 불변 — 섞이면 torn
+                            if (!ok) Interlocked.Increment(ref torn);
+                            Array.Copy(cur, prev, years + 1); havePrev = true;               // 성공 시에만 직전 프레임 갱신
+                        }
+                        else if (havePrev)
+                        {
+                            // 찢김/미발행 — 직전 프레임 그대로 유지(prev 불변). 유지한 프레임은 항상 유효 발행본이어야 한다.
+                            long pv0 = prev[0];
+                            if (!(pv0 == allowed[0] || pv0 == allowed[1])) Interlocked.Increment(ref prevInvalid);
+                        }
+                    }
+                }
+                catch { Interlocked.Increment(ref exceptions); }
+            }) { IsBackground = true };
+
+            writer.Start(); reader.Start();
+            Assert.True(writer.Join(60000), "writer join 타임아웃(데드락?)");
+            Assert.True(reader.Join(60000), "reader join 타임아웃(데드락?)");
+
+            Assert.Equal(0, exceptions);    // 경합에 예외를 던지지 않음(비블록·fail-closed)
+            Assert.Equal(0, torn);          // 찢긴 곡선 0(seqlock 버전 재독출)
+            Assert.Equal(0, prevInvalid);   // 찢김 시 유지한 직전 프레임은 항상 유효 발행본
         }
     }
 }

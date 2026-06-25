@@ -18,10 +18,21 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.58.0</Version>
-    <AssemblyVersion>4.58.0.0</AssemblyVersion>
-    <FileVersion>4.58.0.0</FileVersion>
-    <!-- v4.58.0 — ★S28 고도화 Mission A/B/C: 점진적 치유 + 컴플라이언스 UI 방화벽 + Sliders→Seqlock 시뮬 페이지.
+    <Version>4.58.1</Version>
+    <AssemblyVersion>4.58.1.0</AssemblyVersion>
+    <FileVersion>4.58.1.0</FileVersion>
+    <!-- v4.58.1 — 진격 프로토콜 3종 예외 가드 박제 + Release 풀스위트 플래키 0% 하드닝. (a) 사용자 지정 3 테스트를
+         S28PortfolioMentorTests 에 추가: ComplianceLocked_DropsLlmStream_AndDisplaysOverlay(스티키 락 시 LLM 스트림
+         드롭+고지문/오버레이 점등 결정 로직), PartialDraft_SavesValidFields_AndTriggersTargetedQuestion(불량 필드는
+         버리고 식별 자산 보존+NextGap 핀포인트), SeqlockRead_TornRead_RetainsPreviousFrame(찢김 시 예외 0·torn 0·직전
+         프레임 유지·작업량 경계). (b) ★Release 플래키 근절 — xUnit 기본 컬렉션-병렬이 헤비 seqlock/Barrier 스트레스
+         클래스(S28 멘토·S29 Gamma·S29 주문)를 동시 가동 → sustained spin CPU 초과 구독 → Barrier/Join(timeout) 기아로
+         WriterCollisions_ExactlyCounts… 등 4건 간헐 실패(로직 결함 아님: 격리 실행 시 11/11 통과 확인). [Collection
+         ("ConcurrencyStress" DisableParallelization)] 로 세 클래스를 단독 구간 순차 실행 → 초과 구독 소거(나머지 1,500+
+         빠른 테스트 병렬 유지). 안전성 단언(torn=0)은 직렬화 무관 불변·활성성(Join 비기아)만 결정론화. 전체 1549 통과
+         (Release 3회 연속 0 실패·~8s). 프로덕션 코드/바이너리 거동 무변경(테스트 인프라+회귀 박제). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.58.0 — ★S28 고도화 Mission A/B/C: 점진적 치유 + 컴플라이언스 UI 방화벽 + Sliders→Seqlock 시뮬 페이지.
          ★정직 회계: 세 미션의 '백엔드 코어'(Canonicalizer/SlotField/Merge, ComplianceGate/RefusalNotice, ScenarioPublisher.
          Recompute/TryReadFrame·RebalanceLever·ChaosScenario·FutureValueEngine)는 S28 에서 이미 완비됐었다 — 본 단계는
          빠진 결속/UI + 진짜 갭(통짜 거절·UI 미배선) 보강. QFutureValue.cs/QChaos.cs 무변경.

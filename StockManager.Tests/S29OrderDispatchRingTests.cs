@@ -8,6 +8,7 @@ namespace StockManager.Tests
 {
     // S29 (Path C) — SPMC 주문 디스패치 링: 고정소수점 제안 라운드트립·다중소비자 분배·동시성 torn-safety·
     //   추월 드롭 계측·무장 게이트(liveArmed:false → 송출 0). 안전성(torn=0)은 부하 무관 결정론.
+    [Collection("ConcurrencyStress")]   // v4.58.0 — 헤비 스트레스 직렬화(단일생산자 4소비자 50k 초과 구독 방지)
     public sealed class S29OrderDispatchRingTests
     {
         [Fact]
