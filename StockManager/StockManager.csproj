@@ -18,10 +18,26 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.59.0</Version>
-    <AssemblyVersion>4.59.0.0</AssemblyVersion>
-    <FileVersion>4.59.0.0</FileVersion>
-    <!-- v4.59.0 — 진공관 결속: GatedOrderDispatcher 무장 술어 스위치를 테스트 가능한 1급 팩토리로 승격.
+    <Version>4.60.0</Version>
+    <AssemblyVersion>4.60.0.0</AssemblyVersion>
+    <FileVersion>4.60.0.0</FileVersion>
+    <!-- v4.60.0 — Path Alpha: ClearingAuthority 권위 역전 컷오버 배선. QClearing.cs 의 SetAuthority 스펙(v4.52)은
+         이미 존재했으나 앱 기동 시 config 연동 진입 배선이 누락 — 본 단계가 그 갭을 채운다. BlazorHomeForm 에서
+         익명 등록되던 ShadowCutoverGate 를 로컬로 호이스팅 후, cfg.GetBool("Clearing.QFixedPrimary.Enabled", false) 가
+         옵트인일 때만 shadowGate.SetAuthority(ClearingAuthority.QFixedPrimary) 호출(volatile int 무할당 가역 스위치).
+         기본 false → LegacyPrimary(decimal 권위·기존 의미론 불변). 단일 인스턴스(호이스팅 후 SetAuthority→AddSingleton
+         동일 객체·중복 생성 0). ★liveArmed:false 박제: DI 게이트는 라이브 청산 경로에 미배선(Launcher 가 BrokerHub.
+         Create(db) 단일 인자 → shadowGate=null·ShadowClearingBroker 미생성)이라 권위 전환은 Clear/ClearBase '반환값'만
+         바꾸고 실주문에 영향 0(설사 배선돼도 ShadowClearingBroker 는 Clear 반환을 버리고 inner.Place 1:1 위임).
+         ★FX 격리 불변식(Ironclad #2): ClearBase()만 QFixed 권위 지원(base 통화 반환), 자산통화 Clear(...,fx)는 권위
+         무관 항상 자산통화 legacy 반환(반환 단위 불변·S27-e 계약 보존). 테스트 +3: AuthorityInversion_WhenLegacy
+         Primary_UsesDecimalAsAuthority(OFF→decimal naive 권위), AuthorityInversion_WhenQFixedPrimary_UsesQFixedAs
+         Authority(ClearBase 매수 ceil 100.01×1331=133113.31·매도 floor 100.00×1330=133000), AuthorityInversion_FX_
+         Clear_RemainsBackwardCompatible(권위 ON 이어도 자산통화 Clear(fx)=100.005 불변). 빌드 0/0, 전체 1555 통과
+         (Release 2회 연속 0 실패). 적대적 리뷰 3렌즈 결함 0(배선/liveArmed·FX 격리·테스트 정확/δ0). δ=0 핫패스 유지
+         (SetAuthority=volatile enum 쓰기, LastDivergence=Interlocked 단일값 발행 불변). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.59.0 — 진공관 결속: GatedOrderDispatcher 무장 술어 스위치를 테스트 가능한 1급 팩토리로 승격.
          ★정직 회계: 실 무장 배선(cfg Dispatch.LiveArmingWired ? LiveArmingGate.IsArmed : ()=>false)은 v4.57.0 에
          이미 BlazorHomeForm 인라인으로 존재했다. 본 단계의 갱신은 (1) 그 인라인 삼항을 순수 정적 팩토리
          DispatchArming.ResolvePredicate(bool wired, LiveArmingGate gate)로 분리 — 호스트가 호출하는 '바로 그 경로'를

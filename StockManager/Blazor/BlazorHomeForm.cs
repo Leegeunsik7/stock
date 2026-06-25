@@ -84,9 +84,17 @@ namespace StockManager.Blazor
             // v4.56.0 — 단일 전역 spec(KRW 정수단가 전용·USD/코인 침묵왜곡) → 자산별 격자 레지스트리 ctor 로 전환.
             //   ON(옵트인) 시 Clear(symbol,..)가 자산별 tick/step 으로 보수 정렬(매수↑·매도↓)하고 미등록 심볼은
             //   fail-closed(전용 섀도우 attestation 동결 — 라이브 격리 유지). 기본 OFF(INERT)라 성벽 무영향.
-            services.AddSingleton(new ShadowCutoverGate(
+            var shadowGate = new ShadowCutoverGate(
                 cfg.GetBool("Clearing.ShadowCutover", false),
-                BuiltInTickSpecs.BuildDefaultRegistry(), new OrderAttestationService()));
+                BuiltInTickSpecs.BuildDefaultRegistry(), new OrderAttestationService());
+            // v4.60.0 Path Alpha — 청산 연산 권위 역전 컷오버 배선. 옵트인(Clearing.QFixedPrimary.Enabled=true) 시에만
+            //   QFixed 정렬값을 권위로 승격(SetAuthority — volatile int 무할당 가역 스위치). 기본 false → LegacyPrimary
+            //   (decimal 권위·기존 의미론 1비트 불변). ⚠️ liveArmed:false 박제: 본 게이트는 라이브 청산 경로에 미배선
+            //   (Launcher 가 BrokerHub.Create(db) 단일 인자 → shadowGate=null)이므로 권위 전환은 실주문에 영향 0 —
+            //   연산 권위(반환값)만 신 QFixed 로 바뀌고, 발산/오버플로/FX 스큐는 전용 섀도우 att 로만 fail-closed 동결.
+            if (cfg.GetBool("Clearing.QFixedPrimary.Enabled", false))
+                shadowGate.SetAuthority(ClearingAuthority.QFixedPrimary);
+            services.AddSingleton(shadowGate);
             services.AddSingleton(bridge);                 // S14 #1 — KiwoomBridgeClient (하트비트 500ms)
             services.AddSingleton(broker.Audit);           // S14 #2 — LiveAuditService (체결 원장)
             services.AddSingleton(broker);                 // S14 #2 — ExecutionBridgeBroker (IBroker 실거래)

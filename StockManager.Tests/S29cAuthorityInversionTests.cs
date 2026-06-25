@@ -153,5 +153,18 @@ namespace StockManager.Tests
             Assert.Equal(641.76m, sell);   // 213.92 × 3 (매도 내림)
             Assert.True(buy > sell);
         }
+
+        // ═══════════════════ v4.60.0 Path Alpha 컷오버 배선 핀포인트 박제 ═══════════════════
+
+        [Fact]
+        public void AuthorityInversion_WhenLegacyPrimary_UsesDecimalAsAuthority()
+        {
+            // 스위치 OFF(기본 LegacyPrimary) — 레거시 decimal naive 명목 가치가 그대로 최종 반환(권위). QFixed 정렬값 미채택.
+            var gate = new ShadowCutoverGate(true, Cent());
+            Assert.Equal(ClearingAuthority.LegacyPrimary, gate.Authority);
+            decimal result = gate.Clear(100.005m, 1m, OrderSide.Buy);
+            Assert.Equal(100.005m, result);     // 레거시 decimal 권위(naive 1:1)
+            Assert.NotEqual(100.01m, result);   // QFixed 정렬값(센트 올림) 아님 — 권위 미전환
+        }
     }
 }

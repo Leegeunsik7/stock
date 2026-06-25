@@ -98,5 +98,42 @@ namespace StockManager.Tests
             long delta = GC.GetAllocatedBytesForCurrentThread() - before;
             Assert.True(delta < 50_000, $"통과 경로 per-call 힙 0(JIT 노이즈만) — delta={delta}");
         }
+
+        // ═══════════════════ v4.60.0 Path Alpha 컷오버 배선 핀포인트 박제 ═══════════════════
+
+        [Fact]
+        public void AuthorityInversion_WhenQFixedPrimary_UsesQFixedAsAuthority()
+        {
+            // 스위치 ON(QFixedPrimary) — ClearBase 가 QFixed 보수 정렬값을 최종 권위(base 통화)로 채택. 매수 ceil·매도 floor.
+            var att  = new OrderAttestationService();
+            var gate = new ShadowCutoverGate(true, Reg(), att, ClearingAuthority.QFixedPrimary);
+
+            // 매수: 자산 100.005 → 센트 올림 100.01 × Ask 1331 = 133113.31 (정렬 base 권위, naive 133106.655 아님)
+            decimal buy = gate.ClearBase("AAPL", 100.005m, 1m, OrderSide.Buy, Fx(), Bounds());
+            Assert.Equal(133113.31m, buy);
+            Assert.NotEqual(133106.655m, buy);
+
+            // 매도: 자산 100.005 → 센트 내림 100.00 × Bid 1330 = 133000 (보수 floor)
+            decimal sell = gate.ClearBase("AAPL", 100.005m, 1m, OrderSide.Sell, Fx(), Bounds());
+            Assert.Equal(133000m, sell);
+
+            Assert.True(buy > sell);                              // 보수 편향(매수↑·매도↓)이 권위값으로 흐름
+            Assert.NotEqual(GatingMode.EmergencyFreeze, att.Mode);
+        }
+
+        [Fact]
+        public void AuthorityInversion_FX_Clear_RemainsBackwardCompatible()
+        {
+            // 스위치 ON 이라도 일반 자산통화 Clear(fx) 는 권위 역전 미적용 — 자산통화 naive 반환(단위/계약 불변·base 아님).
+            var legacy = new ShadowCutoverGate(true, Reg(), new OrderAttestationService());                                 // Legacy
+            var qfixed = new ShadowCutoverGate(true, Reg(), new OrderAttestationService(), ClearingAuthority.QFixedPrimary); // QFixed ON
+
+            decimal underLegacy = legacy.Clear("AAPL", 100.005m, 1m, OrderSide.Buy, Fx(), Bounds());
+            decimal underQFixed = qfixed.Clear("AAPL", 100.005m, 1m, OrderSide.Buy, Fx(), Bounds());
+
+            Assert.Equal(100.005m, underLegacy);     // 자산통화 naive
+            Assert.Equal(100.005m, underQFixed);     // 권위 ON 이어도 동일 — FX Clear 격리 불변식
+            Assert.Equal(underLegacy, underQFixed);  // 권위 역전이 자산통화 Clear 에 영향 0
+        }
     }
 }
