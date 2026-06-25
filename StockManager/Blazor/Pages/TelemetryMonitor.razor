@@ -1,0 +1,148 @@
+@* ============================================================================
+   TelemetryMonitor — S29 Path Gamma: 파이프라인 디스패치 링 락-프리 관제탑
+   PeriodicTimer(150ms) + RingTelemetryChannel.TryRead 세쿼록 단방향 폴링.
+   TryRead false → 직전 프레임 유지(StateHasChanged 불호출, 코어 무블록).
+   SendErrors > 0 → 비상 경보 오버레이(downstream throw = 비상 동결 신호).
+   ============================================================================ *@
+@page "/broker/pipeline"
+@implements IAsyncDisposable
+@using System.Threading
+@inject RingTelemetryChannel Channel
+@inject OrderAttestationService Attestation
+
+<div class="top">
+    <div class="hello">
+        <h1>📡 파이프라인 관제 <span class="tag">DISPATCH RING TELEMETRY</span></h1>
+        <p>SPMC 주문 디스패치 링의 실시간 지표 — 150ms 락-프리 폴링, 코어 무블록. SendErrors &gt; 0 = 비상 동결 확인.</p>
+    </div>
+</div>
+
+@* ══ SendErrors 비상 경보 오버레이 ═══════════════════════════════════════════ *@
+@if (_frame.HasAlert)
+{
+    <div style="margin:0 28px 18px;background:rgba(180,20,20,0.18);border:2px solid #e34d4d;border-radius:10px;padding:18px 22px">
+        <div style="font-size:16px;font-weight:700;color:#ff4444;margin-bottom:6px">🚨 DOWNSTREAM THROW 감지 — 비상 동결 확인 필요</div>
+        <div style="font-size:13px;color:#ffaaaa">
+            <b>SendErrors = @(_frame.SendErrors)</b> — onSend(브로커 송출)에서 예외 발생, ForceFreeze 호출됨.
+            &nbsp;현재 게이팅 모드: <b>@(Attestation.Mode)</b>.
+            &nbsp;/broker/gating 에서 원장 확인 후 수동 정합 서명을 완료하세요.
+        </div>
+    </div>
+}
+
+@* ══ 계기판 ════════════════════════════════════════════════════════════════ *@
+<div style="padding:0 28px 28px">
+
+    @* 상단 KPI 카드 열 *@
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px">
+        <div class="kpi-card @(_frame.HasAlert ? "kpi-alert" : "")">
+            <div class="kpi-label">Published</div>
+            <div class="kpi-value">@(_frame.Published < 0 ? "—" : _frame.Published.ToString("N0"))</div>
+            <div class="kpi-sub">링 최고 발행 시퀀스</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Forwarded</div>
+            <div class="kpi-value" style="color:var(--green,#4caf50)">@(_frame.Forwarded.ToString("N0"))</div>
+            <div class="kpi-sub">무장 실송출 (성공)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">GatedOut</div>
+            <div class="kpi-value" style="color:var(--yellow,#ffc107)">@(_frame.GatedOut.ToString("N0"))</div>
+            <div class="kpi-sub">미무장 차단 (fail-closed)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Dropped</div>
+            <div class="kpi-value" style="color:@(_frame.Dropped > 0 ? "var(--orange,#ff9800)" : "inherit")">@(_frame.Dropped.ToString("N0"))</div>
+            <div class="kpi-sub">추월 유실 (소비 지연)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">WriterCollisions</div>
+            <div class="kpi-value" style="color:@(_frame.WriterCollisions > 0 ? "var(--red,#f44336)" : "inherit")">@(_frame.WriterCollisions.ToString("N0"))</div>
+            <div class="kpi-sub">동시 발행 위반 (CAS 낙방)</div>
+        </div>
+        <div class="kpi-card @(_frame.HasAlert ? "kpi-alert" : "")">
+            <div class="kpi-label">SendErrors</div>
+            <div class="kpi-value" style="color:@(_frame.SendErrors > 0 ? "#ff4444" : "inherit");font-weight:@(_frame.SendErrors > 0 ? "800" : "400")">@(_frame.SendErrors.ToString("N0"))</div>
+            <div class="kpi-sub">downstream throw 누적</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Throughput</div>
+            <div class="kpi-value">@(_frame.ThroughputPerSec.ToString("N1"))</div>
+            <div class="kpi-sub">건/초 (직전 샘플 델타)</div>
+        </div>
+    </div>
+
+    @* 데이터 없음 안내 *@
+    @if (!_frame.HasActivity)
+    {
+        <div style="text-align:center;padding:40px;color:var(--muted,#888);font-size:14px">
+            <div style="font-size:28px;margin-bottom:12px">📭</div>
+            <div>링 활동 없음 — OrderDispatchRing 에 제안이 발행되지 않았거나 샘플러가 미시작입니다.</div>
+            <div style="margin-top:8px;font-size:12px;font-family:var(--mono)">RingTelemetryPublisher.Sample() 주기 호출 여부를 확인하세요.</div>
+        </div>
+    }
+
+    @* 세쿼록 채널 진단 *@
+    <div style="margin-top:10px;padding:12px 16px;background:var(--card-bg,rgba(255,255,255,0.04));border-radius:8px;font-size:12px;color:var(--muted,#888);font-family:var(--mono)">
+        채널 버전: @(Channel.Version)
+        &nbsp;|&nbsp; 폴링 주기: 150ms (PeriodicTimer, 무할당)
+        &nbsp;|&nbsp; seqlock 8회 재시도 후 직전 프레임 유지
+        &nbsp;|&nbsp; 게이팅 모드: @(Attestation.Mode)
+    </div>
+</div>
+
+<style>
+    .kpi-card {
+        background: var(--card-bg, rgba(255,255,255,0.05));
+        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        border-radius: 10px;
+        padding: 14px 16px;
+        display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi-card.kpi-alert {
+        border-color: rgba(220, 50, 50, 0.5);
+        background: rgba(180, 20, 20, 0.10);
+    }
+    .kpi-label { font-size: 11px; color: var(--muted, #888); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+    .kpi-sub   { font-size: 11px; color: var(--muted, #888); }
+</style>
+
+@code {
+    // 직전 성공 프레임 — TryRead false(경합) 시 이 값 그대로 유지(StateHasChanged 불호출).
+    private RingTelemetry _frame;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized()
+    {
+        _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(150));
+        _ = PollLoopAsync(_cts.Token);
+    }
+
+    // ★ 백그라운드 폴링 루프 — 렌더링 스레드와 독립. InvokeAsync 로만 UI 갱신.
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                if (Channel.TryRead(out var latest))
+                {
+                    // 새 프레임 수신 — 상태 갱신 후 UI 스레드에 렌더 요청
+                    _frame = latest;
+                    await InvokeAsync(StateHasChanged).ConfigureAwait(false);
+                }
+                // TryRead == false → seqlock 경합 지속 → 직전 _frame 유지, 렌더 생략(무할당·무블록)
+            }
+        }
+        catch (OperationCanceledException) { /* 컴포넌트 Dispose 시 정상 탈출 */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync().ConfigureAwait(false);
+        _timer?.Dispose();
+        _cts.Dispose();
+    }
+}

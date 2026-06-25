@@ -105,33 +105,44 @@ namespace StockManager.Common
     /// S29 — 무장 게이트 디스패처. 링에서 제안을 빼 '무장+미동결'일 때만 송출 콜백 호출, 아니면 게이팅 카운터만 증가.
     /// liveArmed 술어가 false 면 송출 0(드라이런). 술어 주입으로 BrokerHub.IsArmed·IgnitionLock·attestation 과
     /// 결속한다(앱 레벨 옵트인). 송출 콜백 자체가 실 브로커 경계 — 본 디스패처는 게이트만 강제.
+    /// ★Mission A — onSend throw fail-closed 벽: 브로커 단절·네트워크 오류 시 즉시 ForceFreeze(셧다운). fail-open 절대 금지.
     /// </summary>
     public sealed class GatedOrderDispatcher
     {
         private readonly RingConsumer<OrderProposal> _consumer;
-        private readonly Func<bool> _isArmed;
+        private readonly Func<bool>                  _isArmed;
+        private readonly OrderAttestationService?    _att;    // Mission A: onSend throw → ForceFreeze(null 허용 = att 없음)
         private long _forwarded;
         private long _gatedOut;
+        private long _sendErrors;   // Mission A: downstream throw 누적(원자)
 
-        public GatedOrderDispatcher(OrderDispatchRing ring, Func<bool> isArmed)
+        /// <param name="attestation">선택적 — null 이면 ForceFreeze 미호출(테스트 시나리오). 앱 레벨은 반드시 주입.</param>
+        public GatedOrderDispatcher(OrderDispatchRing ring, Func<bool> isArmed,
+                                    OrderAttestationService? attestation = null)
         {
             if (ring is null) throw new ArgumentNullException(nameof(ring));
             _consumer = ring.CreateConsumer();
             _isArmed  = isArmed ?? throw new ArgumentNullException(nameof(isArmed));
+            _att      = attestation;
         }
 
-        /// <summary>무장 상태에서 실제 브로커로 송출된 제안 수.</summary>
-        public long Forwarded => Interlocked.Read(ref _forwarded);
+        /// <summary>무장 상태에서 실제 브로커로 송출된 제안 수(onSend 성공 시만 계상).</summary>
+        public long Forwarded   => Interlocked.Read(ref _forwarded);
         /// <summary>미무장(fail-closed)으로 송출이 차단된 제안 수.</summary>
-        public long GatedOut  => Interlocked.Read(ref _gatedOut);
+        public long GatedOut    => Interlocked.Read(ref _gatedOut);
         /// <summary>추월로 유실된 제안 누적 수(소비 지연 계측).</summary>
-        public long Dropped   => _consumer.Dropped;
+        public long Dropped     => _consumer.Dropped;
+        /// <summary>Mission A — onSend throw(브로커 단절 등) 누적. 0 이 정상. 양수 시 비상 동결 확인 필수.</summary>
+        public long SendErrors  => Interlocked.Read(ref _sendErrors);
 
         /// <summary>가용 제안을 모두 처리. 무장 시 onSend 호출(+Forwarded), 미무장 시 차단(+GatedOut). 처리 건수 반환.
+        /// ★fail-closed 벽: onSend throw 시 SendErrors++·ForceFreeze(즉시 비상 동결)·루프 break(추가 처리 차단).
         /// 단일 소비자 전용(이 디스패처를 동시 Drain 하지 말 것 — 내부 RingConsumer 커서는 비원자).</summary>
         public int Drain(Action<OrderProposal> onSend)
         {
             if (onSend is null) throw new ArgumentNullException(nameof(onSend));
+            // 이미 비상 동결 상태면 즉시 0 반환 — ForceFreeze 재호출 불요·루프 폭주 차단.
+            if (_att is { } attCheck && attCheck.Mode == GatingMode.EmergencyFreeze) return 0;
             int n = 0;
             while (_consumer.TryRead(out var p))
             {
@@ -141,8 +152,26 @@ namespace StockManager.Common
                 bool armed;
                 try { armed = _isArmed(); }
                 catch { armed = false; }
-                if (armed) { onSend(p); Interlocked.Increment(ref _forwarded); }
-                else        Interlocked.Increment(ref _gatedOut);
+                if (armed)
+                {
+                    try
+                    {
+                        onSend(p);
+                        Interlocked.Increment(ref _forwarded);   // 성공 시만 계상
+                    }
+                    catch (Exception ex)
+                    {
+                        // ★Mission A — downstream throw(브로커 단절·네트워크 오류) fail-closed 벽.
+                        // ForceFreeze 는 항상 성공(멱등·audit append) — fail-open 절대 금지.
+                        Interlocked.Increment(ref _sendErrors);
+                        _att?.ForceFreeze("GatedOrderDispatcher downstream throw: " + ex.Message);
+                        break;   // 추가 제안 처리 차단 — 동결 후 루프 폭주 방지
+                    }
+                }
+                else
+                {
+                    Interlocked.Increment(ref _gatedOut);
+                }
             }
             return n;
         }

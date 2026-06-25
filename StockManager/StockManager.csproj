@@ -18,10 +18,25 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.54.0</Version>
-    <AssemblyVersion>4.54.0.0</AssemblyVersion>
-    <FileVersion>4.54.0.0</FileVersion>
-    <!-- v4.54.0 — ★Path Alpha-FX(S29-c 후속): 이종통화 청산 권위 역전(base 통화 계약). 신규 ShadowCutoverGate.
+    <Version>4.55.0</Version>
+    <AssemblyVersion>4.55.0.0</AssemblyVersion>
+    <FileVersion>4.55.0.0</FileVersion>
+    <!-- v4.55.0 — ★Mission A+B(S29): GatedOrderDispatcher fail-closed 하드닝 + Path Gamma UI 배선 완결.
+         [Mission A] GatedOrderDispatcher.Drain onSend fail-closed 벽 — 브로커 단절·네트워크 오류가 onSend throw
+         를 유발하면: ①Interlocked.Increment(_sendErrors) 원자 계상 ②OrderAttestationService.ForceFreeze("Gated
+         OrderDispatcher downstream throw: "+ex.Message) 즉시 비상 동결(fail-open 절대 금지) ③break(추가 처리 차단·
+         루프 폭주 방지). EmergencyFreeze 선행 시 Drain 조기 탈출(return 0·ForceFreeze 재호출 불요). 선택적
+         OrderAttestationService? 파라미터(기본 null·기존 테스트 후방호환). RingTelemetry 에 SendErrors 필드 추가
+         (long·기본 0L·HasActivity+HasAlert 신규). RingTelemetryPublisher.Sample() 이 _dispatcher.SendErrors 를
+         채널에 포함. 테스트 +3(OnSendThrows_Freezes·AlreadyFrozen_Returns0·AttNull_NullSafe).
+         [Mission B] Path Gamma UI 배선 완결 — TelemetryMonitor.razor 신규(@page "/broker/pipeline"). PeriodicTimer
+         (150ms) + RingTelemetryChannel.TryRead 세쿼록 단방향 폴링. TryRead false 시 직전 _frame 유지·StateHasChanged
+         불호출(무할당·무블록). true 시 InvokeAsync(StateHasChanged)(렌더링 스레드 안전). SendErrors>0 비상 경보 오버레이.
+         KPI 카드 7종. BlazorHomeForm: 싱글톤 OrderDispatchRing/GatedOrderDispatcher/RingTelemetryChannel/Publisher+
+         200ms 샘플러 타이머 등록. NavMenu: "📡 파이프라인 관제" 추가. ★불변 준수: δ=0 핫패스(onSend 성공 경로
+         추가 할당 0). 플래키 0%(신규 테스트 결정론·작업량 경계). liveArmed:false 불변(isArmed:()=>false 박제). 빌드 0/0.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.54.0 — ★Path Alpha-FX(S29-c 후속): 이종통화 청산 권위 역전(base 통화 계약). 신규 ShadowCutoverGate.
          ClearBase() — QFixedPrimary 면 shadowBase(보수 FX 환산·수렴검문 통과값)가 base 통화 권위, 아니면 legacyBase
          (naive 자산명목×환율). 레거시 base 는 후방 백스톱(밴드/오버플로/수렴위반 → TraceFxOrFreeze EmergencyFreeze →
          권위 오염 대신 정지·degraded legacyBase). ★반환 단위 = base 통화(자산통화 Clear 와 다름·명시 계약) — 그래서

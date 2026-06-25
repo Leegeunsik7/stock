@@ -248,6 +248,22 @@ namespace StockManager.Blazor
             services.AddSingleton(shadowMetrics);
             // 주: 배양 스레드 Start 및 시그널→주문 루프 점화는 운영자 명시 가동에 둔다(드라이런 기본).
 
+            // S29 Path C+Gamma — SPMC 주문 디스패치 링 + Mission A/B 락-프리 UI 텔레메트리 배선.
+            // ⚠️ isArmed: liveArmed:false 박제 — 점화(Arm)·IgnitionLock.MasterIgnited 이전 송출 수학적 0.
+            // Mission A: attestation 주입 → onSend throw 시 동일 ForceFreeze 로 전체 파이프라인 비상 동결.
+            var dispatchRing   = new OrderDispatchRing(1024);
+            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, () => false, attestation);
+            var ringChannel    = new RingTelemetryChannel();
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel);
+            services.AddSingleton(dispatchRing);
+            services.AddSingleton(ringDispatcher);
+            services.AddSingleton(ringChannel);    // TelemetryMonitor.razor 주입 대상
+            services.AddSingleton(ringPublisher);
+            // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher) 보장.
+            var ringTimer = new System.Threading.Timer(
+                _ => { try { ringPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
+            FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
+
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(
                 attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway, rejectionForensics));

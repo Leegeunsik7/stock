@@ -193,5 +193,76 @@ namespace StockManager.Tests
             Assert.Throws<ArgumentNullException>(() => new GatedOrderDispatcher(ring, () => true).Drain(null!));
             Assert.Throws<ArgumentException>(() => new OrderDispatchRing(7));   // 2의 거듭제곱 아님
         }
+
+        // ★Mission A — fail-closed 벽 테스트 3종.
+        // (1) onSend throw → ForceFreeze+SendErrors++·break(추가 처리 차단)
+        // (2) AlreadyFrozen 조기 탈출 — 제안 미처리·Drain 즉시 0
+        // (3) att=null 이면 ForceFreeze 미호출이나 SendErrors·break 동일(테스트 시나리오)
+
+        [Fact]
+        public void GatedDispatcher_OnSendThrows_Freezes_SendErrorsIncremented_DrainBreaks()
+        {
+            // 3건 적재, onSend 가 첫 번째에 throw → break → 2·3번 미처리
+            var ring = new OrderDispatchRing(8);
+            var att  = new OrderAttestationService();
+            var disp = new GatedOrderDispatcher(ring, () => true, att);   // 항상 무장
+            for (int i = 1; i <= 3; i++)
+                ring.PublishRaw(new OrderProposal(i, i, i, OrderSide.Buy, 1, new QPrice(i * 100), new QQty(i), i));
+
+            int sendCount = 0;
+            int drained = disp.Drain(p =>
+            {
+                sendCount++;
+                throw new InvalidOperationException("브로커 단절 모사");
+            });
+
+            Assert.Equal(1, drained);                                       // 첫 시도 후 break → n=1
+            Assert.Equal(1, sendCount);                                     // onSend 1회만 호출
+            Assert.Equal(1L, disp.SendErrors);                              // 에러 카운터 증가
+            Assert.Equal(0L, disp.Forwarded);                               // throw 이전 Forwarded 계상 안 됨
+            Assert.Equal(GatingMode.EmergencyFreeze, att.Mode);             // ForceFreeze 호출 확인
+        }
+
+        [Fact]
+        public void GatedDispatcher_AlreadyFrozen_DrainReturnsImmediately()
+        {
+            // 선행 ForceFreeze → Drain 조기 탈출(제안 처리 없이 0 반환)
+            var ring = new OrderDispatchRing(8);
+            var att  = new OrderAttestationService();
+            att.ForceFreeze("테스트 선행 동결");
+            var disp = new GatedOrderDispatcher(ring, () => true, att);
+            for (int i = 1; i <= 5; i++)
+                ring.PublishRaw(new OrderProposal(i, i, i, OrderSide.Buy, 1, new QPrice(i * 100), new QQty(i), i));
+
+            int sendCount = 0;
+            int drained = disp.Drain(p => sendCount++);
+
+            Assert.Equal(0, drained);       // 조기 탈출 — 제안 미처리
+            Assert.Equal(0, sendCount);     // onSend 미호출
+            Assert.Equal(0L, disp.Forwarded);
+            Assert.Equal(0L, disp.SendErrors);
+        }
+
+        [Fact]
+        public void GatedDispatcher_AttNull_OnSendThrows_SendErrorsIncremented_DrainBreaks_NoFreeze()
+        {
+            // att=null(기본값) 이면 ForceFreeze 미호출이나 SendErrors·break 는 동일 동작(NullReferenceException 없음)
+            var ring = new OrderDispatchRing(8);
+            var disp = new GatedOrderDispatcher(ring, () => true);   // attestation=null(기본값)
+            for (int i = 1; i <= 3; i++)
+                ring.PublishRaw(new OrderProposal(i, i, i, OrderSide.Buy, 1, new QPrice(i * 100), new QQty(i), i));
+
+            int sendCount = 0;
+            int drained = disp.Drain(p =>
+            {
+                sendCount++;
+                throw new InvalidOperationException("브로커 단절 모사");
+            });
+
+            Assert.Equal(1, drained);
+            Assert.Equal(1, sendCount);
+            Assert.Equal(1L, disp.SendErrors);
+            Assert.Equal(0L, disp.Forwarded);
+        }
     }
 }

@@ -23,14 +23,15 @@ namespace StockManager.Common
     public readonly struct RingTelemetry
     {
         public readonly long   Published;         // 링 최고 발행 시퀀스(-1 = 미발행)
-        public readonly long   Forwarded;         // 무장 상태 실 송출 수
+        public readonly long   Forwarded;         // 무장 상태 실 송출 수(onSend 성공)
         public readonly long   GatedOut;          // 미무장(fail-closed) 차단 수
         public readonly long   Dropped;           // 추월 유실(소비 지연 계측)
         public readonly long   WriterCollisions;  // 단일 생산자 CAS 낙방(동시 발행 위반)
         public readonly double ThroughputPerSec;  // 직전 샘플 대비 발행 처리량(건/초)
+        public readonly long   SendErrors;        // Mission A — downstream throw 누적(브로커 단절 등). 0 이 정상.
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
-                             long writerCollisions, double throughputPerSec)
+                             long writerCollisions, double throughputPerSec, long sendErrors = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -38,11 +39,15 @@ namespace StockManager.Common
             Dropped          = dropped;
             WriterCollisions = writerCollisions;
             ThroughputPerSec = throughputPerSec;
+            SendErrors       = sendErrors;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
         /// ★정직 한계: 정확히 1건만 발행되고 미드레인인 링(Published=0·나머지 0)은 false 로 보인다(극단 엣지·무해).</summary>
-        public bool HasActivity => Published > 0 || Forwarded > 0 || GatedOut > 0 || Dropped > 0 || WriterCollisions > 0;
+        public bool HasActivity => Published > 0 || Forwarded > 0 || GatedOut > 0
+                                || Dropped > 0 || WriterCollisions > 0 || SendErrors > 0;
+        /// <summary>비상 경보 여부 — SendErrors 가 양수면 downstream throw 발생·비상 동결 확인 필수.</summary>
+        public bool HasAlert    => SendErrors > 0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -143,7 +148,7 @@ namespace StockManager.Common
                 double tps = (dTick > 0 && dPub > 0) ? dPub * (double)Stopwatch.Frequency / dTick : 0.0;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
-                    _ring.WriterCollisions, tps));
+                    _ring.WriterCollisions, tps, _dispatcher.SendErrors));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
