@@ -12,8 +12,10 @@
 
 @* 자연어 → 규칙 (🅱) — LLM은 검증 가능한 규칙 JSON만 생성, 편집기에 채워 검토 후 저장 *@
 <div style="margin:0 28px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    @* v4.62.0 Pitfall#1 — per-keystroke oninput 제거(IME 한글 조합 리셋 함정). 기본 @bind(onchange)는 blur/Enter 커밋이라
+       입력 중 재렌더가 없어 IME 안전 — 값은 'AI 규칙 생성' 버튼/Enter(OnNlKey) 시점에만 소비된다. *@
     <input class="srch" style="flex:1;min-width:280px" placeholder="🤖 자연어로 규칙 만들기 (예: 비트코인 RSI 30 아래로 가고 거래량 2배 늘면 알림)"
-           @bind="_nl" @bind:event="oninput" @onkeydown="OnNlKey" />
+           @bind="_nl" @onkeydown="OnNlKey" />
     <button class="addbtn" style="background:var(--accent-2)" disabled="@(_aiBusy || !Ai.HasKey)" @onclick="CompileNl">@(_aiBusy?"생성 중…":"🤖 AI 규칙 생성")</button>
     @if (!Ai.HasKey) { <span class="sub" style="font-size:12px">설정 마법사에서 Gemini 키 입력 시 사용 가능</span> }
 </div>

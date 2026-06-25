@@ -18,10 +18,29 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.61.0</Version>
-    <AssemblyVersion>4.61.0.0</AssemblyVersion>
-    <FileVersion>4.61.0.0</FileVersion>
-    <!-- v4.61.0 — 무장 전야 하드닝: ShadowClearingBroker 권위 채택(load-bearing) 가드 + 청산 정렬 프리미티브.
+    <Version>4.62.0</Version>
+    <AssemblyVersion>4.62.0.0</AssemblyVersion>
+    <FileVersion>4.62.0.0</FileVersion>
+    <!-- v4.62.0 — 온보딩 마법사 네이티브 + 하이브리드 폼 함정 하드닝. ★정직 회계: 스펙의 두 대상 페이지는 이미
+         존재했다 — SetupWizardPage(@page "/setup", API 키 5단계 마법사)·CompositeAlertsPage(@page "/composite",
+         주식+코인 규칙 편집기). 스펙이 가정한 'one-shot/re-arm 비대칭을 복합 알림 페이지에서 분기'는 오귀속:
+         그 비대칭은 별개 서브시스템(AlertRule one-shot[IsTriggered 영구 latch] vs CoinAlert re-arm[Triggered 양방향
+         토글])에 '타입·저장소·엔진 분리'로 이미 원천 차단돼 있다 — 복합 규칙은 의도적으로 균일 cooldown 모델이라
+         거기에 one-shot/re-arm 필드를 주입하면 엔진이 무시하는 정책 날조가 됨(미수행).
+         [미션 A] 신규 OnboardingWizardPage(@page "/setup/wizard" — 기존 /setup 와 충돌·이름충돌 회피한 별개 컴포넌트):
+         시드머니·타겟 자산군(설정 기록)·초기 보유 종목 import 3단계 마법사. ★Pitfall#1(IME): 모든 텍스트 입력 비제어
+         (value 바인딩 없음)+@key+@onchange 캡처 — per-keystroke 재렌더 없어 한글 조합 리셋 불가. 숫자는 InvariantCulture
+         ParseMoney(0.13→0 절사 함정 회피). ★Pitfall#3(연쇄 불변식): 신규 OnboardingImporter.ImportHoldings 가
+         AddTransaction(Buy)→RecomputeAverage 를 '심볼별 1회' 강제 연쇄(멱등 전이력 리플레이)·행단위 fail-soft·무효행 skip.
+         ★Pitfall#4(한글 식별자): @멤버한글 금지·@(...) 래핑. NavMenu 링크 추가.
+         [미션 B] CompositeAlertsPage NL 입력의 @bind:event="oninput" 제거(Pitfall#1 footgun — per-keystroke 재렌더가
+         한글 조합 리셋) → 기본 @bind(onchange). 그 외 무변경(라우트·정책 필드 미추가). 비대칭은 AlertRule/CoinAlert
+         타입 분리로 이미 보존됨을 정직 보고.
+         테스트 +5(OnboardingImporterTests): 연쇄로 Holdings 생성·0.13 소수 보존·동일심볼 가중평단 1500·무효행 fail-soft
+         skip·널가드. 빌드 0/0, 전체 1565 통과(Release 2회 연속 0 실패). 적대적 리뷰 3렌즈 결함 0(라우트 무충돌[startup
+         크래시 정적 반증]·IME 안전·연쇄/정직). liveArmed:false 불변.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.61.0 — 무장 전야 하드닝: ShadowClearingBroker 권위 채택(load-bearing) 가드 + 청산 정렬 프리미티브.
          ★정직 회계: 스펙(IBroker.Place(OrderProposal) 의 price/qty 를 ClearBase 반환값으로 강제 교체)은 5중으로
          '코드상 불가'였다 — (1)IBroker.Place 는 9-positional primitive(OrderProposal 아님) (2)OrderProposal 은
          readonly struct(불변·Place 에 미전달) (3)Clear/ClearBase 는 단일 decimal 명목만 반환(분리된 QPrice/QQty 노출

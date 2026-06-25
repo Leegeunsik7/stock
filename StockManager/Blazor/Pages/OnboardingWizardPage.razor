@@ -1,0 +1,210 @@
+@* ============================================================================
+   OnboardingWizardPage — v4.62.0: 포트폴리오 온보딩 마법사 (시드머니·타겟 자산군·초기 보유 import)
+   ★기존 SetupWizardPage(/setup, API 키 설정)와 별개 — 신규 컴포넌트·신규 라우트(/setup/wizard)로 이름/라우트 충돌 회피.
+   Pitfall #1(IME): 모든 텍스트 입력은 '비제어'(value 바인딩 없음) + @key + @onchange 캡처 — 입력 중 재렌더가 한글
+     조합을 리셋하지 못한다(per-keystroke StateHasChanged 없음). 숫자는 InvariantCulture ParseMoney(0.13→0 절사 방지).
+   Pitfall #3(연쇄 불변식): 초기 보유 저장은 OnboardingImporter 가 AddTransaction→RecomputeAverage 를 심볼별 강제 연쇄.
+   Pitfall #4(한글 식별자): @멤버한글 금지 — 한글 인접 표현은 모두 @(...) 래핑.
+   ============================================================================ *@
+@page "/setup/wizard"
+@inject LocalDatabase Db
+@inject NavigationManager Nav
+@inject ToastService Toasts
+
+<div class="top">
+    <div class="hello">
+        <h1>🧭 포트폴리오 온보딩 <span class="tag">SETUP WIZARD</span></h1>
+        <p>시드머니·타겟 자산군·초기 보유 종목을 한 번에 설정합니다. 초기 보유는 거래 이력으로 기록되어 평균단가가 자동 재계산됩니다.</p>
+    </div>
+</div>
+
+<div style="padding:0 28px 40px;max-width:860px">
+
+    @* 스텝 인디케이터 *@
+    <div style="display:flex;gap:8px;margin-bottom:18px">
+        @for (int i = 1; i <= 3; i++)
+        {
+            var si = i;
+            <div style="flex:1;height:6px;border-radius:3px;background:@(_step >= si ? "var(--accent)" : "var(--line)")"></div>
+        }
+    </div>
+
+    @* ── Step 1: 시드머니 + 타겟 자산군 ── *@
+    @if (_step == 1)
+    {
+        <div class="panel">
+            <div class="panel-h">💰 1단계 · 시드머니 & 타겟 자산군</div>
+            <div class="panel-b" style="padding:16px 18px;display:flex;flex-direction:column;gap:16px">
+                <div>
+                    <label class="sub" style="font-size:12.5px">투자 시드머니 (KRW)</label>
+                    @* 비제어: value 바인딩 없음 → 입력 중 재렌더 무영향(IME 안전). 커밋은 onchange(blur). *@
+                    <input class="fin" style="width:220px" inputmode="decimal" placeholder="예: 10,000,000"
+                           @key="@($"seed-{_resetKey}")" @onchange="OnSeedChanged" />
+                    <span class="sub" style="margin-left:10px;font-size:12px">= ₩@(_seedCash.ToString("N0"))</span>
+                </div>
+                <div>
+                    <label class="sub" style="font-size:12.5px;display:block;margin-bottom:6px">타겟 자산군(선택)</label>
+                    <div style="display:flex;gap:14px;flex-wrap:wrap">
+                        @foreach (var c in _classDefs)
+                        {
+                            var cc = c;
+                            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                                <input type="checkbox" checked="@_targets.Contains(cc.Key)"
+                                       @onchange="e => ToggleTarget(cc.Key, e.Value is true)" />
+                                @(cc.Label)
+                            </label>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button class="addbtn" @onclick="() => _step = 2">다음 →</button>
+        </div>
+    }
+
+    @* ── Step 2: 초기 보유 종목 import ── *@
+    else if (_step == 2)
+    {
+        <div class="panel">
+            <div class="panel-h">📋 2단계 · 초기 보유 종목 (@(_rows.Count)행)</div>
+            <div class="panel-b" style="padding:14px 16px">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="color:var(--sub);text-align:left">
+                        <th style="padding:6px">종목코드/이름</th><th style="padding:6px">수량</th>
+                        <th style="padding:6px">평균단가</th><th style="padding:6px"></th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var row in _rows)
+                        {
+                            var r = row;
+                            <tr @key="r.Key">
+                                <td style="padding:4px 6px">
+                                    <input class="fin" style="width:100%" placeholder="005930 / AAPL / KRW-BTC"
+                                           @key="@($"sym-{r.Key}-{_resetKey}")" @onchange="e => r.Symbol = Trim(e.Value)" />
+                                </td>
+                                <td style="padding:4px 6px">
+                                    <input class="fin" style="width:120px" inputmode="decimal" placeholder="0.13"
+                                           @key="@($"qty-{r.Key}-{_resetKey}")" @onchange="e => r.Qty = ParseMoney(e.Value)" />
+                                </td>
+                                <td style="padding:4px 6px">
+                                    <input class="fin" style="width:140px" inputmode="decimal" placeholder="70,000"
+                                           @key="@($"px-{r.Key}-{_resetKey}")" @onchange="e => r.AvgPrice = ParseMoney(e.Value)" />
+                                </td>
+                                <td style="padding:4px 6px"><button class="ghost" @onclick="() => RemoveRow(r)">🗑</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <button class="ghost" style="margin-top:10px" @onclick="AddRow">➕ 종목 추가</button>
+                <div class="sub" style="font-size:11.5px;margin-top:8px">
+                    ℹ️ 수량·단가는 텍스트 입력(InvariantCulture 파싱) — 0.13 같은 소수도 안전히 저장됩니다. 시장/통화는 종목코드로
+                    자동 판별(KRW-=코인·6자리=국내·그 외 해외). 빈/0 행은 저장 시 건너뜁니다.
+                </div>
+            </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:14px">
+            <button class="ghost" @onclick="() => _step = 1">← 이전</button>
+            <button class="addbtn" disabled="@_busy" @onclick="Confirm">@(_busy ? "저장 중…" : "✅ 확정 · 저장")</button>
+        </div>
+    }
+
+    @* ── Step 3: 완료 ── *@
+    else
+    {
+        <div class="panel">
+            <div class="panel-h">🎉 3단계 · 완료</div>
+            <div class="panel-b" style="padding:18px;display:flex;flex-direction:column;gap:10px">
+                <div style="font-size:14px">시드머니 <b>₩@(_seedCash.ToString("N0"))</b> · 타겟 자산군 <b>@(_targets.Count)</b>종 설정 완료.</div>
+                <div style="font-size:14px">초기 보유 <b class="up">@(_result.Imported)</b>건 저장 · 건너뜀 <b>@(_result.Skipped)</b>건.</div>
+                @if (_result.Errors.Count > 0)
+                {
+                    <details style="font-size:12px;color:var(--sub)">
+                        <summary style="cursor:pointer">⚠️ 건너뛴/실패 행 @(_result.Errors.Count)건</summary>
+                        @foreach (var er in _result.Errors) { <div>· @er</div> }
+                    </details>
+                }
+                <div style="display:flex;gap:10px;margin-top:8px">
+                    <button class="addbtn" @onclick='() => Nav.NavigateTo("/portfolio")'>📋 포트폴리오 보기</button>
+                    <button class="ghost" @onclick="Restart">↺ 다시 설정</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private sealed class Row { public int Key; public string Symbol = ""; public decimal Qty; public decimal AvgPrice; }
+    private record ClassDef(string Key, string Label);
+
+    private int _step = 1;
+    private bool _busy;
+    private int _resetKey;                 // 증가 시 모든 비제어 입력 재생성(초기화) — IME 안전 리셋
+    private int _nextRowKey = 1;
+    private decimal _seedCash;
+    private readonly HashSet<string> _targets = new(StringComparer.Ordinal);
+    private readonly List<Row> _rows = new();
+    private OnboardingImporter.ImportResult _result;
+
+    private readonly ClassDef[] _classDefs =
+    {
+        new("domestic", "🇰🇷 국내주식"), new("foreign", "🇺🇸 해외주식"), new("crypto", "₿ 코인"),
+    };
+
+    protected override void OnInitialized()
+    {
+        AddRow(); AddRow();   // 시작 2행
+        // 기존 설정 복원(있으면)
+        if (decimal.TryParse(Db.GetSetting("Onboarding.SeedCashKrw"),
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var s) && s > 0)
+            _seedCash = s;
+    }
+
+    private void AddRow() => _rows.Add(new Row { Key = _nextRowKey++ });
+    private void RemoveRow(Row r) { _rows.Remove(r); if (_rows.Count == 0) AddRow(); }
+
+    private void OnSeedChanged(ChangeEventArgs e) => _seedCash = ParseMoney(e.Value);
+    private void ToggleTarget(string key, bool on) { if (on) _targets.Add(key); else _targets.Remove(key); }
+
+    private void Confirm()
+    {
+        if (_busy) return;
+        _busy = true;
+        try
+        {
+            // 설정 영속(시드머니·타겟 자산군 — 기록 선호). 정직: QTickRegistry 런타임 주입은 빌드타임 seam이라 본 단계는 설정 기록.
+            Db.SetSetting("Onboarding.SeedCashKrw", _seedCash.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Db.SetSetting("Onboarding.TargetClasses", string.Join(",", _targets));
+
+            // ★연쇄 불변식 강제 — AddTransaction→RecomputeAverage(심볼별 1회). UI는 결과만 받는다.
+            var seeds = _rows.Select(r => new SeedHolding(r.Symbol, r.Qty, r.AvgPrice));
+            _result = OnboardingImporter.ImportHoldings(Db, seeds, DateTime.UtcNow);
+
+            Db.SetSetting("Onboarding.Completed", "true");
+            Toasts.Success("온보딩 완료", $"초기 보유 {_result.Imported}건 저장 · 평균단가 재계산 완료");
+            _step = 3;
+        }
+        catch (Exception ex) { Toasts.Warning("온보딩 저장 실패", ex.Message); }
+        finally { _busy = false; }
+    }
+
+    private void Restart()
+    {
+        _rows.Clear(); _nextRowKey = 1; AddRow(); AddRow();
+        _seedCash = 0m; _targets.Clear(); _result = default;
+        _resetKey++;   // 비제어 입력 재생성(초기화)
+        _step = 1;
+    }
+
+    private static string Trim(object? v) => (v?.ToString() ?? "").Trim();
+
+    // InvariantCulture 안전 파싱 — type=number @bind 의 0.13→0 절사 함정 회피(텍스트 + 통화기호·콤마 제거).
+    private static decimal ParseMoney(object? v)
+    {
+        var s = v?.ToString() ?? "";
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s) if (char.IsDigit(ch) || ch == '.' || ch == '-') sb.Append(ch);
+        return decimal.TryParse(sb.ToString(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out var d) && d >= 0 ? d : 0m;
+    }
+}
