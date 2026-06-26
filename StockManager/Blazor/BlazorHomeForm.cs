@@ -290,7 +290,13 @@ namespace StockManager.Blazor
             // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher·페이지 transient) 카운터를 싱글톤
             //   브리지로 받아 중앙 샘플러가 합류. FutureSimPage 가 매 틱 Report → ringPublisher.Sample 이 Read → 채널 발행.
             var scenarioMon    = new ScenarioSeqlockMonitor();
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon);
+            // v4.73.0 — 자율 알파 공장: BelowNormal 백그라운드 스레드(24h 주기). EmergencyFreeze → fail-closed 스킵.
+            //   외부 시세 API 의존 0(CartridgeEngine.ReferenceSeries(seed=42)). 카운터는 ringPublisher.Sample 이 합류.
+            var alphaFactory = new AutonomousAlphaFactory(db, attestation);
+            alphaFactory.Start();
+            services.AddSingleton(alphaFactory);
+            FormClosed += (_, _) => { try { alphaFactory.Dispose(); } catch { } };
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

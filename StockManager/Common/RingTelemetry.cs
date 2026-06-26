@@ -33,10 +33,15 @@ namespace StockManager.Common
         public readonly long   ScenarioVersion;          // 시나리오 seqlock 버전(0=미보고)
         public readonly long   ScenarioWriterCollisions; // 시나리오 단일 라이터 경합(슬라이더 변이)
         public readonly long   ScenarioFrozen;           // 시나리오 산출 동결(음수 배수·오버플로 등)
+        // v4.73.0 — 자율 알파 공장 카운터 통합. 공장 미배선(null) 시 전부 0 — UI "—" 표시.
+        public readonly long   AlphaFactoryCycles;    // 완료 사이클 수
+        public readonly long   AlphaFactorySigned;    // ECDsa 서명 완료 전략 수(누적)
+        public readonly long   AlphaFactoryRejected;  // 수치 가드(CartridgeNumericsGuard) 거부 수(누적)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
-                             long scenarioVersion = 0L, long scenarioWriterCollisions = 0L, long scenarioFrozen = 0L)
+                             long scenarioVersion = 0L, long scenarioWriterCollisions = 0L, long scenarioFrozen = 0L,
+                             long alphaFactoryCycles = 0L, long alphaFactorySigned = 0L, long alphaFactoryRejected = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -48,6 +53,9 @@ namespace StockManager.Common
             ScenarioVersion          = scenarioVersion;
             ScenarioWriterCollisions = scenarioWriterCollisions;
             ScenarioFrozen           = scenarioFrozen;
+            AlphaFactoryCycles   = alphaFactoryCycles;
+            AlphaFactorySigned   = alphaFactorySigned;
+            AlphaFactoryRejected = alphaFactoryRejected;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -58,6 +66,8 @@ namespace StockManager.Common
         public bool HasAlert    => SendErrors > 0 || ScenarioFrozen > 0;
         /// <summary>시나리오 변이 seqlock 활성(시뮬 페이지가 보고 중).</summary>
         public bool ScenarioActive => ScenarioVersion > 0;
+        /// <summary>알파 공장 배선 여부(사이클 1 이상 완료된 경우). 미배선·미시작이면 false.</summary>
+        public bool AlphaFactoryActive => AlphaFactoryCycles > 0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -129,19 +139,22 @@ namespace StockManager.Common
         private readonly RingTelemetryChannel    _channel;
         private readonly Func<long>              _nowTicks;   // 기본 Stopwatch.GetTimestamp(테스트는 주입)
         private readonly ScenarioSeqlockMonitor? _scenario;   // v4.63.0 — 시나리오 변이 seqlock 통합(옵션·기본 null)
+        private readonly AutonomousAlphaFactory? _alphaFactory; // v4.73.0 — 자율 알파 공장 카운터 통합(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
 
         public RingTelemetryPublisher(OrderDispatchRing ring, GatedOrderDispatcher dispatcher,
                                       RingTelemetryChannel channel, Func<long>? nowTicks = null,
-                                      ScenarioSeqlockMonitor? scenario = null)
+                                      ScenarioSeqlockMonitor? scenario = null,
+                                      AutonomousAlphaFactory? alphaFactory = null)
         {
-            _ring       = ring       ?? throw new ArgumentNullException(nameof(ring));
-            _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-            _channel    = channel    ?? throw new ArgumentNullException(nameof(channel));
-            _nowTicks   = nowTicks   ?? Stopwatch.GetTimestamp;
-            _scenario   = scenario;
+            _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
+            _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
+            _channel      = channel      ?? throw new ArgumentNullException(nameof(channel));
+            _nowTicks     = nowTicks     ?? Stopwatch.GetTimestamp;
+            _scenario     = scenario;
+            _alphaFactory = alphaFactory;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -162,9 +175,13 @@ namespace StockManager.Common
                 // v4.63.0 — 시나리오 seqlock 카운터 합류(미배선이면 0). 무할당(long 3개 Volatile 읽기).
                 long sVer = 0L, sWc = 0L, sFr = 0L;
                 if (_scenario is { } sc) { sVer = sc.Version; sWc = sc.WriterCollisions; sFr = sc.Frozen; }
+                // v4.73.0 — 자율 알파 공장 카운터 합류(미배선이면 0). int→long 캐스팅, 힙 할당 0.
+                long afCycles = 0L, afSigned = 0L, afRejected = 0L;
+                if (_alphaFactory is { } af) { afCycles = af.CyclesCompleted; afSigned = af.StrategiesSigned; afRejected = af.GuardRejections; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
-                    _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr));
+                    _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
+                    afCycles, afSigned, afRejected));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

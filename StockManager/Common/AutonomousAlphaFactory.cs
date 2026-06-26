@@ -72,7 +72,12 @@ namespace StockManager.Common
             };
         }
 
-        public void Start() => _worker.Start();
+        public void Start()
+        {
+            // IsAlive guard: DI singleton 이므로 이중 호출은 없어야 하나, ThreadStateException 방어.
+            if (_worker.IsAlive) return;
+            _worker.Start();
+        }
 
         private void RunLoop()
         {

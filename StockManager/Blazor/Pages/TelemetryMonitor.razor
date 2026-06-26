@@ -108,6 +108,37 @@
         </div>
     </div>
 
+    @* ══ 자율 알파 공장 카운터 ════════════════════════════════════════════════════ *@
+    <div class="kpi-card" style="margin-bottom:22px">
+        <div class="kpi-label">🏭 자율 알파 공장 @(_frame.AlphaFactoryActive ? "" : "(첫 사이클 대기 중)")</div>
+        <div style="display:flex;gap:20px;margin-top:6px;flex-wrap:wrap">
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.AlphaFactoryActive ? _frame.AlphaFactoryCycles.ToString("N0") : "—")</div>
+                <div class="kpi-sub">완료 사이클 (24h 주기)</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:var(--green,#4caf50)">@(_frame.AlphaFactoryActive ? _frame.AlphaFactorySigned.ToString("N0") : "—")</div>
+                <div class="kpi-sub">서명 완료 전략 수</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:@(_frame.AlphaFactoryRejected > 0 ? "var(--orange,#ff9800)" : "inherit")">@(_frame.AlphaFactoryActive ? _frame.AlphaFactoryRejected.ToString("N0") : "—")</div>
+                <div class="kpi-sub">가드 거부 수 (수치 검증 실패)</div>
+            </div>
+            @{
+                long denom = _frame.AlphaFactorySigned + _frame.AlphaFactoryRejected;
+                string rejRate = (denom > 0) ? ((double)_frame.AlphaFactoryRejected / denom * 100.0).ToString("F1") + "%" : "—";
+            }
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.AlphaFactoryActive ? rejRate : "—")</div>
+                <div class="kpi-sub">거부율 (가드/전체)</div>
+            </div>
+        </div>
+        @if (!_frame.AlphaFactoryActive)
+        {
+            <div class="kpi-sub" style="margin-top:6px">AutonomousAlphaFactory 배선됨 — 첫 24h 사이클 완료 후 지표 표시. RunCycle() 직접 호출로 즉시 확인 가능.</div>
+        }
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
