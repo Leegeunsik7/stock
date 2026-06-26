@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.69.0** (2026-06-26)  
+> 기준 버전: **v4.71.0** (2026-06-26)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -73,6 +73,8 @@ Launcher.cs
             │     ├── IgnitionLock
             │     ├── RuntimeConfig / ConfigAuditor
             │     ├── ComplianceBridge / SlippageSentinel
+            │     ├── GatedOrderDispatcher + LiveArmingGate (3관문 무장 술어)
+            │     ├── OrderDrainWorker (50ms 드레인 엔진, ValveWired 이중 키)
             │     └── IModuleBridge → HostBoundModuleBridge (STA 마샬링 어댑터)
             └── ModuleBridge(정적) → 레거시 WinForms 창 위임 (InvokeRequired 마샬링 내장)
 
@@ -315,7 +317,12 @@ RebalanceLever.TryScaleClass/Symbol(bp)  — 범위[0, 50000bp] 이탈 → fail-
   EmergencyFreeze → InvalidOperationException (체결 불가)
 ```
 
-**현재 상태**: `liveArmed:false` 전 영역 유지. `GatedOrderDispatcher._isArmed` 술어는 스캐폴드(주입만). 실 무장 배선 (`BrokerHub.IsArmed + IgnitionLock.AllowPhysical + att.AssertNormal` 결속)은 미완 — 명시적 옵트인 단계.
+**현재 상태**: `liveArmed:false` 전 영역 유지(기본).
+- v4.57.0: `LiveArmingGate` 3관문 결속 (`BrokerHub.IsArmed ∧ IgnitionLock.AllowPhysical ∧ att.AssertNormal`).
+- v4.59.0: `DispatchArming.ResolvePredicate(wired, gate)` — `Dispatch.LiveArmingWired=false` 기본.
+- v4.70.0: `OrderDrainWorker` 50ms 드레인 엔진 — `Dispatch.ValveWired=false` 기본.
+
+**이중 키 잠금**: `ValveWired=true ∧ LiveArmingWired=true` 양쪽 ON 시에만 실 주문 흐름. 어느 한쪽만 false여도 실거래 0% 수학적 보장.
 
 ---
 
@@ -380,7 +387,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.69.0)
+### 현황 (v4.71.0)
 
 - **총 테스트**: 1,588 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
@@ -449,6 +456,8 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.67.0 | Blazor DI↔WinForms 브릿지 + 청산 가드 + 파이프라인 하드닝 테스트 |
 | v4.68.0 | SymbolPicker mousedown 선택 + IndexTickerBar 마켓 추가 + 병렬 fetch (Sem4·Sem3) |
 | v4.69.0 | DashboardHome 통합 관제탑 (Blazor 런처 허브) + IModuleBridge STA 마샬링 |
+| v4.70.0 | `OrderDrainWorker` 50ms 드레인 엔진 + 이중 키 잠금(`ValveWired ∧ LiveArmingWired`) 완결 |
+| v4.71.0 | `SystemVersionProvider` 무할당 버전 공급자 + HANDOVER.md 대통합 사양 갱신 |
 
 ---
 
@@ -534,6 +543,8 @@ xunit / xunit.runner.visualstudio (테스트)
 링버퍼 코어          → Common/RingBufferCore.cs
 주문 디스패치        → Common/OrderDispatchRing.cs
 링 텔레메트리        → Common/RingTelemetry*.cs  (Gamma)
+발주 드레인 엔진     → Common/OrderDrainWorker.cs  (v4.70.0 이중 키 잠금)
+버전 공급자          → Common/SystemVersionProvider.cs  (무할당 캐싱)
 포트폴리오 멘토      → Common/QPortfolioMentor.cs
 미래가치 시뮬        → Common/QFutureValue.cs
 카오스 진단          → Common/QChaos.cs
@@ -554,10 +565,11 @@ WinForms 진입점      → Launcher.cs
 
 | 항목 | 설명 |
 |---|---|
-| **실 무장 배선** | `GatedOrderDispatcher._isArmed` ← `BrokerHub.IsArmed ∧ IgnitionLock.AllowPhysical ∧ att.AssertNormal` 결속 |
+| **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
 | **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
-| **UI 텔레메트리 표면** | `RingTelemetryChannel.TryRead()` → Blazor 대시보드 실시간 지표 |
+| **UI 텔레메트리 확장** | `RingTelemetryChannel.TryRead()` → Blazor 대시보드 실시간 지표 추가 |
 | **QFixedPrimary 전환** | Observed/FrozenCount/LastDivergence 모니터링 → 분기 0 확인 → `SetAuthority(QFixedPrimary)` |
+| **키움 32-bit 실거래** | `PlatformTarget=x86` 활성화 후 `ExecutionBridgeBroker` 파이프 실 연결 |
 
 ---
 
