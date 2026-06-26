@@ -18,6 +18,7 @@
 //   현재는 BrokerHub.Create(db) 기본 호출이 gate=null 이라 미배선(후방호환) — 명시적 옵트인에서만 결속.
 // ============================================================================
 using System;
+using System.Diagnostics;
 
 namespace StockManager.Common
 {
@@ -47,7 +48,25 @@ namespace StockManager.Common
         {
             // ★v4.61 권위 분기 — QFixedPrimary 는 'load-bearing'(게이트 정렬값이 실주문 권위), 그 외(LegacyPrimary)는 기존 '병렬 관측'.
             if (_gate.Authority == ClearingAuthority.QFixedPrimary)
-                return PlaceQFixedAuthoritative(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
+            {
+                // v4.67.0 — IBroker.Place 경계 load-bearing 가드.
+                //   PlaceQFixedAuthoritative 가 미등록/격자 오염/수량 0 시 InvalidOperationException을 throw하는데,
+                //   이 예외가 WinForms UI 스레드까지 전파되면 OrderConfirmDialog 이후 앱이 크래시.
+                //   경계에서 포착해 (false, msg)로 변환 — 호출부는 MessageBox 처리로 안전 강등.
+                //   ★FailClosed()는 throw '전에' _liveAtt.ForceFreeze()를 완료하므로 가드 포착 후에도 동결 불변식 유지.
+                try
+                {
+                    return PlaceQFixedAuthoritative(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
+                }
+                // when 필터: FailClosed()가 생성하는 "[CLEARING FAIL-CLOSED]" 메시지만 포착.
+                //   inner.Place()가 던지는 InvalidOperationException은 when 통과 실패 → 상위 catch로 전파(오귀인 방지).
+                catch (InvalidOperationException ex)
+                    when (ex.Message.StartsWith("[CLEARING FAIL-CLOSED]", StringComparison.Ordinal))
+                {
+                    Trace.TraceError("[ShadowClearingBroker] 청산 fail-closed 포착({0}): {1}", symbol, ex.Message);
+                    return (false, ex.Message);
+                }
+            }
 
             // ── LegacyPrimary(안전 모드·기존 계약 1비트 불변) — 관측만·결과 버림·예외 삼킴·RAW 위임 ──
             if (_gate.Enabled)

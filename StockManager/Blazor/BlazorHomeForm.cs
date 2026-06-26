@@ -94,6 +94,10 @@ namespace StockManager.Blazor
             //   연산 권위(반환값)만 신 QFixed 로 바뀌고, 발산/오버플로/FX 스큐는 전용 섀도우 att 로만 fail-closed 동결.
             if (cfg.GetBool("Clearing.QFixedPrimary.Enabled", false))
                 shadowGate.SetAuthority(ClearingAuthority.QFixedPrimary);
+            // v4.67.0 — WinForms Launcher 결속 브릿지 등록.
+            //   Launcher.PaperQuick()가 TryGet()으로 게이트·증적 인스턴스를 추출해 BrokerHub.Create에 주입 → ShadowClearingBroker 배선.
+            //   등록 실패(이미 등록됨)는 first-write wins로 무시 — 재진입·이중 초기화 안전.
+            ExecutionInfrastructureHub.Register(shadowGate, attestation);
             services.AddSingleton(shadowGate);
             services.AddSingleton(bridge);                 // S14 #1 — KiwoomBridgeClient (하트비트 500ms)
             services.AddSingleton(broker.Audit);           // S14 #2 — LiveAuditService (체결 원장)

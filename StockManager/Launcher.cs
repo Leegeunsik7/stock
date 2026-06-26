@@ -418,7 +418,9 @@ namespace StockManager
                 var name = t?.KoreanName ?? market.Replace("KRW-", "");
                 var qty = krw / price;
 
-                IBroker broker = BrokerHub.Create(_db);   // 모의/실전 토글 반영(실전은 안전상 거부)
+                // v4.67.0 — 브릿지에서 gate/att 추출 → ShadowClearingBroker 배선(등록 전이면 null → 기본 폴백).
+                var (shadowGate, liveAtt) = ExecutionInfrastructureHub.TryGet();
+                IBroker broker = BrokerHub.Create(_db, shadowGate, liveAtt);   // 모의/실전 토글 반영(실전은 안전상 거부)
                 if (side == PaperSide.Sell)
                 {
                     var held = broker.HeldQty(PaperAsset.Coin, market);

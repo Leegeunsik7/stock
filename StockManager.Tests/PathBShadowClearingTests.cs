@@ -151,32 +151,37 @@ namespace StockManager.Tests
         public void ShadowBroker_WhenQFixedPrimary_FailsOnClearingError_FailClosed()
         {
             // QFixedPrimary + 미등록 심볼 → 청산 불가 → fail-closed: inner.Place 절대 미호출 + 라이브 attestation
-            //   하드 동결 + InvalidOperationException 으로 파이프라인 단절(자산 오염 차단). LegacyPrimary 의 삼킴과 정반대.
+            //   하드 동결 + (false,msg) 반환으로 IBroker.Place 경계 파이프라인 단절(자산 오염 차단).
+            //   v4.67.0 Mission B — 가드가 InvalidOperationException을 (false,msg)로 변환: UI 스레드 크래시 방지.
+            //   FailClosed()는 throw '전에' liveAtt.ForceFreeze()를 완료하므로 가드 포착 후에도 동결 불변식 유지.
             var gateAtt = new OrderAttestationService();
             var liveAtt = new OrderAttestationService();   // 라이브 파이프라인 attestation(데코레이터 주입)
             var gate = new ShadowCutoverGate(true, Reg(), gateAtt, ClearingAuthority.QFixedPrimary);
             var spy  = new SpyBroker();
             var deco = new ShadowClearingBroker(spy, gate, liveAtt);
 
-            Assert.Throws<InvalidOperationException>(() =>
-                deco.Place(PaperAsset.Stock, "GHOST999", "유령", PaperSide.Buy, PaperKind.Limit, 10m, 70000m, 70000m));
+            var (ok, msg) = deco.Place(PaperAsset.Stock, "GHOST999", "유령", PaperSide.Buy, PaperKind.Limit, 10m, 70000m, 70000m);
 
-            Assert.Empty(spy.Placed);                                // ★inner.Place 절대 미호출(하드 카운터 단절)
-            Assert.Equal(GatingMode.EmergencyFreeze, liveAtt.Mode);  // ★라이브 파이프라인 동결(에스컬레이션)
-            Assert.True(gate.FrozenCount > 0);                       // 게이트도 fail-closed 계상
+            Assert.False(ok);                                                                // ★다운스트림 차단
+            Assert.Contains("CLEARING FAIL-CLOSED", msg, StringComparison.Ordinal);         // ★fail-closed 식별자 포함
+            Assert.Empty(spy.Placed);                                                        // ★inner.Place 절대 미호출(하드 카운터 단절)
+            Assert.Equal(GatingMode.EmergencyFreeze, liveAtt.Mode);                         // ★라이브 파이프라인 동결(에스컬레이션)
+            Assert.True(gate.FrozenCount > 0);                                               // 게이트도 fail-closed 계상
         }
 
         [Fact]
-        public void ShadowBroker_QFixedPrimary_FailClosed_NoLiveAtt_StillThrows_InnerNotCalled()
+        public void ShadowBroker_QFixedPrimary_FailClosed_NoLiveAtt_InnerNotCalled()
         {
-            // _liveAtt 미주입(기본 null)이어도 throw + inner 미호출 하드 단절은 유지(footgun 없이 fail-closed).
+            // _liveAtt 미주입(기본 null)이어도 (false,msg) 반환 + inner 미호출 하드 단절은 유지(footgun 없이 fail-closed).
+            // v4.67.0: throw→(false,msg) 변환 후에도 null liveAtt는 단순 무시(NullRef 없음).
             var gate = new ShadowCutoverGate(true, Reg(), new OrderAttestationService(), ClearingAuthority.QFixedPrimary);
             var spy  = new SpyBroker();
             var deco = new ShadowClearingBroker(spy, gate);   // liveAttestation 생략
 
-            Assert.Throws<InvalidOperationException>(() =>
-                deco.Place(PaperAsset.Stock, "GHOST999", "유령", PaperSide.Buy, PaperKind.Limit, 10m, 70000m, 70000m));
-            Assert.Empty(spy.Placed);
+            var (ok, msg) = deco.Place(PaperAsset.Stock, "GHOST999", "유령", PaperSide.Buy, PaperKind.Limit, 10m, 70000m, 70000m);
+            Assert.False(ok);
+            Assert.Contains("CLEARING FAIL-CLOSED", msg, StringComparison.Ordinal);
+            Assert.Empty(spy.Placed);   // ★inner.Place 미호출 — 하드 차단 확인
         }
 
         [Fact]

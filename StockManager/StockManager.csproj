@@ -18,9 +18,21 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.66.0</Version>
-    <AssemblyVersion>4.66.0.0</AssemblyVersion>
-    <FileVersion>4.66.0.0</FileVersion>
+    <Version>4.67.0</Version>
+    <AssemblyVersion>4.67.0.0</AssemblyVersion>
+    <FileVersion>4.67.0.0</FileVersion>
+    <!-- v4.67.0 — Mission A: Blazor DI ↔ WinForms Launcher 싱글톤 인프라 결속 브릿지.
+         ExecutionInfrastructureHub(정적·Interlocked/Volatile.Read·CS0420 안전): BlazorHomeForm이 shadowGate+attestation을
+         Register()로 공유 슬롯에 등록 → Launcher.PaperQuick()이 TryGet()으로 추출해 BrokerHub.Create(_db,gate,att)에 주입.
+         기존 BrokerHub.Create(db) 단일 인자 경로(절연 공백)가 완전 배선되어 ShadowClearingBroker가 실 주문 파이프라인에
+         결속됨. 미등록(BlazorHomeForm 미초기화)이면 (null,null) → 기본 폴백(후방호환). Mission B: ShadowClearingBroker
+         IBroker.Place 경계 load-bearing 가드 — PlaceQFixedAuthoritative의 InvalidOperationException을 when 필터
+         ("[CLEARING FAIL-CLOSED]" 접두)로 포착해 (false,msg) 반환(UI 스레드 크래시 차단). FailClosed()는 throw 전에
+         ForceFreeze() 완료하므로 가드 포착 후에도 liveAtt 동결 불변식 유지. inner.Place()의 InvalidOperationException은
+         when 통과 실패 → 상위 catch 전파(오귀인 방지). Mission C: PipelineHardeningTests 2건 — WiredQFixed_MutatesOrder
+         (등록 심볼 정렬 체결 ok=true), ClearingFails_HardFreeze(미등록 심볼 ok=false + liveAtt EmergencyFreeze + inner
+         미호출). PathBShadowClearingTests 2건: throw→(false,msg) 계약 갱신 + NoLiveAtt 검증 Assert.Empty 보완.
+         빌드 0/0, 전체 1588 통과(신규 +2). liveArmed:false 불변식 유지: 기본 QFixedPrimary 미활성화(옵트인 전용). -->
     <!-- v4.66.0 — Mission A: PaperBroker 가상 잔고 원자적 시딩(OnboardingImporter.SeedVirtualCash/ReseedVirtualCash).
          Reload() 증발·재시작 중복 누적 결함 근절: RunInTransaction으로 Deposit 감사 레코드(BrokerAccount='paper')
          + Paper.Account JSON + Paper.Seeded 멱등 플래그를 단일 원자 커밋. Mission B: TradingSettingsPage.razor
