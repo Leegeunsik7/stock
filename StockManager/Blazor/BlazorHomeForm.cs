@@ -279,8 +279,12 @@ namespace StockManager.Blazor
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate);
             var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation);
             var ringChannel    = new RingTelemetryChannel();
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel);
+            // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher·페이지 transient) 카운터를 싱글톤
+            //   브리지로 받아 중앙 샘플러가 합류. FutureSimPage 가 매 틱 Report → ringPublisher.Sample 이 Read → 채널 발행.
+            var scenarioMon    = new ScenarioSeqlockMonitor();
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
+            services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
             services.AddSingleton(ringDispatcher);
             services.AddSingleton(ringChannel);    // TelemetryMonitor.razor 주입 대상

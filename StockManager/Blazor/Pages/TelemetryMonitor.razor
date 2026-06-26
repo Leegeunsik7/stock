@@ -9,6 +9,7 @@
 @using System.Threading
 @inject RingTelemetryChannel Channel
 @inject OrderAttestationService Attestation
+@inject IJSRuntime JS
 
 <div class="top">
     <div class="hello">
@@ -72,6 +73,41 @@
         </div>
     </div>
 
+    @* ══ δ=0 실시간 추세 차트 — Canvas(JS) 직접 드로잉. C# 은 매 틱 스칼라 2개만 push(SVG 문자열 KB 폭발 없음) ══ *@
+    <div style="background:var(--card-bg,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:12px 14px;margin-bottom:22px">
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
+            <span class="kpi-label">최근 @(ChartCapacity)프레임 추세 (~@(ChartCapacity * 150 / 1000)초)</span>
+            <span style="font-size:11px;color:var(--muted,#888)"><span style="display:inline-block;width:12px;height:2px;background:#4caf50;vertical-align:middle"></span> Throughput</span>
+            <span style="font-size:11px;color:var(--muted,#888)"><span style="display:inline-block;width:12px;height:2px;background:#f44336;vertical-align:middle"></span> WriterCollisions</span>
+        </div>
+        @* width/height = 픽셀 백버퍼. 문자열·MarkupString 미사용 — 좌표는 전부 JS 측 Float64Array→canvas. *@
+        <canvas id="@ChartId" width="900" height="120" style="width:100%;height:120px;display:block"></canvas>
+    </div>
+
+    @* ══ 다중 seqlock 교차 관제(주문 파이프라인 ↔ 시나리오 변이) ══════════════════ *@
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:22px">
+        <div class="kpi-card">
+            <div class="kpi-label">📡 주문 파이프라인 seqlock</div>
+            <div style="display:flex;gap:20px;margin-top:6px">
+                <div><div class="kpi-value" style="font-size:18px;color:@(_frame.WriterCollisions > 0 ? "var(--red,#f44336)" : "inherit")">@(_frame.WriterCollisions.ToString("N0"))</div><div class="kpi-sub">라이터 경합</div></div>
+                <div><div class="kpi-value" style="font-size:18px">@(_tornReads.ToString("N0"))</div><div class="kpi-sub">읽기 경합(torn 재시도·UI계수)</div></div>
+                <div><div class="kpi-value" style="font-size:18px">@(Channel.Version.ToString("N0"))</div><div class="kpi-sub">채널 버전</div></div>
+            </div>
+        </div>
+        <div class="kpi-card @(_frame.ScenarioFrozen > 0 ? "kpi-alert" : "")">
+            <div class="kpi-label">🌀 시나리오 변이 seqlock @(_frame.ScenarioActive ? "" : "(비활성)")</div>
+            <div style="display:flex;gap:20px;margin-top:6px">
+                <div><div class="kpi-value" style="font-size:18px;color:@(_frame.ScenarioWriterCollisions > 0 ? "var(--red,#f44336)" : "inherit")">@(_frame.ScenarioWriterCollisions.ToString("N0"))</div><div class="kpi-sub">라이터 경합(슬라이더)</div></div>
+                <div><div class="kpi-value" style="font-size:18px;color:@(_frame.ScenarioFrozen > 0 ? "#ff4444" : "inherit")">@(_frame.ScenarioFrozen.ToString("N0"))</div><div class="kpi-sub">산출 동결</div></div>
+                <div><div class="kpi-value" style="font-size:18px">@(_frame.ScenarioVersion.ToString("N0"))</div><div class="kpi-sub">발행 버전</div></div>
+            </div>
+            @if (!_frame.ScenarioActive)
+            {
+                <div class="kpi-sub" style="margin-top:6px">미래가치 시뮬(/future/sim) 열면 슬라이더 경합이 실시간 합류됩니다.</div>
+            }
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -109,8 +145,13 @@
 </style>
 
 @code {
+    private const string ChartId = "telemetryChart";   // 상수(캐시 — push 마다 문자열 재생성 없음)
+    private const int    ChartCapacity = 60;            // 최근 60프레임(~9초 @150ms)
+
     // 직전 성공 프레임 — TryRead false(경합) 시 이 값 그대로 유지(StateHasChanged 불호출).
     private RingTelemetry _frame;
+    private long _tornReads;                            // 읽기 경합(torn/미발행 재시도) UI측 계수 — δ=0 long 증가
+    private bool _chartReady;
     private PeriodicTimer? _timer;
     private CancellationTokenSource _cts = new();
 
@@ -120,20 +161,40 @@
         _ = PollLoopAsync(_cts.Token);
     }
 
-    // ★ 백그라운드 폴링 루프 — 렌더링 스레드와 독립. InvokeAsync 로만 UI 갱신.
+    // 첫 렌더 후 JS 차트 초기화(canvas DOM 존재 시점). 고정크기 Float64Array ring 1회 할당.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { await JS.InvokeVoidAsync("dashboard.telemetryChart.init", ChartId, ChartCapacity); _chartReady = true; }
+            catch { /* JS 미로드 시 차트만 비활성(데이터 카드는 정상) */ }
+        }
+    }
+
+    // ★ 백그라운드 폴링 루프 — 렌더링 스레드와 독립.
+    //   차트는 매 틱 JS canvas 로 직접 push(δ=0: C# 문자열 미생성·Blazor 렌더 트리 미경유). KPI 텍스트는 새 프레임에만 렌더.
     private async Task PollLoopAsync(CancellationToken ct)
     {
         try
         {
             while (await _timer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
-                if (Channel.TryRead(out var latest))
+                bool got = Channel.TryRead(out var latest);
+                if (got) _frame = latest;
+                else     _tornReads++;   // 읽기 경합(직전 프레임 유지) — UI측 torn 계수(코어 무손상)
+
+                // UI 스레드 마샬링: ① JS 차트 push(스칼라 2개·문자열 0) ② 새 프레임이면 KPI 텍스트 렌더.
+                //   push 는 매 틱(추세 시간축 진행), StateHasChanged 는 got 일 때만(불필요 렌더 억제).
+                await InvokeAsync(async () =>
                 {
-                    // 새 프레임 수신 — 상태 갱신 후 UI 스레드에 렌더 요청
-                    _frame = latest;
-                    await InvokeAsync(StateHasChanged).ConfigureAwait(false);
-                }
-                // TryRead == false → seqlock 경합 지속 → 직전 _frame 유지, 렌더 생략(무할당·무블록)
+                    // 차트 push 는 teardown 레이스(네비게이션 중 WebView 단절)에서 throw 가능 — 삼켜 fire-and-forget 무옵저브 차단.
+                    if (_chartReady)
+                        try { await JS.InvokeVoidAsync("dashboard.telemetryChart.push",
+                            ChartId, _frame.ThroughputPerSec, (double)_frame.WriterCollisions).ConfigureAwait(false); }
+                        catch (JSDisconnectedException) { }
+                        catch (ObjectDisposedException) { }
+                    if (got) StateHasChanged();
+                }).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { /* 컴포넌트 Dispose 시 정상 탈출 */ }

@@ -18,10 +18,27 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.62.0</Version>
-    <AssemblyVersion>4.62.0.0</AssemblyVersion>
-    <FileVersion>4.62.0.0</FileVersion>
-    <!-- v4.62.0 — 온보딩 마법사 네이티브 + 하이브리드 폼 함정 하드닝. ★정직 회계: 스펙의 두 대상 페이지는 이미
+    <Version>4.63.0</Version>
+    <AssemblyVersion>4.63.0.0</AssemblyVersion>
+    <FileVersion>4.63.0.0</FileVersion>
+    <!-- v4.63.0 — δ=0 시계열 차팅 가속 + 다중 seqlock 통합 관제. [미션 A] String Allocation Trap 정면 돌파:
+         150ms 주기 추세 차트를 Blazor SVG <path>(매 프레임 수십 KB 좌표 문자열 GC 폭발) 대신 JS Canvas 직접 드로잉으로
+         전환. dashboard.js telemetryChart — init 1회 Float64Array ring 할당, push/draw 경로 문자열·할당 0(색상 리터럴
+         인터닝·ctx 숫자 인자). C# TelemetryMonitor 는 매 틱 스칼라 2개(Throughput·WriterCollisions)만 push — C# 힙
+         per-frame 문자열 0(δ=0). StateHasChanged 는 새 프레임에만(got), 차트는 매 틱 JS 직접 갱신(렌더 트리 미경유).
+         ★정직 한정: push 의 InvokeVoidAsync 는 메서드명·상수 ChartId·double 2개의 '바운드 마샬'(수십 B/호출·6.7회/초)
+         — 표적이던 KB SVG 문자열 트랩이 아니며, 진짜 무-interop-alloc 은 WebView2 공유버퍼 홉 필요(미노출·정직 표기).
+         스레드 안전: 백그라운드 폴 루프의 JS 호출은 InvokeAsync(Dispatcher) 마샬링, teardown 레이스는 JSDisconnected/
+         ObjectDisposed catch + _cts 취소로 무옵저브 예외 0. [미션 B] 다중 seqlock 통합: ScenarioPublisher(페이지
+         transient)의 _writerCollisions/_frozen/Version 을 신규 싱글톤 ScenarioSeqlockMonitor 가 브리지(FutureSimPage 매 틱
+         Report → 중앙 RingTelemetryPublisher.Sample 이 Read → RingTelemetry 합류). RingTelemetry +3 필드(옵션·기본 0·
+         후방호환)·HasAlert 에 ScenarioFrozen 합류. UI: '주문 파이프라인 seqlock'(라이터 경합·읽기경합[torn 재시도 UI계수]·
+         채널버전)·'시나리오 변이 seqlock'(슬라이더 경합·산출 동결·발행버전) 교차 관제 카드. ★telemetry-only: 코어 lock-free
+         (RingTelemetryChannel·ScenarioPublisher·GatedOrderDispatcher) 무변경·liveArmed:false 불변.
+         테스트 +3(S29eMultiSeqlock): 모니터 라운드트립·퍼블리셔 시나리오 합류(변이 검증)·모니터 미주입 후방호환 0.
+         빌드 0/0, 전체 1568 통과(Release 2회 연속 0 실패). 적대적 리뷰 3렌즈 결함 0(δ=0 정직·스레드/teardown·통합/후방호환/변이민감).
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.62.0 — 온보딩 마법사 네이티브 + 하이브리드 폼 함정 하드닝. ★정직 회계: 스펙의 두 대상 페이지는 이미
          존재했다 — SetupWizardPage(@page "/setup", API 키 5단계 마법사)·CompositeAlertsPage(@page "/composite",
          주식+코인 규칙 편집기). 스펙이 가정한 'one-shot/re-arm 비대칭을 복합 알림 페이지에서 분기'는 오귀속:
          그 비대칭은 별개 서브시스템(AlertRule one-shot[IsTriggered 영구 latch] vs CoinAlert re-arm[Triggered 양방향

@@ -29,9 +29,14 @@ namespace StockManager.Common
         public readonly long   WriterCollisions;  // 단일 생산자 CAS 낙방(동시 발행 위반)
         public readonly double ThroughputPerSec;  // 직전 샘플 대비 발행 처리량(건/초)
         public readonly long   SendErrors;        // Mission A — downstream throw 누적(브로커 단절 등). 0 이 정상.
+        // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher) 채널. Version 0 = 시뮬 페이지 비활성(미보고).
+        public readonly long   ScenarioVersion;          // 시나리오 seqlock 버전(0=미보고)
+        public readonly long   ScenarioWriterCollisions; // 시나리오 단일 라이터 경합(슬라이더 변이)
+        public readonly long   ScenarioFrozen;           // 시나리오 산출 동결(음수 배수·오버플로 등)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
-                             long writerCollisions, double throughputPerSec, long sendErrors = 0L)
+                             long writerCollisions, double throughputPerSec, long sendErrors = 0L,
+                             long scenarioVersion = 0L, long scenarioWriterCollisions = 0L, long scenarioFrozen = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -40,14 +45,19 @@ namespace StockManager.Common
             WriterCollisions = writerCollisions;
             ThroughputPerSec = throughputPerSec;
             SendErrors       = sendErrors;
+            ScenarioVersion          = scenarioVersion;
+            ScenarioWriterCollisions = scenarioWriterCollisions;
+            ScenarioFrozen           = scenarioFrozen;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
         /// ★정직 한계: 정확히 1건만 발행되고 미드레인인 링(Published=0·나머지 0)은 false 로 보인다(극단 엣지·무해).</summary>
         public bool HasActivity => Published > 0 || Forwarded > 0 || GatedOut > 0
-                                || Dropped > 0 || WriterCollisions > 0 || SendErrors > 0;
-        /// <summary>비상 경보 여부 — SendErrors 가 양수면 downstream throw 발생·비상 동결 확인 필수.</summary>
-        public bool HasAlert    => SendErrors > 0;
+                                || Dropped > 0 || WriterCollisions > 0 || SendErrors > 0 || ScenarioVersion > 0;
+        /// <summary>비상 경보 여부 — SendErrors/시나리오 동결 양수면 비상 확인 필수.</summary>
+        public bool HasAlert    => SendErrors > 0 || ScenarioFrozen > 0;
+        /// <summary>시나리오 변이 seqlock 활성(시뮬 페이지가 보고 중).</summary>
+        public bool ScenarioActive => ScenarioVersion > 0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -114,21 +124,24 @@ namespace StockManager.Common
     /// </summary>
     public sealed class RingTelemetryPublisher
     {
-        private readonly OrderDispatchRing     _ring;
-        private readonly GatedOrderDispatcher  _dispatcher;
-        private readonly RingTelemetryChannel  _channel;
-        private readonly Func<long>            _nowTicks;   // 기본 Stopwatch.GetTimestamp(테스트는 주입)
+        private readonly OrderDispatchRing       _ring;
+        private readonly GatedOrderDispatcher    _dispatcher;
+        private readonly RingTelemetryChannel    _channel;
+        private readonly Func<long>              _nowTicks;   // 기본 Stopwatch.GetTimestamp(테스트는 주입)
+        private readonly ScenarioSeqlockMonitor? _scenario;   // v4.63.0 — 시나리오 변이 seqlock 통합(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
 
         public RingTelemetryPublisher(OrderDispatchRing ring, GatedOrderDispatcher dispatcher,
-                                      RingTelemetryChannel channel, Func<long>? nowTicks = null)
+                                      RingTelemetryChannel channel, Func<long>? nowTicks = null,
+                                      ScenarioSeqlockMonitor? scenario = null)
         {
             _ring       = ring       ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _channel    = channel    ?? throw new ArgumentNullException(nameof(channel));
             _nowTicks   = nowTicks   ?? Stopwatch.GetTimestamp;
+            _scenario   = scenario;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -146,9 +159,12 @@ namespace StockManager.Common
                 long dTick     = now - _lastTicks;
                 // 음수 델타(역행) 방어 + 0-경과 div 차단. Stopwatch.Frequency = ticks/sec.
                 double tps = (dTick > 0 && dPub > 0) ? dPub * (double)Stopwatch.Frequency / dTick : 0.0;
+                // v4.63.0 — 시나리오 seqlock 카운터 합류(미배선이면 0). 무할당(long 3개 Volatile 읽기).
+                long sVer = 0L, sWc = 0L, sFr = 0L;
+                if (_scenario is { } sc) { sVer = sc.Version; sWc = sc.WriterCollisions; sFr = sc.Frozen; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
-                    _ring.WriterCollisions, tps, _dispatcher.SendErrors));
+                    _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

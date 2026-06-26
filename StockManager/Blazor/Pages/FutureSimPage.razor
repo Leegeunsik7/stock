@@ -7,6 +7,7 @@
 @page "/future/sim"
 @implements IAsyncDisposable
 @using System.Threading
+@inject ScenarioSeqlockMonitor ScenarioMon
 
 <div class="top">
     <div class="hello">
@@ -191,6 +192,8 @@
             {
                 var pub = _pub;   // 카오스 재구성과의 레이스 차단(지역 캡처·참조 원자)
                 if (pub is null) continue;
+                // v4.63.0 — 시나리오 seqlock 카운터를 중앙 관제(/broker/pipeline)에 매 틱 보고(읽기 성공 무관·δ=0).
+                ScenarioMon.Report(pub.WriterCollisions, pub.FrozenCount, pub.Version);
                 if (pub.TryReadFrame(_mBuf, _oBuf, _pBuf))
                 {
                     Array.Copy(_mBuf, _median, Years + 1);
