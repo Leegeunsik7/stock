@@ -1,0 +1,258 @@
+@* ============================================================================
+   ClearingAuthorityPage — v4.74.0: 청산 연산 권위 전환 관제탑
+   ShadowCutoverGate 의 Observed/FrozenCount/LastDivergence 를 300ms 폴링하고
+   FrozenCount == 0 조건 확인 후 SetAuthority(QFixedPrimary) 승격 버튼 제공.
+
+   안전 불변(liveArmed:false 박제):
+     본 게이트는 라이브 청산 경로에 미배선(Launcher 단일 인자 — shadowGate=null).
+     권위 전환은 Clear() 반환값(청산 명목)만 바꾸며 실 주문 송출과 무관.
+     발산/오버플로 시 전용 섀도우 OrderAttestationService 로만 EmergencyFreeze.
+   ============================================================================ *@
+@page "/clearing/authority"
+@implements IAsyncDisposable
+@using System.Threading
+@inject ShadowCutoverGate ShadowGate
+@inject OrderAttestationService Attestation
+
+<div class="top">
+    <div class="hello">
+        <h1>🔧 청산 권위 전환 <span class="tag">CLEARING AUTHORITY</span></h1>
+        <p>ShadowCutoverGate Observed/FrozenCount/LastDivergence — 300ms 폴링. FrozenCount = 0 달성 후 QFixedPrimary 승격.</p>
+    </div>
+</div>
+
+@* ══ INERT 경보 ═══════════════════════════════════════════════════════════════ *@
+@if (!_enabled)
+{
+    <div style="margin:0 28px 18px;background:rgba(100,100,100,0.12);border:2px solid #666;border-radius:10px;padding:16px 22px">
+        <div style="font-size:15px;font-weight:700;color:#aaa;margin-bottom:4px">⚠️ INERT — ShadowCutoverGate 비활성</div>
+        <div style="font-size:13px;color:#888">
+            config <code>Clearing.ShadowCutover=true</code> 로 재시작해야 게이트가 관측을 시작합니다.
+            현재 Clear() 호출은 섀도우 대조 없이 레거시 naive 값만 반환합니다.
+        </div>
+    </div>
+}
+
+@* ══ EmergencyFreeze 경보 ════════════════════════════════════════════════════ *@
+@if (Attestation.Mode == GatingMode.EmergencyFreeze)
+{
+    <div style="margin:0 28px 18px;background:rgba(180,20,20,0.18);border:2px solid #e34d4d;border-radius:10px;padding:16px 22px">
+        <div style="font-size:16px;font-weight:700;color:#ff4444;margin-bottom:6px">🚨 EmergencyFreeze — 비상 동결 중</div>
+        <div style="font-size:13px;color:#ffaaaa">
+            OrderAttestationService 가 EmergencyFreeze 상태입니다. 권위 승격을 먼저 해제한 후 진행하세요.
+        </div>
+    </div>
+}
+
+<div style="padding:0 28px 28px">
+
+    @* ══ KPI 카드 열 ═══════════════════════════════════════════════════════════ *@
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:14px;margin-bottom:22px">
+        <div class="kpi-card @(_enabled ? "" : "kpi-dim")">
+            <div class="kpi-label">게이트 상태</div>
+            <div class="kpi-value" style="font-size:16px;color:@(_enabled ? "var(--green,#4caf50)" : "#888")">@(_enabled ? "ON" : "INERT")</div>
+            <div class="kpi-sub">Clearing.ShadowCutover</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Observed</div>
+            <div class="kpi-value">@(_observed.ToString("N0"))</div>
+            <div class="kpi-sub">병렬 청산 관측 누적</div>
+        </div>
+        <div class="kpi-card @(_frozenCount > 0 ? "kpi-alert" : "")">
+            <div class="kpi-label">FrozenCount</div>
+            <div class="kpi-value" style="color:@(_frozenCount > 0 ? "#ff4444" : "var(--green,#4caf50)");font-weight:@(_frozenCount > 0 ? "800" : "600")">@(_frozenCount.ToString("N0"))</div>
+            <div class="kpi-sub">분기 발산 동결 누적</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">LastDivergence</div>
+            <div class="kpi-value" style="font-size:16px;color:@(System.Math.Abs(_lastDivergence) > 1.0 ? "var(--orange,#ff9800)" : "inherit")">@(_lastDivergence.ToString("+0.####;-0.####;0"))</div>
+            <div class="kpi-sub">최근 신−구 명목 차(원)</div>
+        </div>
+        <div class="kpi-card @(_authority == ClearingAuthority.QFixedPrimary ? "kpi-promote" : "")">
+            <div class="kpi-label">Authority</div>
+            <div class="kpi-value" style="font-size:15px;color:@(_authority == ClearingAuthority.QFixedPrimary ? "#8b5cf6" : "inherit")">
+                @(_authority == ClearingAuthority.QFixedPrimary ? "QFixedPrimary" : "LegacyPrimary")
+            </div>
+            <div class="kpi-sub">현재 청산 연산 권위</div>
+        </div>
+    </div>
+
+    @* ══ 권위 전환 패널 ════════════════════════════════════════════════════════ *@
+    <div style="background:var(--card-bg,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:20px 22px;margin-bottom:22px">
+        <div style="font-size:13px;font-weight:700;color:var(--muted,#888);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:14px">
+            청산 연산 권위 전환
+        </div>
+
+        @* 현재 권위 배너 *@
+        <div style="padding:14px 18px;border-radius:8px;margin-bottom:16px;
+                    background:@(_authority == ClearingAuthority.QFixedPrimary ? "rgba(139,92,246,0.12)" : "rgba(100,100,100,0.08)");
+                    border:1px solid @(_authority == ClearingAuthority.QFixedPrimary ? "rgba(139,92,246,0.4)" : "rgba(120,120,120,0.3)")">
+            <div style="font-size:18px;font-weight:700;color:@(_authority == ClearingAuthority.QFixedPrimary ? "#8b5cf6" : "#aaa")">
+                현재 권위: @(_authority == ClearingAuthority.QFixedPrimary ? "🟣 QFixed Primary (역전 모드)" : "⬜ Legacy Primary (섀도우 모드)")
+            </div>
+            <div style="font-size:12px;color:var(--muted,#888);margin-top:4px">
+                @if (_authority == ClearingAuthority.QFixedPrimary)
+                {
+                    <span>Clear() 반환 = QFixed 정렬값(권위). 레거시는 백스톱. 밴드 위반→섀도우 att EmergencyFreeze.</span>
+                }
+                else
+                {
+                    <span>Clear() 반환 = naive decimal 곱(권위). QFixed 는 병렬 관측만. 섀도우 모드 불변.</span>
+                }
+            </div>
+        </div>
+
+        @* 전환 버튼 *@
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <button @onclick="Promote"
+                    disabled="@(!CanPromote)"
+                    style="padding:10px 22px;border-radius:7px;font-size:14px;font-weight:700;cursor:@(CanPromote ? "pointer" : "not-allowed");
+                           background:@(CanPromote ? "rgba(139,92,246,0.18)" : "rgba(80,80,80,0.10)");
+                           border:2px solid @(CanPromote ? "rgba(139,92,246,0.5)" : "rgba(100,100,100,0.3)");
+                           color:@(CanPromote ? "#8b5cf6" : "#666")">
+                ⬆️ 승격: Legacy → QFixed
+            </button>
+            <button @onclick="Demote"
+                    disabled="@(_authority != ClearingAuthority.QFixedPrimary)"
+                    style="padding:10px 22px;border-radius:7px;font-size:14px;font-weight:700;cursor:@(_authority == ClearingAuthority.QFixedPrimary ? "pointer" : "not-allowed");
+                           background:@(_authority == ClearingAuthority.QFixedPrimary ? "rgba(100,100,100,0.12)" : "rgba(60,60,60,0.08)");
+                           border:2px solid @(_authority == ClearingAuthority.QFixedPrimary ? "rgba(150,150,150,0.4)" : "rgba(80,80,80,0.25)");
+                           color:@(_authority == ClearingAuthority.QFixedPrimary ? "#aaa" : "#555")">
+                ⬇️ 강등: QFixed → Legacy
+            </button>
+        </div>
+    </div>
+
+    @* ══ 승격 조건 체크리스트 ═══════════════════════════════════════════════════ *@
+    <div style="background:var(--card-bg,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08));border-radius:10px;padding:18px 22px;margin-bottom:22px">
+        <div style="font-size:13px;font-weight:700;color:var(--muted,#888);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px">
+            QFixedPrimary 승격 조건
+        </div>
+        @{
+            bool condEnabled   = _enabled;
+            bool condFrozen    = _frozenCount == 0;
+            bool condObserved  = _observed > 0;
+            bool condLegacy    = _authority == ClearingAuthority.LegacyPrimary;
+            bool condNotFreeze = Attestation.Mode != GatingMode.EmergencyFreeze;
+        }
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+            <div style="color:@(condEnabled ? "var(--green,#4caf50)" : "#f44336")">
+                @(condEnabled ? "✅" : "❌") 게이트 활성 (Clearing.ShadowCutover=true)
+                @if (!condEnabled) { <span style="color:#888"> — 재시작 후 config 변경 필요</span> }
+            </div>
+            <div style="color:@(condFrozen ? "var(--green,#4caf50)" : "#f44336")">
+                @(condFrozen ? "✅" : "❌") 분기 동결 0 (FrozenCount = @(_frozenCount))
+                @if (!condFrozen) { <span style="color:#888"> — 발산 원인 분석 후 재시작 필요</span> }
+            </div>
+            <div style="color:@(condObserved ? "var(--green,#4caf50)" : "var(--orange,#ff9800)")">
+                @(condObserved ? "✅" : "⏳") 관측 완료 (Observed = @(_observed))
+                @if (!condObserved) { <span style="color:#888"> — 최소 1회 이상 Clear() 호출 필요</span> }
+            </div>
+            <div style="color:@(condLegacy ? "var(--green,#4caf50)" : "#888")">
+                @(condLegacy ? "✅" : "—") 현재 LegacyPrimary 상태
+                @if (!condLegacy) { <span style="color:#888"> — 이미 QFixedPrimary 로 승격됨</span> }
+            </div>
+            <div style="color:@(condNotFreeze ? "var(--green,#4caf50)" : "#f44336")">
+                @(condNotFreeze ? "✅" : "❌") Attestation 정상 (Mode = @(Attestation.Mode))
+                @if (!condNotFreeze) { <span style="color:#888"> — EmergencyFreeze 해제 후 재시도</span> }
+            </div>
+        </div>
+    </div>
+
+    @* ══ 안전 불변 callout ══════════════════════════════════════════════════════ *@
+    <div style="padding:14px 18px;border-radius:8px;background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.2);font-size:12px;color:#93c5fd">
+        <b>안전 불변 (liveArmed:false 박제)</b><br/>
+        본 ShadowCutoverGate 는 라이브 청산 경로에 미배선입니다(Launcher → BrokerHub.Create(db) 단일 인자, shadowGate=null).<br/>
+        권위 전환(SetAuthority)은 <b>Clear() 반환값(청산 명목)만</b> 바꾸며 실 주문 송출·OrderDrainWorker·GatedOrderDispatcher 와 무관합니다.<br/>
+        발산/오버플로 동결은 전용 섀도우 <code>OrderAttestationService</code> 로만 격리 — 라이브 att 오염 없음.
+    </div>
+
+    @* 폴링 상태 *@
+    <div style="margin-top:10px;padding:10px 14px;font-size:11px;color:var(--muted,#888);font-family:var(--mono)">
+        폴링 주기: 300ms (PeriodicTimer, 무할당) &nbsp;|&nbsp; 채널 직접 읽기(락-프리) &nbsp;|&nbsp; Attestation.Mode: @(Attestation.Mode)
+    </div>
+</div>
+
+<style>
+    .kpi-card {
+        background: var(--card-bg, rgba(255,255,255,0.05));
+        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        border-radius: 10px;
+        padding: 14px 16px;
+        display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi-card.kpi-alert   { border-color: rgba(220,50,50,0.5);   background: rgba(180,20,20,0.10); }
+    .kpi-card.kpi-promote { border-color: rgba(139,92,246,0.4);  background: rgba(139,92,246,0.08); }
+    .kpi-card.kpi-dim     { opacity: 0.55; }
+    .kpi-label { font-size: 11px; color: var(--muted, #888); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+    .kpi-sub   { font-size: 11px; color: var(--muted, #888); }
+</style>
+
+@code {
+    private long             _observed;
+    private long             _frozenCount;
+    private double           _lastDivergence;
+    private ClearingAuthority _authority;
+    private bool             _enabled;
+    private PeriodicTimer?   _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized()
+    {
+        // 초기 스냅샷 — 첫 렌더 전 값 채우기
+        Snapshot();
+        _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(300));
+        _ = PollLoopAsync(_cts.Token);
+    }
+
+    private void Snapshot()
+    {
+        _enabled        = ShadowGate.Enabled;
+        _observed       = ShadowGate.Observed;
+        _frozenCount    = ShadowGate.FrozenCount;
+        _lastDivergence = ShadowGate.LastDivergence;
+        _authority      = ShadowGate.Authority;
+    }
+
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                Snapshot();
+                await InvokeAsync(StateHasChanged).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { /* 컴포넌트 Dispose 시 정상 탈출 */ }
+    }
+
+    private bool CanPromote =>
+        _enabled &&
+        _frozenCount == 0 &&
+        _observed > 0 &&
+        _authority == ClearingAuthority.LegacyPrimary &&
+        Attestation.Mode != GatingMode.EmergencyFreeze;
+
+    private void Promote()
+    {
+        if (!CanPromote) return;
+        ShadowGate.SetAuthority(ClearingAuthority.QFixedPrimary);
+        Snapshot();   // 즉시 UI 반영
+    }
+
+    private void Demote()
+    {
+        if (_authority != ClearingAuthority.QFixedPrimary) return;
+        ShadowGate.SetAuthority(ClearingAuthority.LegacyPrimary);
+        Snapshot();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync().ConfigureAwait(false);
+        _timer?.Dispose();
+        _cts.Dispose();
+    }
+}
