@@ -297,6 +297,13 @@ namespace StockManager.Blazor
             services.AddSingleton(ringDispatcher);
             services.AddSingleton(ringChannel);    // TelemetryMonitor.razor 주입 대상
             services.AddSingleton(ringPublisher);
+            // v4.70.0 — 발주 밸브 결속: Drain 루프(50ms) → IBroker.Place() 배선.
+            //   Dispatch.ValveWired=true 일 때만 타이머 가동(기본 false — 드라이런 박제).
+            //   LiveArmingWired 와 독립 스위치 — 둘 다 ON 이어야 실 주문 흐름(이중 키 잠금).
+            var drainWorker = new OrderDrainWorker(ringDispatcher, broker,
+                wired: cfg.GetBool("Dispatch.ValveWired", false));
+            services.AddSingleton(drainWorker);
+            FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher) 보장.
             var ringTimer = new System.Threading.Timer(
                 _ => { try { ringPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);

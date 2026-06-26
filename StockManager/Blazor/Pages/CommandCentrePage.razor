@@ -7,6 +7,8 @@
 @inject ConfigAuditReport ConfigAudit
 @inject GreenhouseService Greenhouse
 @inject ForensicTelemetryChannel Telemetry
+@inject GatedOrderDispatcher RingDispatcher
+@inject OrderDrainWorker DrainValve
 @using System.Threading
 @using StockManager.Common
 
@@ -219,12 +221,26 @@
         <span class="cc-ign-icon">🔑</span> 점화 제어반
         <span class="cc-ign-stage">@IgnitionLock.StageLabel(Ignition.Stage)</span>
     </div>
-    <div class="cc-ign-banner">🔒 발주 밸브 미결속(-c) — 점화 단계와 무관하게 실거래 0%. 제어반 조종석(드라이런 박제).</div>
+    @if (!DrainValve.IsWired)
+    {
+        <div class="cc-ign-banner">🔒 발주 밸브 미결속(-c) — 점화 단계와 무관하게 실거래 0%. 제어반 조종석(드라이런 박제).</div>
+    }
+    else
+    {
+        <div class="cc-ign-banner" style="background:color-mix(in srgb,var(--up,#22c55e) 14%,transparent);border-color:var(--up,#22c55e)">✅ 발주 밸브 결속(50ms 드레인) — 점화·무장 조건 충족 시 실 주문 흐름 활성.</div>
+    }
     <div class="cc-ign-rows">
         <div><span>현재 단계</span><b>@IgnitionLock.StageLabel(Ignition.Stage)</b></div>
         <div><span>1주 프로브 잔여</span><b>@Ignition.ProbeRemaining</b></div>
-        <div><span>물리 발주 허용</span><b>@(Ignition.AllowPhysical() ? "허용(밸브 미결속)" : "차단")</b></div>
+        <div><span>물리 발주 허용</span><b>@(Ignition.AllowPhysical() ? (DrainValve.IsWired ? "허용 — 밸브 결속" : "허용(밸브 미결속)") : "차단")</b></div>
         <div><span>시스템 동결</span><b>@(Ignition.SystemFrozen ? "동결" : "정상")</b></div>
+    </div>
+    <div class="cc-ign-rows" style="margin-top:6px;border-top:1px solid var(--line)">
+        <div><span>발주 밸브</span><b>@(DrainValve.IsWired ? "✅ 결속(50ms 드레인)" : "⛔ 미결속(드라이런)")</b></div>
+        <div><span>전달(Forwarded)</span><b>@RingDispatcher.Forwarded.ToString("N0")</b></div>
+        <div><span>게이팅 차단</span><b>@RingDispatcher.GatedOut.ToString("N0")</b></div>
+        <div><span>유실(Dropped)</span><b>@RingDispatcher.Dropped.ToString("N0")</b></div>
+        <div><span>송출 오류</span><b class="@(RingDispatcher.SendErrors > 0 ? "warn" : "")">@RingDispatcher.SendErrors.ToString("N0")</b></div>
     </div>
     <div class="cc-ign-panel">
         <input class="cc-ign-input" @bind="_ignSignature" placeholder="지휘관 점화 서명" />
