@@ -18,9 +18,16 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.64.0</Version>
-    <AssemblyVersion>4.64.0.0</AssemblyVersion>
-    <FileVersion>4.64.0.0</FileVersion>
+    <Version>4.65.0</Version>
+    <AssemblyVersion>4.65.0.0</AssemblyVersion>
+    <FileVersion>4.65.0.0</FileVersion>
+    <!-- v4.65.0 — 실시간 시세 종목 추가 UX: 코드 직접 입력(종목코드 암기 필요) → SymbolPicker 자동완성 + 카테고리
+         선택 미니모달로 교체. "삼" 입력하면 삼성전자·삼성SDI·삼성바이오로직스... 드롭다운. 선택 후 "어느 카테고리에
+         추가할지" 미니패널 표시(현재 활성 탭 강조). SymbolPicker는 기존 PortfolioPage 동일 컴포넌트 재사용(라이브
+         네이버 검색·코스피/코스닥/미국 전종목 + 업비트 코인 + 로컬 카탈로그 폴백). 시장 타입도 SymbolEntry에서
+         직접 수신(DetectMarket 6자리 추론보다 정확 — NVDA=NASDAQ, 005930=KOSPI, BTC=CRYPTO 정확 분류).
+         기존 WatchlistStore.AddSymbol(Code, Name, Market)·DnD·카테고리 CRUD 전량 유지(UI 레이어만 교체).
+         빌드 0/0, 전체 1586 통과. -->
     <!-- v4.64.0 — 실시간 시세 워치리스트 개인화 + 포트폴리오 상단 실시간 지수 스트립(사용자 스크린샷 요청 직접 반영).
          [요청 1·2] 카테고리 추가/삭제 + 그룹 내 종목 추가/삭제: 신규 WatchlistStore(Common, Razor 밖 결정론·테스트 가능)가
          빌트인 7종(즐겨찾기/국내/미국/반도체/2차전지/AI/AI피지컬)에 더해 '커스텀 카테고리'를 Settings JSON 에 영속하고,
@@ -47,7 +54,7 @@
             중단·_drag stale(유령 재정렬) → `_drag` 보유 중 StateHasChanged 보류 + 드래그 종목 flash ver 미증가(이중 가드).
          ② [major] AddSymbol 의 SortOrder=COUNT(*) 가 중간 삭제 후 생존 행과 충돌(중복 정렬값→다음 로드서 기존 행 튐)
             → MAX(SortOrder)+1 단조 증가로 교체(+회귀 테스트).
-         ③ [minor] OnDrop 인덱스 비대칭(아래로 끌 때 타깃 뒤 낙하) → from<to 시 to-- 보정.
+         ③ [minor] OnDrop 인덱스 비대칭(아래로 끌 때 타깃 뒤 낙하) → from＜to 시 to -= 1 보정.
          ④ [minor] Reorder N개 UPDATE 비원자적(중간 실패 시 부분 SortOrder 잔존) → RunInTransaction 원자화.
          ⑤ [nit] AddSymbol ON CONFLICT 가 Market 미갱신(write-only stale) → Market=@m 추가(SaveHolding 수정과 동궤).
          ⑥ [minor] add-after-delete 미커버 → 회귀 테스트 추가.  ⑦ [minor] 카탈로그 개수 주석(11) stale → 하드코딩 제거.

@@ -37,8 +37,34 @@
     @* 커스텀 카테고리 생성 — 내가 원하는 항목을 추가 *@
     <input class="srch" style="width:128px" placeholder="+ 새 카테고리" @bind="_newCat" @onkeydown="OnAddCatKey" />
     <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="AddCategoryAsync">＋ 카테고리</button>
-    <input class="srch" style="width:170px" placeholder="종목코드 추가 (005930/AAPL)" @bind="_newSym" @onkeydown="OnAddKey" />
-    <button class="addbtn" @onclick="AddSymbolAsync">➕ 추가</button>
+    @* v4.65.0 — SymbolPicker 자동완성: 이름/코드 입력 → 드롭다운 선택 → 카테고리 미니모달 *@
+    <div style="position:relative;display:inline-block;min-width:220px">
+        <SymbolPicker OnPick="OnSymbolPicked" Placeholder="종목 검색 (삼성, NVDA, 005930…)" />
+        @if (_pendingSym.HasValue)
+        {
+            <div style="position:absolute;top:calc(100% + 4px);left:0;z-index:50;min-width:230px;
+                        background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+                        box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px">
+                <div style="margin-bottom:10px;line-height:1.5">
+                    <b style="font-size:13px">@_pendingSym.Value.Name</b>
+                    <span style="color:var(--sub);font-size:11px;margin-left:5px;font-family:monospace">@_pendingSym.Value.Code</span>
+                    <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
+                                 background:var(--card-2);color:var(--sub);margin-left:4px">@_pendingSym.Value.MarketLabel</span>
+                    <div style="color:var(--sub);font-size:11px;margin-top:3px">추가할 카테고리를 선택하세요</div>
+                </div>
+                @foreach (var g in _groups)
+                {
+                    var gg = g;
+                    <button class="pill @(g == _group ? "r" : "b")" style="display:block;width:100%;text-align:left;
+                                margin-bottom:4px;padding:7px 12px;font-size:12.5px;border:0;cursor:pointer"
+                            @onclick="() => AddPendingToGroup(gg)">@g</button>
+                }
+                <button style="display:block;width:100%;margin-top:6px;border:0;background:transparent;
+                               color:var(--sub);cursor:pointer;padding:5px;font-size:12px"
+                        @onclick="CancelPending">취소</button>
+            </div>
+        }
+    </div>
     <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="ToggleAlertForm">🔔 알림 규칙</button>
 </div>
 
@@ -193,8 +219,8 @@
 
     private int _intervalSec = 3;   // 원본 기본 3초
     private string _status = "준비됨", _statusColor = "var(--ok)";
-    private string _newSym = "";
     private bool _scanning;
+    private SymbolEntry? _pendingSym;   // v4.65.0 — 종목 선택 후 카테고리 대기
 
     // 알림 규칙 폼
     private bool _showAlertForm;
@@ -351,16 +377,18 @@
         return string.IsNullOrEmpty(w.name) ? w.sym : w.name;
     }
 
-    // ===== 종목 추가/삭제 (원본 룰: UPSERT·대문자화·SectorMap 이름 / 삭제는 현재 그룹만) =====
-    private async Task OnAddKey(KeyboardEventArgs e) { if (e.Key == "Enter") await AddSymbolAsync(); }
+    // ===== 종목 추가/삭제 — v4.65.0: SymbolPicker 자동완성 + 카테고리 선택 미니모달 =====
+    // SymbolPicker.OnPick → _pendingSym 대기 → 카테고리 버튼 클릭 → AddPendingToGroup
+    private void OnSymbolPicked(SymbolEntry e) { _pendingSym = e; }
+    private void CancelPending() { _pendingSym = null; }
 
-    private async Task AddSymbolAsync()
+    private async Task AddPendingToGroup(string group)
     {
-        var sym = _newSym.Trim().ToUpperInvariant();
-        if (string.IsNullOrEmpty(sym)) return;
-        WatchlistStore.AddSymbol(Db, _group, sym, SectorMap.NameOf(sym), DetectMarket(sym));
-        _newSym = "";
-        await ReloadGroupAsync();
+        if (_pendingSym is null) return;
+        var sym = _pendingSym.Value;
+        _pendingSym = null;
+        WatchlistStore.AddSymbol(Db, group, sym.Code, sym.Name, sym.Market);
+        if (_group == group) await ReloadGroupAsync();
     }
 
     private async Task DeleteSymbolAsync(string sym)
