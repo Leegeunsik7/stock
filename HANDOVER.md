@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.71.0** (2026-06-26)  
+> 기준 버전: **v4.72.0** (2026-06-26)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -14,7 +14,7 @@
 - 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
 - AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
 - **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
-- 1,588 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- 1,593 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.71.0)
+### 현황 (v4.72.0)
 
-- **총 테스트**: 1,588 (클린런)
+- **총 테스트**: 1,593 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -458,6 +458,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.69.0 | DashboardHome 통합 관제탑 (Blazor 런처 허브) + IModuleBridge STA 마샬링 |
 | v4.70.0 | `OrderDrainWorker` 50ms 드레인 엔진 + 이중 키 잠금(`ValveWired ∧ LiveArmingWired`) 완결 |
 | v4.71.0 | `SystemVersionProvider` 무할당 버전 공급자 + HANDOVER.md 대통합 사양 갱신 |
+| v4.72.0 | 로우레이턴시 퀀트 커널 3계층: `VectorizedAlphaEngine`(AVX2 SIMD OLS) · `ZeroAllocJsonParser`(hybrid stackalloc/ArrayPool) · `AutonomousAlphaFactory+CartridgeNumericsGuard`(headless mine→attest→guard→sign) · `MacroChaosTailReplayer`(virtual clock 1000x, GFC/LUNA 3σ→ForceFreeze) |
 
 ---
 
@@ -545,6 +546,10 @@ xunit / xunit.runner.visualstudio (테스트)
 링 텔레메트리        → Common/RingTelemetry*.cs  (Gamma)
 발주 드레인 엔진     → Common/OrderDrainWorker.cs  (v4.70.0 이중 키 잠금)
 버전 공급자          → Common/SystemVersionProvider.cs  (무할당 캐싱)
+SIMD OLS 알파        → Common/VectorizedAlphaEngine.cs  (AVX2 두 번 패스)
+무할당 JSON 파서     → Common/ZeroAllocJsonParser.cs  (stackalloc/ArrayPool 혼합)
+자율 알파 공장       → Common/AutonomousAlphaFactory.cs  (headless 24h 루프 + CartridgeNumericsGuard)
+꼬리 리스크 재현기   → Common/MacroChaosTailReplayer.cs  (가상 클럭 1000x, GFC·LUNA 3σ→ForceFreeze)
 포트폴리오 멘토      → Common/QPortfolioMentor.cs
 미래가치 시뮬        → Common/QFutureValue.cs
 카오스 진단          → Common/QChaos.cs
@@ -570,6 +575,7 @@ WinForms 진입점      → Launcher.cs
 | **UI 텔레메트리 확장** | `RingTelemetryChannel.TryRead()` → Blazor 대시보드 실시간 지표 추가 |
 | **QFixedPrimary 전환** | Observed/FrozenCount/LastDivergence 모니터링 → 분기 0 확인 → `SetAuthority(QFixedPrimary)` |
 | **키움 32-bit 실거래** | `PlatformTarget=x86` 활성화 후 `ExecutionBridgeBroker` 파이프 실 연결 |
+| ~~v4.72.0 SIMD·알파·꼬리~~ | ✅ 완료 — `VectorizedAlphaEngine` · `ZeroAllocJsonParser` · `AutonomousAlphaFactory` · `MacroChaosTailReplayer` |
 
 ---
 
