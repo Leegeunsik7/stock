@@ -17,6 +17,9 @@
         <span class="dot"><i></i>KIS</span>
         <span class="dot"><i style="background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)"></i>모의</span>
     </div>
+    @* v4.69.0 — 통합 관제탑 진입 버튼 *@
+    <button class="addbtn" @onclick='() => Nav.NavigateTo("/dashboard")'
+            style="margin-right:4px" title="통합 관제탑 열기">🚀 통합 관제탑</button>
     <button class="iconbtn" @onclick="ToggleTheme" title="테마 전환">@(_theme == "dark" ? "☀️" : "🌙")</button>
 </div>
 

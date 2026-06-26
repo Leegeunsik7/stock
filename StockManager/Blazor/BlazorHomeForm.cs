@@ -15,10 +15,14 @@ namespace StockManager.Blazor
             StartPosition = FormStartPosition.CenterScreen;
             Width = 1280; Height = 860;
 
-            ModuleBridge.Configure(provider, db);
+            // v4.69.0 — host(this) 주입: Open() 내부 InvokeRequired STA 마샬링 앵커.
+            ModuleBridge.Configure(provider, db, this);
 
             var services = new ServiceCollection();
             services.AddWindowsFormsBlazorWebView();
+            // v4.69.0 — IModuleBridge DI 결속: Blazor 컴포넌트가 @inject IModuleBridge 로 획득.
+            //   HostBoundModuleBridge 는 ModuleBridge.Open() 정적 브릿지를 위임(STA 마샬링 포함).
+            services.AddSingleton<IModuleBridge>(new HostBoundModuleBridge());
             services.AddSingleton<IQuoteProvider>(provider);
             services.AddSingleton(db);
             // 설정 격리·런타임 보안 파사드 — precedence: 환경변수 → DB 설정 → (호출자 폴백).
@@ -310,6 +314,13 @@ namespace StockManager.Blazor
             };
             view.RootComponents.Add<App>("#app");
             Controls.Add(view);
+        }
+
+        // ── v4.69.0: IModuleBridge DI 어댑터 ─────────────────────────────────────
+        // ModuleBridge(정적) 에 STA 마샬링이 이미 내장되어 있으므로 단순 위임으로 충분.
+        private sealed class HostBoundModuleBridge : IModuleBridge
+        {
+            public void Open(string key) => ModuleBridge.Open(key);
         }
 
         // ── S18 #1: 콜드 하든 배선 ─────────────────────────────────────────────

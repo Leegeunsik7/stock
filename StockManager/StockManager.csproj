@@ -18,10 +18,11 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.68.0</Version>
-    <AssemblyVersion>4.68.0.0</AssemblyVersion>
-    <FileVersion>4.68.0.0</FileVersion>
-    <!-- v4.68.0 — SymbolPicker mousedown 선택 + 실시간 병렬 fetch(NaverSem4·YahooSem3) + 기본주기 1s + IndexTickerBar 마켓.
+    <Version>4.69.0</Version>
+    <AssemblyVersion>4.69.0.0</AssemblyVersion>
+    <FileVersion>4.69.0.0</FileVersion>
+    <!-- v4.69.0 — DashboardHome.razor 통합 관제탑(Blazor 런처 허브) + IModuleBridge DI + STA 마샬링 하드닝.
+         v4.68.0 — SymbolPicker mousedown 선택 + 실시간 병렬 fetch(NaverSem4·YahooSem3) + 기본주기 1s + IndexTickerBar 마켓.
          v4.67.0 — Mission A: Blazor DI ↔ WinForms Launcher 싱글톤 인프라 결속 브릿지.
          ExecutionInfrastructureHub(정적·Interlocked/Volatile.Read·CS0420 안전): BlazorHomeForm이 shadowGate+attestation을
          Register()로 공유 슬롯에 등록 → Launcher.PaperQuick()이 TryGet()으로 추출해 BrokerHub.Create(_db,gate,att)에 주입.

@@ -1,0 +1,188 @@
+@* ============================================================================
+   DashboardHome — v4.69.0: 통합 관제탑 (Unified Terminal Hub)
+   Launcher.cs 12개 WinForms 카드 UI를 Blazor 단일 허브로 완전 흡수.
+
+   아키텍처 원칙:
+   ① 네이티브 라우팅: 모든 주요 모듈은 Blazor @page 를 가지므로 NavigateTo() 직접 전환.
+      컨텍스트 스위칭 지연 0 — WebView2 내에서 React Router 수준의 즉각 전환.
+   ② 레거시 브릿지: WinForms 창이 반드시 필요한 케이스(설정 마법사 등)만 IModuleBridge.Open().
+      Open() 내부 InvokeRequired 감지 → BeginInvoke STA 마샬링 → 크래시 차단.
+   ③ δ=0 렌더링: 카드 데이터(정적 배열)는 초기화 0회 재할당. DashboardService KPI 는
+      기존 Dashboard.razor 와 동일한 싱글톤 폴링을 공유 — 추가 네트워크 요청 없음.
+   ④ 다중 창 구조 대비 단일 WebView 터미널: 부동 WinForms 폼(9개 독립 창)이 소비하던
+      GDI 핸들·WM 큐·STA 렌더 루프를 완전 해소. Blazor 디프(δ=0 구조 불변)로 갱신.
+   ============================================================================ *@
+@page "/dashboard"
+@inject NavigationManager Nav
+@inject IModuleBridge Bridge
+@inject DashboardService Svc
+
+<div class="top">
+    <div class="hello">
+        <h1>🚀 통합 관제탑</h1>
+        <p>@DateTime.Now.ToString("yyyy년 MM월 dd일 dddd") · 모든 모듈을 한 곳에서 진입</p>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)"
+                @onclick='() => Nav.NavigateTo("/")' title="위젯 대시보드 열기">📊 대시보드</button>
+        <button class="addbtn" @onclick='() => Nav.NavigateTo("/command")' title="관제 터미널 열기"
+                style="background:var(--down);margin-right:16px">🖥 관제 터미널</button>
+    </div>
+</div>
+
+@* 실시간 지수 스트립 — GlobalIndexService 60초 폴링 공유(추가 fetch 없음) *@
+<IndexTickerBar />
+
+@* ── KPI 요약 스트립 ── DashboardService 싱글톤 공유(중복 폴링 없음) *@
+<div class="lc-kpi">
+    <div class="lc-kp">
+        <div class="lc-kl">총자산</div>
+        <div class="lc-kv num">₩@Svc.Total.ToString("N0")</div>
+        <div class="lc-ks @(Svc.Ret >= 0 ? "up" : "down")">@Svc.Ret.ToString("+0.0;-0.0;0.0")%</div>
+    </div>
+    <div class="lc-kp">
+        <div class="lc-kl">평가손익</div>
+        <div class="lc-kv num @(Svc.Pnl >= 0 ? "up" : "down")">@Svc.Pnl.ToString("+#,##0;-#,##0;0")</div>
+        <div class="lc-ks sub">누적 수익률 @(Svc.Ret.ToString("+0.0;-0.0"))%</div>
+    </div>
+    <div class="lc-kp">
+        <div class="lc-kl">코인 평가</div>
+        <div class="lc-kv num">₩@Svc.CoinValue.ToString("N0")</div>
+        <div class="lc-ks sub">업비트 실시간</div>
+    </div>
+    <div class="lc-kp">
+        <div class="lc-kl">모의 잔액</div>
+        <div class="lc-kv num">₩@((Svc.PaperCash + Svc.PaperPosVal).ToString("N0"))</div>
+        <div class="lc-ks @(Svc.PaperRet >= 0 ? "up" : "down")">@Svc.PaperRet.ToString("+0.0;-0.0;0.0")%</div>
+    </div>
+</div>
+
+@* ── 모듈 그리드 — 3 섹션 ── *@
+@foreach (var sec in _sections)
+{
+    <div class="lc-sec">@sec.Label</div>
+    <div class="lc-grid">
+        @foreach (var card in sec.Cards)
+        {
+            var c = card;
+            <div class="lc-card" @onclick="() => Go(c)" title="@c.Title 열기">
+                <div class="lc-ac" style="background:@c.Color"></div>
+                <div class="lc-ico">@c.Icon</div>
+                <div class="lc-tt">@c.Title</div>
+                <div class="lc-ds">@c.Desc</div>
+                <span class="lc-bg @(c.Route != null ? "lc-nat" : "lc-bdg")">
+                    @(c.Route != null ? "BLAZOR" : "BRIDGE")
+                </span>
+            </div>
+        }
+    </div>
+}
+
+<div style="padding:12px 28px 32px;color:var(--sub);font-size:11px;display:flex;gap:18px;align-items:center">
+    <span><span class="lc-bg lc-nat" style="display:inline-block">BLAZOR</span> — Blazor 네이티브 라우팅 (NavigateTo, 즉각 전환)</span>
+    <span><span class="lc-bg lc-bdg" style="display:inline-block">BRIDGE</span> — WinForms STA 마샬링 브릿지 위임</span>
+</div>
+
+@code {
+    // 카드 레코드 — 정적 배열(초기화 후 재할당 없음 → δ=0 불변).
+    private record Mod(string Icon, string Title, string Desc, string Color,
+        string? Route = null, string? Key = null);
+
+    private void Go(Mod m)
+    {
+        if (m.Route is { } r) { Nav.NavigateTo(r); return; }
+        if (m.Key   is { } k) Bridge.Open(k);
+    }
+
+    private record Section(string Label, Mod[] Cards);
+
+    // ── §1 마켓 — 실시간 시세·코인·알림 ──────────────────────────────────────
+    private static readonly Mod[] _market =
+    {
+        new("📈", "실시간 시세",  "종목 감시·히트맵·52주 신고가 스캔·차트",         "var(--up)",   "/realtime"),
+        new("🪙", "코인 감시",    "업비트 WS·바이낸스 시세·김프·지정가 알림",       "#f0a028",    "/coins"),
+        new("🔔", "알림 센터",    "가격·시그널·뉴스 통합 스트림·복합 알림",         "#eab308",    "/alertcenter"),
+    };
+
+    // ── §2 포트폴리오 · 투자 ─────────────────────────────────────────────────
+    private static readonly Mod[] _portfolio =
+    {
+        new("💼", "포트폴리오",   "보유·배분·거래·세금·배당·리밸런싱(MPT)",         "#22c55e",    "/portfolio"),
+        new("🧮", "총자산",       "주식+코인 통합 평가·파이차트·손익",              "#14b8a6",    "/portfolio/assets"),
+        new("🧪", "모의투자",     "가상 시드 Paper Trading·주문·리스크 시뮬",       "#78716c",    "/paper"),
+    };
+
+    // ── §3 분석 · 연구소 ─────────────────────────────────────────────────────
+    private static readonly Mod[] _analysis =
+    {
+        new("🧠", "AI 인텔",      "Gemini 기업 분석·레이더·멀티에이전트 토론",      "#a855f7",    "/intel"),
+        new("📰", "뉴스 레이더",  "RSS 수집·Gemini 감성분석·이벤트 스터디",         "#f59e0b",    "/news"),
+        new("⚡", "전략 연구소",  "백테스팅·Walk-Forward·시나리오·MPT 최적화",       "#f97316",    "/lab"),
+        new("🔬", "검증 허브",    "전략 검증·예측 스코어보드·RAG 두뇌·정합성",       "#6366f1",    "/validate"),
+        new("🎯", "리스크 랩",    "리스크 기여도·패리티·블랙스완·테일 버짓",        "#dc2626",    "/risklab"),
+        new("📊", "미래가치",     "seqlock 락-프리 미래가치 시뮬레이터",             "#0ea5e9",    "/future"),
+    };
+
+    // ── §4 집행 · 관제 ───────────────────────────────────────────────────────
+    private static readonly Mod[] _execution =
+    {
+        new("🖥", "관제 터미널",  "5대 센서 통합·gating·attestation·파이프라인",    "var(--down)", "/command"),
+        new("🚀", "라이브 허브",  "실거래 집행·점화 제어반·ShadowMetrics 미러링",    "#b91c1c",    "/live"),
+        new("⚙️", "설정",         "API 키·증권사·텔레그램·런타임 설정",              "#6b7280",    "/settings"),
+        new("🧭", "온보딩 마법사","최초 설정·KIS·Gemini·채널 연결 테스트",           "#0284c7",    "/setup/wizard"),
+    };
+
+    private static readonly Section[] _sections =
+    {
+        new("📡 마켓",           _market),
+        new("💰 포트폴리오 · 투자", _portfolio),
+        new("🔬 분석 · 연구소",  _analysis),
+        new("⚙️ 집행 · 관제",    _execution),
+    };
+}
+
+<style>
+    /* ── KPI 스트립 ── */
+    .lc-kpi { display:flex; gap:12px; padding:10px 28px 4px; flex-wrap:wrap; }
+    .lc-kp  { background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+               padding:10px 18px; min-width:140px; flex:1; }
+    .lc-kl  { font-size:11px; color:var(--sub); letter-spacing:.04em; }
+    .lc-kv  { font-size:19px; font-weight:800; font-family:var(--mono); color:var(--ink); margin:2px 0; }
+    .lc-ks  { font-size:11.5px; font-weight:700; }
+
+    /* ── 섹션 헤더 ── */
+    .lc-sec { padding:16px 28px 8px; font-size:12px; font-weight:700; letter-spacing:.06em;
+               color:var(--sub); text-transform:uppercase; border-top:1px solid var(--line); margin-top:4px; }
+
+    /* ── 모듈 카드 그리드 ── */
+    .lc-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; padding:0 28px 8px; }
+    @@media (max-width:900px) { .lc-grid { grid-template-columns:repeat(2,1fr); } }
+
+    .lc-card {
+        position:relative; background:var(--card); border:1px solid var(--line);
+        border-radius:var(--radius); padding:18px 18px 14px 24px; cursor:pointer;
+        overflow:hidden; transition:background .15s, box-shadow .15s;
+        display:flex; flex-direction:column; gap:4px; min-height:120px;
+    }
+    .lc-card:hover { background:var(--card-2); box-shadow:0 8px 24px rgba(0,0,0,.22); }
+
+    /* 좌측 컬러 액센트 바 */
+    .lc-ac {
+        position:absolute; left:0; top:0; bottom:0; width:4px;
+        border-radius:var(--radius) 0 0 var(--radius);
+    }
+
+    .lc-ico { font-size:26px; line-height:1; margin-bottom:4px; }
+    .lc-tt  { font-size:14px; font-weight:700; color:var(--ink); }
+    .lc-ds  { font-size:11.5px; color:var(--sub); line-height:1.45; flex:1; }
+
+    /* BLAZOR / BRIDGE 배지 */
+    .lc-bg  {
+        align-self:flex-end; font-size:9px; font-weight:800; letter-spacing:.08em;
+        padding:2px 7px; border-radius:999px; margin-top:6px;
+    }
+    .lc-nat { background:color-mix(in srgb, var(--accent,#5b8cff) 16%, transparent);
+               color:var(--accent,#5b8cff); }
+    .lc-bdg { background:color-mix(in srgb, var(--warn,#d97706) 16%, transparent);
+               color:var(--warn,#d97706); }
+</style>
