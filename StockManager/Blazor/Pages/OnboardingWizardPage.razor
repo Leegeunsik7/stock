@@ -180,6 +180,9 @@
             var seeds = _rows.Select(r => new SeedHolding(r.Symbol, r.Qty, r.AvgPrice));
             _result = OnboardingImporter.ImportHoldings(Db, seeds, DateTime.UtcNow);
 
+            // 모의투자 초기 시드머니 원자적 고착화 (멱등 — 이미 시딩됐으면 no-op)
+            OnboardingImporter.SeedVirtualCash(Db);
+
             Db.SetSetting("Onboarding.Completed", "true");
             Toasts.Success("온보딩 완료", $"초기 보유 {_result.Imported}건 저장 · 평균단가 재계산 완료");
             _step = 3;

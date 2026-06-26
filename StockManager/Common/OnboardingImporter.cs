@@ -12,6 +12,8 @@
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text.Json;
 
 namespace StockManager.Common
 {
@@ -67,6 +69,80 @@ namespace StockManager.Common
             }
 
             return new ImportResult(imported, skipped, errors);
+        }
+
+        // ── 가상 잔고 원자적 시딩 ─────────────────────────────────────────────────
+        //
+        // PaperBroker의 진실 원천 = Settings['Paper.Account'] JSON.
+        // 단순 메모리 변수 시딩은 Reload() 한 번으로 증발하거나 앱 재시작마다 중복 누적되는
+        // 이중 결함을 유발한다.
+        //
+        // 해결책: RunInTransaction으로 3개 쓰기를 단일 원자 커밋
+        //   ① Transactions: Type=Deposit, BrokerAccount='paper' (감사 추적; 실 포트폴리오와 격리)
+        //   ② Settings['Paper.Account']: PaperAccount JSON (Reload() 내성의 진실 원천)
+        //   ③ Settings['Paper.Seeded']: '1' (멱등 플래그)
+        //
+        // liveArmed 불변식: BrokerAccount='paper' 네임스페이스는 실거래 경로에 오염되지 않는다.
+        //   PortfolioService.RecomputeAverage는 Symbol 기준 조회라 빈 Symbol Deposit은 무관.
+
+        /// <summary>
+        /// 모의투자 초기 시드머니를 DB에 원자적·멱등 고착화.
+        /// 이미 시딩됐으면(Paper.Seeded=1) 즉시 리턴 — 중복 시딩 없음.
+        /// </summary>
+        public static void SeedVirtualCash(LocalDatabase db)
+        {
+            if (db is null) throw new ArgumentNullException(nameof(db));
+            if (db.GetSetting("Paper.Seeded") == "1") return;   // 멱등 가드
+            SeedCore(db, null);
+        }
+
+        /// <summary>
+        /// 명시적 리셋 — Paper.Seeded 플래그를 무시하고 강제 재시딩.
+        /// TradingSettingsPage 모의계좌 초기화 전용. 포지션·주문은 PaperAccount 재생성으로 초기화.
+        /// </summary>
+        public static void ReseedVirtualCash(LocalDatabase db, decimal? overrideSeed = null)
+        {
+            if (db is null) throw new ArgumentNullException(nameof(db));
+            db.SetSetting("Paper.Seeded", "");   // 플래그 초기화
+            SeedCore(db, overrideSeed);
+        }
+
+        private static void SeedCore(LocalDatabase db, decimal? overrideSeed)
+        {
+            decimal seed;
+            if (overrideSeed is decimal os && os > 0)
+            {
+                seed = os;
+                db.SetSetting("Onboarding.SeedCashKrw",
+                    seed.ToString(CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                var raw = db.GetSetting("Onboarding.SeedCashKrw");
+                seed = decimal.TryParse(raw, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var v) && v > 0 ? v : 10_000_000m;
+            }
+
+            db.RunInTransaction(() =>
+            {
+                // ① 감사 Deposit (BrokerAccount='paper' → 실 포트폴리오와 격리)
+                db.Execute(
+                    @"INSERT INTO Transactions(Symbol,Type,Quantity,Price,Commission,Tax,ExecutedAt,BrokerAccount,Memo)
+                      VALUES('',@t,1,@p,0,0,@d,'paper','모의투자 초기 시드머니 입금')",
+                    new Dictionary<string, object>
+                    {
+                        ["@t"] = (int)TransactionType.Deposit,
+                        ["@p"] = (double)seed,
+                        ["@d"] = DateTime.UtcNow.ToString("o"),
+                    });
+
+                // ② PaperAccount JSON (PaperBroker.Reload()가 읽는 진실 원천)
+                db.SetSetting("Paper.Account",
+                    JsonSerializer.Serialize(new PaperAccount { Seed = seed, Cash = seed }));
+
+                // ③ 멱등 플래그
+                db.SetSetting("Paper.Seeded", "1");
+            });
         }
     }
 }

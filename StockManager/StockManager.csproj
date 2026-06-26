@@ -18,9 +18,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.65.0</Version>
-    <AssemblyVersion>4.65.0.0</AssemblyVersion>
-    <FileVersion>4.65.0.0</FileVersion>
+    <Version>4.66.0</Version>
+    <AssemblyVersion>4.66.0.0</AssemblyVersion>
+    <FileVersion>4.66.0.0</FileVersion>
+    <!-- v4.66.0 — Mission A: PaperBroker 가상 잔고 원자적 시딩(OnboardingImporter.SeedVirtualCash/ReseedVirtualCash).
+         Reload() 증발·재시작 중복 누적 결함 근절: RunInTransaction으로 Deposit 감사 레코드(BrokerAccount='paper')
+         + Paper.Account JSON + Paper.Seeded 멱등 플래그를 단일 원자 커밋. Mission B: TradingSettingsPage.razor
+         신규 (/settings/trading) — 국내/해외/코인 수수료율·슬리피지 허용범위를 비제어 소수 입력(IME 안전)으로 편집·
+         저장(Task.Run WAL 오프로드). 모의계좌 초기화(ReseedVirtualCash + Broker.Reload() 메모리 동기화). SettingsPage
+         '빠른 설정'에 '💹 거래 수수료 설정' 버튼 추가. OnboardingWizardPage.Confirm()에 SeedVirtualCash 자동 호출
+         추가(온보딩 완료 직후 자동 시딩). liveArmed 불변식 수호: Deposit BrokerAccount='paper'는 실 포트폴리오 경로와 격리.
+         빌드 0/0, 전체 1586+ 통과. -->
     <!-- v4.65.0 — 실시간 시세 종목 추가 UX: 코드 직접 입력(종목코드 암기 필요) → SymbolPicker 자동완성 + 카테고리
          선택 미니모달로 교체. "삼" 입력하면 삼성전자·삼성SDI·삼성바이오로직스... 드롭다운. 선택 후 "어느 카테고리에
          추가할지" 미니패널 표시(현재 활성 탭 강조). SymbolPicker는 기존 PortfolioPage 동일 컴포넌트 재사용(라이브

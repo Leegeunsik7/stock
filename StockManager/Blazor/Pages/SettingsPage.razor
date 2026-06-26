@@ -139,6 +139,7 @@
         <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="OpenSetup">🔧 설정 마법사</button>
             <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="OpenBrokerSettings">💳 거래 설정</button>
+            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="OpenTradingSettings">💹 거래 수수료 설정</button>
         </div>
     </div>
 </div>
@@ -251,8 +252,9 @@
     }
 
     private void SetMode(bool live) { BrokerHub.SetLive(Db, live); _live = live; }
-    private void OpenBrokerSettings() => Nav.NavigateTo("/broker");   // Blazor 네이티브 페이지 (WinForms 팝업 제거)
-    private void OpenSetup() => Nav.NavigateTo("/setup");             // Blazor 네이티브 설정 마법사
+    private void OpenBrokerSettings() => Nav.NavigateTo("/broker");
+    private void OpenTradingSettings() => Nav.NavigateTo("/settings/trading");
+    private void OpenSetup() => Nav.NavigateTo("/setup");
 
     private static string MaskKey(string k) =>
         string.IsNullOrWhiteSpace(k) ? "(미설정)" :

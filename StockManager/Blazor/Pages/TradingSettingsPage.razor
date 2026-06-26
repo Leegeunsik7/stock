@@ -1,0 +1,206 @@
+@* TradingSettingsPage — 거래 수수료율·슬리피지·모의투자 시드를 편집하는 설정 페이지.
+   Route: /settings/trading  (NavMenu의 '⚙️ 거래 설정' /settings Prefix로 하이라이트됨)
+   IME/WebView2 안전: 소수 입력은 모두 비제어 패턴(value+@oninput, @bind 미사용). *@
+@page "/settings/trading"
+@inject LocalDatabase Db
+@inject NavigationManager Nav
+@inject DashboardService Svc
+@using System.Globalization
+
+<div class="top">
+    <div class="hello"><h1>⚙️ 거래 수수료 설정</h1><p>수수료율 · 슬리피지 · 모의투자 시드</p></div>
+</div>
+
+<div style="padding:0 28px 40px;max-width:620px">
+
+    @* ── 수수료율 ── *@
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">📊 거래 수수료율</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:14px">
+            매수·매도 기록 시 수수료를 초기 추정하는 기준값입니다. 단위: <b>%</b> — 예) <code>0.015</code> 입력 시 0.015%.
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <div>
+                <label class="flbl">국내주식 (%)</label>
+                @* 비제어 입력 — @bind 대신 value+@oninput. 소수점 타이핑 중 커서 튐·한글 조합 깨짐 방지. *@
+                <input class="fin" style="width:130px" @key='"kr-fee"'
+                       value="@_krStr"
+                       @oninput="@(e => _krStr = e.Value?.ToString() ?? _krStr)"
+                       placeholder="0.015" />
+            </div>
+            <div>
+                <label class="flbl">해외주식 (%)</label>
+                <input class="fin" style="width:130px" @key='"us-fee"'
+                       value="@_usStr"
+                       @oninput="@(e => _usStr = e.Value?.ToString() ?? _usStr)"
+                       placeholder="0.015" />
+            </div>
+            <div>
+                <label class="flbl">코인 (%)</label>
+                <input class="fin" style="width:130px" @key='"coin-fee"'
+                       value="@_coinStr"
+                       @oninput="@(e => _coinStr = e.Value?.ToString() ?? _coinStr)"
+                       placeholder="0.05" />
+            </div>
+        </div>
+    </div>
+
+    @* ── 슬리피지 ── *@
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">📉 슬리피지 허용 범위</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+            체결가 편차가 이 값을 초과하면 SlippageSentinel이 부정거래 경고를 발생시킵니다.
+        </div>
+        <div>
+            <label class="flbl">최대 슬리피지 (%)</label>
+            <input class="fin" style="width:130px" @key='"slip"'
+                   value="@_slipStr"
+                   @oninput="@(e => _slipStr = e.Value?.ToString() ?? _slipStr)"
+                   placeholder="0.1" />
+        </div>
+    </div>
+
+    @* ── 실거래 무장 상태 (읽기전용) ── *@
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:8px">🔐 실거래 무장 상태</div>
+        <div style="font-size:13px;margin-bottom:10px">
+            현재:
+            <b style="color:@(_armed ? "#e34d4d" : "var(--sub)")">
+                @(_armed ? "🔴 무장 — 실주문 활성" : "⚪ 미무장 — 안전")
+            </b>
+        </div>
+        <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)"
+                @onclick='() => Nav.NavigateTo("/broker")'>⚙️ 거래 설정에서 변경</button>
+    </div>
+
+    @* ── 모의투자 시드 ── *@
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">🧪 모의투자 시드머니 초기화</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:10px">
+            초기화 시 포지션·주문이 리셋됩니다. Transactions 이력은 유지됩니다.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:10px">
+            <div>
+                <label class="flbl">새 시드머니 (원)</label>
+                @* _seedKey 증가 시 이 input만 재생성되어 value가 최신값으로 초기화됨. *@
+                <input class="fin" style="width:150px" @key="@($"seed{_seedKey}")"
+                       value="@_seedStr"
+                       @oninput="@(e => _seedStr = e.Value?.ToString() ?? _seedStr)"
+                       placeholder="10000000" />
+            </div>
+            <button class="addbtn" style="background:var(--warn)" disabled="@_busy"
+                    @onclick="ResetPaperAsync">🔄 초기화</button>
+        </div>
+        <div style="font-size:12.5px;color:var(--sub)">
+            현재: 시드 <b>@_currentSeed.ToString("N0")원</b> · 현금 <b>@_currentCash.ToString("N0")원</b> · 포지션 <b>@(_posCount)개</b>
+        </div>
+    </div>
+
+    @* ── 저장 · 취소 ── *@
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <button class="addbtn" disabled="@_busy" @onclick="SaveAsync">💾 저장</button>
+        <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)"
+                @onclick='() => Nav.NavigateTo("/settings")'>← 설정으로</button>
+        @if (_msg.Length > 0)
+        {
+            <span style="font-size:12.5px;color:@(_ok ? "var(--up)" : "var(--warn)")">@_msg</span>
+        }
+    </div>
+</div>
+
+@code {
+    // 비제어 입력 버퍼 — 저장/초기화 버튼에서만 InvariantCulture 파싱
+    private string _krStr = "", _usStr = "", _coinStr = "", _slipStr = "", _seedStr = "";
+    private int    _seedKey;   // seed input 전용 @key — 초기화 후 재생성에만 사용
+    private bool   _armed;
+    private decimal _currentSeed, _currentCash;
+    private int    _posCount;
+    private bool   _busy;
+    private string _msg = "";
+    private bool   _ok;
+
+    protected override void OnInitialized()
+    {
+        // DB 저장값 로드 (없으면 BrokerFeeSchedule 기본값으로 폴백)
+        _krStr   = Load("Trading.KrFeeRate",   0.015m);
+        _usStr   = Load("Trading.UsFeeRate",   0.015m);
+        _coinStr = Load("Trading.CoinFeeRate", 0.05m);
+        _slipStr = Load("Trading.MaxSlippage", 0.1m);
+        _armed   = BrokerHub.IsArmed(Db);
+
+        var raw  = Db.GetSetting("Onboarding.SeedCashKrw");
+        _seedStr = decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var sv) && sv > 0
+            ? sv.ToString("N0") : "10,000,000";
+
+        // 온보딩 완료 후 미시딩 상태면 이 페이지 방문 시 자동 시딩 (catch-all 안전망)
+        OnboardingImporter.SeedVirtualCash(Db);
+        RefreshStatus();
+    }
+
+    private string Load(string key, decimal fallback)
+    {
+        var raw = Db.GetSetting(key);
+        return decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0
+            ? v.ToString(CultureInfo.InvariantCulture)
+            : fallback.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private void RefreshStatus()
+    {
+        _currentSeed = Svc.Broker.Account.Seed;
+        _currentCash = Svc.Broker.Account.Cash;
+        _posCount    = Svc.Broker.Account.Positions.Count;
+    }
+
+    // Task.Run: WAL busy_timeout(최대 5s×5회) 블로킹을 Blazor 렌더 스레드에서 분리
+    private async Task SaveAsync()
+    {
+        _busy = true; _msg = ""; StateHasChanged();
+        try
+        {
+            var kr   = ParsePct(_krStr,   0.015m);
+            var us   = ParsePct(_usStr,   0.015m);
+            var coin = ParsePct(_coinStr, 0.05m);
+            var slip = ParsePct(_slipStr, 0.1m);
+            await Task.Run(() =>
+            {
+                Db.SetSetting("Trading.KrFeeRate",   kr.ToString(CultureInfo.InvariantCulture));
+                Db.SetSetting("Trading.UsFeeRate",   us.ToString(CultureInfo.InvariantCulture));
+                Db.SetSetting("Trading.CoinFeeRate", coin.ToString(CultureInfo.InvariantCulture));
+                Db.SetSetting("Trading.MaxSlippage", slip.ToString(CultureInfo.InvariantCulture));
+            });
+            _msg = "✅ 저장됨"; _ok = true;
+        }
+        catch (Exception ex) { _msg = "⚠️ " + ex.Message; _ok = false; }
+        _busy = false;
+    }
+
+    private async Task ResetPaperAsync()
+    {
+        _busy = true; _msg = ""; StateHasChanged();
+        try
+        {
+            // 콤마·공백 제거 후 파싱 (N0 포맷 입력 지원)
+            var clean = (_seedStr ?? "").Replace(",", "").Replace(" ", "");
+            decimal? ns = decimal.TryParse(clean, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var sv) && sv > 0 ? sv : (decimal?)null;
+
+            await Task.Run(() => OnboardingImporter.ReseedVirtualCash(Db, ns));
+            Svc.Broker.Reload();   // Paper.Account JSON 재로드 → 메모리 동기화
+            RefreshStatus();
+            _seedKey++;            // seed input 재생성으로 새 시드값 표시
+            _seedStr = _currentSeed.ToString("N0");
+            _msg = $"✅ 초기화 완료 — 시드 {_currentSeed:N0}원"; _ok = true;
+        }
+        catch (Exception ex) { _msg = "⚠️ 초기화 실패: " + ex.Message; _ok = false; }
+        _busy = false;
+    }
+
+    // InvariantCulture 파싱 + 양수 가드 + 폴백
+    private static decimal ParsePct(string s, decimal fallback)
+    {
+        var clean = (s ?? "").Replace(",", "");
+        return decimal.TryParse(clean, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0
+            ? v : fallback;
+    }
+}
