@@ -1,189 +1,564 @@
-# 📦 MS2-E Stock Suite — 개발 인수인계 문서 (HANDOVER)
+# MS2E StockSuite — 정밀 인수인계 문서
 
-> 작성: 이 세션의 작업 결과 인수인계용 · 대상 솔루션: `StockManager_v3.4.1`
-> 이 문서 하나로 **현재 상태 파악 → 빌드/실행 → 이어서 작업**까지 가능하도록 작성했습니다.
+> 기준 버전: **v4.69.0** (2026-06-26)  
+> 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
+> 소스가 권위. 이 문서는 네비게이션 보조다.
 
 ---
 
-## 0. 30초 요약 (TL;DR)
+## 0. 30초 요약
 
-이 저장소에는 **두 갈래의 작업**이 들어 있습니다.
+**MS2E StockSuite**는 한국 개인 퀀트 트레이더를 위한 올인원 터미널이다.
 
-1. **MS2-E Stock Suite (주식·코인 관리 앱)** — 기존 **WinForms 앱을 Blazor Hybrid로 이식**하던 프로젝트. 이번 세션에서 "이식 과정에서 누락되기 쉬운 숨은 비즈니스 룰"을 원본(v3.0)과 대조 감사하고, 누락분을 Blazor 측에 구현했습니다.
-2. **Primes (소수 유틸리티 모듈)** — 사용자 요청으로 **새로 추가한 독립 수학 모듈**. 주식 앱과 기능적 연관은 없으며, `Common/`에 들어 있는 순수 정적 유틸 + 전용 테스트/벤치 프로젝트입니다.
+- .NET 8 WinForms + Blazor Hybrid (WebView2), SQLite 단일 DB
+- 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
+- AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
+- **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
+- 1,588 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
-**현재 상태:** 메인 앱 빌드 ✅ (오류 0·경고 0) · Primes 테스트 ✅ **105/105 통과** · 벤치 ✅ 실측 완료.
+```powershell
+# 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
+dotnet build StockManager/StockManager.csproj -c Release
 
-```bash
-# 빌드/테스트/실행 (작업 디렉터리: StockManager_v3.4.1)
-dotnet build StockManager                                  # 메인 앱
-dotnet test  StockManager.Tests                            # 소수 테스트 105개
-dotnet run   --project StockManager.PrimesBench -c Release # 소수 벤치마크
-dotnet run   --project StockManager                        # 앱 실행(Blazor, WebView2 필요)
-dotnet run   --project StockManager -- --classic           # 구 WinForms 런처로 실행
+# 전체 테스트
+dotnet test StockManager.Tests/StockManager.Tests.csproj --logger "trx" -c Release
+
+# 앱 실행
+dotnet run --project StockManager/StockManager.csproj
 ```
 
 ---
 
 ## 1. 솔루션 구조
 
-`.sln` 파일은 **없습니다.** 3개 프로젝트가 ProjectReference로 연결되어 있어 개별 빌드/테스트가 가능합니다. (통합 빌드를 원하면 `dotnet new sln` 후 3개 프로젝트를 add 하세요.)
-
 ```
 StockManager_v3.4.1/
-├─ HANDOVER.md                  ← (이 문서)
-├─ StockManager/                ← 메인 앱 (WinForms + Blazor Hybrid)
-│  ├─ Program.cs                ← 엔트리포인트 (앱/엔진 기동)
-│  ├─ StockManager.csproj       ← net8.0-windows, WinExe, AssemblyName=MS2E.StockSuite
-│  ├─ Common/                   ← 공용 엔진·서비스·모델 (핵심 로직 대부분)
-│  ├─ Blazor/                   ← Blazor Hybrid UI (Dashboard, Pages/, 서비스)
-│  ├─ 01_RealtimeWatcher ~ 09_CompositeAlerts/  ← 레거시 WinForms 모듈 창
-│  ├─ wwwroot/                  ← index.html, app.css, dashboard.js
-│  └─ _design_prototype/        ← ⚠️ 컴파일 제외된 HTML 목업 (SortableJS는 여기만 잔존)
-├─ StockManager.Tests/          ← xUnit 테스트 (현재 Primes 전용, 105 케이스)
-└─ StockManager.PrimesBench/    ← 무의존 Stopwatch 벤치마크 콘솔
+├── HANDOVER.md                          ← 이 문서
+├── StockManager/                        ← 메인 앱
+│   ├── StockManager.csproj              ← SDK=Razor, net8.0-windows, AssemblyName=MS2E.StockSuite
+│   ├── Launcher.cs                      ← 통합 메뉴 진입점 (9개 모듈 카드 UI)
+│   ├── 00_Setup/SetupWizard.cs          ← 설정 마법사
+│   ├── 01_RealtimeWatcher/              ← 실시간 시세 + 차트
+│   ├── 02_Portfolio/                    ← 포트폴리오 관리
+│   ├── 03_AIAnalysis/                   ← AI 분석
+│   ├── 04_NewsRadar/                    ← 뉴스 레이더
+│   ├── 05_SignalEngine/                 ← 시그널 엔진 + 백테스트
+│   ├── 06_CryptoWatcher/               ← 암호화폐 감시
+│   ├── 07_TotalAsset/                   ← 총자산 현황
+│   ├── 08_PaperTrading/                 ← 모의투자
+│   ├── 09_CompositeAlerts/              ← 복합 알림
+│   ├── Blazor/                          ← Blazor Hybrid 대시보드
+│   │   ├── BlazorHomeForm.cs            ← DI 컨테이너 + WebView2 호스팅
+│   │   ├── ModuleBridge.cs              ← IModuleBridge(DI) + 정적 브릿지(STA 마샬링)
+│   │   ├── DashboardService.cs          ← Blazor 데이터 허브 (싱글톤)
+│   │   ├── ToastService.cs              ← 전역 액션형 토스트
+│   │   └── Pages/                       ← Razor 페이지들
+│   │       ├── DashboardHome.razor      ← @page "/dashboard" — 통합 관제탑 런처 허브
+│   ├── Common/                          ← 핵심 인프라 (아래 §2~§5 상세)
+│   └── wwwroot/                         ← index.html, app.css, dashboard.js
+└── StockManager.Tests/                  ← xUnit (~1,472 테스트)
 ```
 
-### 1.1 아키텍처 한눈에
+### 1.1 아키텍처 개요
 
-- **하이브리드 호스팅:** `Program.cs` → `BlazorHomeForm`(WinForms 폼) 안에 `BlazorWebView`를 띄워 Blazor UI를 렌더. WebView2 런타임 실패 시 자동으로 구 `LauncherForm`(WinForms)으로 폴백. `--classic` 인자로 강제 가능.
-- **단일 진실 소스 = SQLite DB.** `LocalDatabase` (`%LocalAppData%\StockManager\portfolio.db`). WinForms 창과 Blazor가 **같은 DB**를 공유합니다. 설정/상태도 `Settings` 테이블(Key-Value) 및 JSON(`Crypto.State`, `Paper.Account` 등)에 저장.
-- **ModuleBridge:** Blazor에서 레거시 WinForms 모듈 창을 그대로 여는 다리. 아직 Blazor로 이식 안 된 화면(설정 마법사, 거래 설정, 복합 알림 관리 등)은 이 경로로 네이티브 창을 띄웁니다.
-- **백그라운드 엔진:** `CompositeAlertService`(복합 알림) + `AlertEngineService`(가격 알림·지정가 체결)가 앱 시작 시 상시 기동되어, 모듈 창이 닫혀 있어도 동작합니다.
+```
+Launcher.cs
+    └── BlazorHomeForm (WinForms 폼)
+            ├── BlazorWebView → Blazor 대시보드 (WebView2)
+            ├── DI 컨테이너 (AddSingleton 체인)
+            │     ├── LocalDatabase (SQLite, WAL+busy_timeout+재시도)
+            │     ├── OrderAttestationService (라이브 전용)
+            │     ├── ShadowCutoverGate (전용 섀도우 att 주입)
+            │     ├── ExecutionBridgeBroker / BrokerHub
+            │     ├── IgnitionLock
+            │     ├── RuntimeConfig / ConfigAuditor
+            │     ├── ComplianceBridge / SlippageSentinel
+            │     └── IModuleBridge → HostBoundModuleBridge (STA 마샬링 어댑터)
+            └── ModuleBridge(정적) → 레거시 WinForms 창 위임 (InvokeRequired 마샬링 내장)
+
+Pages/DashboardHome.razor (@page "/dashboard") — v4.69.0 통합 관제탑
+    ├── NavigationManager.NavigateTo() → 15개 모듈 Blazor 네이티브 전환
+    └── IModuleBridge.Open() → 엣지 케이스 WinForms STA 위임
+```
+
+**단일 진실 소스**: `LocalDatabase` (`%LocalAppData%\StockManager\portfolio.db`). WinForms·Blazor·백그라운드 서비스 모두 같은 DB 공유.
 
 ---
 
-## 2. Workstream 1 — Blazor 이식 감사 & 구현
+## 2. 핵심 설계 원칙
 
-### 2.1 배경
+| 원칙 | 구현 |
+|---|---|
+| **liveArmed:false 불변** | 3중 게이트 — GatedOrderDispatcher/IgnitionLock/OrderAttestationService |
+| **fail-closed** | 경계 오염·오버플로 → ForceFreeze, 모호함 통과 금지 |
+| **무할당(δ=0) 핫패스** | 고정소수점 값 타입, seqlock, 스택/사전할당 버퍼 |
+| **결정론** | 동일 입력 → 비트 동일 출력, RNG 사용 금지(시뮬·테스트) |
+| **Gemini 3룰** | LLM은 엔티티 추출·표현만, 수학·결정·락은 코어 |
 
-원본 WinForms 앱(`StockManager_v3.0`)에는 UI 이벤트에 얽힌 **숨은 비즈니스 룰**이 많았고, Blazor 이식본(v3.4.1)에서 다수가 누락되어 있었습니다. 4대 관점(① 이벤트 연쇄 ② 재진입 가드·숨은 상태 ③ 조건부 UI ④ 실패 복구·더티 체크)으로 전수 대조 감사 후, 누락/변형분을 Blazor에 구현했습니다.
+---
 
-### 2.2 이번 세션에 구현한 것 (라운드별)
+## 3. Common 계층 — 고정소수점 척추
 
-| 라운드 | 구현 | 핵심 파일 |
+### 3.1 `QFixed.cs` — 정밀도 기반
+
+**스케일**: 10^8 raw (사토시·KRW 원 공용). 전부 `checked` 정수 산술.
+
+```
+QMath         — 내부 정수 산술 (Add/Sub/Notional/CrossDiv, Int128 중간연산)
+QPrice        — 호가. 보수 정렬: 매수=AlignUp(ceil)↑, 매도=AlignDown(floor)↓
+QQty          — 수량. 보수 정렬: 항상 AlignDown↓ (과대 금지)
+QMoney        — 명목금액/원장 가치. CrossDiv(금액÷단가=수량) 내장
+QLedgerGuard  — 청산 게이트: 보수 정렬 후 명목 산출, 오염 → ForceFreeze
+```
+
+**보수 편향 핵심**: `Notional(a, b, roundUp: side==Buy)` — 매수=ceil(비용↑), 매도=floor(수령↓). `0방향 절사`는 매수 비용을 과소계상해 AlignUp 효과를 무효화하므로 방향 분리 필수.
+
+**오버플로 트랩**: QPrice×QQty = raw² → Int128 중간 + `checked((long)q)`. AlignUp도 `checked(raw + step - r)`.
+
+### 3.2 `QClearing.cs` — 3미션 청산 아키텍처
+
+decimal → QFixed 단계적 마이그레이션 교량:
+
+```
+QAcl                  M1: 부패 방지 계층. decimal import → Try 패턴
+                           음수/오버플로 → 경계에서 ForceFreeze (raw 예외 확산 금지)
+QScaleGuard           M2: 멀티-스케일 정합
+                           격자 비정렬 또는 round-trip 디싱크(≥1step) → 동결
+ShadowClearingTracer  M3: 섀도우 추적
+                           (1) 보수 불변식: 정렬exact 대비 매수ceil·매도floor·|Δ|≤1raw
+                           (2) 회귀 밴드: naive decimal 대비 정렬+반올림 델타 초과 → 동결
+```
+
+#### ShadowCutoverGate (`QClearing.cs`)
+
+```csharp
+// 생성자 2종
+ShadowCutoverGate(bool enabled, QTickSpec spec, OrderAttestationService? att,
+                  ClearingAuthority authority = LegacyPrimary)
+ShadowCutoverGate(bool enabled, QTickRegistry registry, ...)  // S27-e: 자산별
+
+// Clear 메서드 4종
+Clear(price, qty, side)                          // 단일 spec (동일 통화)
+Clear(symbol, price, qty, side)                  // 자산별 spec 조회
+Clear(symbol, price, qty, side, fxQuote, fxBounds)  // 이종통화 FX — 반환: 자산통화
+ClearBase(symbol, price, qty, side, fxQuote, fxBounds)  // S29-c — 반환: base통화
+
+// 권위 역전 (S29-c)
+enum ClearingAuthority { LegacyPrimary=0, QFixedPrimary=1 }
+void SetAuthority(authority)  // volatile 쓰기, 런타임 가역, 무할당
+
+// 텔레메트리
+long Observed       // 관측 누적
+long FrozenCount    // 동결 누적
+double LastDivergence  // 최근 신-구 명목 차 (Interlocked 락-프리)
+```
+
+**안전 불변**:
+- `enabled=false && LegacyPrimary` → INERT (즉시 legacy 반환, 할당 0)
+- 미등록 심볼 → fail-closed 동결
+- FX `Clear()`는 권위 역전 미적용 (반환 단위=자산통화, 후방호환)
+- `ClearBase()`만 base통화 권위 지원
+
+---
+
+## 4. Common 계층 — 주문 실행 파이프라인
+
+### 4.1 `OrderAttestationService.cs` — 거래 증적 감사
+
+```
+GatingMode: Normal / EmergencyFreeze  (volatile int 원자)
+
+AssertNormal(ctx)         — 실주문 진입부 인터셉터. Freeze면 즉시 throw
+Reconcile(local, broker)  — O(N) 교차검증. 1원/1주 불일치 → EmergencyFreeze
+ForceFreeze(reason)       — 외부 이벤트 (파이프 끊김, 청산 오염) → 즉시 동결
+ManualRelease(signature)  — 서명 확인 후만 해제 (감사 로그 기록)
+ProcessFill(fill, expected) — 체결 감사: 방향/가격오차(0.5%)/과체결 → ForceFreeze
+MaxLogEntries: 200        — FIFO 감사 로그 캡
+```
+
+**DI 필수 규칙**: 섀도우 게이트는 **전용 `new OrderAttestationService()`** 주입. 라이브 인스턴스 공유 시 섀도우 동결 → 실 주문 차단 (footgun, `BlazorHomeForm.cs` 주석 참조).
+
+### 4.2 브로커 계층
+
+```
+IBroker
+  ├── PaperBroker          — 모의투자 (시드 1천만KRW, 수수료 0.015%, 지정가 프로세싱)
+  ├── LiveBrokerStub       — 미무장 시 거부 (liveArmed:false 물리 구현)
+  ├── LiveRouterBroker     — 실거래 라우터
+  ├── UpbitLiveBroker      — 업비트 실주문 (JWT HS256 + SHA512 쿼리 해시)
+  ├── ExecutionBridgeBroker — 키움 파이프 (FillReceived/ProxyLost → ForceFreeze)
+  └── ShadowClearingBroker — Path B 데코레이터 (QFixed 병렬 관측, inner 권위 불변)
+```
+
+```csharp
+// 팩토리 패턴
+IBroker inner = !IsLive(db)  ? new PaperBroker(db)
+              : !IsArmed(db) ? new LiveBrokerStub()
+              : (IBroker)new LiveRouterBroker(db);
+return shadowGate is null ? inner : new ShadowClearingBroker(inner, shadowGate);
+```
+
+`ShadowClearingBroker.Place()`: 게이트 INERT면 Clear 미호출(완전 통과). 관측 예외는 삼킴 — 섀도우 결함이 `inner.Place`를 절대 막지 않음.
+
+### 4.3 `IgnitionLock.cs` — 점화 잠금 (4단계 FSM)
+
+```
+Locked → ProbeReady → TimeBoxOpen → MasterIgnited
+```
+
+- `Arm(signature)`: Locked + 서명 필요 (비대칭 안전)
+- `Lock()`: 즉시 전환 (어느 상태에서도)
+- `AllowPhysical()`: MasterIgnited일 때만 true
+- **3σ 슬리피지 경보** → 자동 Lock
+- 프로브: 1주 소액, 30분 시간상자
+
+### 4.4 `OrderDispatchRing.cs` — SPMC 링버퍼 (Path C)
+
+```csharp
+// 고정소수점 전송 단위 (unmanaged)
+readonly struct OrderProposal {
+    long OrderId, GenomeId, SymbolCode, PriceRaw, QtyRaw, TimestampTicks;
+    byte SideByte, KindByte;
+}
+
+// 단일 생산자 CAS 게이트
+OrderDispatchRing.Publish(...)    // EnterPublish: CAS _publishing → fail-closed throw
+OrderDispatchRing.PublishRaw(in proposal)
+long WriterCollisions             // CAS 낙방 누적 (정상=0)
+
+// 무장 게이트 디스패처
+GatedOrderDispatcher.Drain(onSend)
+  // n++ 먼저 (증발 방지)
+  // try { armed = _isArmed(); } catch { armed = false; }  // 술어 throw → fail-closed
+  // armed → onSend(p) + Forwarded++  /  else → GatedOut++
+```
+
+`RingBufferCore<T>` (S20 seqlock SPMC):
+- 생산자: `Seq=Writing` → 값 기록 → `Seq=시퀀스` (release fence)
+- 소비자: `s1 == s2 == seq`일 때만 채택, torn → 재시도 (최대 32회)
+- 추월: `published - next >= capacity` → fast-forward, Dropped 계상
+
+### 4.5 `RingTelemetry` — UI 락-프리 텔레메트리 (Path Gamma)
+
+```
+RingTelemetry           — blittable 값 타입 (Published/Forwarded/GatedOut/Dropped/WriterCollisions/ThroughputPerSec)
+RingTelemetryChannel    — [StructLayout(Explicit)] Cell seqlock (홀→payload→짝, 8회 재시도→직전 프레임)
+RingTelemetryPublisher  — 주기 스냅샷 발행 (CAS 가드, Stopwatch 주입 → 결정론 테스트)
+```
+
+UI는 `TryRead()`만 (단방향). 코어 무블록, 경합 시 직전 프레임 유지.
+
+---
+
+## 5. Common 계층 — AI 포트폴리오 멘토 (S28)
+
+### 5.1 `QPortfolioMentor.cs` — M1 온보딩 엔진
+
+```
+EntityDraft          — LLM 추출 ACL 경계 DTO (decimal?/string? — 신뢰하지 않음)
+PortfolioSlot        — 정준화 슬롯 (QQty·QPrice·SlotField.Known)
+OnboardingCanonicalizer.TryCanonicalize()
+  — 소수 0-절사 재검증: qty.Raw <= 0 → BadQuantity
+  — OverflowException → CanonReject.Overflow
+OnboardingPump.Ingest()     — 점진 upsert (누락 필드 병합), 상태 진행
+ComplianceGate.Admit(IntentClass)  — sticky 락 (세션 내 해제 불가)
+```
+
+**Gemini 룰1**: LLM은 엔티티 추출만 (숫자 계산 금지).  
+**Gemini 룰3**: 유사투자자문/확정수익/탈옥 → `ComplianceLocked` 전이, 모호한 회피 응답 없이 결정론 고지문 발화.
+
+### 5.2 `QFutureValue.cs` — M2 미래가치 + 락-프리 교량
+
+```
+FutureValueEngine.Project()
+  — 결정론 복리: V = Σ A_i·(1+r_i)^t (고정소수점, RNG 없음)
+  — 분위 밴드: ±k·σ·√t (k=1.645, closed-form) — 몬테카를로 사칭 금지
+  — 음수 drift·overflow → fail-closed
+
+ScenarioPublisher    — seqlock SPMC 발행자
+  .Recompute(ShadowMutation)  — CAS _writerGate (단일 라이터 강제)
+                                  경합 패배 → _writerCollisions++만 (ForceFreeze 금지 — 자해성 동결 차단)
+  .TryReadFrame()             — torn-read 재시도 (최대 64스핀)
+
+ShadowMutation: ScaleSymbol(symbol, factor) / ScaleClass(class, factor)
+  — 구조체 값 타입 (무할당), LLM → 코어 주입
+```
+
+**정직 경계**: 복리 factor는 매 연차 floor 절사 → 결정론적 하향 편향 (미래 과대 표시 불가).
+
+### 5.3 `QChaos.cs` — M3 카오스 + 진단 + 리밸런싱 밸브
+
+```
+ChaosScenario: None / Gfc2008 / RateSpike / InflationShock / CryptoWinter
+ChaosEngine.Severity()           — CryptoWinter=0.55 (×β2.0→1.10>1 → 0 클램프 실도달)
+ChaosEngine.Beta(scenario, class) — 자산군 시스템 베타
+ChaosEngine.ApplyStress()        — stressed_i = V0_i · max(0, 1 - severity·β)
+PortfolioDiagnosis.Diagnose()    — 집중도·방어점수·최악낙폭 (숫자만, LLM이 서술)
+RebalanceLever.TryScaleClass/Symbol(bp)  — 범위[0, 50000bp] 이탈 → fail-closed
+```
+
+---
+
+## 6. Common 계층 — 3중 liveArmed:false 게이트
+
+```
+게이트 1: GatedOrderDispatcher
+  _isArmed() == false → GatedOut (송출 0)
+  _isArmed() throw    → fail-closed (미무장 간주, GatedOut)
+
+게이트 2: IgnitionLock
+  AllowPhysical() == false → 물리 주문 차단
+  3σ 슬리피지           → 자동 Lock
+
+게이트 3: OrderAttestationService
+  AssertNormal() — 모든 실주문 진입부 호출
+  EmergencyFreeze → InvalidOperationException (체결 불가)
+```
+
+**현재 상태**: `liveArmed:false` 전 영역 유지. `GatedOrderDispatcher._isArmed` 술어는 스캐폴드(주입만). 실 무장 배선 (`BrokerHub.IsArmed + IgnitionLock.AllowPhysical + att.AssertNormal` 결속)은 미완 — 명시적 옵트인 단계.
+
+---
+
+## 7. AI / 전략 계층
+
+### 7.1 분석 엔진
+
+| 파일 | 역할 | 핵심 |
 |---|---|---|
-| 1차 | 백그라운드 알림·체결 엔진, PaperBroker 재로드, USD 환산, 테마 동기화, 팔레트 매크로, 뉴스 중복 제거 | `Common/AlertEngineService.cs`(신규), `Common/ThemeManager.cs`, `Common/NewsService.cs`, `Blazor/DashboardService.cs`, `Blazor/CommandPalette.razor`, `Program.cs` |
-| 2차 | 거래기록→평단 재계산 연쇄, 포트폴리오 5탭(보유/이력/세금/배당/상관), 실시간 워치리스트·갱신주기·플래시·52주·알림규칙, 시그널 영속+알림, 뉴스 감성분석 | `Common/PortfolioService.cs`(신규), `Blazor/Pages/PortfolioPage.razor`, `Blazor/Pages/RealtimePage.razor`, `Blazor/Pages/NewsPage.razor`, `Blazor/Pages/AlertHistoryPage.razor` |
-| 3차 | 차트 보조지표(RSI/MACD/Stoch/볼린저), 백테스트 엔진, 김치 프리미엄 | `Common/IndicatorMath.cs`(신규), `Common/BacktestEngine.cs`(신규), `Blazor/Pages/SignalPage.razor`, `Blazor/Pages/CoinPage.razor`, `Common/CryptoProviders.cs` |
-| A3 | **SortableJS(외부 DnD 라이브러리) 제거** → 순수 HTML5 네이티브 DnD 위젯 + 헤더 딥링크 | `Blazor/Dashboard.razor`, `wwwroot/index.html`, `wwwroot/dashboard.js`, `wwwroot/app.css` |
-| A4 | **액션형 전역 Toast 서비스**(버튼 델리게이트 + 자동 닫힘) | `Blazor/ToastService.cs`(신규), `Blazor/ToastHost.razor`(신규), `Blazor/MainLayout.razor`, `Blazor/BlazorHomeForm.cs` |
+| `BacktestEngine.cs` | 전략 백테스트 | 5전략, 슬리피지 0.1%, 수수료 0.015%(KR)/0.99$(US), Sharpe×√252 |
+| `StrategyOptimizer.cs` | MA 격자탐색 | short∈{5,8,10,12}×long∈{20,26,30,60}, 무거래 조합 제외 |
+| `AlphaEngine.cs` | OLS 진성 알파 | Beta=Cov/Var, TrueAlpha=Π(1+Resid), IR=연환산 Sharpe |
+| `CommitteeEngine.cs` | 위원회 팩트시트 | AlphaReport+TailBudget+Backtest → 한국어 직렬화 (LLM 숫자 환각 방화벽) |
+| `MultiverseEngine.cs` | 다중 시나리오 | 4시나리오(Live/Bull/Stagflation/DeepRecession), GFC 2008 오버레이 |
+| `RegimeDetector.cs` | 레짐 변화 탐지 | 이상탐지 |
+| `MarkowitzOptimizer.cs` | MPT 최적화 | 효율적 포트폴리오 프론티어 |
+| `MonteCarlo.cs` | 몬테카를로 | 수익 분포 시뮬 |
+| `WalkForward.cs` | Walk-Forward | Out-of-Sample 검증 (과최적화 방지) |
+| `EventStudy.cs` | 이벤트 스터디 | 이벤트 전후 수익률 분석 |
+| `RiskAttribution.cs` | 리스크 기여도 | 패리티 분해 |
+| `CounterfactualTwin.cs` | 반사실 트윈 | 역사적 What-If |
+| `HypothesisMiner.cs` | 자동 가설 발굴 | |
+| `ScenarioStudio.cs` | 시나리오 스튜디오 | What-If |
+| `ForecastScore.cs` | 예측 스코어보드 | |
+| `PositionSizer.cs` | 포지션 사이저 | Kelly 크기 산정 |
+| `AlertCalibrator.cs` | 알림 캘리브레이터 | 신뢰도 보정 |
 
-### 2.3 핵심 컴포넌트 설명
+### 7.2 전략 진화
 
-- **`Common/AlertEngineService.cs`** — 10초 주기 백그라운드 평가. ① 코인 지정가 알림(재무장 정책) ② 주식 AlertRules(one-shot 정책) + 5% 급변 감지 ③ 모의투자 지정가 자동 체결. **해당 WinForms 창이 열려 있으면 그 항목 평가를 건너뜀**(이중 발동 방지). `Program.cs`에서 `Start(db, provider)` / 종료 시 `Stop()`.
-- **`Common/PortfolioService.cs`** — `RecomputeAverage(db, symbol, fallbackName)`. 거래 INSERT 후 호출하면 **전체 거래 이력을 시간순 재집계**해 보유 수량·평단을 갱신(이동평균법). 전량 매도 시 평단 0, 보유 0 상태의 매도는 무시.
-- **`Common/IndicatorMath.cs`** — 차트용 RSI/MACD/Stochastic/볼린저%B/EMA. ⚠️ 차트용 RSI(`avgL==0→rs=100`)와 백테스트용 RSI(`l==0→100`)는 **공식이 다름** — 섞지 말 것(주석 명시).
-- **`Common/BacktestEngine.cs`** — 5전략(이평/RSI/볼린저/MACD/볼륨) + 비용 모델(`TradingCost.Default`: 수수료·매도세·슬리피지) + Equity Curve/MDD/Sharpe/승률. 기간 종료 시 강제 청산.
-- **`Blazor/DashboardService.cs`** — Blazor 화면의 데이터 허브(싱글톤). `LoadAsync()`가 환율·주식·코인·모의계좌를 한 번에 적재. `PersistCrossSignal`이 시그널을 DB 저장+알림(매수만). 코인 알림 매크로 헬퍼(`AddCoinAlert`/`DisableAllCoinAlerts`/`SetTelegramEnabled`). 테마 setter는 `ThemeManager.Set`로 일원화.
-- **`Blazor/ToastService.cs` + `ToastHost.razor`** — 전역 액션형 토스트. `ToastButton(label, Func<Task>, Primary)` 델리게이트 지원. `MainLayout.razor`에 `<ToastHost />` 마운트, `BlazorHomeForm.cs`에 싱글톤 DI 등록.
-
-### 2.4 ⚠️ 절대 깨면 안 되는 숨은 룰 (Gotchas)
-
-이어받는 분이 리팩토링하다 가장 쉽게 망가뜨릴 지점들입니다.
-
-1. **알림 정책 비대칭** — 주식 알림 = **one-shot**(발동 즉시 `IsTriggered=1` 영구 비활성), 코인 알림 = **재무장(re-arm)**(가격이 조건을 벗어나면 다시 무장). 두 정책을 하나의 알림 서비스로 합치면 한쪽이 깨집니다.
-2. **AlertEngineService 창-열림 가드** — 코인/실시간/모의투자 WinForms 창이 열려 있으면 그 창이 처리하므로, 엔진은 해당 항목을 **건너뜁니다**. 가드를 제거하면 알림·체결이 이중 발생합니다.
-3. **DI 수명 = Singleton 필수** — `FxConverter`(환율 10분 캐시), KIS 토큰(23시간 캐시), `Crypto.State` JSON. Scoped/Transient로 바꾸면 캐시 무력화 → 환율 폭주 호출·토큰 재발급(레이트리밋 위반).
-4. **테마 토글 순서 계약** — `ThemeManager.Set()`은 ① 저장 → ② `ReapplyOpenForms`(표준 컨트롤) → ③ `Changed` 이벤트(커스텀 폼 자기 색 확정) 순. 순서를 바꾸면 커스텀 색이 덮입니다.
-5. **USD 보유 환산** — 포트폴리오/총자산 합계는 USD 종목을 **환율로 KRW 환산 후 합산**. 미환산 시 원화·달러가 섞입니다(원본 `KrwValue` 룰).
-6. **세금 시뮬 행 간 누적** — `runningRealized`가 평가이익 내림차순으로 250만 공제를 소진(USD만 누적). 행별 독립 계산으로 바꾸면 두 번째 행부터 세액이 전부 틀립니다.
-7. **거래 저장 연쇄** — `Db.AddTransaction` 단독 호출 금지. 반드시 `PortfolioService.RecomputeAverage`를 이어서 호출해야 보유 현황이 갱신됩니다.
-8. **DB가 진실의 원천** — 다중 인스턴스(Blazor·WinForms 창·백그라운드 엔진)가 같은 DB/Settings를 공유. `PaperBroker.Reload()`를 읽기 전에 호출해 최신화하는 패턴 유지.
-9. **한국 관례 색상** — 상승=빨강(`--up`), 하락=파랑(`--down`). 글로벌 관례(상승=초록)로 바꾸지 말 것.
-10. **시그널 비대칭** — 골든크로스 = DB 저장 + 알림(Warning), 데드크로스 = 저장만(알림 없음).
-11. **뉴스 감성 센티널** — `SentimentScore == 0`은 "미분석" 표시. 분석 대상 선별/중립 표시 모두 이 값에 의존.
-12. **이터레이터 예외 지연** — `SegmentedSieveStream` 같은 `yield` 메서드는 인자 검증을 **래퍼에서 즉시** 수행(내부 로컬 함수만 yield). 검증을 yield 본문에 넣으면 "열거해야만 예외"가 되어 계약이 깨집니다.
-
-### 2.5 남은 작업 / 알려진 한계 (Workstream 1)
-
-- **레거시 위임 화면:** 설정 마법사(`SetupWizard`), 거래 설정(`BrokerSettingsForm`), 복합 알림 관리, 알림 이력(WinForms) 등은 아직 `ModuleBridge.Open`으로 **네이티브 WinForms 창**을 띄웁니다. Blazor 네이티브 페이지로 이식하면 일관성이 좋아집니다.
-- **포트폴리오 입력 이원화:** `PortfolioPage`에 ⓐ 매수/매도 **거래 기록**(→ Transactions + RecomputeAverage)과 ⓑ **직접 등록/수정**(→ Holdings 직접 CRUD, 거래 이력 미생성)이 공존합니다. 의도된 설계지만, ⓑ로 수정하면 거래 이력과 평단이 어긋날 수 있음을 인지할 것.
-- **차트 상호작용:** RealtimePage 차트에 지표·MA·거래량은 구현됐으나, 원본 WinForms `ChartForm`의 크로스헤어 툴팁/마우스 호버 OHLC 표시는 미이식.
-- **알려진 사소한 버그:** `NavMenu.razor`의 검색바(kbar) `@onclick`이 `dashboard.setFocus`를 호출하는데 `dashboard.js`에는 해당 함수가 없습니다(현재 no-op). 의도는 Ctrl+K 팔레트 열기로 추정 — `CommandPalette`의 `OpenPalette`로 연결하면 됩니다. (이번 세션 범위 밖이라 미수정)
-- **A3 영속:** 위젯 배치는 요청서의 `ms2e_home_layout` LocalStorage가 아니라 기존 **DB `Dashboard.Layout`** 에 저장합니다(단일 진실 소스 유지). LocalStorage 강제가 필요하면 `DashboardService.LoadLayout/SaveLayout` 내부만 JS interop으로 교체.
-
----
-
-## 3. Workstream 2 — Primes 소수 모듈 (독립)
-
-> ⚠️ 주식 앱과 **기능적 연관 없음.** 사용자 요청으로 추가한 독립 수학 유틸리티입니다. `StockManager.Common` 네임스페이스에 들어 있지만, 다른 코드가 참조하지 않습니다.
-
-### 3.1 구성
-
-- **`StockManager/Common/Primes.cs`** (v2.1) — 순수 정적 유틸. 외부 의존성 0.
-- **`StockManager/Common/Primes_Guide.md`** (v1.2) — 모듈 전용 상세 분석/가이드 문서(알고리즘 해설·복잡도·벤치 실측·백로그). **소수 모듈을 이어받을 때는 이 문서를 먼저 읽으세요.**
-- **`StockManager.Tests/PrimesTests.cs`** — xUnit 105 케이스.
-- **`StockManager.PrimesBench/`** — Stopwatch 기반 무의존 벤치마크.
-
-### 3.2 공개 API (13개 + 상수 3개)
-
-`IsPrime(long)` / `IsPrime(BigInteger)` · `Sieve` · `CountPrimes` · `CountPrimesLong`(Lucy) · `SegmentedSieve` · `SegmentedSieveStream` · `NextPrime`(→`long?`) · `Factorize`(Pollard rho) · `Generate`(지연) · `NthPrime` · `IsCoprime` · `Totient`. 상수: `MaxSieveLimit=10⁹`, `MaxLongPrime`, `MaxPiLimit=10¹³`.
-
-### 3.3 로드맵 진행 상태
-
-- ✅ P0~P4 전부 완료 (Miller–Rabin, BigInteger, 비트 체, 청크 구간체, Pollard rho, Lucy π(n), 105 테스트, 벤치).
-- ⬜ **P5 백로그(다음 작업 후보):** ① Meissel–Lehmer π(n) (10¹³ 너머) ② `Factorize(BigInteger)` ③ `Generate` 세그먼트 체 백엔드.
-
-### 3.4 벤치 실측 (참고)
-IsPrime 시산제 대비 ≈638배, Factorize 시산제 대비 ≈485배, π(10⁹) 체 대비 ≈292배 — 상세는 `Primes_Guide.md` §6.
-
----
-
-## 4. 빌드 · 실행 · 테스트 (검증된 명령)
-
-작업 디렉터리: `StockManager_v3.4.1`
-
-```bash
-# 1) 메인 앱 빌드
-dotnet build StockManager
-#    → 오류 0 · 경고 0
-
-# 2) 소수 테스트
-dotnet test StockManager.Tests
-#    → 통과! 실패: 0, 통과: 105, 전체: 105
-
-# 3) 소수 벤치마크 (Release 권장)
-dotnet run --project StockManager.PrimesBench -c Release
-
-# 4) 앱 실행
-dotnet run --project StockManager              # Blazor Hybrid (WebView2 런타임 필요)
-dotnet run --project StockManager -- --classic # 구 WinForms 런처
+```
+CartridgeGenome.Evolve()   — 유전자 알고리즘 (교차+변이+선택, FNV 결정론 난수)
+CartridgeService           — .ms2cart JSON 서명·검증·배포 (ECDsa, DPAPI)
+StrategyCompiler/Parser    — 전략 DSL 컴파일
+StrategyTournament         — 전략 토너먼트 선발
+AgentRouter/AgentService   — LLM 에이전트 라우팅
 ```
 
-**필수 런타임:** .NET 8 SDK, Windows (net8.0-windows + WinForms). Blazor 모드는 **WebView2 런타임** 필요(없으면 자동 클래식 폴백).
+### 7.3 LLM 연동
 
-**NuGet 패키지(메인):** Microsoft.Data.Sqlite 8.0.0 · QuestPDF 2024.10.1 · System.Security.Cryptography.ProtectedData 8.0.0 · Microsoft.AspNetCore.Components.WebView.WindowsForms 8.0.10.
-
----
-
-## 5. 이어받는 분을 위한 우선순위 To-Do
-
-### 🔴 P0 — 바로 시작 가능
-- [ ] **테스트 커버리지 확장:** 현재 `StockManager.Tests`는 Primes 전용. `PortfolioService.RecomputeAverage`, `BacktestEngine`, `IndicatorMath`, `AlertEngineService`(정책 분기)에 회귀 테스트 추가.
-- [ ] **`NavMenu` kbar 버그 수정:** `dashboard.setFocus`(미존재) → Ctrl+K 팔레트 열기로 연결.
-
-### 🟠 P1 — 이식 완성도
-- [ ] 레거시 위임 화면(설정 마법사·거래 설정·복합 알림 관리)을 Blazor 네이티브 페이지로 이식.
-- [ ] RealtimePage 차트에 크로스헤어/OHLC 툴팁 추가(원본 `ChartForm` 수준).
-- [ ] `.sln` 생성으로 통합 빌드/CI 구성.
-
-### 🟡 P2 — Primes 모듈 (원하면)
-- [ ] Meissel–Lehmer π(n), `Factorize(BigInteger)` — `Primes_Guide.md` §3/§5 참고.
+```
+ILlmProvider               — 추상 (Gemini, GPT-4o, Ollama 로컬)
+AiService.AskAsync()       — PortfolioContext.Build() 주입으로 숫자 환각 차단
+PortfolioContext.Build()   — DB → 정확한 한국어 포트폴리오 직렬화 (LLM에게 수학 시키지 않음)
+DebateService              — 멀티에이전트 토론 (Bull/Bear/CRO 역할)
+NightlyResearch            — 야간 자동 리서치/퍼블리싱
+```
 
 ---
 
-## 6. 파일 변경 인벤토리 (이번 세션)
+## 8. 데이터 공급자
 
-**신규 (8):**
-`StockManager/Common/AlertEngineService.cs` · `PortfolioService.cs` · `IndicatorMath.cs` · `BacktestEngine.cs` · `Primes.cs` · `Primes_Guide.md` · `StockManager/Blazor/ToastService.cs` · `ToastHost.razor`
-**신규 프로젝트 (2):** `StockManager.Tests/` (csproj + PrimesTests.cs) · `StockManager.PrimesBench/` (csproj + Program.cs)
-
-**수정 (주요):**
-`StockManager/Program.cs` · `Common/PaperBroker.cs` · `ThemeManager.cs` · `NewsService.cs` · `CryptoProviders.cs` · `Blazor/DashboardService.cs` · `BlazorHomeForm.cs` · `MainLayout.razor` · `CommandPalette.razor` · `Dashboard.razor` · `Pages/{Portfolio,Realtime,Signal,Coin,PaperTrading,News,AlertHistory}Page.razor` · `wwwroot/{index.html,dashboard.js,app.css}`
-
-> 이 저장소는 git 미초기화 상태입니다(`Is a git repository: false`). 변경 추적을 위해 `git init` 후 첫 커밋을 만들어 두길 권장합니다.
+| 공급자 | 파일 | 비고 |
+|---|---|---|
+| **키움 OpenAPI+** | `BrokerProviders.cs` | 32-bit COM 전용 (`PlatformTarget=x86` 주석 해제 필수) |
+| **한국투자증권 KIS** | `BrokerProviders.cs` | REST, Bearer JWT, `prdy_vrss` 전일대비 정확 처리 |
+| **업비트** | `LiveBrokers.cs` | JWT HS256 + SHA512 쿼리 해시 |
+| **빗썸** | `BithumbProvider.cs` | |
+| **네이버/다음** | `QuoteProviders.cs` | 일봉 캐시 (`LinearQuoteCache`) |
+| **로컬 DB** | SQLite | WAL + `busy_timeout` + 재시도 래퍼 |
 
 ---
 
-*문서 끝. 추가로 특정 모듈의 상세 흐름이 필요하면 해당 파일 상단 주석 블록과 `Primes_Guide.md`(소수)를 참고하세요.*
+## 9. 테스트 인프라
+
+### 현황 (v4.69.0)
+
+- **총 테스트**: 1,588 (클린런)
+- **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
+- **빌드 게이트**: `TreatWarningsAsErrors=true`
+
+### 주요 테스트 파일
+
+| 파일 | 커버 |
+|---|---|
+| `S27DecimalSweepTests.cs` | QFixed 기본 |
+| `S27bShadowClearingTests.cs` | 섀도우 추적·보수 불변식 |
+| `S27cCutoverTests.cs` | ShadowCutoverGate ON/OFF/INERT |
+| `S27dMultiAssetTests.cs` | 멀티자산 레지스트리 |
+| `S27eMultiAssetGateTests.cs` | FX·이종통화 청산 |
+| `S28PortfolioMentorTests.cs` | M1/M2/M3 (42 tests) |
+| `PathBShadowClearingTests.cs` | IBroker 데코레이터 (5 tests) |
+| `S29OrderDispatchRingTests.cs` | SPMC 링 (9 tests) |
+| `S29GammaRingTelemetryTests.cs` | 링 텔레메트리 (11 tests) |
+| `S29cAuthorityInversionTests.cs` | 권위 역전 (10 tests) |
+| `S29cFxAuthorityTests.cs` | FX 권위 역전 (7 tests) |
+| `RingBufferTests.cs` | seqlock torn-safety |
+| `IgnitionLockTests.cs` | 점화 잠금 FSM |
+| `OrderAttestationTests.cs` | 감사 서비스 |
+| `ResilienceMeshTests.cs` | TWAP/알고 내성 (work-bounded) |
+| `KiwoomBridgeTests.cs` | 가상 클럭 결정론 |
+
+### 플래키 제거 패턴
+
+| 문제 | 해결 |
+|---|---|
+| 벽시계 타임아웃 | 작업량 경계 (고정 반복) + 가상 클럭 주입 |
+| 비동기 완료 대기 | 이벤트/세마포어 시그널, `WaitFor(8000ms)` |
+| 동시성 torn-read | seqlock s1==s2 재독출, 작업량 경계 writer |
+| 순서 불확정 | 결정론 우선순위, `Ordinal` 비교 |
+
+---
+
+## 10. 버전 이력 (주요 마일스톤)
+
+| 버전 | 내용 |
+|---|---|
+| v3.4.x | WinForms 9모듈, Blazor Hybrid 이식, DB WAL 하드닝, API 캐시 |
+| v3.8~v3.29 | AI 비서, 오버나잇 옵티마이저, Walk-Forward, RAG, MPT, 반사실 트윈 등 |
+| v3.34~v3.41 | 로컬 LLM, 멀티에이전트 토론, Blazor DnD 위젯, Inno Setup |
+| v4.0 | `TreatWarningsAsErrors` 빌드 하드게이트 |
+| v4.47 | S28: AI 포트폴리오 멘토 M1/M2/M3 |
+| v4.48.1 | S28-b: 게이트 자해성 동결 제거 (`_writerCollisions` 분리) |
+| v4.48.4 | Path A: 전역 플래키 0% (7개 테스트 결정론화) |
+| v4.49.0 | Path B: `ShadowClearingBroker` IBroker 데코레이터 + 전용 att DI |
+| v4.50.0 | Path C: `OrderDispatchRing` SPMC + `GatedOrderDispatcher` |
+| v4.51.0 | Path Beta: `QAdmissionGate` 멀티자산 진입 검문 |
+| v4.52.0 | Path Alpha: `ClearingAuthority` 권위 역전 (`QFixedPrimary`) |
+| v4.53.0 | Path Gamma: `RingTelemetryChannel` seqlock UI 락-프리 텔레메트리 |
+| v4.54.0 | Path Alpha-FX: `ClearBase()` base 통화 권위 계약 (이종통화 역전) |
+| v4.55.0 | GatedOrderDispatcher fail-closed 하드닝 + Path Gamma UI 배선 완결 |
+| v4.57.0 | 자산 격자 기본 레지스트리 + 3중 안전 게이트 실 무장 술어 + 팔레트 순수 C# 열기 |
+| v4.58.0~1 | S28 AI 포트폴리오 멘토 M1/M2/M3 하드닝 + 플래키 0% 박제 |
+| v4.59.0 | 진공관 결속 — 무장 술어 스위치 테스트 가능 팩토리 승격 |
+| v4.60.0 | ClearingAuthority 권위 역전 컷오버 배선 |
+| v4.61.0 | ShadowClearingBroker 권위 채택 load-bearing 가드 하드닝 |
+| v4.62.0 | 온보딩 마법사 Blazor 네이티브 + 하이브리드 폼 함정 하드닝 |
+| v4.63.0 | δ=0 시계열 차팅 가속 + 다중 seqlock 통합 관제 |
+| v4.64.0 | 워치리스트 개인화 + 실시간 지수 스트립 (커스텀 카테고리·DnD·선물 바) |
+| v4.65.0 | SymbolPicker 자동완성 + 카테고리 선택 미니모달 |
+| v4.66.0 | 모의잔고 원자적 시딩 + 거래 수수료 설정 페이지 |
+| v4.67.0 | Blazor DI↔WinForms 브릿지 + 청산 가드 + 파이프라인 하드닝 테스트 |
+| v4.68.0 | SymbolPicker mousedown 선택 + IndexTickerBar 마켓 추가 + 병렬 fetch (Sem4·Sem3) |
+| v4.69.0 | DashboardHome 통합 관제탑 (Blazor 런처 허브) + IModuleBridge STA 마샬링 |
+
+---
+
+## 11. 빌드 & 실행
+
+### 빌드
+
+```powershell
+# 앱 종료 필수 (MS2E.StockSuite.exe가 출력 바이너리 잠금 → MSB3027/3021)
+dotnet build StockManager/StockManager.csproj -c Release
+```
+
+### 테스트
+
+```powershell
+dotnet test StockManager.Tests/StockManager.Tests.csproj --logger "trx" -c Release
+# TRX 파싱으로 실제 실패 테스트명 추출 (플래키 census)
+```
+
+### 키움 32-bit 실거래 빌드
+
+```xml
+<!-- StockManager.csproj: AnyCPU 주석 처리 후 해제 -->
+<PlatformTarget>x86</PlatformTarget>
+```
+
+### 의존 패키지 (주요)
+
+```
+Microsoft.Data.Sqlite 8.0.0
+QuestPDF 2024.10.1
+System.Security.Cryptography.ProtectedData 8.0.0
+Microsoft.AspNetCore.Components.WebView.WindowsForms 8.0.10
+xunit / xunit.runner.visualstudio (테스트)
+```
+
+---
+
+## 12. 알려진 함정 모음
+
+| 항목 | 내용 |
+|---|---|
+| **Razor 한글 식별자** | `@멤버한글` → 컴파일 에러. `@(...)` 래핑 필수. 빌드 `-m:1` |
+| **Blazor 라우트 중복** | `@page` 중복은 빌드 통과 후 앱 시작 시 "routes are ambiguous"로 죽음. 추가 전 grep |
+| **Razor 포맷 문자열** | `@(v:+0.00)` 불가. `.ToString("fmt")` 사용 |
+| **Razor `<style>`** | `@@keyframes` (이중 이스케이프) |
+| **Write 제어문자** | 구분자 등 제어문자는 `\uXXXX` 이스케이프 (직접 입력 시 빈 문자열로 저장) |
+| **SQLite 소수 친화도** | `INTEGER` 컬럼에 0.13 저장 → 0 잘림. REAL 타입으로 마이그레이션 |
+| **IME 비동기 재렌더** | 폴링+비동기=입력 리셋/손상. 비제어입력+`@key`+InvariantCulture 파싱 |
+| **앱 실행 중 빌드** | exe 잠금 → MSB3027. 종료+빌드를 한 줄로 묶어 첫 번만 확인 |
+| **CS0420 경고** | `volatile` 필드 + `Interlocked.*` → `TreatWarningsAsErrors` 빌드 실패. `ref` 지역변수 패턴 |
+| **CS8983** | struct 이니셜라이저 경고 → 필드 직접 초기화 |
+| **섀도우 att 공유 금지** | `ShadowCutoverGate`에 라이브 `OrderAttestationService` 공유 금지 (섀도우 동결→라이브 차단 footgun) |
+| **FX Clear 권위 역전 미적용** | `Clear(symbol, fx...)` 반환=자산통화. base통화 권위는 `ClearBase()` 사용 |
+| **fail-closed 주장 함정** | 안전 펜스 커밋 전 음수/역순/경계/재독출 엣지를 선제 반증 필수 (S25-c·S26-b 2회 연속 major 적발 전례) |
+| **알림 정책 비대칭** | 주식 알림=one-shot, 코인 알림=재무장(re-arm). 합치면 한쪽 깨짐 |
+| **AlertEngineService 창-열림 가드** | 해당 WinForms 창이 열려 있으면 엔진은 건너뜀 (이중 발동 방지). 가드 제거 시 중복 |
+| **DI 수명 Singleton 필수** | `FxConverter`(10분 캐시), KIS 토큰(23시간), `Crypto.State`. Scoped/Transient 시 캐시 무력화 |
+| **거래 저장 연쇄** | `Db.AddTransaction` 단독 금지 → 반드시 `PortfolioService.RecomputeAverage` 후속 호출 |
+| **키움 32-bit 전용** | `PlatformTarget=x86` 없이는 COM 연결 불가 (현재 AnyCPU 기본) |
+
+---
+
+## 13. 비즈니스 룰 (깨면 안 되는 것들)
+
+1. **한국 관례 색상**: 상승=빨강(`--up`), 하락=파랑(`--down`). 글로벌(상승=초록) 절대 금지.
+2. **시그널 비대칭**: 골든크로스=DB저장+알림(Warning), 데드크로스=저장만(알림 없음).
+3. **뉴스 감성 센티널**: `SentimentScore==0` = "미분석". 분석 대상 선별/중립 표시 의존.
+4. **세금 시뮬 누적**: `runningRealized`가 250만 공제를 소진. 행별 독립 계산 시 세액 전부 틀림.
+5. **USD 보유 환산**: 포트폴리오/총자산 합계는 USD를 환율 KRW 환산 후 합산.
+6. **DB가 진실의 원천**: `PaperBroker.Reload()` 읽기 전 필수. 다중 인스턴스 공유.
+7. **이터레이터 예외 지연**: `yield` 메서드는 래퍼에서 즉시 인자 검증. 본문 yield 전 검증 시 "열거해야만 예외" 계약 위반.
+
+---
+
+## 14. 코드 탐색 치트시트
+
+```
+고정소수점 척추      → Common/QFixed.cs
+청산 게이트          → Common/QClearing.cs  (ShadowCutoverGate)
+브로커 레이어        → Common/PaperBroker.cs, LiveBrokers.cs, ShadowClearingBroker.cs
+주문 증적            → Common/OrderAttestationService.cs
+링버퍼 코어          → Common/RingBufferCore.cs
+주문 디스패치        → Common/OrderDispatchRing.cs
+링 텔레메트리        → Common/RingTelemetry*.cs  (Gamma)
+포트폴리오 멘토      → Common/QPortfolioMentor.cs
+미래가치 시뮬        → Common/QFutureValue.cs
+카오스 진단          → Common/QChaos.cs
+점화 잠금            → Common/IgnitionLock.cs
+백테스트             → Common/BacktestEngine.cs
+전략 유전자          → Common/CartridgeGenome.cs
+LLM 연동             → Common/AiService.cs, LlmProviders.cs
+포트폴리오 컨텍스트  → Common/PortfolioContext.cs
+Blazor 런처 허브      → Blazor/Pages/DashboardHome.razor
+Blazor DI 진입점     → Blazor/BlazorHomeForm.cs
+WinForms 진입점      → Launcher.cs
+테스트 전체          → StockManager.Tests/
+```
+
+---
+
+## 15. 다음 진격 후보
+
+| 항목 | 설명 |
+|---|---|
+| **실 무장 배선** | `GatedOrderDispatcher._isArmed` ← `BrokerHub.IsArmed ∧ IgnitionLock.AllowPhysical ∧ att.AssertNormal` 결속 |
+| **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
+| **UI 텔레메트리 표면** | `RingTelemetryChannel.TryRead()` → Blazor 대시보드 실시간 지표 |
+| **QFixedPrimary 전환** | Observed/FrozenCount/LastDivergence 모니터링 → 분기 0 확인 → `SetAuthority(QFixedPrimary)` |
+
+---
+
+*코드가 권위. 이 문서는 재진입 네비게이션 보조. 특정 모듈 상세는 해당 파일 상단 주석 블록을 최우선 참조.*
