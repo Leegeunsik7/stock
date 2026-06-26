@@ -97,16 +97,20 @@ namespace StockManager.Common
             }
         }
 
+        // v4.68.0 — 순차→병렬 전환: SemaphoreSlim(4)로 최대 4개 동시 fetch.
+        //   기존 50ms 인터-리퀘스트 딜레이 제거 → 13종목 기준 ~1.95s→~450ms.
         public async Task<List<Quote>> GetQuotesAsync(IEnumerable<string> symbols, Market market, CancellationToken ct = default)
         {
-            var list = new List<Quote>();
-            foreach (var s in symbols)
+            var symArr = symbols.ToArray();
+            using var sem = new SemaphoreSlim(4, 4);
+            var tasks = symArr.Select(async s =>
             {
-                var q = await GetQuoteAsync(s, market, ct);
-                if (q != null) list.Add(q);
-                try { await Task.Delay(50, ct); } catch (TaskCanceledException) { break; }
-            }
-            return list;
+                await sem.WaitAsync(ct);
+                try { return await GetQuoteAsync(s, market, ct); }
+                finally { sem.Release(); }
+            }).ToArray();
+            var results = await Task.WhenAll(tasks);
+            return results.Where(q => q != null).ToList()!;
         }
 
         public async Task<List<Candle>> GetHistoryAsync(string symbol, Market market, DateTime from, DateTime to, CancellationToken ct = default)
@@ -213,19 +217,20 @@ namespace StockManager.Common
             }
         }
 
+        // v4.68.0 — 순차→병렬 전환: SemaphoreSlim(3)로 최대 3개 동시 fetch.
+        //   ⚠️ Yahoo v7/finance/quote 배치 API는 crumb 인증 필요 → v8/finance/chart 단건 병렬.
         public async Task<List<Quote>> GetQuotesAsync(IEnumerable<string> symbols, Market market, CancellationToken ct = default)
         {
-            // ⚠️ Yahoo v7/finance/quote 배치 API는 이제 crumb 인증을 요구해 빈 응답/401이 잦음.
-            //    인증 불필요한 v8/finance/chart(단건 GetQuoteAsync)로 순회 — 안정적(국내 네이버와 동일 패턴).
             var symArr = symbols.ToArray();
-            var list = new List<Quote>();
-            foreach (var s in symArr)
+            using var sem = new SemaphoreSlim(3, 3);
+            var tasks = symArr.Select(async s =>
             {
-                var q = await GetQuoteAsync(s, market, ct);
-                if (q != null) list.Add(q);
-                try { await Task.Delay(40, ct); } catch (TaskCanceledException) { break; }
-            }
-            return list;
+                await sem.WaitAsync(ct);
+                try { return await GetQuoteAsync(s, market, ct); }
+                finally { sem.Release(); }
+            }).ToArray();
+            var results = await Task.WhenAll(tasks);
+            return results.Where(q => q != null).ToList()!;
         }
 
         public async Task<List<Candle>> GetHistoryAsync(string symbol, Market market, DateTime from, DateTime to, CancellationToken ct = default)

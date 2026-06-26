@@ -18,7 +18,7 @@
             @for (int i = 0; i < _results.Count; i++)
             {
                 var r = _results[i];
-                <div class="sympick-row @(i == 0 ? "top" : "")" @onmousedown:preventDefault="true" @onclick="() => Pick(r)">
+                <div class="sympick-row @(i == 0 ? "top" : "")" @onmousedown:preventDefault="true" @onmousedown="() => Pick(r)">
                     <span class="sympick-name">@r.Name</span>
                     <span class="sympick-code">@r.Code</span>
                     <span class="sympick-badge @(r.IsCrypto ? "is-coin" : "")">@r.MarketLabel</span>
