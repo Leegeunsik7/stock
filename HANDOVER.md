@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.72.0** (2026-06-26)  
+> 기준 버전: **v4.73.0** (2026-06-26)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -387,7 +387,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.72.0)
+### 현황 (v4.73.0)
 
 - **총 테스트**: 1,593 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
@@ -459,6 +459,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.70.0 | `OrderDrainWorker` 50ms 드레인 엔진 + 이중 키 잠금(`ValveWired ∧ LiveArmingWired`) 완결 |
 | v4.71.0 | `SystemVersionProvider` 무할당 버전 공급자 + HANDOVER.md 대통합 사양 갱신 |
 | v4.72.0 | 로우레이턴시 퀀트 커널 3계층: `VectorizedAlphaEngine`(AVX2 SIMD OLS) · `ZeroAllocJsonParser`(hybrid stackalloc/ArrayPool) · `AutonomousAlphaFactory+CartridgeNumericsGuard`(headless mine→attest→guard→sign) · `MacroChaosTailReplayer`(virtual clock 1000x, GFC/LUNA 3σ→ForceFreeze) |
+| v4.73.0 | UI 텔레메트리 확장: `RingTelemetry` struct AlphaFactory 카운터(Cycles·Signed·Rejected) 통합 · `RingTelemetryPublisher` AlphaFactory 옵션 배선 · `BlazorHomeForm` AutonomousAlphaFactory singleton 배선(BelowNormal 24h) · `TelemetryMonitor.razor` 🏭 알파 공장 패널(거부율 포함) |
 
 ---
 
@@ -572,9 +573,11 @@ WinForms 진입점      → Launcher.cs
 |---|---|
 | **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
 | **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
-| **UI 텔레메트리 확장** | `RingTelemetryChannel.TryRead()` → Blazor 대시보드 실시간 지표 추가 |
 | **QFixedPrimary 전환** | Observed/FrozenCount/LastDivergence 모니터링 → 분기 0 확인 → `SetAuthority(QFixedPrimary)` |
+| **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
+| **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
 | **키움 32-bit 실거래** | `PlatformTarget=x86` 활성화 후 `ExecutionBridgeBroker` 파이프 실 연결 |
+| ~~v4.73.0 AlphaFactory 텔레메트리~~ | ✅ 완료 — `RingTelemetry` struct 확장 · `RingTelemetryPublisher` 배선 · `TelemetryMonitor.razor` 🏭 패널 |
 | ~~v4.72.0 SIMD·알파·꼬리~~ | ✅ 완료 — `VectorizedAlphaEngine` · `ZeroAllocJsonParser` · `AutonomousAlphaFactory` · `MacroChaosTailReplayer` |
 
 ---
