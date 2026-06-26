@@ -18,10 +18,44 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.63.0</Version>
-    <AssemblyVersion>4.63.0.0</AssemblyVersion>
-    <FileVersion>4.63.0.0</FileVersion>
-    <!-- v4.63.0 — δ=0 시계열 차팅 가속 + 다중 seqlock 통합 관제. [미션 A] String Allocation Trap 정면 돌파:
+    <Version>4.64.0</Version>
+    <AssemblyVersion>4.64.0.0</AssemblyVersion>
+    <FileVersion>4.64.0.0</FileVersion>
+    <!-- v4.64.0 — 실시간 시세 워치리스트 개인화 + 포트폴리오 상단 실시간 지수 스트립(사용자 스크린샷 요청 직접 반영).
+         [요청 1·2] 카테고리 추가/삭제 + 그룹 내 종목 추가/삭제: 신규 WatchlistStore(Common, Razor 밖 결정론·테스트 가능)가
+         빌트인 7종(즐겨찾기/국내/미국/반도체/2차전지/AI/AI피지컬)에 더해 '커스텀 카테고리'를 Settings JSON 에 영속하고,
+         Watchlist 테이블의 임의 GroupName 을 그대로 활용해 별도 테이블 없이 표현. 빌트인은 삭제 불가(거부)·빈 그룹은
+         큐레이션 시드 폴백, 커스텀은 삭제 가능(+그 그룹 행 일괄 삭제)·빈 그룹은 진짜 비움(사용자 캔버스). AddSymbol 은
+         멱등 upsert(ON CONFLICT(Symbol,GroupName)→이름만 갱신·순서 보존). [요청 3] 주식 행 위·아래 재정렬: RealtimePage
+         에 HTML5 네이티브 DnD(외부 lib 0·Dashboard 패턴 계승) — 좌측 그립(td draggable) 소스 + 행 드롭 타깃
+         (@ondragover:preventDefault), 드롭 시 List 재배치 후 PersistWatchOrder(시드→DB 승격 upsert + SortOrder 0..n-1
+         일괄 영속, 전부 0 이던 회귀 차단·다음 진입 유지). [요청 4 일부] 코인 수동 재정렬은 보류(CoinPage 는 거래소 실시간
+         유니버스라 영속 멤버십이 없어 별도 아키텍처 — 정직 미수행). [요청 5] 포트폴리오 허브 상단 실시간 지수·선물 스트립:
+         신규 IndexTickerBar(컴포넌트·@page 없음→라우트 충돌 0) 가 기존 GlobalIndexService(Yahoo v8·60초 폴링·실데이터·
+         fail-keep-last)를 구독만 해 재사용 — 코스피(^KS11)·코스닥(^KQ11)·나스닥(^IXIC)·나스닥선물(NQ=F)·다우(^DJI)·
+         S&P(^GSPC) 큐레이션 표시(이름·현재가·등락률·상승/하락 색). GlobalIndexService 카탈로그에 미국 지수 선물 3종
+         (NQ=F/ES=F/YM=F·동일 Yahoo =F 연속물 실데이터) 합류. ★정직 한정: 한국 코스피200 야간/주간 선물은 Yahoo
+         무인증 피드에 없어(KRX·KIS futureoption TR 필요) 미배선 — 날조하지 않음(KIS 연동 시 합류 가능). 스레드 안전:
+         OnRefreshed(백그라운드 폴 스레드)→InvokeAsync(StateHasChanged) 마샬링 + IDisposable 구독 해제.
+         테스트 +18(WatchlistStoreTests): 카테고리 CRUD(빌트인/빈/중복 거부·커스텀 삭제 시 행 일괄 제거·타 그룹 불변)·
+         AddSymbol 증분 SortOrder·멱등 재추가(순서 보존·이름/시장 갱신)·대문자 정규화·동일티커 그룹간 독립·Reorder distinct
+         SortOrder 영속(재오픈 유지)·null/empty no-op·중간삭제후 추가 distinct(MAX+1)·재추가 시장 교정.
+         빌드 0/0, 전체 1586 통과(Release 2회 연속 0 실패).
+         ★적대적 리뷰 5렌즈(데이터 정직·라우트/컴포넌트 해소·DnD 정확성·저장소 후방호환/테스트 비공허·스레드/수명주기)
+         → 12주장 중 7 확정 결함 전량 수정·5 기각(dispose 레이스/_any 가시성은 .NET8 런타임상 무해 입증). 수정:
+         ① [major] 백그라운드 폴 Loop 가 드래그 중 재렌더→@key(sym:ver) 변경으로 드래그 소스 <tr> 교체→네이티브 DnD
+            중단·_drag stale(유령 재정렬) → `_drag` 보유 중 StateHasChanged 보류 + 드래그 종목 flash ver 미증가(이중 가드).
+         ② [major] AddSymbol 의 SortOrder=COUNT(*) 가 중간 삭제 후 생존 행과 충돌(중복 정렬값→다음 로드서 기존 행 튐)
+            → MAX(SortOrder)+1 단조 증가로 교체(+회귀 테스트).
+         ③ [minor] OnDrop 인덱스 비대칭(아래로 끌 때 타깃 뒤 낙하) → from<to 시 to-- 보정.
+         ④ [minor] Reorder N개 UPDATE 비원자적(중간 실패 시 부분 SortOrder 잔존) → RunInTransaction 원자화.
+         ⑤ [nit] AddSymbol ON CONFLICT 가 Market 미갱신(write-only stale) → Market=@m 추가(SaveHolding 수정과 동궤).
+         ⑥ [minor] add-after-delete 미커버 → 회귀 테스트 추가.  ⑦ [minor] 카탈로그 개수 주석(11) stale → 하드코딩 제거.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         ※ 보류(정직): 코인 수동 재정렬 — CoinPage 는 거래소 실시간 유니버스로 영속 멤버십이 없어 별도 아키텍처(미수행).
+         ※ 미배선(정직): 한국 코스피200 야간/주간 선물 — Yahoo 무인증 피드 부재(KRX·KIS futureoption TR 필요), 날조 금지.
+         ───────────────────────────────────────────────────────────────────────────────────────────────────────
+         v4.63.0 — δ=0 시계열 차팅 가속 + 다중 seqlock 통합 관제. [미션 A] String Allocation Trap 정면 돌파:
          150ms 주기 추세 차트를 Blazor SVG <path>(매 프레임 수십 KB 좌표 문자열 GC 폭발) 대신 JS Canvas 직접 드로잉으로
          전환. dashboard.js telemetryChart — init 1회 Float64Array ring 할당, push/draw 경로 문자열·할당 0(색상 리터럴
          인터닝·ctx 숫자 인자). C# TelemetryMonitor 는 매 틱 스칼라 2개(Throughput·WriterCollisions)만 push — C# 힙

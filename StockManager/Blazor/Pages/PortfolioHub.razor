@@ -29,6 +29,9 @@
     }
 </div>
 
+@* v4.64.0 — 실시간 지수·선물 스트립(코스피·코스닥·나스닥·나스닥선물·다우·S&P). GlobalIndexService 구독 재사용. *@
+<IndexTickerBar />
+
 <HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
 
 @if (_busy && Cur is "rebalance" or "risk")

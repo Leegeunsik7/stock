@@ -1,0 +1,62 @@
+@* ============================================================================
+   IndexTickerBar — v4.64.0: 실시간 지수·선물 스트립(포트폴리오 허브 상단)
+   기존 GlobalIndexService(Yahoo v8·60초 폴링·실데이터)를 재사용 — 별도 fetch 없이 구독만.
+   표시: 코스피·코스닥·나스닥·나스닥선물·다우·S&P. OnRefreshed 구독 → InvokeAsync(StateHasChanged).
+   ※ 한국 야간/주간 선물(코스피200)은 무인증 피드 부재로 미표시(정직) — KIS futureoption 배선 시 합류 가능.
+   ============================================================================ *@
+@implements IDisposable
+@inject GlobalIndexService GlobIdx
+
+<div class="idxbar">
+    @foreach (var sym in _show)
+    {
+        var r = Find(sym);
+        @if (r != null)
+        {
+            <div class="idxchip @(r.Up ? "u" : "d")" title="@(r.Symbol) · @(r.Region)">
+                <span class="idxname">@r.Flag @r.Name</span>
+                <span class="idxlast">@r.Last.ToString("N2")</span>
+                <span class="idxpct">@(r.ChgPct.ToString("+0.00;-0.00"))%</span>
+            </div>
+        }
+    }
+    @if (!_any) { <div class="idxchip" style="opacity:.6">📡 지수 수집 중…</div> }
+</div>
+
+@code {
+    // 큐레이션 — 사용자 요청(코스피·코스닥 실시간 + 나스닥·나스닥선물·다우). S&P 동반.
+    private static readonly string[] _show = { "^KS11", "^KQ11", "^IXIC", "NQ=F", "^DJI", "^GSPC" };
+    private bool _any;
+
+    protected override void OnInitialized()
+    {
+        GlobIdx.OnRefreshed += OnRefreshed;
+        _any = GlobIdx.Indices.Count > 0;
+    }
+
+    private void OnRefreshed()
+    {
+        _any = GlobIdx.Indices.Count > 0;
+        InvokeAsync(StateHasChanged);   // 백그라운드 폴링 스레드 → UI 스레드 마샬링
+    }
+
+    private IndexRow? Find(string sym)
+    {
+        foreach (var r in GlobIdx.Indices) if (r.Symbol == sym) return r;
+        return null;
+    }
+
+    public void Dispose() => GlobIdx.OnRefreshed -= OnRefreshed;
+}
+
+<style>
+    .idxbar { display:flex; gap:8px; padding:6px 28px 4px; overflow-x:auto; align-items:stretch; }
+    .idxchip { display:flex; flex-direction:column; gap:1px; min-width:96px; padding:6px 12px;
+               border:1px solid var(--line); border-radius:10px; background:var(--card); white-space:nowrap; }
+    .idxchip.u { border-left:3px solid var(--up,#e34d4d); }
+    .idxchip.d { border-left:3px solid var(--down,#3d7bd6); }
+    .idxname { font-size:11px; color:var(--sub); }
+    .idxlast { font-size:14px; font-weight:700; font-family:var(--mono); }
+    .idxchip.u .idxpct { font-size:11.5px; font-weight:700; color:var(--up,#e34d4d); }
+    .idxchip.d .idxpct { font-size:11.5px; font-weight:700; color:var(--down,#3d7bd6); }
+</style>

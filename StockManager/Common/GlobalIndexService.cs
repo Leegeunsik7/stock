@@ -22,7 +22,7 @@ namespace StockManager.Common
 
     public sealed class GlobalIndexService : IDisposable
     {
-        // 11개 지수 — 아시아 → 미국 → 유럽 순서
+        // 지수 카탈로그 — 아시아 → 미국 → 미국선물 → 유럽 순서(런타임 동작은 _catalog.Length 기준 · 개수 하드코딩 금지)
         private static readonly (string sym, string name, string flag, string region, string currency)[] _catalog =
         {
             ("^KS11",     "코스피",      "🇰🇷", "아시아",  "KRW"),
@@ -33,6 +33,11 @@ namespace StockManager.Common
             ("^GSPC",     "S&P 500",     "🇺🇸", "미국",    "USD"),
             ("^IXIC",     "나스닥",      "🇺🇸", "미국",    "USD"),
             ("^DJI",      "다우존스",    "🇺🇸", "미국",    "USD"),
+            // v4.64.0 — 미국 지수 선물(동일 Yahoo v8 =F 연속물·실데이터·24h 거래라 장외 시간 추세 관측).
+            //   ※ 한국 코스피200 야간/주간 선물은 Yahoo 무인증 피드에 없음(KRX·KIS futureoption TR 필요) → 미배선(정직).
+            ("NQ=F",      "나스닥 선물", "🇺🇸", "미국선물","USD"),
+            ("ES=F",      "S&P 선물",    "🇺🇸", "미국선물","USD"),
+            ("YM=F",      "다우 선물",   "🇺🇸", "미국선물","USD"),
             ("^VIX",      "VIX 공포지수","🌐",  "미국",    "USD"),
             ("^FTSE",     "FTSE 100",   "🇬🇧", "유럽",    "GBP"),
             ("^GDAXI",    "DAX",         "🇩🇪", "유럽",    "EUR"),

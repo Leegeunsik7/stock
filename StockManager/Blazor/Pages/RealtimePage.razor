@@ -24,8 +24,19 @@
 <div style="display:flex;gap:8px;padding:0 28px 12px;flex-wrap:wrap;align-items:center">
     @foreach (var g in _groups)
     {
-        <button class="pill @(g==_group?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SetGroup(g)">@g</button>
+        var gg = g;
+        <span style="display:inline-flex;align-items:center">
+            <button class="pill @(g==_group?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SetGroup(gg)">@g</button>
+            @if (!WatchlistStore.IsBuiltIn(g))   @* 커스텀 카테고리만 삭제 가능(빌트인 보존) *@
+            {
+                <button title="카테고리 삭제" style="border:0;background:transparent;cursor:pointer;color:var(--sub);margin-left:-4px;font-size:11px"
+                        @onclick="() => RemoveCategoryAsync(gg)">✕</button>
+            }
+        </span>
     }
+    @* 커스텀 카테고리 생성 — 내가 원하는 항목을 추가 *@
+    <input class="srch" style="width:128px" placeholder="+ 새 카테고리" @bind="_newCat" @onkeydown="OnAddCatKey" />
+    <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="AddCategoryAsync">＋ 카테고리</button>
     <input class="srch" style="width:170px" placeholder="종목코드 추가 (005930/AAPL)" @bind="_newSym" @onkeydown="OnAddKey" />
     <button class="addbtn" @onclick="AddSymbolAsync">➕ 추가</button>
     <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="ToggleAlertForm">🔔 알림 규칙</button>
@@ -54,18 +65,23 @@
 <div class="split-lr" style="display:grid;grid-template-columns:minmax(440px,1fr) minmax(420px,1.1fr);gap:18px;padding:0 28px 40px">
     <div>
         <table class="ctbl">
-            <thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">전일대비</th><th style="text-align:right">등락률</th><th style="text-align:right">거래량</th><th></th></tr></thead>
+            <thead><tr><th style="width:22px"></th><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">전일대비</th><th style="text-align:right">등락률</th><th style="text-align:right">거래량</th><th></th></tr></thead>
             <tbody>
                 @foreach (var w in _watch)
                 {
+                    var ww = w;
                     var q = _quotes.GetValueOrDefault(w.sym);
                     var diff = q != null ? q.Price - q.PreviousClose : 0m;
                     var rate = q != null && q.PreviousClose > 0 ? diff / q.PreviousClose * 100m : 0m;
                     var ver = _flashVer.GetValueOrDefault(w.sym);
                     var rowKey = w.sym + ":" + ver;
-                    var rowStyle = RowStyle(w.sym, ver);
+                    var rowStyle = RowStyle(w.sym, ver) + (_dragOver == w.sym && _drag != w.sym ? "outline:2px dashed var(--accent);outline-offset:-2px;" : "");
+                    @* 드롭 타깃 = 행 전체(@ondragover:preventDefault 필수). 드래그 소스 = 좌측 그립(td)만 — 행 클릭(선택)과 충돌 회피. *@
                     <tr @key="rowKey" style="@rowStyle"
-                        @onclick="() => SelectAsync(w.sym, NameOf(w), DetectMarket(w.sym))">
+                        @ondragover:preventDefault="true" @ondragenter="() => OnDragEnter(ww.sym)" @ondrop="() => OnDrop(ww.sym)"
+                        @onclick="() => SelectAsync(ww.sym, NameOf(ww), DetectMarket(ww.sym))">
+                        <td draggable="true" title="드래그로 순서 변경" style="cursor:grab;text-align:center;color:var(--sub);user-select:none"
+                            @ondragstart="() => OnDragStart(ww.sym)" @ondragend="OnDragEnd" @onclick:stopPropagation="true">⠿</td>
                         <td><b>@NameOf(w)</b><br/><small class="sub">@w.sym</small></td>
                         <td class="num" style="text-align:right">@PriceText(q)</td>
                         <td class="num @(diff>=0?"up":"down")" style="text-align:right">@DiffText(q, diff)</td>
@@ -162,10 +178,13 @@
 </div>
 
 @code {
-    // ===== 워치리스트 그룹 (원본 5종 고정 탭) =====
-    private readonly string[] _groups = { "⭐ 즐겨찾기", "🇰🇷 국내주식", "🇺🇸 미국주식", "💎 반도체", "🔋 2차전지", "🤖 AI", "🦾 AI 피지컬" };
+    // ===== 워치리스트 그룹 — v4.64.0: 빌트인 + 사용자 커스텀(WatchlistStore, DB 영속) =====
+    private List<string> _groups = new(WatchlistStore.BuiltInCategories);   // OnInitialized 에서 커스텀 병합
     private string _group = "⭐ 즐겨찾기";
+    private string _newCat = "";
     private List<(string sym, string name)> _watch = new();
+    // HTML5 네이티브 DnD 재정렬 상태(외부 라이브러리 없음 — Dashboard 패턴 계승)
+    private string? _drag, _dragOver;
 
     private readonly Dictionary<string, Quote> _quotes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, decimal> _prev = new(StringComparer.OrdinalIgnoreCase);     // 플래시용 직전 가격
@@ -200,6 +219,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _groups = WatchlistStore.LoadCategories(Db);   // 빌트인 + 영속된 커스텀 카테고리
         await ReloadGroupAsync();
         await SelectFirstAsync();
         RestartLoop();
@@ -219,7 +239,10 @@
         {
             try { await Task.Delay(_intervalSec * 1000, ct); } catch { return; }
             await RefreshAsync();
-            await InvokeAsync(StateHasChanged);
+            // ★드래그 중 재렌더 금지: @key(rowKey=sym:ver) 변경이 드래그 소스 <tr>/<td> 를 DOM 에서 교체하면 진행 중인
+            //   네이티브 HTML5 드래그가 끊겨 @ondragend/@ondrop 미발화 → _drag 가 stale 로 남는다(다음 클릭서 유령 재정렬).
+            //   데이터(_quotes)는 계속 갱신하되 렌더만 보류 — 드롭/종료 시점(또는 다음 idle 틱)에 반영.
+            if (_drag is null) await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -239,24 +262,12 @@
         await SelectFirstAsync();
     }
 
-    // 원본 ReloadGroupAsync: Watchlist 우선, 빈 그룹 → 샘플 폴백 (그룹명 "미국" 포함 → USTop, Take 10)
+    // v4.64.0 — WatchlistStore 경유(SortOrder 순). 빈 그룹: 빌트인은 큐레이션 시드 폴백, 커스텀은 진짜 비움(사용자 캔버스).
     private async Task ReloadGroupAsync()
     {
-        _watch.Clear();
-        try
-        {
-            var dt = Db.Query("SELECT Symbol, Name FROM Watchlist WHERE GroupName=@g ORDER BY SortOrder",
-                new() { ["@g"] = _group });
-            if (dt.Rows.Count == 0)
-            {
-                foreach (var (s, n) in DefaultsFor(_group).Take(12)) _watch.Add((s, n));   // 그룹별 큐레이션 폴백
-            }
-            else
-            {
-                foreach (DataRow r in dt.Rows) _watch.Add((Safe.Str(r["Symbol"]), Safe.Str(r["Name"])));
-            }
-        }
-        catch { }
+        _watch = WatchlistStore.LoadSymbols(Db, _group);
+        if (_watch.Count == 0 && WatchlistStore.IsBuiltIn(_group))
+            foreach (var (s, n) in DefaultsFor(_group).Take(12)) _watch.Add((s, n));
         await RefreshAsync();
     }
 
@@ -294,7 +305,8 @@
                 foreach (var q in qs)
                 {
                     // 가격 변동 감지 → 플래시 (원본: 등락률 부호로 색 결정, 800ms)
-                    if (_prev.TryGetValue(q.Symbol, out var p) && p > 0 && p != q.Price)
+                    //  ★드래그 중인 종목은 ver(=@key) 증가 금지 — 그 행이 재생성되면 진행 중 드래그가 끊긴다(이중 안전장치).
+                    if (_prev.TryGetValue(q.Symbol, out var p) && p > 0 && p != q.Price && q.Symbol != _drag)
                     {
                         _flashVer[q.Symbol] = _flashVer.GetValueOrDefault(q.Symbol) + 1;
                         _flashAnim[q.Symbol] = q.ChangeRate > 0 ? "flashU" : "flashD";
@@ -346,28 +358,68 @@
     {
         var sym = _newSym.Trim().ToUpperInvariant();
         if (string.IsNullOrEmpty(sym)) return;
-        var name = SectorMap.NameOf(sym);
-        try
-        {
-            Db.Execute(@"INSERT INTO Watchlist(Symbol,Name,Market,GroupName,SortOrder)
-                         VALUES(@s,@n,@m,@g,0)
-                         ON CONFLICT(Symbol,GroupName) DO UPDATE SET Name=@n",
-                new() { ["@s"] = sym, ["@n"] = name, ["@m"] = (int)DetectMarket(sym), ["@g"] = _group });
-        }
-        catch { }
+        WatchlistStore.AddSymbol(Db, _group, sym, SectorMap.NameOf(sym), DetectMarket(sym));
         _newSym = "";
         await ReloadGroupAsync();
     }
 
     private async Task DeleteSymbolAsync(string sym)
     {
-        try
-        {
-            Db.Execute("DELETE FROM Watchlist WHERE Symbol=@s AND GroupName=@g",
-                new() { ["@s"] = sym, ["@g"] = _group });
-        }
-        catch { }
+        WatchlistStore.RemoveSymbol(Db, _group, sym);
         await ReloadGroupAsync();
+    }
+
+    // ===== v4.64.0 커스텀 카테고리(추가/삭제) =====
+    private async Task OnAddCatKey(KeyboardEventArgs e) { if (e.Key == "Enter") await AddCategoryAsync(); }
+
+    private async Task AddCategoryAsync()
+    {
+        var name = _newCat.Trim();
+        if (WatchlistStore.AddCategory(Db, name))
+        {
+            _groups = WatchlistStore.LoadCategories(Db);
+            _group = name; _newCat = "";
+            await ReloadGroupAsync();
+            await SelectFirstAsync();
+        }
+        else { _newCat = ""; }   // 빈/빌트인/중복 — 무시
+    }
+
+    private async Task RemoveCategoryAsync(string cat)
+    {
+        if (!WatchlistStore.RemoveCategory(Db, cat)) return;   // 빌트인은 삭제 불가
+        _groups = WatchlistStore.LoadCategories(Db);
+        if (_group == cat) _group = _groups.Count > 0 ? _groups[0] : "⭐ 즐겨찾기";
+        await ReloadGroupAsync();
+        await SelectFirstAsync();
+    }
+
+    // ===== v4.64.0 행 드래그 재정렬(HTML5 네이티브 DnD) — 그립(td)이 소스, 행이 드롭 타깃 =====
+    private void OnDragStart(string sym) { _drag = sym; _dragOver = null; }
+    private void OnDragEnter(string sym) { if (_drag != null && sym != _drag) _dragOver = sym; }
+    private void OnDragEnd() { _drag = null; _dragOver = null; }
+
+    private void OnDrop(string targetSym)
+    {
+        if (_drag is null || _drag == targetSym) { OnDragEnd(); return; }
+        int from = _watch.FindIndex(x => x.sym == _drag);
+        int to   = _watch.FindIndex(x => x.sym == targetSym);
+        if (from >= 0 && to >= 0)
+        {
+            var item = _watch[from];
+            _watch.RemoveAt(from);
+            if (from < to) to--;   // ★아래로 끌 때: 앞 원소 제거로 타깃 인덱스가 1 당겨짐 — 보정 없으면 타깃 '뒤'에 떨어져 위↔아래 비대칭.
+            _watch.Insert(to, item);   // 보정 후엔 항상 타깃 '자리(앞)'에 일관 삽입
+            PersistWatchOrder();   // 시드-only 그룹도 첫 재정렬 시 DB 승격 + SortOrder 영속(다음 진입 시 유지)
+        }
+        OnDragEnd();
+    }
+
+    // 현재 _watch 순서를 DB 에 영속: 모든 행 upsert(시드→영속 승격) 후 SortOrder 0..n-1 일괄 기입.
+    private void PersistWatchOrder()
+    {
+        foreach (var w in _watch) WatchlistStore.AddSymbol(Db, _group, w.sym, w.name, DetectMarket(w.sym));
+        WatchlistStore.Reorder(Db, _group, _watch.Select(x => x.sym).ToList());
     }
 
     // ===== 52주 신고/신저가 스캔 (원본: SampleData 전체 · 종가 기준 · 이벤트당 Warning 알림) =====
