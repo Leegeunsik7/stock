@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.74.0** (2026-06-26)  
+> 기준 버전: **v4.78.0** (2026-06-27)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -14,7 +14,7 @@
 - 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
 - AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
 - **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
-- 1,593 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- 1,641 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.74.0)
+### 현황 (v4.78.0)
 
-- **총 테스트**: 1,593 (클린런)
+- **총 테스트**: 1,641 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -461,6 +461,10 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.72.0 | 로우레이턴시 퀀트 커널 3계층: `VectorizedAlphaEngine`(AVX2 SIMD OLS) · `ZeroAllocJsonParser`(hybrid stackalloc/ArrayPool) · `AutonomousAlphaFactory+CartridgeNumericsGuard`(headless mine→attest→guard→sign) · `MacroChaosTailReplayer`(virtual clock 1000x, GFC/LUNA 3σ→ForceFreeze) |
 | v4.73.0 | UI 텔레메트리 확장: `RingTelemetry` struct AlphaFactory 카운터(Cycles·Signed·Rejected) 통합 · `RingTelemetryPublisher` AlphaFactory 옵션 배선 · `BlazorHomeForm` AutonomousAlphaFactory singleton 배선(BelowNormal 24h) · `TelemetryMonitor.razor` 🏭 알파 공장 패널(거부율 포함) |
 | v4.74.0 | QFixedPrimary 전환 관제탑: `ClearingAuthorityPage.razor`(`/clearing/authority`) 신규 — ShadowCutoverGate Observed/FrozenCount/LastDivergence 300ms 폴링·5조건 승격 체크리스트·가역 SetAuthority 버튼·liveArmed:false 안전 callout · DashboardHome 🔧 청산 권위 카드 추가 |
+| v4.75.0 | 4대 진격 과제 검증 스캐폴드(미배선·liveArmed:false): `SafeIgnitionSequencer`(안전 점화 5상태 FSM) · `QKrxTickLadder`+`KrxFxClearing`(KRX 가격대 격자·USD·이종통화 FX) · `KiwoomFreezeRelay`(파이프 생존성 멱등 동결) · `TossLiveBroker`(IBroker·WS→ring·ShadowClearing). 워크플로 적대검증 fail-open 4건 교정 반영 |
+| v4.76.0 | 과제1 배선: `SafeIgnitionSequencer` BlazorHomeForm 결속(격리 PaperBroker·이중키 술어) + 12 테스트(dead-on-arrival 교정·해피패스·fail-closed) |
+| v4.77.0 | 과제2 배선: ShadowCutoverGate 레지스트리 `BuildAugmentedRegistry`(가격대별 정확 KRX 격자 보강) + 26 테스트(KRX 사다리 경계·★INERT 게이트 FX fail-closed 회귀잠금) |
+| v4.78.0 | 과제3 배선: `KiwoomFreezeRelay` 결속(ProxyLost/Error 만 구독·freeze-storm 회피) + `ModuleBridge` STA 하드닝(x86 폼 파괴 레이스 방어) + 10 테스트(★FillReceived 미구독 회귀잠금) |
 
 ---
 
@@ -552,6 +556,10 @@ SIMD OLS 알파        → Common/VectorizedAlphaEngine.cs  (AVX2 두 번 패스
 무할당 JSON 파서     → Common/ZeroAllocJsonParser.cs  (stackalloc/ArrayPool 혼합)
 자율 알파 공장       → Common/AutonomousAlphaFactory.cs  (headless 24h 루프 + CartridgeNumericsGuard)
 꼬리 리스크 재현기   → Common/MacroChaosTailReplayer.cs  (가상 클럭 1000x, GFC·LUNA 3σ→ForceFreeze)
+안전 점화 시퀀서     → Common/SafeIgnitionSequencer.cs  (v4.76.0 배선, 5상태 FSM·격리 프로브·이중키)
+KRX 호가 사다리·FX   → Common/QKrxTickLadder.cs  (v4.77.0 배선, KrxTickLadder·KrxFxClearing 독립 fail-closed)
+키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
+토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, 미배선 — 실 API 확정 후 결속)
 포트폴리오 멘토      → Common/QPortfolioMentor.cs
 미래가치 시뮬        → Common/QFutureValue.cs
 카오스 진단          → Common/QChaos.cs
@@ -574,9 +582,12 @@ WinForms 진입점      → Launcher.cs
 
 | 항목 | 설명 |
 |---|---|
-| **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
-| **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
-| **키움 32-bit 실거래** | `PlatformTarget=x86` 활성화 후 `ExecutionBridgeBroker` 파이프 실 연결 |
+| **실 무장 옵트인** | `appsettings.json` `Dispatch.ValveWired=true` + `LiveArmingWired=true` 동시 ON → `SafeIgnitionSequencer.BeginIgnition` 으로 안전 점화(현재 둘 다 false). /command 트리거 버튼 UI 미배선 |
+| **토스 브로커 결속** | `TossLiveBroker`(v4.75.0 스캐폴드)를 `ShadowClearingBroker`로 래핑 + `ITossTransport` 실 구현(REST/wss·OAuth 확정 필요) |
+| **키움 32-bit 실거래** | `PlatformTarget=x86`(현 NamedPipe 분리 권장) + `ExecutionBridgeBroker` 파이프 실 연결 + WebView2 비트니스 확인 |
+| **FX 실시간 피드** | `KrxFxClearing` 진입점은 준비됨 — `QFxQuote` 환율 실시간 소스(API) 배선 시 USD 자산 라이브 청산 활성 |
+| ~~v4.76–78 과제1·2·3 배선~~ | ✅ 완료 — SafeIgnitionSequencer·KrxFxClearing·KiwoomFreezeRelay 결속 + 회귀 테스트 48건 |
+| ~~v4.75.0 4대 과제 스캐폴드~~ | ✅ 완료 — 워크플로 설계+적대검증 4파일(fail-open 4건 교정) |
 | ~~v4.74.0 QFixedPrimary 전환 관제탑~~ | ✅ 완료 — `ClearingAuthorityPage.razor` 신규 · DashboardHome 🔧 카드 |
 | ~~v4.73.0 AlphaFactory 텔레메트리~~ | ✅ 완료 — `RingTelemetry` struct 확장 · `RingTelemetryPublisher` 배선 · `TelemetryMonitor.razor` 🏭 패널 |
 | ~~v4.72.0 SIMD·알파·꼬리~~ | ✅ 완료 — `VectorizedAlphaEngine` · `ZeroAllocJsonParser` · `AutonomousAlphaFactory` · `MacroChaosTailReplayer` |
