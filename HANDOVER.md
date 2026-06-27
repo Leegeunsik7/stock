@@ -545,7 +545,7 @@ xunit / xunit.runner.visualstudio (테스트)
 주문 증적            → Common/OrderAttestationService.cs
 링버퍼 코어          → Common/RingBufferCore.cs
 주문 디스패치        → Common/OrderDispatchRing.cs
-링 텔레메트리        → Common/RingTelemetry*.cs  (Gamma)
+링 텔레메트리        → Common/RingTelemetry*.cs  (Gamma + v4.73.0 AlphaFactory 카운터 통합)
 발주 드레인 엔진     → Common/OrderDrainWorker.cs  (v4.70.0 이중 키 잠금)
 버전 공급자          → Common/SystemVersionProvider.cs  (무할당 캐싱)
 SIMD OLS 알파        → Common/VectorizedAlphaEngine.cs  (AVX2 두 번 패스)
@@ -561,7 +561,9 @@ SIMD OLS 알파        → Common/VectorizedAlphaEngine.cs  (AVX2 두 번 패스
 LLM 연동             → Common/AiService.cs, LlmProviders.cs
 포트폴리오 컨텍스트  → Common/PortfolioContext.cs
 Blazor 런처 허브      → Blazor/Pages/DashboardHome.razor
-Blazor DI 진입점     → Blazor/BlazorHomeForm.cs
+Blazor DI 진입점     → Blazor/BlazorHomeForm.cs  (AlphaFactory singleton 배선 포함)
+파이프라인 관제탑    → Blazor/Pages/TelemetryMonitor.razor  (/broker/pipeline, 🏭 AlphaFactory 패널)
+청산 권위 전환       → Blazor/Pages/ClearingAuthorityPage.razor  (/clearing/authority, v4.74.0)
 WinForms 진입점      → Launcher.cs
 테스트 전체          → StockManager.Tests/
 ```
@@ -572,8 +574,6 @@ WinForms 진입점      → Launcher.cs
 
 | 항목 | 설명 |
 |---|---|
-| **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
-| **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
 | **실 무장 옵트인** | `appsettings.json`에서 `Dispatch.ValveWired=true` + `Dispatch.LiveArmingWired=true` 동시 활성화 (현재 둘 다 false) |
 | **자산별 QTickSpec 완성** | `ShadowCutoverGate(enabled=true)` 활성화 전제 (KRW 정수·USD 소수 분기 필수) |
 | **키움 32-bit 실거래** | `PlatformTarget=x86` 활성화 후 `ExecutionBridgeBroker` 파이프 실 연결 |
