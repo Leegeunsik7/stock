@@ -72,6 +72,16 @@ namespace StockManager.Blazor
             var (hydration, recoveryJournaler) = WireBootIntegrity(attestation, cfg);
 
             var (broker, bridge) = ExecutionBridgeBroker.Create(attestation);
+
+            // v4.78.0 — 과제3: 키움 파이프 생존성 연쇄 동결 릴레이.
+            //   ★체결 감사 경계: 체결(Fill) 감사·보유수량 갱신은 ExecutionBridgeBroker 가 소유한 LiveAuditService
+            //     단일 경로로 일원화한다(OrderRejected 도 FillReceived 로 들어와 평범한 거부가 전체를 동결하는
+            //     freeze-storm 회피). 따라서 Relay 는 FillReceived 를 구독하지 않고 ProxyLost/ErrorReceived 만
+            //     멱등 CAS 동결 트리거로 처리한다(적대검증 critical 2건 교정 반영).
+            var freezeRelay = new KiwoomFreezeRelay(attestation, bridge, com: null);
+            freezeRelay.Attach();
+            services.AddSingleton(freezeRelay);
+            FormClosed += (_, _) => { try { freezeRelay.Dispose(); } catch { } };
             services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
             // S27-c — 섀도우 컷오버 게이트(옵트인 기본 OFF = INERT). ON 시 청산 신호에 신 QFixed 병렬 대조+분기 동결.
             //   라이브 청산 미배선(현행 decimal 권위 유지)·기본 OFF 라 성벽 무영향. 실 컷오버 시 Clear() 결속.

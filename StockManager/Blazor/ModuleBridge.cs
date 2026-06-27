@@ -41,15 +41,29 @@ namespace StockManager.Blazor
         /// <summary>
         /// 지정 키의 WinForms 창을 연다. Blazor async 컨텍스트에서 호출해도 안전:
         /// InvokeRequired 시 BeginInvoke 로 STA 마샬링 후 반환.
+        /// ★v4.78.0 과제3 — x86 전환 시 폼 핸들 파괴/종료 레이스에서 BeginInvoke 자체가 던지는
+        ///   InvalidOperationException/ObjectDisposedException 을 포착해 직접호출로 폴백한다(UI 크래시 차단).
         /// </summary>
         public static void Open(string key)
         {
-            if (_host is { InvokeRequired: true })
+            // 지역 복사: 동시 Configure 와의 락-프리 경합 차단.
+            var host = _host;
+            if (host is { IsDisposed: false, InvokeRequired: true })
             {
-                _host.BeginInvoke(() => OpenInner(key));
-                return;
+                try
+                {
+                    host.BeginInvoke(() => OpenInner(key));
+                    return;
+                }
+                // ObjectDisposedException 은 InvalidOperationException 의 하위형이므로 먼저 catch(CS0160 회피).
+                catch (System.ObjectDisposedException)   { /* 폼 종료 레이스 → 폴백 */ }
+                catch (System.InvalidOperationException) { /* 핸들 미생성/파괴 → 폴백 */ }
+                // 마샬링 실패 시 직접 호출로 폴백(무동작이 STA 위반 가능성보다 더 위험).
             }
-            OpenInner(key);
+
+            try { OpenInner(key); }
+            catch (System.ObjectDisposedException)   { /* 폼 파괴 레이스 — 무시 */ }
+            catch (System.InvalidOperationException) { /* 크로스스레드/핸들 레이스 — UI 크래시 방지 */ }
         }
 
         private static void OpenInner(string key)
