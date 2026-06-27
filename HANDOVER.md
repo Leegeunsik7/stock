@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.78.0** (2026-06-27)  
+> 기준 버전: **v4.79.0** (2026-06-27)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -465,6 +465,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.76.0 | 과제1 배선: `SafeIgnitionSequencer` BlazorHomeForm 결속(격리 PaperBroker·이중키 술어) + 12 테스트(dead-on-arrival 교정·해피패스·fail-closed) |
 | v4.77.0 | 과제2 배선: ShadowCutoverGate 레지스트리 `BuildAugmentedRegistry`(가격대별 정확 KRX 격자 보강) + 26 테스트(KRX 사다리 경계·★INERT 게이트 FX fail-closed 회귀잠금) |
 | v4.78.0 | 과제3 배선: `KiwoomFreezeRelay` 결속(ProxyLost/Error 만 구독·freeze-storm 회피) + `ModuleBridge` STA 하드닝(x86 폼 파괴 레이스 방어) + 10 테스트(★FillReceived 미구독 회귀잠금) |
+| v4.79.0 | 과제1 UI: `/command` 점화 제어반에 🚀 안전 점화 시퀀스 원샷 트리거 버튼 추가(`SafeIgnitionSequencer.BeginIgnition` 결속·결과/상태 표시·이중키 미충족 시 거부) |
 
 ---
 

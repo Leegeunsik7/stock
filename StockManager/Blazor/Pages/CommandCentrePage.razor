@@ -9,6 +9,7 @@
 @inject ForensicTelemetryChannel Telemetry
 @inject GatedOrderDispatcher RingDispatcher
 @inject OrderDrainWorker DrainValve
+@inject SafeIgnitionSequencer IgnitionSeq
 @using System.Threading
 @using StockManager.Common
 
@@ -249,6 +250,16 @@
         <button class="addbtn" @onclick="ArmMaster">③ 마스터</button>
         <button class="addbtn cc-ign-retreat" @onclick="Retreat">⏹ 후퇴(Lock)</button>
     </div>
+    @* v4.76.0 — 안전 점화 시퀀스(원샷): 이중키 동시 ON + 격리 1주 프로브 → 3σ·지연 검증 → MasterIgnited.
+       단계별 수동 Arm 과 달리 가드 전 과정을 한 번에 의식(ritual)으로 수행. 어느 단계든 실패 시 fail-closed 동결. *@
+    <div class="cc-ign-panel" style="margin-top:6px">
+        <button class="addbtn" @onclick="BeginSafeIgnition" title="이중키+격리프로브+3σ·지연 검증 원샷">🚀 안전 점화 시퀀스</button>
+        <span style="font-size:11px;color:var(--sub)">현재 시퀀스 상태: <b>@IgnitionSeq.State</b></span>
+    </div>
+    @if (!string.IsNullOrEmpty(_seqMsg))
+    {
+        <div class="cc-ign-msg">@_seqMsg</div>
+    }
     @if (!string.IsNullOrEmpty(_ignMsg))
     {
         <div class="cc-ign-msg">@_ignMsg</div>
@@ -426,6 +437,20 @@
     {
         Ignition.Lock("관제반 수동 후퇴");
         _ignMsg = "⏹ 후퇴 — 즉시 Locked 다운그레이드";
+        StateHasChanged();
+    }
+
+    private string? _seqMsg;
+
+    // v4.76.0 — 안전 점화 시퀀스 원샷 트리거. 서명은 점화 패널 입력(_ignSignature) 재사용.
+    //   기본 구성(이중키 false)에선 "이중 키 미충족"으로 거부(동결 없음) — liveArmed:false 박제.
+    private void BeginSafeIgnition()
+    {
+        var r = IgnitionSeq.BeginIgnition(_ignSignature ?? "");
+        _seqMsg = r.Succeeded
+            ? $"🚀 {r.FinalState} — {r.Reason} (z={r.ObservedZ:F2}σ, 지연 {r.PipelineLatencyMs}ms)"
+            : $"⛔ {r.FinalState} — {r.Reason}";
+        _ignSignature = "";
         StateHasChanged();
     }
 
