@@ -18,9 +18,9 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.74.0</Version>
-    <AssemblyVersion>4.74.0.0</AssemblyVersion>
-    <FileVersion>4.74.0.0</FileVersion>
+    <Version>4.75.0</Version>
+    <AssemblyVersion>4.75.0.0</AssemblyVersion>
+    <FileVersion>4.75.0.0</FileVersion>
     <!-- v4.69.0 — DashboardHome.razor 통합 관제탑(Blazor 런처 허브) + IModuleBridge DI + STA 마샬링 하드닝.
          v4.68.0 — SymbolPicker mousedown 선택 + 실시간 병렬 fetch(NaverSem4·YahooSem3) + 기본주기 1s + IndexTickerBar 마켓.
          v4.67.0 — Mission A: Blazor DI ↔ WinForms Launcher 싱글톤 인프라 결속 브릿지.
