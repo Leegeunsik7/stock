@@ -88,9 +88,20 @@ namespace StockManager.Blazor
             // v4.56.0 — 단일 전역 spec(KRW 정수단가 전용·USD/코인 침묵왜곡) → 자산별 격자 레지스트리 ctor 로 전환.
             //   ON(옵트인) 시 Clear(symbol,..)가 자산별 tick/step 으로 보수 정렬(매수↑·매도↓)하고 미등록 심볼은
             //   fail-closed(전용 섀도우 attestation 동결 — 라이브 격리 유지). 기본 OFF(INERT)라 성벽 무영향.
+            // v4.77.0 — 과제2: 가격대별 정확 KRX 격자 + USD 센트 격자로 레지스트리 보강.
+            //   BuildAugmentedRegistry 는 DefaultEntries(불변) 위에 신규 심볼만 추가(동일 심볼은 ctor FNV 충돌
+            //   fail-fast). KrxEntry(symbol, 참조가격)→KrxTickLadder.SpecFor(가격대 정확 호가단위), UsdEntry→0.01 센트.
+            //   기본 OFF(INERT)라 성벽 무영향. 이종통화 USD→KRW base 청산은 KrxFxClearing.TryClearUsdToKrwBase(독립 fail-closed).
+            var clearingRegistry = KrxTickSpecsExtensions.BuildAugmentedRegistry(new[]
+            {
+                ("068270", 180_000m),   // 셀트리온  (~18만 → 5만~20만 → 100원)
+                ("207940", 800_000m),   // 삼성바이오 (~80만 → 50만↑ → 1000원)
+                ("005490", 400_000m),   // POSCO홀딩스(~40만 → 20만~50만 → 500원)
+                ("012330", 230_000m),   // 현대모비스 (~23만 → 20만~50만 → 500원)
+            });
             var shadowGate = new ShadowCutoverGate(
                 cfg.GetBool("Clearing.ShadowCutover", false),
-                BuiltInTickSpecs.BuildDefaultRegistry(), new OrderAttestationService());
+                clearingRegistry, new OrderAttestationService());
             // v4.60.0 Path Alpha — 청산 연산 권위 역전 컷오버 배선. 옵트인(Clearing.QFixedPrimary.Enabled=true) 시에만
             //   QFixed 정렬값을 권위로 승격(SetAuthority — volatile int 무할당 가역 스위치). 기본 false → LegacyPrimary
             //   (decimal 권위·기존 의미론 1비트 불변). ⚠️ liveArmed:false 박제: 본 게이트는 라이브 청산 경로에 미배선
