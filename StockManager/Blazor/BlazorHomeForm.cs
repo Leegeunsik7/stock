@@ -315,6 +315,24 @@ namespace StockManager.Blazor
                 _ => { try { ringPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
             FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
 
+            // v4.76.0 — 과제1: 실 무장 안전 점화 시퀀서 배선. 두 옵트인 키(ValveWired ∧ LiveArmingWired)가
+            //   '동시' ON 일 때만 BeginIgnition 이 격리 1주 프로브→3σ·지연 검증→MasterIgnited 로 진행.
+            //   ★프로브는 반드시 격리 PaperBroker(IsLive=false)로 — 실 자본 위험 0(broker 가 IsLive 면 시퀀서가 거부→동결).
+            //   ★ProbeReferencePrice>0 필수(지정가 경로). 0=시장가는 dead-on-arrival(StockValidator·PaperBroker 양쪽 거부).
+            //   liveArmed:false 불변: MasterIgnited 도달 전까지 IgnitionLock=Locked·LiveArmingGate=false 유지.
+            var probeBroker = new PaperBroker(db);
+            var ignitionSeq = new SafeIgnitionSequencer(
+                ignition, attestation, sentinel, probeBroker,
+                valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
+                liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false))
+            {
+                ProbeSymbol          = "005930",
+                ProbeReferencePrice  = 1.0,    // >0 필수(지정가 경로). 실 운영은 실제 호가 기준가 주입 권장.
+                MaxPipelineLatencyMs = 2_000,
+                MaxObservedSigma     = sentinel.AlertThresholdSigma,   // 센티넬 3σ 임계와 정렬
+            };
+            services.AddSingleton(ignitionSeq);    // ClearingAuthorityPage 와 동급 — /command 점화 트리거용
+
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(
                 attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway, rejectionForensics));
