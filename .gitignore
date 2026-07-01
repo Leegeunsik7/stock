@@ -26,3 +26,6 @@ coverage*.json
 .idea/
 *.tmp
 Thumbs.db
+
+# MCP Playwright 세션 아티팩트(임시)
+.playwright-mcp/
