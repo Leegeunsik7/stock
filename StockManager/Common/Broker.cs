@@ -65,6 +65,27 @@ namespace StockManager.Common
                           : (IBroker)new LiveRouterBroker(db);
             return shadowGate is null ? inner : new ShadowClearingBroker(inner, shadowGate, liveAttestation);
         }
+
+        /// <summary>
+        /// 토스증권 실거래 스택 순수 조립(옵트인 전용). transport(인증 결속 완료)·signalRing(시세 신호 전용
+        /// 링·유일 생산자)·clock 을 주입받아 TossLiveBroker 를 만들고, shadowGate 제공 시 ShadowClearingBroker
+        /// 로 래핑(데코레이터 계약: LegacyPrimary/INERT=병렬 관측·RAW 위임, QFixedPrimary=정렬값 치환+fail-closed).
+        /// ★liveArmed:false 불변 — 본 팩토리는 어떤 프로덕션 호출부에서도 자동 배선되지 않는다(비가역 실 결속은
+        /// 호출부가 IsLive&amp;IsArmed 옵트인 하에 명시 수행). transport 의 인증(TossTokenService.CurrentAccessToken)
+        /// 은 호출부가 결속한다.
+        /// </summary>
+        public static IBroker CreateToss(
+            ITossTransport transport,
+            OrderDispatchRing signalRing,
+            Func<long> clock,
+            OrderAttestationService? liveAttestation = null,
+            ShadowCutoverGate? shadowGate = null,
+            long genomeId = 0,
+            int maxReconnects = 5)
+        {
+            var toss = new TossLiveBroker(transport, signalRing, clock, liveAttestation, genomeId, maxReconnects);
+            return shadowGate is null ? toss : new ShadowClearingBroker(toss, shadowGate, liveAttestation);
+        }
     }
 
     /// <summary>API 키 보안 보관 (DPAPI 기반 Secret 사용)</summary>
@@ -79,6 +100,12 @@ namespace StockManager.Common
         { db.SetSecret("Upbit.AccessKey", accessKey); db.SetSecret("Upbit.SecretKey", secretKey); }
         public static (string access, string secret) GetUpbit(LocalDatabase db)
             => (db.GetSecret("Upbit.AccessKey") ?? "", db.GetSecret("Upbit.SecretKey") ?? "");
+
+        // 토스증권 OAuth 자격증명(client_credentials 가정). DPAPI Secret 보관 — 실 로드는 옵트인.
+        public static void SaveToss(LocalDatabase db, string clientId, string clientSecret, string account)
+        { db.SetSecret("Toss.ClientId", clientId); db.SetSecret("Toss.ClientSecret", clientSecret); db.SetSecret("Toss.Account", account); }
+        public static (string clientId, string clientSecret, string account) GetToss(LocalDatabase db)
+            => (db.GetSecret("Toss.ClientId") ?? "", db.GetSecret("Toss.ClientSecret") ?? "", db.GetSecret("Toss.Account") ?? "");
     }
 
     /// <summary>주문 실행 전 확인 다이얼로그(실거래 전환 대비 공통 UI)</summary>

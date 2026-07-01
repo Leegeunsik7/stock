@@ -18,9 +18,27 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.79.0</Version>
-    <AssemblyVersion>4.79.0.0</AssemblyVersion>
-    <FileVersion>4.79.0.0</FileVersion>
+    <Version>4.80.0</Version>
+    <AssemblyVersion>4.80.0.0</AssemblyVersion>
+    <FileVersion>4.80.0.0</FileVersion>
+    <!-- v4.80.0 — ★로드맵 1단계: 토스증권 인증 격리(OAuth 토큰 수명주기) + 실배선 조립.
+         ★정직 회계: TossLiveBroker/ITossTransport/TossHttpTransport(δ=0 인입·ShadowClearingBroker 데코레이터
+         계약)는 v4.75.0 골격으로 이미 존재. 실제 미결 델타는 두 가지였다: (1) TossHttpTransport 에 Func 기반
+         bearer '훅'만 있고 실제 OAuth 토큰 만료/갱신 서비스 부재, (2) ApiKeyVault 에 Toss 슬롯·BrokerHub 조립
+         경로 부재. 본 단계가 그 갭만 채운다(중복 재작성 없음).
+         [핵심] TossTokenService(신규·싱글톤 수명 전제) — 실 주문 핫패스(Place→transport)는 CurrentAccessToken()
+         을 '락-프리 단일 읽기'로만 만지고(불변 Snapshot 참조 Volatile 스왑·네트워크 블록 0·할당 0), 토큰 취득/
+         갱신 네트워크 I/O 는 백그라운드 스레드(RefreshLoop)가 콜드 패스에서 수행 — 두 경로 물리 분리(명령 §1).
+         갱신은 단일-비행 CAS 게이트(_refreshing)로 중첩 방지. ★fail-closed: 스냅샷 없음·만료(경계 포함)·
+         수명≤0·취득 실패 → CurrentAccessToken()="" → 인증 헤더 미부착 → REST 401 → 상위 (false,msg) 거부
+         (모호한 통과 0). 연속 실패 임계 초과 → ForceFreeze(1회 래치)·성공 시 스트릭 리셋. 수명 오버플로
+         (now+life*ticks) → checked 트랩 → 취득 실패 취급(오염 스냅샷 금지). clock 주입 필수(ticks 단위·결정론).
+         ITossAuthClient 추상 + TossOAuthClient(실 HttpClient 골격·엔드포인트 openQuestions). ApiKeyVault.
+         SaveToss/GetToss(DPAPI Secret). BrokerHub.CreateToss(순수 조립·shadowGate 제공 시 ShadowClearingBroker
+         래핑). ★liveArmed:false 불변: CreateToss 는 어떤 프로덕션 호출부에서도 자동 배선되지 않음(옵트인 전용).
+         테스트 +15(TossTokenServiceTests): 미취득/만료경계(==)/초과/무효수명(0·음수) fail-closed·연속실패 임계
+         동결·성공 스트릭 리셋·취득 예외 흡수 계상·선제 갱신(skew 창)·null 가드·bearer 공급자 반영·CreateToss
+         조립(래핑/비래핑)·INERT 위임 Place 실운반 도달. 빌드 0/0(TreatWarningsAsErrors), 전체 1656 통과(신규 +15). -->
     <!-- v4.69.0 — DashboardHome.razor 통합 관제탑(Blazor 런처 허브) + IModuleBridge DI + STA 마샬링 하드닝.
          v4.68.0 — SymbolPicker mousedown 선택 + 실시간 병렬 fetch(NaverSem4·YahooSem3) + 기본주기 1s + IndexTickerBar 마켓.
          v4.67.0 — Mission A: Blazor DI ↔ WinForms Launcher 싱글톤 인프라 결속 브릿지.
