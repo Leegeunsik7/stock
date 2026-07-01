@@ -209,15 +209,17 @@ namespace StockManager.Common
                 try
                 {
                     _transport.ConnectAndSubscribe();
-                    reconnectStreak = 0;   // 연결 성공 → 스트릭 리셋
 
                     // 수신 루프 — TryReceive 가 throw 하면 소켓 단절 → catch 로 재연결 판단.
                     while (_running)
                     {
                         // ★δ=0 핫패스 진입 — onFrame 콜백은 IngestFrame(무할당 파싱·ring publish).
                         bool got = _transport.TryReceive(IngestFrame, timeoutMs: 1000);
-                        // got==false 는 정상 타임아웃(프레임 없음) — 루프 지속.
-                        _ = got;
+                        // ★fail-open 차단(적대검증 교정): '연결 성공'이 아니라 '실 데이터 수신(got)' 시에만 스트릭 리셋.
+                        //   connect→즉시 close 반복(권한취소·구독거부)이 스트릭을 리셋시켜 한도에 영영 못 닿던
+                        //   재연결 livelock 을, 스트릭 누적→_maxReconnects 초과→fail-closed 동결로 수렴시킨다.
+                        //   got==false 는 정상 타임아웃(프레임 없음) — 스트릭 불변, 루프 지속.
+                        if (got) reconnectStreak = 0;
                     }
                 }
                 catch (Exception ex)
@@ -355,12 +357,15 @@ namespace StockManager.Common
         private readonly string  _baseUrl;       // 실 REST 베이스(openQuestions)
         private readonly Func<string>? _bearer;  // OAuth 토큰 공급(openQuestions — 미주입 시 인증 헤더 생략)
         private readonly ITossSocket? _socket;   // WS 추상(미주입 시 ConnectAndSubscribe throw → fail-closed)
+        private readonly OrderAttestationService? _att;  // ★인증 실패(401/403) fail-closed 채널
 
-        public TossHttpTransport(string baseUrl, Func<string>? bearerTokenProvider = null, ITossSocket? socket = null)
+        public TossHttpTransport(string baseUrl, Func<string>? bearerTokenProvider = null, ITossSocket? socket = null,
+                                 OrderAttestationService? attestation = null)
         {
             _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://api.toss-invest.example" : baseUrl;
             _bearer  = bearerTokenProvider;
             _socket  = socket;
+            _att     = attestation;
         }
 
         public (bool ok, string body) PostOrder(string pathAndQuery, string jsonBody)
@@ -420,11 +425,23 @@ namespace StockManager.Common
                 req.Headers.TryAddWithoutValidation("authorization", "Bearer " + token);
         }
 
-        private static (bool ok, string body) SendRead(HttpRequestMessage req)
+        private (bool ok, string body) SendRead(HttpRequestMessage req)
         {
             using var res = Http.Send(req);
             var body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            // ★인증 실패 fail-closed: 401/403 은 재시도로 방치하지 않고 즉시 동결(토큰 만료·서명 실패 표면).
+            if (IsAuthFailureStatus(res.StatusCode))
+                TripAuthFreeze("Toss Auth Failure — REST " + (int)res.StatusCode);
             return (res.IsSuccessStatusCode, body);
+        }
+
+        /// <summary>401 Unauthorized·403 Forbidden 은 인증 실패로 간주(fail-closed 대상).</summary>
+        public static bool IsAuthFailureStatus(System.Net.HttpStatusCode code)
+            => code == System.Net.HttpStatusCode.Unauthorized || code == System.Net.HttpStatusCode.Forbidden;
+
+        private void TripAuthFreeze(string reason)
+        {
+            try { _att?.ForceFreeze(reason); } catch { /* 동결 실패해도 진행 흐름 오염 금지 */ }
         }
 
         public void Dispose() => Disconnect();

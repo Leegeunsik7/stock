@@ -56,20 +56,36 @@ namespace StockManager.Common
 
         // ── 팩토리 — 권장 생성 방법 ─────────────────────────────────────────────
 
-        /// <summary>heartbeatTimeoutMs=500, LiveAuditService를 내부에서 생성해 묶음 반환.</summary>
+        /// <summary>IPC 헬스체크 간격 상수(과제 §2.2) — 50ms 초고속: 20ms Ping / 50ms 타임아웃.</summary>
+        public const int FastPingIntervalMs     = 20;
+        public const int FastHeartbeatTimeoutMs = 50;
+
+        /// <summary>LiveAuditService를 내부 생성해 묶음 반환. heartbeatTimeoutMs 기본 500ms(후방호환).
+        /// pingIntervalMs>0 이면 클라이언트가 능동 Ping 을 보내고 Pong 수신으로 양방향 생존성을 갱신한다.</summary>
         public static (ExecutionBridgeBroker Broker, KiwoomBridgeClient Bridge) Create(
             OrderAttestationService attestation,
-            string pipeName = BridgeSerializer.DefaultPipeName)
+            string pipeName = BridgeSerializer.DefaultPipeName,
+            int heartbeatTimeoutMs = 500,
+            int pingIntervalMs = 0)
         {
             var bridge = new KiwoomBridgeClient(
                 attestation:        null,    // ProxyLost 이벤트로 처리하므로 이중 호출 방지
                 pipeName:           pipeName,
-                heartbeatTimeoutMs: 500);    // S14 #2 스펙: 500ms
+                heartbeatTimeoutMs: heartbeatTimeoutMs,
+                nowTicks:           null,
+                pingIntervalMs:     pingIntervalMs);
 
             var audit  = new LiveAuditService(attestation);
             var broker = new ExecutionBridgeBroker(bridge, audit, attestation);
             return (broker, bridge);
         }
+
+        /// <summary>과제 §2.2 — 50ms 초고속 IPC 헬스체크 프로덕션 팩토리(20ms Ping·50ms 타임아웃 핑퐁).
+        /// 프록시가 50ms 이상 Pong 을 못 주면 ProxyLost → KiwoomFreezeRelay/OnProxyLost → EmergencyFreeze 연쇄.</summary>
+        public static (ExecutionBridgeBroker Broker, KiwoomBridgeClient Bridge) CreateFast(
+            OrderAttestationService attestation,
+            string pipeName = BridgeSerializer.DefaultPipeName)
+            => Create(attestation, pipeName, FastHeartbeatTimeoutMs, FastPingIntervalMs);
 
         // ── IBroker.Place ─────────────────────────────────────────────────────
 

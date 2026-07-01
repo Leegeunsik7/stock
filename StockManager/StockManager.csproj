@@ -21,9 +21,27 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.82.0</Version>
-    <AssemblyVersion>4.82.0.0</AssemblyVersion>
-    <FileVersion>4.82.0.0</FileVersion>
+    <Version>4.83.0</Version>
+    <AssemblyVersion>4.83.0.0</AssemblyVersion>
+    <FileVersion>4.83.0.0</FileVersion>
+    <!-- v4.83.0 — ★프로덕션 결속: 토스 실 WSS/REST · 키움 IPC 핑퐁+COM 시임 · 실 FX 피드. 4렌즈 적대검증 후 6결함 교정.
+         ★정직 회계: 운반 메커니즘(ClientWebSocket·HttpClient·IPC 핑퐁·JSON 파싱)은 전량 컴파일·테스트. 실 엔드포인트
+         URL·인증 서명·메시지 스키마·axKHOpenAPI COM 타입은 저장소 부재(검증 불가) → 날조 없이 주입형으로 격리.
+         [과제1 토스] TossProductionSocket(신규): 실 ClientWebSocket δ=0 수신(재사용 _rx·ReadOnlyMemory→IngestFrame·
+         문자열변환 0·pending-receive 로 타임아웃 시 소켓 abort 없음). 인증 fail-closed: 공백토큰 연결거부·핸드셰이크
+         401/403(CollectHttpResponseDetails 활성)→ForceFreeze·정책종료→ForceFreeze. TossHttpTransport 401/403→ForceFreeze.
+         TossProductionAssembler(옵트인·자동시작/무장 없음). [과제2 키움] BridgeProtocol Ping/Pong+PackSeq. KiwoomBridgeClient
+         50ms급 핑퐁(클라 _sendGate 직렬화·Pong→생존성 갱신·재사용 _pingBuf δ=0). KiwoomProxyHost Ping→Pong(_sendLock).
+         ExecutionBridgeBroker.CreateFast(20ms Ping/50ms 타임아웃). 무응답→ProxyLost→KiwoomFreezeRelay→EmergencyFreeze
+         연쇄(FillReceived 미구독 불변 유지). ProductionKiwoomApi(#if KIWOOM_COM·기본 빌드 제외): 정식 axKHOpenAPI
+         이벤트(OnReceiveRealData/OnReceiveChejanData)↔IKiwoomApi 매핑 어댑터(운영자 SDK 결합 시 활성). [과제3 FX]
+         HttpFxRateSource(신규): 실 HTTP 폴·dot-path JSON 추출·fail-soft→브레이커 스테일 승격. QFxFeedPump 가 QAcl.
+         TryImportRate 경계(외부 decimal→QFixed raw)→SubmitRaw 로 결선. QFxCircuitBreaker SubmitRaw/TripExternal.
+         ★적대검증 6교정: (H)WSS 핸드셰이크 상태수집 미설정으로 401 동결 죽던 것 활성화, (M)connect→즉시close 재연결
+         livelock→'실 데이터 수신 시에만 스트릭 리셋'으로 동결 수렴, (M)ping byte[] 할당→재사용버퍼 δ=0, (L)ConnectAsync
+         비-WS예외 소켓누수→Dispose, (L)_sendGate.Dispose 레이스→미해제, (L)TryReceive _pending 필드 재읽기 NRE→로컬캡처.
+         ★liveArmed:false 불변: 신규 조립기/펌프/브레이커 어느 것도 자동 시작·무장·실송출 없음(옵트인 전용).
+         테스트 +25(TossProductionTests·HttpFxRateSourceTests·KiwoomBridgeTests §1b/§7). 빌드 0/0(메인+x86), 전체 1698 통과. -->
     <!-- v4.82.0 — ★로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어(δ=0 송신).
          ★정직 회계 + 아키텍처 결정: 스펙 §2 는 '메인 프로세스에서 WebView2+키움 COM 동거 시 32비트
          메모리 압박 방어'를 요구했으나, 현 아키텍처는 정반대로 COM 을 별도 x86 프로세스(KiwoomProxy)로

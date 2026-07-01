@@ -136,6 +136,14 @@ namespace StockManager.KiwoomProxy
                 var payload = plen > 0 ? new byte[plen] : Array.Empty<byte>();
                 if (plen > 0 && !await ReadExactAsync(payload, ct)) break;
 
+                // ★50ms 초고속 헬스체크: Ping 즉시 Pong 에코(양방향 생존성·클라 RTT 측정). _sendLock 직렬화.
+                if (type == BridgeMessageType.Ping)
+                {
+                    long seq = payload.Length >= sizeof(long) ? BitConverter.ToInt64(payload) : 0L;
+                    SendControl(BridgeMessageType.Pong, seq);
+                    continue;
+                }
+
                 if (type != BridgeMessageType.OrderRequest) continue;  // 방향 오류 무시
 
                 var req = BridgeSerializer.Unpack<OrderRequest>(payload);
@@ -185,6 +193,16 @@ namespace StockManager.KiwoomProxy
             lock (_sendLock)
             {
                 int n = BridgeSerializer.PackHeartbeat(_sendBuf, sequence);
+                WriteLocked(n);
+            }
+        }
+
+        // 제어 프레임(Pong 등) 송신 — _sendLock 직렬화·재사용 버퍼(무할당).
+        private void SendControl(BridgeMessageType type, long seq)
+        {
+            lock (_sendLock)
+            {
+                int n = BridgeSerializer.PackSeq(_sendBuf, type, seq);
                 WriteLocked(n);
             }
         }

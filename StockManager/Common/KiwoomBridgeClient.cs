@@ -31,6 +31,11 @@ namespace StockManager.Common
         private readonly OrderAttestationService?  _attestation;
         // [v4.48.3] 주입식 클럭 — 기본은 실제 UtcNow. 테스트가 가상 시각으로 타임아웃 판정을 결정론 검증.
         private readonly Func<long>                _now;
+        // ★v4.83.0 IPC 핑퐁 — >0 이면 pingIntervalMs 주기로 Ping 송신, Pong 수신이 생존성 갱신(양방향).
+        private readonly int                       _pingIntervalMs;
+        private readonly SemaphoreSlim             _sendGate = new(1, 1);   // 클라 송신 직렬화(주문·Ping 동시 write 레이스 차단)
+        private readonly byte[]                    _pingBuf  = new byte[BridgeSerializer.HeaderSize + sizeof(long)];  // Ping 재사용 버퍼(δ=0·_sendGate 하 단독 접근)
+        private long                               _pingSeq;
 
         private NamedPipeClientStream?             _pipe;
         private readonly Channel<BridgeEnvelope>  _queue;
@@ -53,12 +58,14 @@ namespace StockManager.Common
             OrderAttestationService? attestation        = null,
             string                   pipeName           = BridgeSerializer.DefaultPipeName,
             int                      heartbeatTimeoutMs = DefaultTimeoutMs,
-            Func<long>?              nowTicks           = null)
+            Func<long>?              nowTicks           = null,
+            int                      pingIntervalMs     = 0)
         {
             _attestation        = attestation;
             _pipeName           = pipeName;
             _heartbeatTimeoutMs = heartbeatTimeoutMs;
             _now                = nowTicks ?? (() => DateTime.UtcNow.Ticks);
+            _pingIntervalMs     = pingIntervalMs < 0 ? 0 : pingIntervalMs;
             _queue = Channel.CreateBounded<BridgeEnvelope>(
                 new BoundedChannelOptions(MaxQueueDepth)
                 { FullMode = BoundedChannelFullMode.DropOldest });
@@ -96,8 +103,41 @@ namespace StockManager.Common
             if (_pipe is null || !_pipe.IsConnected)
                 throw new InvalidOperationException("KiwoomBridgeClient가 연결되지 않았습니다.");
             var buf = BridgeSerializer.PackOrderRequest(in req);
-            await _pipe.WriteAsync(buf, ct);
-            await _pipe.FlushAsync(ct);
+            // 클라 송신 직렬화 — 주문과 Ping 이 동일 파이프에 동시 write 하여 프레임이 섞이는 것을 차단.
+            await _sendGate.WaitAsync(ct);
+            try { await _pipe.WriteAsync(buf, ct); await _pipe.FlushAsync(ct); }
+            finally { _sendGate.Release(); }
+        }
+
+        // ── IPC 핑퐁: Ping 송신(클라→프록시) ─────────────────────────────────
+        private async Task SendPingAsync(CancellationToken ct)
+        {
+            var pipe = _pipe;
+            if (pipe is null || !pipe.IsConnected) return;
+            await _sendGate.WaitAsync(ct);
+            try
+            {
+                // ★δ=0: 재사용 _pingBuf 에 span 오버로드로 pack(프레임당 힙 할당 0). _sendGate 하 단독 접근이라 안전.
+                int n = BridgeSerializer.PackSeq(_pingBuf, BridgeMessageType.Ping, Interlocked.Increment(ref _pingSeq));
+                await pipe.WriteAsync(_pingBuf.AsMemory(0, n), ct);
+                await pipe.FlushAsync(ct);
+            }
+            finally { _sendGate.Release(); }
+        }
+
+        private async Task PingLoopAsync(CancellationToken ct)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    await Task.Delay(_pingIntervalMs, ct);
+                    try { await SendPingAsync(ct); }
+                    catch (OperationCanceledException) { throw; }
+                    catch { /* 전송 실패는 하트비트 감시가 ProxyLost 로 포착(fail-closed) */ }
+                }
+            }
+            catch (OperationCanceledException) { }
         }
 
         // ── 루프 시작 ─────────────────────────────────────────────────────────
@@ -107,6 +147,12 @@ namespace StockManager.Common
         {
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var token = _cts.Token;
+            if (_pingIntervalMs > 0)
+                return Task.WhenAll(
+                    ReadLoopAsync(token),
+                    DispatchLoopAsync(token),
+                    HeartbeatWatchAsync(token),
+                    PingLoopAsync(token));
             return Task.WhenAll(
                 ReadLoopAsync(token),
                 DispatchLoopAsync(token),
@@ -130,6 +176,13 @@ namespace StockManager.Common
                     if (plen > 0 && !await ReadExactAsync(payload, ct)) break;
 
                     if (type == BridgeMessageType.Heartbeat)
+                    {
+                        MarkHeartbeat(_now());
+                        continue;
+                    }
+
+                    // Pong 수신 = 프록시 생존 확인(양방향) → 타임아웃 카운터 리셋. 50ms 헬스체크의 핵심.
+                    if (type == BridgeMessageType.Pong)
                     {
                         MarkHeartbeat(_now());
                         continue;
@@ -247,6 +300,9 @@ namespace StockManager.Common
             _cts?.Cancel();
             _cts?.Dispose();
             _pipe?.Dispose();
+            // ★_sendGate 는 Dispose 하지 않는다: 취소 직후 in-flight Ping/주문의 WaitAsync/Release 와 레이스하면
+            //   ObjectDisposedException(미관측 fault·거짓 동결)을 유발. SemaphoreSlim 은 AvailableWaitHandle 을
+            //   건드리지 않는 한 관리 자원만 쓰므로 미해제해도 누수 없음(GC 회수).
         }
     }
 }

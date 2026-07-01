@@ -107,9 +107,26 @@ namespace StockManager.Common
             long raw;
             try { raw = QFxRate.Of(rate).Raw; }
             catch (OverflowException) { Trip("환율 import 오버플로 — fail-closed"); return false; }
+            return SubmitCore(raw, (double)rate);
+        }
 
+        /// <summary>
+        /// 이미 QAcl.TryImportRate 경계를 통과한 QFixed raw 환율을 투입(3단계 §3.2 흐름: 외부 decimal →
+        /// QAcl → QFixed raw → 브레이커 시계열). raw≤0 은 방어적으로 trip(경계가 이미 걸렀어야 함).
+        /// </summary>
+        public bool SubmitRaw(QFxRate rate)
+        {
+            long raw = rate.Raw;
+            if (raw <= 0) { Trip("환율 raw 비양수 — fail-closed"); return false; }
+            return SubmitCore(raw, (double)rate.ToDecimal());
+        }
+
+        /// <summary>외부(예: QAcl 경계 거부) 사유로 브레이커를 명시 래치. ForceFreeze 는 멱등(중복 무해).</summary>
+        public void TripExternal(string reason) => Trip(reason);
+
+        private bool SubmitCore(long raw, double val)
+        {
             long now = _clock();
-            double val = (double)rate;
 
             lock (_lock)
             {
@@ -215,20 +232,25 @@ namespace StockManager.Common
     // 실시간 FX 피드 펌프 — IFxRateSource 폴 → QFxCircuitBreaker.Submit. 백그라운드 격리.
     //   ★liveArmed:false 불변: '구성'만. 실 피드 소스·자동 시작은 호출부 옵트인.
     // ========================================================================
-    /// <summary>환율 폴 소스를 주기적으로 읽어 브레이커에 투입하는 콜드 패스 펌프.</summary>
+    /// <summary>환율 폴 소스를 주기적으로 읽어 브레이커에 투입하는 콜드 패스 펌프.
+    /// ★3단계 §3.2 흐름: 외부 decimal → QAcl.TryImportRate(경계 부패방지·≤0/오버플로 fail-closed) →
+    /// QFixed raw → QFxCircuitBreaker.SubmitRaw(시계열 3σ/스테일). QAcl 거부 시 브레이커도 명시 래치.</summary>
     public sealed class QFxFeedPump : IDisposable
     {
-        private readonly IFxRateSource     _source;
-        private readonly QFxCircuitBreaker _breaker;
-        private readonly int               _pollMs;
+        private readonly IFxRateSource          _source;
+        private readonly QFxCircuitBreaker       _breaker;
+        private readonly OrderAttestationService? _att;   // QAcl 경계 동결 채널(옵션)
+        private readonly int                     _pollMs;
 
         private Thread?       _thread;
         private volatile bool _running;
 
-        public QFxFeedPump(IFxRateSource source, QFxCircuitBreaker breaker, int pollMs = 200)
+        public QFxFeedPump(IFxRateSource source, QFxCircuitBreaker breaker, int pollMs = 200,
+                           OrderAttestationService? attestation = null)
         {
             _source  = source  ?? throw new ArgumentNullException(nameof(source));
             _breaker = breaker ?? throw new ArgumentNullException(nameof(breaker));
+            _att     = attestation;
             _pollMs  = pollMs < 20 ? 20 : pollMs;
         }
 
@@ -250,10 +272,15 @@ namespace StockManager.Common
             _thread = null;
         }
 
-        /// <summary>1회 폴→투입(결정론 테스트용). 소스 예외는 흡수하지 않음(상위 판단) — 루프에서만 흡수.</summary>
+        /// <summary>1회 폴→(QAcl 경계)→투입(결정론 테스트용). 소스 예외는 흡수하지 않음 — 루프에서만 흡수.</summary>
         public void PumpOnce()
         {
-            if (_source.TryPoll(out decimal rate)) _breaker.Submit(rate);
+            if (!_source.TryPoll(out decimal rate)) return;   // 데이터 없음(정상) — 브레이커 스테일 감지가 지연을 포착
+            // ★QAcl 경계: 외부 decimal → QFixed raw. ≤0/오버플로는 여기서 fail-closed(att 동결) + 브레이커 래치.
+            if (QAcl.TryImportRate(rate, _att, out var q))
+                _breaker.SubmitRaw(q);
+            else
+                _breaker.TripExternal("FX 경계 ACL 거부(≤0/오버플로) — fail-closed");
         }
 
         private void Loop()

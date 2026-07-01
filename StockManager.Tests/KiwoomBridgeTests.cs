@@ -477,5 +477,112 @@ namespace StockManager.Tests
         [Fact]
         public void OrderRequest_SizeIs_48B()
             => Assert.Equal(48, Unsafe.SizeOf<OrderRequest>());
+
+        // ════════════════════════════════════════════════════════════════════
+        // 7. IPC 핑퐁(v4.83.0) — 클라 Ping → 프록시 Pong 생존성 + 무응답 → ProxyLost 연쇄 동결
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void PackSeq_PingPong_RoundTrips()
+        {
+            var buf = BridgeSerializer.PackSeq(BridgeMessageType.Ping, 4242L);
+            Assert.True(BridgeSerializer.TryParseHeader(buf.AsSpan(0, BridgeSerializer.HeaderSize), out var t, out int plen));
+            Assert.Equal(BridgeMessageType.Ping, t);
+            Assert.Equal(sizeof(long), plen);
+            Assert.Equal(4242L, BitConverter.ToInt64(buf, BridgeSerializer.HeaderSize));
+        }
+
+        [Fact]
+        public async Task PingPong_ProxyPongs_ClientStaysAlive()
+        {
+            var pipeName = UniquePipe();
+            int pings = 0;
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+                var header = new byte[BridgeSerializer.HeaderSize];
+                while (await ReadExactAsync(srv, header))
+                {
+                    if (!BridgeSerializer.TryParseHeader(header, out var type, out int plen)) break;
+                    var payload = plen > 0 ? new byte[plen] : Array.Empty<byte>();
+                    if (plen > 0 && !await ReadExactAsync(srv, payload)) break;
+                    if (type == BridgeMessageType.Ping)   // 프록시 역할: Pong 에코
+                    {
+                        Interlocked.Increment(ref pings);
+                        await srv.WriteAsync(BridgeSerializer.PackSeq(BridgeMessageType.Pong, BitConverter.ToInt64(payload)));
+                        await srv.FlushAsync();
+                    }
+                }
+            });
+
+            var att = new OrderAttestationService();
+            // heartbeatTimeoutMs(150) < 관찰창(400ms) → Pong 이 계속 갱신해야만 생존. Ping 20ms.
+            using var client = new KiwoomBridgeClient(attestation: att, pipeName: pipeName,
+                                                      heartbeatTimeoutMs: 150, pingIntervalMs: 20);
+            bool proxyLost = false;
+            client.ProxyLost += () => proxyLost = true;
+            await client.ConnectAsync();
+            var loop = client.StartAsync();
+
+            await Task.Delay(400);
+
+            Assert.True(Volatile.Read(ref pings) >= 1, $"클라가 Ping 을 보내야 함(pings={pings})");
+            Assert.True(client.IsProxyAlive, "Pong 수신으로 생존 유지되어야 함");
+            Assert.False(proxyLost);
+            Assert.Equal(GatingMode.Normal, att.Mode);
+
+            client.Dispose();
+            try { await loop.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public async Task PingPong_ProxyStopsResponding_ProxyLost_RelayFreezes()
+        {
+            var pipeName = UniquePipe();
+            var proxyLostTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+                await Task.Delay(2_000);   // ★Ping 을 받아도 Pong 을 주지 않음(응답 정지)
+            });
+
+            var att = new OrderAttestationService();
+            // 프로덕션 배선 모사: 브리지엔 att 미주입, KiwoomFreezeRelay 가 ProxyLost → ForceFreeze 연쇄.
+            using var client = new KiwoomBridgeClient(attestation: null, pipeName: pipeName,
+                                                      heartbeatTimeoutMs: 150, pingIntervalMs: 20);
+            using var relay = new KiwoomFreezeRelay(att, client);
+            relay.Attach();
+            client.ProxyLost += () => proxyLostTcs.TrySetResult(true);
+
+            await client.ConnectAsync();
+            var loop = client.StartAsync();
+
+            Assert.True(await proxyLostTcs.Task.WaitAsync(TimeSpan.FromSeconds(3)), "무응답 → ProxyLost 발화 필요");
+            Assert.True(relay.IsFrozen, "ProxyLost → 릴레이 멱등 동결");
+            Assert.Equal(GatingMode.EmergencyFreeze, att.Mode);   // 연쇄 EmergencyFreeze
+            Assert.False(client.IsProxyAlive);
+
+            client.Dispose();
+            try { await loop.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
+        public void ExecutionBridge_CreateFast_UsesFiftyMsClassHealthCheck()
+        {
+            Assert.Equal(20, ExecutionBridgeBroker.FastPingIntervalMs);
+            Assert.Equal(50, ExecutionBridgeBroker.FastHeartbeatTimeoutMs);
+            var att = new OrderAttestationService();
+            var (broker, bridge) = ExecutionBridgeBroker.CreateFast(att, UniquePipe());
+            Assert.NotNull(broker);
+            Assert.NotNull(bridge);
+            broker.Dispose();
+            bridge.Dispose();
+        }
     }
 }

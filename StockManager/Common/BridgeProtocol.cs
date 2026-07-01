@@ -24,6 +24,8 @@ namespace StockManager.Common
         OrderRejected  = 3,
         AccountState   = 4,
         ErrorReport    = 5,
+        Ping           = 6,   // BridgeClient → ProxyHost: 50ms 초고속 헬스체크 요청(seq 에코)
+        Pong           = 7,   // ProxyHost → BridgeClient: Ping 응답(양방향 생존성·RTT)
         OrderRequest   = 10,  // BridgeClient → ProxyHost 방향
     }
 
@@ -115,16 +117,27 @@ namespace StockManager.Common
             return total;
         }
 
-        public static int PackHeartbeat(Span<byte> dest, long sequence)
+        /// <summary>[type][8][seq(long)] 제어 프레임(Heartbeat/Ping/Pong 공용) — 재사용 버퍼에 무할당 기록.</summary>
+        public static int PackSeq(Span<byte> dest, BridgeMessageType type, long seq)
         {
             int total = HeaderSize + sizeof(long);
             if (dest.Length < total)
-                throw new ArgumentException($"대상 버퍼 부족({dest.Length}<{total}) — heartbeat pack 불가", nameof(dest));
-            BitConverter.TryWriteBytes(dest, (int)BridgeMessageType.Heartbeat);
+                throw new ArgumentException($"대상 버퍼 부족({dest.Length}<{total}) — seq pack 불가", nameof(dest));
+            BitConverter.TryWriteBytes(dest, (int)type);
             BitConverter.TryWriteBytes(dest.Slice(4), sizeof(long));
-            BitConverter.TryWriteBytes(dest.Slice(HeaderSize), sequence);
+            BitConverter.TryWriteBytes(dest.Slice(HeaderSize), seq);
             return total;
         }
+
+        public static byte[] PackSeq(BridgeMessageType type, long seq)
+        {
+            var buf = new byte[HeaderSize + sizeof(long)];
+            PackSeq(buf, type, seq);
+            return buf;
+        }
+
+        public static int PackHeartbeat(Span<byte> dest, long sequence)
+            => PackSeq(dest, BridgeMessageType.Heartbeat, sequence);
 
         // ── 직렬화(할당 오버로드 — span 버전에 위임·후방호환) ────────────────────
 
@@ -175,6 +188,6 @@ namespace StockManager.Common
         public static long ParseSymbol(string? code)
             => long.TryParse(code, out var v) ? v : 0L;
 
-        private static bool IsValidWireType(int t) => t is (>= 0 and <= 5) or 10;
+        private static bool IsValidWireType(int t) => t is (>= 0 and <= 7) or 10;
     }
 }
