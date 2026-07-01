@@ -36,6 +36,12 @@ namespace StockManager.Common
         private readonly SemaphoreSlim             _sendGate = new(1, 1);   // 클라 송신 직렬화(주문·Ping 동시 write 레이스 차단)
         private readonly byte[]                    _pingBuf  = new byte[BridgeSerializer.HeaderSize + sizeof(long)];  // Ping 재사용 버퍼(δ=0·_sendGate 하 단독 접근)
         private long                               _pingSeq;
+        // ★v4.84.0 RTT 텔레메트리 — seq 슬롯 링(δ=0·고정 배열)으로 Ping 송신시각 기록, Pong 수신시 매칭 RTT 산출.
+        private const int                          PingSlotMask = 63;       // 64 슬롯(2^n-1) — 소수 outstanding ping 매칭
+        private readonly long[]                    _pingSentAt  = new long[PingSlotMask + 1];
+        private long                               _currentRttTicks;
+        private long                               _peakRttTicks;
+        private long                               _pongReceived;
 
         private NamedPipeClientStream?             _pipe;
         private readonly Channel<BridgeEnvelope>  _queue;
@@ -53,6 +59,12 @@ namespace StockManager.Common
         public event Action?                 ProxyLost;
 
         public bool IsProxyAlive => _alive;
+
+        // ── IPC 레이턴시 텔레메트리(관제) — LatencyTelemetryPublisher 가 주기 독출 ──────────
+        public long CurrentIpcRttTicks => Interlocked.Read(ref _currentRttTicks);   // 최근 Pong RTT(100ns ticks)
+        public long PeakIpcRttTicks    => Interlocked.Read(ref _peakRttTicks);      // 관측 최대 RTT
+        public long TotalPingSent      => Interlocked.Read(ref _pingSeq);           // 누적 Ping 송신
+        public long TotalPongReceived  => Interlocked.Read(ref _pongReceived);      // 누적 Pong 수신
 
         public KiwoomBridgeClient(
             OrderAttestationService? attestation        = null,
@@ -118,7 +130,9 @@ namespace StockManager.Common
             try
             {
                 // ★δ=0: 재사용 _pingBuf 에 span 오버로드로 pack(프레임당 힙 할당 0). _sendGate 하 단독 접근이라 안전.
-                int n = BridgeSerializer.PackSeq(_pingBuf, BridgeMessageType.Ping, Interlocked.Increment(ref _pingSeq));
+                long seq = Interlocked.Increment(ref _pingSeq);
+                Volatile.Write(ref _pingSentAt[(int)(seq & PingSlotMask)], _now());   // RTT 기준 시각(seq 슬롯)
+                int n = BridgeSerializer.PackSeq(_pingBuf, BridgeMessageType.Ping, seq);
                 await pipe.WriteAsync(_pingBuf.AsMemory(0, n), ct);
                 await pipe.FlushAsync(ct);
             }
@@ -181,9 +195,24 @@ namespace StockManager.Common
                         continue;
                     }
 
-                    // Pong 수신 = 프록시 생존 확인(양방향) → 타임아웃 카운터 리셋. 50ms 헬스체크의 핵심.
+                    // Pong 수신 = 프록시 생존 확인(양방향) → 타임아웃 카운터 리셋 + RTT 산출. 50ms 헬스체크의 핵심.
                     if (type == BridgeMessageType.Pong)
                     {
+                        if (payload.Length >= sizeof(long))
+                        {
+                            long seq    = BitConverter.ToInt64(payload, 0);
+                            long sentAt = Volatile.Read(ref _pingSentAt[(int)(seq & PingSlotMask)]);
+                            if (sentAt > 0)
+                            {
+                                long rtt = _now() - sentAt;
+                                if (rtt >= 0)   // 클럭 역행 방어
+                                {
+                                    Volatile.Write(ref _currentRttTicks, rtt);
+                                    if (rtt > _peakRttTicks) Volatile.Write(ref _peakRttTicks, rtt);   // ReadLoop 단일 스레드
+                                }
+                            }
+                            Interlocked.Increment(ref _pongReceived);
+                        }
                         MarkHeartbeat(_now());
                         continue;
                     }

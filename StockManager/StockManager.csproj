@@ -21,9 +21,22 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.83.0</Version>
-    <AssemblyVersion>4.83.0.0</AssemblyVersion>
-    <FileVersion>4.83.0.0</FileVersion>
+    <Version>4.84.0</Version>
+    <AssemblyVersion>4.84.0.0</AssemblyVersion>
+    <FileVersion>4.84.0.0</FileVersion>
+    <!-- v4.84.0 — ★Path Gamma UI: 초고속 IPC 레이턴시 + FX 3σ 변동성 전술 관제(LatencyMonitor.razor). 4렌즈 적대검증(1결함 교정).
+         무할당 공유 구조체 LatencySnapshot(readonly blittable·Pack=1·7×long+byte=57B) + LatencyTelemetryChannel(seqlock
+         단일 라이터·캐시라인 격리·홀/짝 커서·8회 재시도 후 직전 프레임 유지 — RingTelemetry idiom 정확 미러링) +
+         LatencyTelemetryPublisher(CAS 단일 라이터·무할당·브리지/FX 옵션). 백엔드 노출: KiwoomBridgeClient RTT(seq 슬롯
+         링 _pingSentAt[64]로 δ=0 매칭·CurrentIpcRttTicks/PeakIpcRttTicks/TotalPingSent/TotalPongReceived), QFxCircuit
+         Breaker.ReadFxStats(마지막환율·10분 이동평균·1σ raw·상태코드 0 Normal/1 Stale/2 Violated). LatencyMonitor.razor
+         (/broker/latency): PeriodicTimer 100ms 락-프리 폴·TryRead 직전 프레임 유지·FxBreakerOpen 또는 EmergencyFreeze 시
+         비상 고지 오버레이·미배선(핑퐁 미연결·FX 미급전) 정직 표기. BlazorHomeForm 에 채널/퍼블리셔/fxBreaker 싱글톤 +
+         기존 200ms ringTimer 에 latencyPublisher.Sample 합류(단일 라이터). NavMenu ⚡ 링크.
+         ★liveArmed:false 불변: 채널/브레이커 '생성'은 순수 관측 인프라 — 실 연결(ConnectAsync)·FX 급전(QFxFeedPump)은
+         여전히 옵트인. 미가동이면 전 카운터 0 → UI '미배선'. ★적대검증 교정(L): σ=0(워밍업·평탄)에서 폭 0의 '3σ 밴드'를
+         확정 경계로 오인시키던 문구 → σ>0 확립 시에만 참고 밴드 표시(정보성 명시)·미확립 시 '표본 수집 중' 고지.
+         테스트 +20(LatencyTelemetryTests 17·KiwoomBridgeTests RTT 1 등). 빌드 0/0(메인+x86), 전체 1718 통과. -->
     <!-- v4.83.0 — ★프로덕션 결속: 토스 실 WSS/REST · 키움 IPC 핑퐁+COM 시임 · 실 FX 피드. 4렌즈 적대검증 후 6결함 교정.
          ★정직 회계: 운반 메커니즘(ClientWebSocket·HttpClient·IPC 핑퐁·JSON 파싱)은 전량 컴파일·테스트. 실 엔드포인트
          URL·인증 서명·메시지 스키마·axKHOpenAPI COM 타입은 저장소 부재(검증 불가) → 날조 없이 주입형으로 격리.

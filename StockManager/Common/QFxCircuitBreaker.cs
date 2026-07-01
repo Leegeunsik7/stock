@@ -60,6 +60,7 @@ namespace StockManager.Common
         private bool   _hasLast;
 
         private int    _openLatch;  // 1 = tripped(open)
+        private byte   _stateCode;  // 0 Normal · 1 Stale · 2 Violated(3σ/비양수/오버플로/외부). 개방 시 스냅샷 노출.
         private long   _accepted, _tripped;
         private volatile string? _lastReason;
 
@@ -103,10 +104,10 @@ namespace StockManager.Common
         public bool Submit(decimal rate)
         {
             // ★fail-closed(경계): 비양수·오버플로는 표본에 기록조차 하지 않음(오염 통계 금지).
-            if (rate <= 0m) { Trip("환율 비양수 — fail-closed"); return false; }
+            if (rate <= 0m) { Trip("환율 비양수 — fail-closed", 2); return false; }
             long raw;
             try { raw = QFxRate.Of(rate).Raw; }
-            catch (OverflowException) { Trip("환율 import 오버플로 — fail-closed"); return false; }
+            catch (OverflowException) { Trip("환율 import 오버플로 — fail-closed", 2); return false; }
             return SubmitCore(raw, (double)rate);
         }
 
@@ -117,12 +118,12 @@ namespace StockManager.Common
         public bool SubmitRaw(QFxRate rate)
         {
             long raw = rate.Raw;
-            if (raw <= 0) { Trip("환율 raw 비양수 — fail-closed"); return false; }
+            if (raw <= 0) { Trip("환율 raw 비양수 — fail-closed", 2); return false; }
             return SubmitCore(raw, (double)rate.ToDecimal());
         }
 
         /// <summary>외부(예: QAcl 경계 거부) 사유로 브레이커를 명시 래치. ForceFreeze 는 멱등(중복 무해).</summary>
-        public void TripExternal(string reason) => Trip(reason);
+        public void TripExternal(string reason) => Trip(reason, 2);
 
         private bool SubmitCore(long raw, double val)
         {
@@ -134,7 +135,7 @@ namespace StockManager.Common
 
                 // 피드 지연: 직전 수용 대비 gap 초과 → 지연 재개(잠재 점프) fail-closed.
                 if (_hasLast && (now - _lastAcceptTicks) > _staleTicks)
-                { TripLocked("피드 스테일(수용 간격 초과) — fail-closed"); return false; }
+                { TripLocked("피드 스테일(수용 간격 초과) — fail-closed", 1); return false; }
 
                 EvictOldLocked(now);
 
@@ -145,7 +146,7 @@ namespace StockManager.Common
                     double var  = (_sumSq / _count) - (mean * mean);
                     double sd   = var > 0 ? Math.Sqrt(var) : 0.0;
                     if (sd > 0 && Math.Abs(val - mean) >= _sigmaK * sd)
-                    { TripLocked($"환율 3σ 급변동(|Δ|={Math.Abs(val - mean):F4}, σ={sd:F4}) — fail-closed"); return false; }
+                    { TripLocked($"환율 3σ 급변동(|Δ|={Math.Abs(val - mean):F4}, σ={sd:F4}) — fail-closed", 2); return false; }
                 }
 
                 AddLocked(new Sample(now, raw, val));
@@ -167,7 +168,7 @@ namespace StockManager.Common
                 if (_openLatch == 1) return false;
                 if (!_hasLast)       return false;    // 표본 없음 — 신선도 미확립(청산 불가)
                 if ((now - _lastAcceptTicks) > _staleTicks)
-                { TripLocked("피드 스테일(가드 조회) — fail-closed"); return false; }
+                { TripLocked("피드 스테일(가드 조회) — fail-closed", 1); return false; }
                 rate = new QFxRate(_lastRaw);
                 return true;
             }
@@ -179,8 +180,28 @@ namespace StockManager.Common
             lock (_lock)
             {
                 Volatile.Write(ref _openLatch, 0);
+                _stateCode = 0;
                 _start = _count = 0; _sum = _sumSq = 0.0;
                 _hasLast = false; _lastRaw = 0; _lastAcceptTicks = 0;
+            }
+        }
+
+        /// <summary>UI 텔레메트리용 FX 통계 스냅샷(무할당·out). 마지막 환율·이동평균·1σ raw + 상태코드(개방 시 사유).</summary>
+        public void ReadFxStats(out long lastRaw, out long maRaw, out long sigmaRaw, out byte state)
+        {
+            lock (_lock)
+            {
+                lastRaw = _hasLast ? _lastRaw : 0L;
+                if (_count > 0)
+                {
+                    double mean = _sum / _count;
+                    double var  = (_sumSq / _count) - (mean * mean);
+                    double sd   = var > 0 ? Math.Sqrt(var) : 0.0;
+                    maRaw    = (long)(mean * QMath.Scale);
+                    sigmaRaw = (long)(sd * QMath.Scale);
+                }
+                else { maRaw = 0L; sigmaRaw = 0L; }
+                state = _openLatch == 1 ? _stateCode : (byte)0;
             }
         }
 
@@ -211,14 +232,15 @@ namespace StockManager.Common
             if (_count == 0) { _sum = 0.0; _sumSq = 0.0; }   // 부동소수 잔차 리셋(빈 창 정확 0)
         }
 
-        private void Trip(string reason)
+        private void Trip(string reason, byte state)
         {
-            lock (_lock) { TripLocked(reason); }
+            lock (_lock) { TripLocked(reason, state); }
         }
 
-        private void TripLocked(string reason)
+        private void TripLocked(string reason, byte state)
         {
             _lastReason = reason;
+            _stateCode  = state;   // 개방 사유 코드(0/1/2) — ReadFxStats 가 개방 시 노출
             Interlocked.Increment(ref _tripped);
             if (Interlocked.Exchange(ref _openLatch, 1) == 0)   // 1회만 ForceFreeze(래치)
             {

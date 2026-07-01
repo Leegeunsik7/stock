@@ -573,6 +573,44 @@ namespace StockManager.Tests
         }
 
         [Fact]
+        public async Task PingPong_RecordsRttAndCounters()
+        {
+            var pipeName = UniquePipe();
+            var serverTask = Task.Run(async () =>
+            {
+                using var srv = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await srv.WaitForConnectionAsync();
+                var header = new byte[BridgeSerializer.HeaderSize];
+                while (await ReadExactAsync(srv, header))
+                {
+                    if (!BridgeSerializer.TryParseHeader(header, out var type, out int plen)) break;
+                    var payload = plen > 0 ? new byte[plen] : Array.Empty<byte>();
+                    if (plen > 0 && !await ReadExactAsync(srv, payload)) break;
+                    if (type == BridgeMessageType.Ping)   // 프록시 역할: seq 에코 Pong
+                    {
+                        await srv.WriteAsync(BridgeSerializer.PackSeq(BridgeMessageType.Pong, BitConverter.ToInt64(payload)));
+                        await srv.FlushAsync();
+                    }
+                }
+            });
+
+            using var client = new KiwoomBridgeClient(pipeName: pipeName, heartbeatTimeoutMs: 2000, pingIntervalMs: 20);
+            await client.ConnectAsync();
+            var loop = client.StartAsync();
+            await Task.Delay(300);   // ~15 pings
+
+            Assert.True(client.TotalPingSent    >= 1, $"Ping 송신 계상 필요(sent={client.TotalPingSent})");
+            Assert.True(client.TotalPongReceived >= 1, $"Pong 수신 계상 필요(recv={client.TotalPongReceived})");
+            Assert.True(client.CurrentIpcRttTicks >= 0, "RTT 는 음수일 수 없음");
+            Assert.True(client.PeakIpcRttTicks   >= client.CurrentIpcRttTicks || client.CurrentIpcRttTicks == 0,
+                        "Peak 은 Current 이상");
+
+            client.Dispose();
+            try { await loop.WaitAsync(TimeSpan.FromSeconds(1)); } catch { }
+        }
+
+        [Fact]
         public void ExecutionBridge_CreateFast_UsesFiftyMsClassHealthCheck()
         {
             Assert.Equal(20, ExecutionBridgeBroker.FastPingIntervalMs);

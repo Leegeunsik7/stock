@@ -1,0 +1,181 @@
+@* ============================================================================
+   LatencyMonitor — v4.84.0 Path Gamma: 초고속 IPC 레이턴시 + FX 변동성 전술 관제탑
+   PeriodicTimer(100ms) + LatencyTelemetryChannel.TryRead 세쿼록 단방향 폴링.
+   TryRead false → 직전 프레임 유지(StateHasChanged 불호출, 코어 무블록·무할당).
+   FxBreakerState != 0(Stale/Violated) 또는 EmergencyFreeze → 비상 고지 오버레이(청산 게이트 래치).
+   미배선(핑퐁 미연결·FX 미급전)은 전부 0 스냅샷 → '미배선/데이터 없음' 정직 표기(거짓 정상 금지).
+   ============================================================================ *@
+@page "/broker/latency"
+@implements IAsyncDisposable
+@using System.Threading
+@inject LatencyTelemetryChannel Channel
+@inject OrderAttestationService Attestation
+
+<div class="top">
+    <div class="hello">
+        <h1>⚡ 레이턴시·변동성 관제 <span class="tag">IPC PING-PONG · FX 3σ BREAKER</span></h1>
+        <p>20ms/50ms IPC 핑퐁 RTT 와 실시간 FX 서킷 브레이커를 100ms 락-프리 폴링으로 관측 — 코어 무블록.</p>
+    </div>
+</div>
+
+@* ══ 비상 고지 오버레이 — 브레이커 개방(청산 게이트 래치) 또는 비상 동결 ══════════════ *@
+@if (_frame.HasAlert || Attestation.Mode == GatingMode.EmergencyFreeze)
+{
+    <div style="margin:0 28px 18px;background:rgba(180,20,20,0.18);border:2px solid #e34d4d;border-radius:10px;padding:18px 22px">
+        <div style="font-size:16px;font-weight:700;color:#ff4444;margin-bottom:6px">🚨 FAIL-CLOSED — 청산 게이트 래치 잠금</div>
+        <div style="font-size:13px;color:#ffaaaa">
+            @if (_frame.FxBreakerOpen)
+            {
+                <span>FX 서킷 브레이커 개방: <b>@(_frame.FxBreakerStateName)</b>
+                    (@(_frame.FxBreakerState == 1 ? "피드 스테일 — 1초 이상 지연" : "3σ 급변동/비양수/오버플로 — 값·변동성 위반")).&nbsp;</span>
+            }
+            현재 게이팅 모드: <b>@(Attestation.Mode)</b>.
+            &nbsp;환율 청산은 차단됨. /broker/gating 에서 원장 확인 후 수동 정합 서명 + 브레이커 Reset 을 완료하세요.
+        </div>
+    </div>
+}
+
+<div style="padding:0 28px 28px">
+
+    @* ══ IPC 핑퐁 레이턴시 ═════════════════════════════════════════════════════ *@
+    <div class="kpi-label" style="margin:0 0 8px 2px">📡 IPC 핑퐁 (x86 프록시 ↔ 64비트 터미널)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px">
+        <div class="kpi-card">
+            <div class="kpi-label">Current RTT</div>
+            <div class="kpi-value">@(_frame.IpcWired ? _frame.CurrentRttMicros.ToString("N1") + " µs" : "—")</div>
+            <div class="kpi-sub">최근 Pong 왕복(100ns→µs)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Peak RTT</div>
+            <div class="kpi-value" style="color:@(_frame.PeakRttMicros > 50_000 ? "var(--orange,#ff9800)" : "inherit")">@(_frame.IpcWired ? _frame.PeakRttMicros.ToString("N1") + " µs" : "—")</div>
+            <div class="kpi-sub">관측 최대 왕복</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Ping / Pong</div>
+            <div class="kpi-value">@(_frame.TotalPingSent.ToString("N0")) / @(_frame.TotalPongReceived.ToString("N0"))</div>
+            <div class="kpi-sub">누적 송신 / 수신</div>
+        </div>
+        <div class="kpi-card @(_frame.PongDeficit > 8 ? "kpi-alert" : "")">
+            <div class="kpi-label">Pong Deficit</div>
+            <div class="kpi-value" style="color:@(_frame.PongDeficit > 8 ? "#ff4444" : "inherit")">@(_frame.PongDeficit.ToString("N0"))</div>
+            <div class="kpi-sub">미응답 ping (지연/손실)</div>
+        </div>
+    </div>
+    @if (!_frame.IpcWired)
+    {
+        <div class="kpi-sub" style="margin:-12px 0 22px 2px">
+            IPC 핑퐁 미가동 — KiwoomBridgeClient 미연결이거나 pingIntervalMs=0.
+            <span style="font-family:var(--mono)">ExecutionBridgeBroker.CreateFast</span> + <span style="font-family:var(--mono)">ConnectAsync/StartAsync</span> 로 20ms/50ms 핑퐁을 개통하세요.
+        </div>
+    }
+
+    @* ══ FX 서킷 브레이커 ══════════════════════════════════════════════════════ *@
+    <div class="kpi-label" style="margin:0 0 8px 2px">💱 실시간 FX 3σ 서킷 브레이커</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:14px">
+        <div class="kpi-card @(_frame.FxBreakerOpen ? "kpi-alert" : "")">
+            <div class="kpi-label">Breaker State</div>
+            <div class="kpi-value" style="color:@(_frame.FxBreakerOpen ? "#ff4444" : "var(--green,#4caf50)")">@(_frame.FxWired || _frame.FxBreakerOpen ? _frame.FxBreakerStateName : "—")</div>
+            <div class="kpi-sub">0 Normal · 1 Stale · 2 Violated</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Last Rate</div>
+            <div class="kpi-value">@(_frame.FxWired ? _frame.LastFxRate.ToString("N2") : "—")</div>
+            <div class="kpi-sub">최근 수용 환율</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">10m MA</div>
+            <div class="kpi-value">@(_frame.FxWired ? _frame.FxMovingAverage.ToString("N2") : "—")</div>
+            <div class="kpi-sub">이동평균(10분 창)</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">1σ</div>
+            <div class="kpi-value">@(_frame.FxWired ? _frame.FxSigma.ToString("N4") : "—")</div>
+            <div class="kpi-sub">표준편차 (3σ 트립 기준)</div>
+        </div>
+    </div>
+    @if (_frame.FxWired && !_frame.FxBreakerOpen && _frame.FxSigmaRaw > 0)
+    {
+        @* 참고용 3σ 밴드(정보성) — σ 확립 후에만 표시. ★실제 트립은 '충분 표본(≥minSamples)·σ>0' 에서만
+           평가되므로(QFxCircuitBreaker.SubmitCore), 이 밴드는 확정 트립 경계가 아니라 참고선임을 명시(오도 방지). *@
+        <div class="kpi-sub" style="margin:0 0 22px 2px">
+            참고 3σ 밴드(정보성): <b>@((_frame.FxMovingAverage - 3m * _frame.FxSigma).ToString("N2"))</b>
+            ~ <b>@((_frame.FxMovingAverage + 3m * _frame.FxSigma).ToString("N2"))</b>
+            &nbsp;— 표본 충분·σ 확립 시 이 밖 급변동은 fail-closed 동결 (현재 σ=@(_frame.FxSigma.ToString("N4"))).
+        </div>
+    }
+    else if (_frame.FxWired && !_frame.FxBreakerOpen)
+    {
+        @* σ=0(워밍업·평탄 이력) — 폭 0 밴드를 확정 경계로 오인시키지 않도록 밴드 대신 정직 고지. *@
+        <div class="kpi-sub" style="margin:0 0 22px 2px">
+            3σ 밴드 — 표본 수집 중(σ 미확립). σ&gt;0 확립 후 참고 밴드가 표시되며, 트립은 충분 표본에서 평가됩니다.
+        </div>
+    }
+    @if (!_frame.FxWired && !_frame.FxBreakerOpen)
+    {
+        <div class="kpi-sub" style="margin:0 0 22px 2px">
+            FX 피드 미급전 — QFxFeedPump 미가동. <span style="font-family:var(--mono)">HttpFxRateSource</span> → <span style="font-family:var(--mono)">QFxFeedPump.Start()</span> 로 실시간 환율을 결선하세요.
+        </div>
+    }
+
+    @* ══ 세쿼록 채널 진단 ══════════════════════════════════════════════════════ *@
+    <div style="margin-top:10px;padding:12px 16px;background:var(--card-bg,rgba(255,255,255,0.04));border-radius:8px;font-size:12px;color:var(--muted,#888);font-family:var(--mono)">
+        채널 버전: @(Channel.Version)
+        &nbsp;|&nbsp; 읽기 경합(torn 재시도·UI계수): @(_tornReads.ToString("N0"))
+        &nbsp;|&nbsp; 폴링 주기: 100ms (PeriodicTimer, 무할당)
+        &nbsp;|&nbsp; seqlock 8회 재시도 후 직전 프레임 유지
+        &nbsp;|&nbsp; 게이팅 모드: @(Attestation.Mode)
+    </div>
+</div>
+
+<style>
+    .kpi-card {
+        background: var(--card-bg, rgba(255,255,255,0.05));
+        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        border-radius: 10px;
+        padding: 14px 16px;
+        display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi-card.kpi-alert { border-color: rgba(220, 50, 50, 0.5); background: rgba(180, 20, 20, 0.10); }
+    .kpi-label { font-size: 11px; color: var(--muted, #888); text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi-value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
+    .kpi-sub   { font-size: 11px; color: var(--muted, #888); }
+</style>
+
+@code {
+    // 직전 성공 프레임 — TryRead false(경합) 시 이 값 그대로 유지(StateHasChanged 불호출).
+    private LatencySnapshot _frame;
+    private long _tornReads;                     // 읽기 경합(torn/미발행 재시도) UI측 계수 — δ=0 long 증가
+    private PeriodicTimer? _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized()
+    {
+        _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
+        _ = PollLoopAsync(_cts.Token);
+    }
+
+    // ★백그라운드 폴링 루프 — 렌더링 스레드와 독립. 새 프레임에만 StateHasChanged(불필요 렌더 억제).
+    private async Task PollLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                bool got = Channel.TryRead(out var latest);
+                if (got) _frame = latest;
+                else     _tornReads++;   // 읽기 경합(직전 프레임 유지) — UI측 torn 계수(코어 무손상)
+
+                if (got)
+                    await InvokeAsync(StateHasChanged).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { /* 컴포넌트 Dispose 시 정상 탈출 */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync().ConfigureAwait(false);
+        _timer?.Dispose();
+        _cts.Dispose();
+    }
+}

@@ -324,6 +324,16 @@ namespace StockManager.Blazor
             services.AddSingleton(ringDispatcher);
             services.AddSingleton(ringChannel);    // TelemetryMonitor.razor 주입 대상
             services.AddSingleton(ringPublisher);
+            // v4.84.0 — 초고속 IPC 레이턴시 + FX 3σ 브레이커 관제(Path Gamma seqlock). bridge(기본 미연결)·
+            //   fxBreaker(기본 미급전) 카운터를 latencyPublisher 가 합류해 채널 발행 → LatencyMonitor.razor(/broker/latency).
+            //   ★liveArmed:false 불변: 채널/브레이커 '생성'은 순수 관측 인프라 — 실 연결(ConnectAsync)·급전(QFxFeedPump)은
+            //   여전히 옵트인이며, 미가동이면 전 카운터 0 → UI 가 '미배선' 정직 표기.
+            var fxBreaker        = new QFxCircuitBreaker(() => DateTime.UtcNow.Ticks, attestation);
+            var latencyChannel   = new LatencyTelemetryChannel();
+            var latencyPublisher = new LatencyTelemetryPublisher(latencyChannel, bridge, fxBreaker);
+            services.AddSingleton(fxBreaker);          // 텔레메트리 + 향후 QFxFeedPump 급전 대상(단일 인스턴스)
+            services.AddSingleton(latencyChannel);     // LatencyMonitor.razor 주입 대상
+            services.AddSingleton(latencyPublisher);
             // v4.70.0 — 발주 밸브 결속: Drain 루프(50ms) → IBroker.Place() 배선.
             //   Dispatch.ValveWired=true 일 때만 타이머 가동(기본 false — 드라이런 박제).
             //   LiveArmingWired 와 독립 스위치 — 둘 다 ON 이어야 실 주문 흐름(이중 키 잠금).
@@ -331,9 +341,9 @@ namespace StockManager.Blazor
                 wired: cfg.GetBool("Dispatch.ValveWired", false));
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
-            // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher) 보장.
+            // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.
             var ringTimer = new System.Threading.Timer(
-                _ => { try { ringPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
+                _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
             FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
 
             // v4.76.0 — 과제1: 실 무장 안전 점화 시퀀서 배선. 두 옵트인 키(ValveWired ∧ LiveArmingWired)가
