@@ -1,0 +1,72 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: ⚡ A&G DRONE AI
+      - generic [ref=e6]: Cognitive Combat v5.0
+    - navigation [ref=e7]:
+      - generic [ref=e8]: WORKSPACE
+      - link "🏠 대시보드" [ref=e9] [cursor=pointer]:
+        - /url: ""
+      - link "🛰️ 통합 작전 사령탑" [ref=e10] [cursor=pointer]:
+        - /url: command
+      - link "🎛️ 통합 전술 콕핏" [ref=e11] [cursor=pointer]:
+        - /url: cockpit
+      - link "🛰️ 2D 시뮬레이터" [ref=e12] [cursor=pointer]:
+        - /url: sim
+      - link "🎮 3D 아레나" [ref=e13] [cursor=pointer]:
+        - /url: arena3d
+      - link "🐝 군집 교전" [ref=e14] [cursor=pointer]:
+        - /url: swarm
+      - link "🔍 설명가능 AI" [ref=e15] [cursor=pointer]:
+        - /url: xai
+      - generic [ref=e16]: UTM 영공관제
+      - link "📦 UTM 배송 관제" [ref=e17] [cursor=pointer]:
+        - /url: utm
+      - generic [ref=e18]: MLOps
+      - link "🧠 학습 제어" [ref=e19] [cursor=pointer]:
+        - /url: training
+      - link "♾️ 무한 학습 (Dark Factory) RUNNING" [ref=e20] [cursor=pointer]:
+        - /url: dark-factory
+        - generic [ref=e21]: ♾️
+        - text: 무한 학습 (Dark Factory)
+        - generic [ref=e22]: RUNNING
+      - generic [ref=e23]: ADVANCED SENSORS
+      - link "📷 Camera Feed" [ref=e24] [cursor=pointer]:
+        - /url: /#camera-feed
+      - link "🛰️ VIO Odometry" [ref=e25] [cursor=pointer]:
+        - /url: /#vio
+      - link "🧩 Multi Sensor Fusion" [ref=e26] [cursor=pointer]:
+        - /url: /#vio
+      - generic [ref=e27]: 정보
+      - link "ℹ️ 정보" [ref=e28] [cursor=pointer]:
+        - /url: about
+    - generic [ref=e29]: © A&G Technology
+  - main [ref=e30]:
+    - heading "2D 시뮬레이터" [level=1] [ref=e31]
+    - generic [ref=e32]: v5 인지 엔진 실시간 자율 비행 — 절차적 시네마틱 시가지 위성 탑다운 뷰 (Deep Dark Metallic OCC)
+    - generic [ref=e33]:
+      - combobox [ref=e34]:
+        - option "v5 인지 (DT+NSSS)" [selected]
+        - option "기하 휴리스틱"
+        - option "PPO v4.1"
+        - option "랜덤"
+      - button "▶ 시작" [ref=e35] [cursor=pointer]
+      - button "■ 정지" [disabled] [ref=e36]
+      - generic [ref=e37]: 대기 중
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic:
+          - generic: ◇ STANDBY
+          - generic: 위성 공역 정찰 대기 — ▶ 시작 으로 자율 요격 시뮬레이션 개시
+      - generic [ref=e41]:
+        - generic [ref=e42]: 텔레메트리
+        - generic [ref=e43]: "모드: 대기 · STANDBY"
+        - generic [ref=e44]: 배터리
+        - generic [ref=e47]: 100.0%
+        - generic [ref=e48]: "시스템 자가진단: ALL GREEN"
+        - generic [ref=e49]: "위성 링크: LOCKED"
+        - generic [ref=e50]: "공역 정찰: 대기 중"
+        - generic [ref=e51]:
+          - generic [ref=e52]: ✅ DT-CBF ARMED
+          - generic [ref=e53]: 🛡️ SDF GUARD READY
+        - generic [ref=e54]: ▶ 시작 을 눌러 자율 요격 시뮬레이션을 개시하세요.

@@ -50,6 +50,14 @@ namespace StockManager.Common
             try { qty = QQty.Of(v); return true; }
             catch (OverflowException) { Freeze(att, "ACL: 수량 import 오버플로 — fail-closed"); return false; }
         }
+        /// <summary>환율 경계 import(3단계 FX 피드). 환율은 0 도 무효(≤0) — 비양수·오버플로 시 fail-closed 동결.</summary>
+        public static bool TryImportRate(decimal v, OrderAttestationService? att, out QFxRate rate)
+        {
+            rate = default;
+            if (v <= 0m) { Freeze(att, "ACL: 비양수 환율 import — fail-closed"); return false; }
+            try { rate = QFxRate.Of(v); return true; }
+            catch (OverflowException) { Freeze(att, "ACL: 환율 import 오버플로 — fail-closed"); return false; }
+        }
         public static decimal ExportPrice(QPrice p) => p.ToDecimal();   // 코어 → 외부(무예외)
         public static decimal ExportQty(QQty q)     => q.ToDecimal();
         public static decimal ExportMoney(QMoney m) => m.ToDecimal();

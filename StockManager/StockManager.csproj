@@ -18,9 +18,28 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.80.0</Version>
-    <AssemblyVersion>4.80.0.0</AssemblyVersion>
-    <FileVersion>4.80.0.0</FileVersion>
+    <Version>4.81.0</Version>
+    <AssemblyVersion>4.81.0.0</AssemblyVersion>
+    <FileVersion>4.81.0.0</FileVersion>
+    <!-- v4.81.0 — ★로드맵 3단계: 실시간 FX 피드 서킷 브레이커(급변동 3σ·스테일 fail-closed) + 환율 ACL.
+         ★정직 회계: FX 변환 인프라(QFxRate/QFxQuote/QFxBounds·QFxGuard.TryConvertOrFreeze·Verify
+         ConservativeFxOrFreeze·ClearBase·KrxFxClearing.TryClearUsdToKrwBase)는 이미 완비. 미결 델타는
+         '시계열' 가드 부재 — 기존 QFxGuard 는 건별 변환만 본다. 본 단계가 실시간 급변동/스테일 브레이커와
+         환율 경계 ACL 만 추가(중복 없음).
+         [핵심] QFxCircuitBreaker(신규) — 직전 windowSeconds(기본 600s=10분) 창의 이동 평균/σ 대비 3σ
+         급변동, 또는 피드가 staleSeconds(기본 1s) 이상 지연되면 '모호하게 통과시키지 않고' ForceFreeze
+         (권위 오염 대신 정지). ★fail-closed: 환율≤0/오버플로 즉시 trip(오염 표본 미기록)·3σ 급변동 trip
+         (창 표본≥minSamples·σ>0; σ=0 완전평탄에선 판정 보류=보수 미발화)·Submit 시 수용 간격 초과 trip·
+         TryGetGuardedRate(now) 조회 시 스테일이면 trip(청산 경로가 낡은 환율로 진행하는 fail-open 차단).
+         한 번 trip 되면 래치 유지(IsOpen)·운영자 att ManualRelease + Reset() 로만 재개. 통계는 decimal
+         환율값(≈1330 규모)으로 계산해 catastrophic cancellation 회피(raw 1e11 미사용). 시계열 창은 시간+
+         용량 이중 축출 링(무-per-sample 할당). clock 주입 필수(ticks·결정론). IFxRateSource + QFxFeedPump
+         (폴→Submit 백그라운드 격리). QAcl.TryImportRate(비양수/오버플로 fail-closed·환율은 0 도 무효).
+         ★가드 조회가 유일 청산 진입점: 신선·닫힘 환율만 QFxQuote 로 흘러 KrxFxClearing 보수 청산(매수 Ask
+         올림·매도 Bid 내림·≤1raw)에 진입. ★liveArmed:false 불변: 브레이커/펌프는 '구성'만·자동 배선 없음.
+         테스트 +13(QFxCircuitBreakerTests): 비양수 trip·무표본 조회 비trip·신선 가드 반환·3σ 스파이크 trip+
+         가드 차단·밴드 내 수용·평탄 σ=0 보류·수용/조회 스테일 trip·open 래치 유지+Reset 재개·null 가드·펌프
+         투입·guarded→KrxFxClearing 정상(AAPL 195×10×1330=2,593,500)·trip 시 청산 차단. 빌드 0/0, 전체 1669 통과(+13). -->
     <!-- v4.80.0 — ★로드맵 1단계: 토스증권 인증 격리(OAuth 토큰 수명주기) + 실배선 조립.
          ★정직 회계: TossLiveBroker/ITossTransport/TossHttpTransport(δ=0 인입·ShadowClearingBroker 데코레이터
          계약)는 v4.75.0 골격으로 이미 존재. 실제 미결 델타는 두 가지였다: (1) TossHttpTransport 에 Func 기반
