@@ -96,6 +96,69 @@ namespace StockManager.Tests
         }
 
         // ════════════════════════════════════════════════════════════════════
+        // 1b. Pack(Span) — δ=0 무할당 오버로드(v4.82.0): byte[] 버전과 바이트 동일 + 경계
+        // ════════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void PackSpan_MatchesByteArray_Tick()
+        {
+            var tick = new TickPayload { SymbolCode = 5930, Price = 85_000.0, Volume = 12_345, ChangeRate = 1.23, TimestampTicks = 637_000_000_000L };
+            byte[] expected = BridgeSerializer.Pack(BridgeMessageType.RealtimeTick, in tick);
+
+            Span<byte> buf = stackalloc byte[BridgeSerializer.MaxFrameSize];
+            int n = BridgeSerializer.Pack(buf, BridgeMessageType.RealtimeTick, in tick);
+
+            Assert.Equal(expected.Length, n);
+            Assert.True(buf[..n].SequenceEqual(expected));   // 바이트 동일
+        }
+
+        [Fact]
+        public void PackHeartbeatSpan_MatchesByteArray()
+        {
+            byte[] expected = BridgeSerializer.PackHeartbeat(987_654L);
+            Span<byte> buf = stackalloc byte[BridgeSerializer.MaxFrameSize];
+            int n = BridgeSerializer.PackHeartbeat(buf, 987_654L);
+            Assert.Equal(expected.Length, n);
+            Assert.True(buf[..n].SequenceEqual(expected));
+        }
+
+        [Fact]
+        public void PackSpan_BufferTooSmall_Throws()
+        {
+            var tick = new TickPayload { SymbolCode = 5930, Price = 1.0 };
+            Assert.Throws<ArgumentException>(() =>
+            {
+                Span<byte> tiny = stackalloc byte[BridgeSerializer.HeaderSize];   // 페이로드 공간 없음
+                BridgeSerializer.Pack(tiny, BridgeMessageType.RealtimeTick, in tick);
+            });
+        }
+
+        [Fact]
+        public void PackSpan_ReusedBuffer_IndependentFrames()
+        {
+            // 재사용 버퍼(프록시 hot path 모사) — 소비 후 재pack 시 프레임이 서로 오염되지 않음.
+            Span<byte> buf = stackalloc byte[BridgeSerializer.MaxFrameSize];
+
+            var tick = new TickPayload { SymbolCode = 5930, Price = 100.0, Volume = 1, ChangeRate = 0, TimestampTicks = 1 };
+            int n1 = BridgeSerializer.Pack(buf, BridgeMessageType.RealtimeTick, in tick);
+            BridgeSerializer.TryParseHeader(buf[..BridgeSerializer.HeaderSize], out var t1, out int p1);
+            var r1 = BridgeSerializer.Unpack<TickPayload>(buf.Slice(BridgeSerializer.HeaderSize, p1));
+
+            var fill = new FillPayload { OrderId = 7, SymbolCode = 660, FillPrice = 5.0, FillQty = 3, Side = -1, TimestampTicks = 9 };
+            int n2 = BridgeSerializer.Pack(buf, BridgeMessageType.OrderFilled, in fill);
+            BridgeSerializer.TryParseHeader(buf[..BridgeSerializer.HeaderSize], out var t2, out int p2);
+            var r2 = BridgeSerializer.Unpack<FillPayload>(buf.Slice(BridgeSerializer.HeaderSize, p2));
+
+            Assert.Equal(BridgeMessageType.RealtimeTick, t1);
+            Assert.Equal(5930L, r1.SymbolCode);
+            Assert.Equal(BridgeMessageType.OrderFilled, t2);
+            Assert.Equal(7L, r2.OrderId);
+            Assert.Equal(-1, r2.Side);
+            Assert.Equal(BridgeSerializer.HeaderSize + 40, n1);   // Tick 40B
+            Assert.Equal(BridgeSerializer.HeaderSize + 48, n2);   // Fill 48B — 각 헤더가 자기 길이를 정확 기술
+        }
+
+        // ════════════════════════════════════════════════════════════════════
         // 2. TryParseHeader — 경계 조건
         // ════════════════════════════════════════════════════════════════════
 

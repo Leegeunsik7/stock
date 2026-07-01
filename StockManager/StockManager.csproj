@@ -12,15 +12,33 @@
     <ApplicationIcon></ApplicationIcon>
 
     <!--
-      ⚠️ AnyCPU: 키움 OpenAPI+는 32비트 전용이므로,
-      Kiwoom 실시간 필요 시 아래 주석을 해제해 x86으로 빌드:
-      <PlatformTarget>x86</PlatformTarget>
+      ⚠️ AnyCPU 고정(★아키텍처 결정 v4.82.0): 메인 터미널은 64비트 유지한다.
+      키움 OpenAPI+ COM(axKHOpenAPI, 32비트 전용)은 메인 프로세스에 '동거'시키지 않고,
+      별도 x86 프로세스(StockManager.KiwoomProxy, <PlatformTarget>x86</PlatformTarget>)로 격리하고
+      NamedPipe(BridgeProtocol)로 결속한다. 이 격리가 목적: WebView2 + COM 이 한 프로세스에서
+      가상 메모리를 다투는 32비트 압박과 COM 크래시의 터미널 전파를 '구조적으로' 차단한다.
+      따라서 메인을 x86 으로 전환하면 이 하드닝이 '역행'하므로 하지 않는다(스펙 §2 요구의 안전한 실현).
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.81.0</Version>
-    <AssemblyVersion>4.81.0.0</AssemblyVersion>
-    <FileVersion>4.81.0.0</FileVersion>
+    <Version>4.82.0</Version>
+    <AssemblyVersion>4.82.0.0</AssemblyVersion>
+    <FileVersion>4.82.0.0</FileVersion>
+    <!-- v4.82.0 — ★로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어(δ=0 송신).
+         ★정직 회계 + 아키텍처 결정: 스펙 §2 는 '메인 프로세스에서 WebView2+키움 COM 동거 시 32비트
+         메모리 압박 방어'를 요구했으나, 현 아키텍처는 정반대로 COM 을 별도 x86 프로세스(KiwoomProxy)로
+         격리하고 NamedPipe 로 결속한다 — 그 격리가 바로 압박·크래시 전파의 구조적 방어다. 지휘관 결정에
+         따라 '프로세스 격리 유지'(메인 AnyCPU/64비트 불변)를 채택. §2.2(STA 마샬링·예외 순서)·§2.3(릴레이
+         절연·FillReceived 미구독·ProxyLost/Error→EmergencyFreeze)는 v4.78.0 에 이미 완비·테스트됨(무변경).
+         [실제 델타 = §2.1] KiwoomProxyHost 의 COM 이벤트 핸들러(고빈도 틱) hot path 가 프레임마다 byte[] 를
+         새로 할당하던 GC 압박 제거: BridgeSerializer 에 δ=0 span 오버로드(Pack/PackHeartbeat — 호출자 재사용
+         버퍼에 직접 기록·무할당, byte[] 오버로드는 이에 위임·후방호환) 추가. KiwoomProxyHost 는 재사용
+         _sendBuf(MaxFrameSize) + _sendLock 로 모든 송신을 직렬화 — per-event 힙 할당 0 + STA 이벤트 스레드와
+         하트비트 태스크의 '동시 파이프 write(프레임 인터리빙 손상)' 잠재 레이스까지 함께 차단(락 보유 중
+         await 없음·동기 write). ★x86 프록시는 설계상 64비트 테스트 호스트에서 직접 로드 불가(격리의 대가) —
+         검증되는 것은 (a) 프록시 x86 클린 빌드, (b) 채택한 직렬화 프리미티브의 단위 테스트다.
+         테스트 +4(KiwoomBridgeTests 1b): Pack(Span) byte[] 바이트 동일(Tick·Heartbeat)·버퍼 부족 throw·
+         재사용 버퍼 프레임 독립. 빌드 0/0(메인·x86 프록시), 전체 1673 통과(+4). liveArmed:false 불변. -->
     <!-- v4.81.0 — ★로드맵 3단계: 실시간 FX 피드 서킷 브레이커(급변동 3σ·스테일 fail-closed) + 환율 ACL.
          ★정직 회계: FX 변환 인프라(QFxRate/QFxQuote/QFxBounds·QFxGuard.TryConvertOrFreeze·Verify
          ConservativeFxOrFreeze·ClearBase·KrxFxClearing.TryClearUsdToKrwBase)는 이미 완비. 미결 델타는

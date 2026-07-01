@@ -26,6 +26,12 @@ namespace StockManager.KiwoomProxy
         private long                         _sequence;
         private bool                         _disposed;
 
+        // ★2단계 GC 방어(스펙 §2.1): COM 이벤트 핸들러 hot path 는 프레임마다 byte[] 를 할당하지 않는다.
+        //   재사용 송신 버퍼 + 송신 직렬화 락으로 (a) per-event 할당 제거, (b) STA 이벤트 스레드와 하트비트
+        //   태스크가 동일 파이프에 '동시 write' 하여 프레임이 섞이던 잠재 손상 레이스를 함께 차단한다.
+        private readonly byte[]              _sendBuf = new byte[BridgeSerializer.MaxFrameSize];
+        private readonly object              _sendLock = new();
+
         public KiwoomProxyHost(
             IKiwoomApi api,
             string     pipeName = BridgeSerializer.DefaultPipeName)
@@ -70,37 +76,43 @@ namespace StockManager.KiwoomProxy
         // ── COM 이벤트 → BridgeMessage (STA 스레드에서 호출) ─────────────────
 
         private void OnTick(object? sender, TickEventArgs e)
-            => SendSync(BridgeSerializer.Pack(BridgeMessageType.RealtimeTick,
-                new TickPayload
-                {
-                    SymbolCode     = e.SymbolCode,
-                    Price          = e.Price,
-                    Volume         = e.Volume,
-                    ChangeRate     = e.ChangeRate,
-                    TimestampTicks = DateTime.UtcNow.Ticks,
-                }));
+        {
+            // 값타입 페이로드(스택·무힙) → 재사용 버퍼에 pack → 직렬화 송신. 프레임당 힙 할당 0.
+            var p = new TickPayload
+            {
+                SymbolCode     = e.SymbolCode,
+                Price          = e.Price,
+                Volume         = e.Volume,
+                ChangeRate     = e.ChangeRate,
+                TimestampTicks = DateTime.UtcNow.Ticks,
+            };
+            SendFrame(BridgeMessageType.RealtimeTick, in p);
+        }
 
         private void OnFill(object? sender, FillEventArgs e)
-            => SendSync(BridgeSerializer.Pack(
-                e.FillQty > 0 ? BridgeMessageType.OrderFilled : BridgeMessageType.OrderRejected,
-                new FillPayload
-                {
-                    OrderId        = e.OrderId,
-                    SymbolCode     = e.SymbolCode,
-                    FillPrice      = e.FillPrice,
-                    FillQty        = e.FillQty,
-                    Side           = e.Side,
-                    TimestampTicks = DateTime.UtcNow.Ticks,
-                }));
+        {
+            var p = new FillPayload
+            {
+                OrderId        = e.OrderId,
+                SymbolCode     = e.SymbolCode,
+                FillPrice      = e.FillPrice,
+                FillQty        = e.FillQty,
+                Side           = e.Side,
+                TimestampTicks = DateTime.UtcNow.Ticks,
+            };
+            SendFrame(e.FillQty > 0 ? BridgeMessageType.OrderFilled : BridgeMessageType.OrderRejected, in p);
+        }
 
         private void OnAccount(object? sender, AccountEventArgs e)
-            => SendSync(BridgeSerializer.Pack(BridgeMessageType.AccountState,
-                new AccountPayload
-                {
-                    Deposit       = e.Deposit,
-                    Equity        = e.Equity,
-                    UnfilledCount = e.UnfilledCount,
-                }));
+        {
+            var p = new AccountPayload
+            {
+                Deposit       = e.Deposit,
+                Equity        = e.Equity,
+                UnfilledCount = e.UnfilledCount,
+            };
+            SendFrame(BridgeMessageType.AccountState, in p);
+        }
 
         // ── 하트비트 루프 ─────────────────────────────────────────────────────
         private async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -108,8 +120,7 @@ namespace StockManager.KiwoomProxy
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(HeartbeatIntervalMs, ct);
-                await SendAsync(BridgeSerializer.PackHeartbeat(
-                    Interlocked.Increment(ref _sequence)));
+                SendHeartbeat(Interlocked.Increment(ref _sequence));
             }
         }
 
@@ -157,16 +168,35 @@ namespace StockManager.KiwoomProxy
             }
         }
 
-        // ── 내부 헬퍼 ─────────────────────────────────────────────────────────
-        private void SendSync(byte[] data)
-            => SendAsync(data).GetAwaiter().GetResult();
-
-        private async Task SendAsync(byte[] data)
+        // ── 내부 헬퍼(송신 직렬화·무할당) ──────────────────────────────────────
+        //   모든 송신은 _sendLock 하에 재사용 버퍼로 pack → 동기 write. STA 이벤트 스레드·하트비트
+        //   태스크의 동시 진입을 직렬화해 프레임 인터리빙(손상)을 원천 차단(락 보유 중 await 없음).
+        private void SendFrame<T>(BridgeMessageType type, in T payload) where T : unmanaged
         {
-            if (_pipe is { IsConnected: true })
+            lock (_sendLock)
             {
-                await _pipe.WriteAsync(data);
-                await _pipe.FlushAsync();
+                int n = BridgeSerializer.Pack(_sendBuf, type, in payload);
+                WriteLocked(n);
+            }
+        }
+
+        private void SendHeartbeat(long sequence)
+        {
+            lock (_sendLock)
+            {
+                int n = BridgeSerializer.PackHeartbeat(_sendBuf, sequence);
+                WriteLocked(n);
+            }
+        }
+
+        // _sendLock 보유 가정. 바이트모드 파이프 동기 write+flush(짧고 빠른 구간·await 없음).
+        private void WriteLocked(int len)
+        {
+            var pipe = _pipe;
+            if (pipe is { IsConnected: true })
+            {
+                pipe.Write(_sendBuf, 0, len);
+                pipe.Flush();
             }
         }
 
