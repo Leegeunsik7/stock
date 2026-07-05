@@ -21,9 +21,30 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.84.0</Version>
-    <AssemblyVersion>4.84.0.0</AssemblyVersion>
-    <FileVersion>4.84.0.0</FileVersion>
+    <Version>4.85.0</Version>
+    <AssemblyVersion>4.85.0.0</AssemblyVersion>
+    <FileVersion>4.85.0.0</FileVersion>
+    <!-- v4.85.0 — ★3대 전술 과제: 보안 자산 금고 + QTickSpec 격자 방화벽 + 알파 공장 자기 제어 밸브. 4렌즈 적대검증 결함 0.
+         [과제1] SecurityAssetVault(신규) — DPAPI(ProtectedData·CurrentUser·기존 Secret 과 enc:v1: 상호호환) 위에 메모리
+         하드닝 가산: Reveal 은 평문 string 을 절대 만들지 않고 ArrayPool char[] 로 디코드해 SecretLease(using) 로 반환,
+         Dispose 시 CryptographicOperations.ZeroMemory 로 즉시 소거(휘발성 와이프). 전이 byte[](DPAPI 평문·전이 인코딩)는
+         모든 경로(예외 포함)에서 ZeroMemory. ★동결 연동 래치: EmergencyFreeze 감지 시 금고 영구 봉인(재복호화 원천 차단).
+         ★liveArmed:false 펜스: Reveal 은 isLiveArmed()==true 에서만(미무장·봉인·동결·미보관·술어예외 전부 fail-closed).
+         BlazorHomeForm 옵트인 싱글톤 배선(()=>BrokerHub.IsArmed(db)).
+         [과제2] KrxFxClearing.TryClearUsdToKrwBaseGuarded(신규·additive) — 기존 다중-펜스 청산 성공 후 registry 독립
+         조회 + QScaleGuard.ReconcileOrFreeze '2중 검증'(격자 오염 방화벽): 게이트↔레지스트리 격자 디싱크(틱 불일치·
+         미등록·round-trip 위반) → ForceFreeze + false. 정상(격자 일치) 경로는 방어심층 통과(기존 결과 불변). 기존
+         TryClearUsdToKrwBase·테스트 무변경. (2.1/2.2 자산별 격자·보수 정렬·≤1raw 는 v4.77/v4.81 에 이미 완비.)
+         [과제3] AlphaRejectionValve(신규) — 최근 ≤1000 시행 롤링 거부율 > 95%(최소 100 표본) 시 자동 트립(래치)해
+         AutonomousAlphaFactory.RunCycle 을 스킵(전략 고갈/오작동 시 폭주 방지)·수동 Suspend/Resume. RingTelemetry +2
+         필드(롤링 거부율·일시정지) + AlphaFactoryAmber. TelemetryMonitor.razor 🏭 패널에 Amber Alert 오버레이·롤링
+         거부율·SUSPENDED 배지 증설(기존 패널은 v4.73 에 존재 — 본 단계는 자기 제어 밸브 델타). Path Gamma seqlock 채널
+         재사용(신규 채널 불요).
+         ★불변: liveArmed:false(금고 Reveal 펜스·공장 무주문)·fail-closed(전 경로 throw/freeze)·δ=0(ArrayPool 재사용·
+         밸브 고정 링)·결정론(밸브)·한국 색상 무관(앰버=경보). 적대검증 4렌즈(메모리/시크릿·fail-closed·동시성·컴파일) 결함 0.
+         테스트 +24(SecurityAssetVaultTests 8·AlphaRejectionValveTests 11·GridFirewallTests 3 등). 빌드 0/0(메인+x86), 전체 1742 통과.
+         ★플래키 0% 사수: 실 파이프·스레드 타이밍 테스트(KiwoomBridgeTests·TossProductionTests)를 [Collection("Concurrency
+         Stress")] 편입 — 전체 스위트 병렬 시 CPU 초과구독으로 인한 간헐 기아 제거(v4.58.1 관례 계승, 8회 연속 클린런 확인). -->
     <!-- v4.84.0 — ★Path Gamma UI: 초고속 IPC 레이턴시 + FX 3σ 변동성 전술 관제(LatencyMonitor.razor). 4렌즈 적대검증(1결함 교정).
          무할당 공유 구조체 LatencySnapshot(readonly blittable·Pack=1·7×long+byte=57B) + LatencyTelemetryChannel(seqlock
          단일 라이터·캐시라인 격리·홀/짝 커서·8회 재시도 후 직전 프레임 유지 — RingTelemetry idiom 정확 미러링) +

@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.84.0** (2026-07-01)  
+> 기준 버전: **v4.85.0** (2026-07-01)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -14,7 +14,7 @@
 - 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
 - AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
 - **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
-- 1,718 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- 1,742 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.84.0)
+### 현황 (v4.85.0)
 
-- **총 테스트**: 1,718 (클린런)
+- **총 테스트**: 1,742 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.85.0 | 3대 전술 과제(적대검증 4렌즈 결함 0). ①`SecurityAssetVault`(DPAPI + `SecretLease` char[] 풀·ZeroMemory 와이프 + 동결 연동 봉인 래치 + liveArmed Reveal 펜스). ②`KrxFxClearing.TryClearUsdToKrwBaseGuarded`(격자 오염 방화벽 — QScaleGuard 2중 검증·격자 디싱크 ForceFreeze). ③`AlphaRejectionValve`(롤링 거부율 95%↑ 자동 Suspend·수동 Suspend/Resume) + RingTelemetry Amber 필드 + TelemetryMonitor 🏭 Amber Alert. +24 테스트. liveArmed:false 불변 |
 | v4.84.0 | Path Gamma UI: 레이턴시·변동성 관제. `LatencySnapshot`(무할당 blittable 57B) + `LatencyTelemetryChannel`(seqlock 미러) + `LatencyTelemetryPublisher`(CAS 단일 라이터). `KiwoomBridgeClient` RTT(seq 슬롯 링 δ=0) + `QFxCircuitBreaker.ReadFxStats`(MA·1σ·상태코드 0/1/2). `LatencyMonitor.razor`(/broker/latency·100ms 폴·fail-closed 오버레이·미배선 정직 표기). BlazorHomeForm 싱글톤+ringTimer 합류. +20 테스트. 적대검증 1교정(σ 미확립 밴드 오도→조건부 표시). liveArmed:false 불변 |
 | v4.83.0 | 프로덕션 결속(3과제) + 4렌즈 적대검증 6교정. ①토스 실 WSS: `TossProductionSocket`(ClientWebSocket δ=0 수신·핸드셰이크 401/403·정책종료·공백토큰 fail-closed→ForceFreeze) + `TossHttpTransport` 401/403 동결 + `TossProductionAssembler`(옵트인). ②키움 IPC 핑퐁: `Ping/Pong`+`PackSeq`, `KiwoomBridgeClient` 클라 Ping·`_sendGate`·`_pingBuf`(δ=0)·Pong→생존성, `KiwoomProxyHost` Pong 응답, `ExecutionBridgeBroker.CreateFast`(20ms/50ms) → 무응답→ProxyLost→`KiwoomFreezeRelay`→EmergencyFreeze. `ProductionKiwoomApi`(#if KIWOOM_COM·기본 제외·SDK 게이트 axKHOpenAPI 어댑터). ③실 FX: `HttpFxRateSource`(HTTP 폴·dot-path·fail-soft) → `QFxFeedPump`가 `QAcl.TryImportRate`→`SubmitRaw` 결선. +25 테스트. liveArmed:false 불변 |
 
@@ -567,6 +568,8 @@ KRX 호가 사다리·FX   → Common/QKrxTickLadder.cs  (v4.77.0 배선, KrxTic
 FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변동·스테일 ForceFreeze·QFxFeedPump 폴; v4.84.0 ReadFxStats·상태코드)
 레이턴시 텔레메트리   → Common/LatencyTelemetry.cs  (v4.84.0, LatencySnapshot·seqlock 채널·퍼블리셔 — RingTelemetry 미러)
 레이턴시 관제 UI     → Blazor/Pages/LatencyMonitor.razor  (v4.84.0, /broker/latency·100ms 락-프리 폴·fail-closed 오버레이)
+보안 자산 금고       → Common/SecurityAssetVault.cs  (v4.85.0, DPAPI·SecretLease 메모리 와이프·동결 봉인 래치·무장 펜스)
+알파 자기 제어 밸브   → Common/AutonomousAlphaFactory.cs  (v4.85.0, AlphaRejectionValve 롤링 거부율 95%↑ 자동 Suspend)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

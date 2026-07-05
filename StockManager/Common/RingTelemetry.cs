@@ -37,11 +37,15 @@ namespace StockManager.Common
         public readonly long   AlphaFactoryCycles;    // 완료 사이클 수
         public readonly long   AlphaFactorySigned;    // ECDsa 서명 완료 전략 수(누적)
         public readonly long   AlphaFactoryRejected;  // 수치 가드(CartridgeNumericsGuard) 거부 수(누적)
+        // v4.85.0 — 자기 제어 밸브: 최근 창(≤1000 시행) 롤링 거부율 + 자동/수동 일시정지 상태(Amber Alert).
+        public readonly double AlphaFactoryRecentRejRate;   // 0..1 (누적 아님·롤링)
+        public readonly long   AlphaFactorySuspended;       // 0=가동, 1=일시정지(밸브 트립)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
                              long scenarioVersion = 0L, long scenarioWriterCollisions = 0L, long scenarioFrozen = 0L,
-                             long alphaFactoryCycles = 0L, long alphaFactorySigned = 0L, long alphaFactoryRejected = 0L)
+                             long alphaFactoryCycles = 0L, long alphaFactorySigned = 0L, long alphaFactoryRejected = 0L,
+                             double alphaFactoryRecentRejRate = 0.0, long alphaFactorySuspended = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -56,6 +60,8 @@ namespace StockManager.Common
             AlphaFactoryCycles   = alphaFactoryCycles;
             AlphaFactorySigned   = alphaFactorySigned;
             AlphaFactoryRejected = alphaFactoryRejected;
+            AlphaFactoryRecentRejRate = alphaFactoryRecentRejRate;
+            AlphaFactorySuspended     = alphaFactorySuspended;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -68,6 +74,9 @@ namespace StockManager.Common
         public bool ScenarioActive => ScenarioVersion > 0;
         /// <summary>알파 공장 배선 여부(사이클 1 이상 완료된 경우). 미배선·미시작이면 false.</summary>
         public bool AlphaFactoryActive => AlphaFactoryCycles > 0;
+        /// <summary>알파 공장 앰버 경보 — 자동/수동 일시정지 중이거나 최근 거부율 95% 이상(전략 고갈 의심).</summary>
+        public bool AlphaFactoryAmber  => AlphaFactorySuspended != 0
+                                       || (AlphaFactoryActive && AlphaFactoryRecentRejRate >= 0.95);
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -176,12 +185,18 @@ namespace StockManager.Common
                 long sVer = 0L, sWc = 0L, sFr = 0L;
                 if (_scenario is { } sc) { sVer = sc.Version; sWc = sc.WriterCollisions; sFr = sc.Frozen; }
                 // v4.73.0 — 자율 알파 공장 카운터 합류(미배선이면 0). int→long 캐스팅, 힙 할당 0.
-                long afCycles = 0L, afSigned = 0L, afRejected = 0L;
-                if (_alphaFactory is { } af) { afCycles = af.CyclesCompleted; afSigned = af.StrategiesSigned; afRejected = af.GuardRejections; }
+                // v4.85.0 — 자기 제어 밸브 상태(롤링 거부율·일시정지) 합류.
+                long afCycles = 0L, afSigned = 0L, afRejected = 0L, afSuspended = 0L;
+                double afRejRate = 0.0;
+                if (_alphaFactory is { } af)
+                {
+                    afCycles = af.CyclesCompleted; afSigned = af.StrategiesSigned; afRejected = af.GuardRejections;
+                    afRejRate = af.RecentRejectionRate; afSuspended = af.IsSuspended ? 1L : 0L;
+                }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
-                    afCycles, afSigned, afRejected));
+                    afCycles, afSigned, afRejected, afRejRate, afSuspended));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

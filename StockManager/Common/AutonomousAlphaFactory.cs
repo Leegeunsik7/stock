@@ -48,6 +48,61 @@ namespace StockManager.Common
         }
     }
 
+    // ── 자기 제어 밸브 — 최근 N 시행 거부율이 임계 초과 시 트립(전략 고갈/오작동 방어) ────────────
+    /// <summary>
+    /// 최근 window 시행(전략 accept/reject)의 거부율이 threshold 초과 시 IsTripped=1 로 래치.
+    /// 결정론·무할당(고정 링). 트립은 지휘관 Reset() 전까지 유지(공장 사이클 스킵).
+    /// </summary>
+    public sealed class AlphaRejectionValve
+    {
+        private readonly int      _window;
+        private readonly double   _threshold;   // 0..1
+        private readonly int      _minSamples;  // 최소 표본(거짓 트립 방지)
+        private readonly bool[]   _recent;
+        private int _head, _count, _rejected, _tripped;
+        private readonly object _lock = new();
+
+        public AlphaRejectionValve(int window = 1000, double threshold = 0.95, int minSamples = 100)
+        {
+            _window     = window < 2 ? 2 : window;
+            _threshold  = threshold is > 0.0 and < 1.0 ? threshold : 0.95;
+            _minSamples = minSamples < 1 ? 1 : (minSamples > _window ? _window : minSamples);
+            _recent     = new bool[_window];
+        }
+
+        public bool   IsTripped   => Volatile.Read(ref _tripped) == 1;
+        public double RecentRate  { get { lock (_lock) return _count == 0 ? 0.0 : (double)_rejected / _count; } }
+        public int    WindowCount { get { lock (_lock) return _count; } }
+
+        /// <summary>1 시행 결과 기록(true=거부). 임계 초과 시 자동 트립(멱등). 반환=현재 트립 상태.</summary>
+        public bool Record(bool rejected)
+        {
+            lock (_lock)
+            {
+                if (_count == _window)                       // 최고참 축출
+                { if (_recent[_head]) _rejected--; }
+                else _count++;
+                _recent[_head] = rejected;
+                if (rejected) _rejected++;
+                _head = (_head + 1) % _window;
+
+                if (_count >= _minSamples && (double)_rejected / _count > _threshold)
+                    Interlocked.CompareExchange(ref _tripped, 1, 0);   // 자동 밸브 트립(멱등 래치)
+            }
+            return IsTripped;
+        }
+
+        /// <summary>명시 트립(지휘관 수동 일시정지).</summary>
+        public void Trip() => Interlocked.Exchange(ref _tripped, 1);
+
+        /// <summary>재개 — 래치 해제 + 창 초기화(운영자 조치).</summary>
+        public void Reset()
+        {
+            lock (_lock) { _head = _count = _rejected = 0; Array.Clear(_recent); }
+            Interlocked.Exchange(ref _tripped, 0);
+        }
+    }
+
     // ── 자율 알파 공장 ─────────────────────────────────────────────────────────
     public sealed class AutonomousAlphaFactory : IDisposable
     {
@@ -55,10 +110,22 @@ namespace StockManager.Common
         private readonly OrderAttestationService  _gate;
         private readonly Thread                   _worker;
         private volatile bool                     _stop;
+        private readonly AlphaRejectionValve      _valve = new();   // v4.85.0 자기 제어 밸브(거부율 95%↑ 자동 정지)
 
         public int CyclesCompleted   { get; private set; }
         public int StrategiesSigned  { get; private set; }
         public int GuardRejections   { get; private set; }
+
+        // ── v4.85.0 자기 제어 밸브(관제·제어) ─────────────────────────────────
+        /// <summary>거부율 임계 초과로 자동 일시정지(또는 수동 Suspend)됨. 사이클 스킵.</summary>
+        public bool   IsSuspended         => _valve.IsTripped;
+        /// <summary>최근 창(≤1000 시행) 거부율(0..1). 누적이 아닌 롤링 — 최근 고갈을 즉시 반영.</summary>
+        public double RecentRejectionRate => _valve.RecentRate;
+        public int    RecentWindowCount   => _valve.WindowCount;
+        /// <summary>수동 일시정지(지휘관). Resume() 전까지 사이클 스킵.</summary>
+        public void   Suspend()           => _valve.Trip();
+        /// <summary>재개 — 밸브 래치 해제 + 창 초기화.</summary>
+        public void   Resume()            => _valve.Reset();
 
         public AutonomousAlphaFactory(LocalDatabase db, OrderAttestationService gate)
         {
@@ -99,6 +166,10 @@ namespace StockManager.Common
             if (_gate.Mode == GatingMode.EmergencyFreeze)
                 return new List<CartStrategy>();
 
+            // ★자기 제어 밸브 트립(거부율 임계 초과 또는 수동 Suspend) → 사이클 스킵(전략 고갈 시 폭주 방지)
+            if (_valve.IsTripped)
+                return new List<CartStrategy>();
+
             // 결정론 기준 시계열 (seed=42, 300봉) — 외부 API 의존 0
             var candles = CartridgeEngine.ReferenceSeries(seed: 42, n: 300);
 
@@ -124,10 +195,12 @@ namespace StockManager.Common
                 if (!CartridgeNumericsGuard.TryValidate(strategy, out _))
                 {
                     GuardRejections++;
+                    _valve.Record(rejected: true);    // 밸브: 거부 시행 기록(임계 초과 시 자동 정지)
                     continue;
                 }
 
                 signed.Add(strategy);
+                _valve.Record(rejected: false);       // 밸브: 수용 시행 기록
             }
 
             // 5. 서명 + 파일 내보내기 — EmergencyFreeze 재확인 (Drain 중 상태 변화 방어)

@@ -16,6 +16,9 @@ using Xunit;
 
 namespace StockManager.Tests
 {
+    // v4.85.0 — 실 NamedPipe·핑퐁 타이밍 테스트(§5·§7)가 전체 스위트 병렬 시 CPU 초과구독으로 간헐 기아
+    //   → ConcurrencyStress(DisableParallelization) 편입으로 단독 구간 순차 실행(플래키 0% 사수). 안전성 단언은 무관.
+    [Collection("ConcurrencyStress")]
     public class KiwoomBridgeTests
     {
         // ════════════════════════════════════════════════════════════════════

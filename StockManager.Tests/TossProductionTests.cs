@@ -16,6 +16,9 @@ using Xunit;
 
 namespace StockManager.Tests
 {
+    // v4.85.0 — ConnectThenCloseLoop 는 실 백그라운드 인그레스 스레드+백오프 sleep 을 돌려 전체 스위트 병렬 시
+    //   초과구독에 취약 → ConcurrencyStress(DisableParallelization) 편입(플래키 0% 사수).
+    [Collection("ConcurrencyStress")]
     public sealed class TossProductionTests
     {
         private sealed class FakeAuth : ITossAuthClient

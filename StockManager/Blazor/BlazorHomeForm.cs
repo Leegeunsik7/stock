@@ -83,6 +83,9 @@ namespace StockManager.Blazor
             services.AddSingleton(freezeRelay);
             FormClosed += (_, _) => { try { freezeRelay.Dispose(); } catch { } };
             services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
+            // v4.85.0 — 보안 자산 금고(DPAPI + 메모리 와이프 + 동결 연동 봉인). ★Reveal 은 liveArmed:false 옵트인
+            //   펜스 뒤(무장 시에만 실 자격증명 복호화). EmergencyFreeze 감지 시 금고 영구 봉인(재복호화 원천 차단).
+            services.AddSingleton(new SecurityAssetVault(db, attestation, () => BrokerHub.IsArmed(db)));
             // S27-c — 섀도우 컷오버 게이트(옵트인 기본 OFF = INERT). ON 시 청산 신호에 신 QFixed 병렬 대조+분기 동결.
             //   라이브 청산 미배선(현행 decimal 권위 유지)·기본 OFF 라 성벽 무영향. 실 컷오버 시 Clear() 결속.
             //   ⚠️ 이 기본 spec 은 'KRW 정수단가 전용 격자'(tick=1원). USD 센트·코인 소수·소수점 원 단가는

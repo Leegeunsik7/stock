@@ -164,5 +164,49 @@ namespace StockManager.Common
                 return false;
             }
         }
+
+        /// <summary>
+        /// 과제 2.3 고도화 — '격자 오염 방화벽'(2중 검증). 기존 다중-펜스 청산(TryClearUsdToKrwBase) 성공 후,
+        /// 자산 격자 스펙을 registry 에서 '독립' 조회하여 정렬 단가/수량이 여전히 그 격자의 정수배인지
+        /// QScaleGuard.ReconcileOrFreeze 로 재확인한다. 환율 스케일 경계에서의 격자 디싱크(round-trip 위반·
+        /// 스케일 오염·게이트와 레지스트리 격자 불일치)를 포착하면 즉시 ForceFreeze + false(모호한 통과 금지).
+        /// ★정직: 정상 경로(gate 와 registry 격자가 일치)에서는 (A)에서 이미 정렬돼 (B)도 통과하는 방어심층
+        /// 펜스다. 두 격자 뷰가 어긋나는 오염(예: 급변동으로 재등록된 격자 디싱크)만 (B)가 추가로 차단한다.
+        /// </summary>
+        public static bool TryClearUsdToKrwBaseGuarded(
+            ShadowCutoverGate gate, QTickRegistry registry, OrderAttestationService? att,
+            string symbol, decimal priceUsd, decimal qty, OrderSide side,
+            QFxQuote usdKrw, QFxBounds bounds, out decimal baseNotionalKrw)
+        {
+            baseNotionalKrw = 0m;
+            if (gate is null)     throw new ArgumentNullException(nameof(gate));
+            if (registry is null) throw new ArgumentNullException(nameof(registry));
+
+            // (A) 기존 다중-펜스 청산(QAcl 경계 + 자산 정렬 + QFxGuard 보수 FX 환산).
+            if (!TryClearUsdToKrwBase(gate, att, symbol, priceUsd, qty, side, usdKrw, bounds, out baseNotionalKrw))
+                return false;
+
+            try
+            {
+                // (B) ★2중 검증(격자 오염 방화벽) — 자산 격자 스펙 독립 조회 + 정렬값 재확인.
+                if (!registry.TryGet(symbol, out var spec))
+                {
+                    try { att?.ForceFreeze($"격자 방화벽: '{symbol}' 미등록(레지스트리 디싱크) — fail-closed"); } catch { }
+                    baseNotionalKrw = 0m; return false;
+                }
+                if (!gate.TryClearAligned(symbol, priceUsd, qty, side, out var ap, out var aq))
+                { baseNotionalKrw = 0m; return false; }   // TryClearAligned 가 이미 ForceFreeze
+                QMoney assetNotional = ap * aq;            // floor QMoney(CrossMul)
+                if (!QScaleGuard.ReconcileOrFreeze(ap, aq, assetNotional, spec, att))
+                { baseNotionalKrw = 0m; return false; }    // 격자 배수/round-trip 디싱크 → ForceFreeze
+                return true;
+            }
+            catch (Exception ex) when (ex is OverflowException or ArgumentOutOfRangeException or DivideByZeroException)
+            {
+                try { att?.ForceFreeze($"격자 방화벽: 연산 트랩({ex.GetType().Name}) — fail-closed"); } catch { }
+                baseNotionalKrw = 0m;
+                return false;
+            }
+        }
     }
 }
