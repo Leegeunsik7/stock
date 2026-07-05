@@ -29,3 +29,7 @@ Thumbs.db
 
 # MCP Playwright 세션 아티팩트(임시)
 .playwright-mcp/
+
+# 세션 외부 유입 이미지 아티팩트(StockSuite 무관)
+kernel_arena.png
+swarm_standby.png
