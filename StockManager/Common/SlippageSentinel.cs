@@ -38,6 +38,26 @@ namespace StockManager.Common
         // 연속 초과 카운터
         private int _consecutive;
 
+        // ── v4.87.0 δ=0 고정소수점(QMath raw) 미시구조 경로 ─────────────────────
+        //   Welford(double) 경로와 독립. 고정 크기 long 링 + 정수 산술로 GC 0 롤링 평균/분산.
+        //   3σ 판정은 sqrt 회피: |dev|>3σ ⟺ dev² > 9·variance (Int128 비교). σ_raw 는 노출용 isqrt.
+        private const int  FixedCap        = 128;   // 사전 할당 고정 링(long _slippageHistoryRaw[128])
+        private const int  FixedMinSamples = 10;    // ★워밍업 가드(표본<10 이면 판정 보류·no-breach)
+        private readonly long[] _slipRaw   = new long[FixedCap];
+        private int    _fHead;
+        private int    _fCount;
+        private long   _fSum;               // Σ slip raw (128×~1e13 < long)
+        private Int128 _fSumSq;             // Σ slip² (raw²·Int128 — long 오버플로 방지)
+        private long   _lastSlipRawBits;    // 최근 slip raw(Interlocked 원자 노출)
+        private long   _lastSigmaRawBits;   // 최근 σ raw(Interlocked 원자 노출)
+
+        /// <summary>최근 고정소수점 슬리피지(raw·10^8). 원자 읽기.</summary>
+        public long LastSlipRaw     => Interlocked.Read(ref _lastSlipRawBits);
+        /// <summary>최근 롤링 표준편차(raw·10^8). 원자 읽기. 워밍업/퇴화 시 0.</summary>
+        public long LastSigmaRaw    => Interlocked.Read(ref _lastSigmaRawBits);
+        /// <summary>고정 링 채워진 표본 수(≤128).</summary>
+        public int  FixedSampleCount => _fCount;
+
         // S16 #1: FrictionFeedbackBridge 노출용 최근 Z-score (Interlocked int64 비트 저장)
         private long _lastZBits;
 
@@ -106,6 +126,56 @@ namespace StockManager.Common
             {
                 _consecutive = 0;
             }
+        }
+
+        // ── v4.87.0 δ=0 고정소수점 슬리피지 기록 + 3σ 즉시 판정 ─────────────────
+        /// <summary>
+        /// 고정소수점(QFixed raw·10^8) 슬리피지(=expected−fill) 를 고정 링에 무할당 기록하고, 현재 슬리피지가
+        /// 롤링 3σ 를 초과하는지 즉시 반환한다. ★fail-closed: 기준가 없음(expectedRaw≤0)·워밍업(표본&lt;10)·
+        /// 퇴화 분산(σ≤0) 이면 false(경보 미발화·가드 무해 — 분모 0/발주 먹통/가드 해제 맹점 원천 차단).
+        /// 단일 라이터(체결 스레드) 가정 — 링/합계는 무락, 노출값만 Interlocked.
+        /// </summary>
+        public bool RecordAndCheck3Sigma(long expectedRaw, long fillRaw)
+        {
+            if (expectedRaw <= 0) return false;   // 시장가·기준가 없음 → 측정 제외(no-breach)
+
+            long slip = expectedRaw - fillRaw;    // 기대단가 − 체결단가(raw)
+
+            // 고정 링 갱신(무할당) — 가득 차면 최고참 축출(합계 보정).
+            if (_fCount == FixedCap)
+            {
+                long old = _slipRaw[_fHead];
+                _fSum   -= old;
+                _fSumSq -= (Int128)old * old;
+            }
+            else _fCount++;
+            _slipRaw[_fHead] = slip;
+            _fSum   += slip;
+            _fSumSq += (Int128)slip * slip;
+            _fHead   = (_fHead + 1) % FixedCap;
+            Interlocked.Exchange(ref _lastSlipRawBits, slip);
+
+            // ★워밍업 가드 — 표본 10건 미만이면 분산 미확립 → 판정 보류(no-breach·fail-closed).
+            if (_fCount < FixedMinSamples) { Interlocked.Exchange(ref _lastSigmaRawBits, 0L); return false; }
+
+            long   mean = _fSum / _fCount;                              // 정수 평균(raw)
+            Int128 var  = _fSumSq / _fCount - (Int128)mean * mean;      // 모분산(raw²·Int128)
+            if (var <= Int128.Zero) { Interlocked.Exchange(ref _lastSigmaRawBits, 0L); return false; }   // 퇴화 → no-breach
+
+            Interlocked.Exchange(ref _lastSigmaRawBits, (long)ISqrt(var));   // σ raw 노출(isqrt)
+
+            long   dev   = slip - mean;
+            Int128 devSq = (Int128)dev * dev;
+            return devSq > (Int128)9 * var;   // |dev|>3σ ⟺ dev² > 9·variance (sqrt 회피·정수 정확)
+        }
+
+        /// <summary>비음수 Int128 정수 제곱근(Newton). 결정론·무할당. σ 노출 전용.</summary>
+        private static Int128 ISqrt(Int128 n)
+        {
+            if (n <= Int128.Zero) return Int128.Zero;
+            Int128 x = n, y = (x + 1) / 2;
+            while (y < x) { x = y; y = (x + n / x) / 2; }
+            return x;
         }
 
         // ── 최근 잔차 스냅샷 (모니터링 UI 용) ───────────────────────────────

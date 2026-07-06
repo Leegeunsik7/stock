@@ -21,9 +21,28 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.86.0</Version>
-    <AssemblyVersion>4.86.0.0</AssemblyVersion>
-    <FileVersion>4.86.0.0</FileVersion>
+    <Version>4.87.0</Version>
+    <AssemblyVersion>4.87.0.0</AssemblyVersion>
+    <FileVersion>4.87.0.0</FileVersion>
+    <!-- v4.87.0 — ★집행 리스크 통제: δ=0 고정소수점 슬리피지 3σ 센티널 + IgnitionLock 강등 + 드레인 fail-closed. 4렌즈 적대검증 결함 0.
+         ★정직 회계: SlippageSentinel(Welford double)·IgnitionLock·OrderDrainWorker 는 기존 존재. 본 단계는 (a) 센티널에
+         δ=0 고정소수점 경로 가산, (b) IgnitionLock.Downgrade 신설, (c) 드레인 fail-closed 강화 — 기존 double 경로·거동 불변.
+         [과제1] SlippageSentinel δ=0 고정소수점 경로(신규·기존 Welford 경로와 독립): 사전할당 long[128] 링 + long 합계 +
+         Int128 제곱합으로 GC 0 롤링 평균/분산. RecordAndCheck3Sigma(expectedRaw,fillRaw) 는 sqrt 회피(|dev|>3σ ⟺
+         dev²>9·variance·Int128 정수 정확)로 3σ 초과를 즉시 Boolean 반환. ★fail-closed 워밍업 가드: 표본<10·분산≤0·
+         기준가≤0 → false(경보 미발화·분모 0/발주 먹통/가드 해제 맹점 원천 차단). σ 노출은 Int128 Newton isqrt.
+         [과제2] IgnitionLock.Downgrade(신설·한 단 강등): MasterIgnited→ProbeReady(프로브 1주만=대형 발주 물리 차단),
+         TimeBox/Probe→Locked. ExecutionMicrostructureGuard(신규): 슬리피지 3σ 2연속 또는 체결 레이턴시 100ms 초과 →
+         Downgrade 격발(결정론·핫패스 무할당). OrderDrainWorker fail-closed 강화: 드레인 루프 예외 또는 이중키
+         (ValveWired∧LiveArmingWired) 무결성 붕괴/검문 예외 → 강등이 아니라 OrderAttestationService.ForceFreeze 단일
+         소스로 파이프라인 영구 락업(DrainOnce 로 결정론 테스트 가능). ★강등(가역) vs 락업(영구) 역할 분리.
+         [과제3] RingTelemetry +4(FSM 단계·슬리피지 raw·σ raw·강등 누적) + UI 헬퍼. RingTelemetryPublisher 에 ignition·
+         execGuard 합류. TelemetryMonitor ⚡ 집행 미시구조 패널(FSM 단계별 색상 배지·슬리피지/σ·3σ Pure CSS 진척 바·
+         강등 시 대형 Amber 고지·워밍업 판정보류 정직 표기).
+         ★liveArmed:false 불변: DrainOnce 는 여전히 armedPredicate(기본 ()=>false)일 때만 송출 — 기본 오발주 확률 수학적 0.
+         강등/텔레메트리는 실 송출 경로를 열지 않음. 적대검증 4렌즈(고정소수점 수학·fail-closed·동시성·컴파일) 결함 0.
+         테스트 +18(ExecutionMicrostructureTests: 워밍업 가드·시장가 제외·퇴화 no-breach·3σ 돌파·강등·레이턴시·드레인 동결·텔레메트리).
+         빌드 0/0(메인+x86), 전체 1776 통과. -->
     <!-- v4.86.0 — ★자율 전략 진화 팩토리: 3중 게이트 파이프라인 + 금고 연동 ECDsa 서명 + FSM 관제. 4렌즈 적대검증(1결함 교정).
          ★정직 회계: WalkForward.Analyze·StrategyTournament.Run·AlphaEngine.Compute·PromotionGateway(인간 서명 잠금)·
          CartridgeCrypto(ECDsa P-256/SHA256)·SecurityAssetVault 는 모두 기존 존재. 자율 파이프라인에 이들이 미배선이던

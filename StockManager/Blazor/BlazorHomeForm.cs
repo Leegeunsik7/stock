@@ -328,7 +328,11 @@ namespace StockManager.Blazor
             var evolutionPipeline = new StrategyEvolutionPipeline(attestation, alphaFactory, cartridgeSigner, promotionGateway);
             services.AddSingleton(cartridgeSigner);
             services.AddSingleton(evolutionPipeline);
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline);
+            // v4.87.0 — 집행 미시구조 가드: 슬리피지 3σ 2연속·레이턴시 100ms 초과 → IgnitionLock.Downgrade(강등).
+            //   ★강등 ≠ 락업. 파이프라인 무결성 붕괴·예외는 OrderDrainWorker 가 ForceFreeze 로 별도 에스컬레이션.
+            var execGuard = new ExecutionMicrostructureGuard(sentinel, ignition);
+            services.AddSingleton(execGuard);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -348,8 +352,13 @@ namespace StockManager.Blazor
             // v4.70.0 — 발주 밸브 결속: Drain 루프(50ms) → IBroker.Place() 배선.
             //   Dispatch.ValveWired=true 일 때만 타이머 가동(기본 false — 드라이런 박제).
             //   LiveArmingWired 와 독립 스위치 — 둘 다 ON 이어야 실 주문 흐름(이중 키 잠금).
+            // v4.87.0 — fail-closed 강화: 드레인 루프 예외 or 이중키 무결성(런타임 ValveWired) 붕괴 → 강등이 아니라
+            //   ForceFreeze 단일 소스로 영구 락업. dualKeyIntact 는 매 틱 ValveWired 설정이 유지되는지 검문.
             var drainWorker = new OrderDrainWorker(ringDispatcher, broker,
-                wired: cfg.GetBool("Dispatch.ValveWired", false));
+                wired: cfg.GetBool("Dispatch.ValveWired", false),
+                periodMs: 50,
+                attestation: attestation,
+                dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false));
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

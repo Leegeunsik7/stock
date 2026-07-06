@@ -96,6 +96,30 @@ namespace StockManager.Common
             }
         }
 
+        /// <summary>
+        /// v4.87.0 원자적 '한 단 강등'(Step-Down) — 즉시 Locked(Lock)보다 완화된 점진 후퇴.
+        /// MasterIgnited → ProbeReady(프로브 1주만 허용 = 추가 대형 주문 물리 차단), TimeBoxOpen/ProbeReady → Locked.
+        /// 슬리피지 3σ 2연속·체결 레이턴시 100ms 초과 등 미시구조 경보 시 호출. 반환=강등 후 단계.
+        /// </summary>
+        public IgnitionStage Downgrade(string reason)
+        {
+            lock (_lock)
+            {
+                var from = Stage;
+                if (from == IgnitionStage.Locked) return IgnitionStage.Locked;   // 이미 최저 — 무동작
+                IgnitionStage to = from == IgnitionStage.MasterIgnited
+                    ? IgnitionStage.ProbeReady    // 마스터 → 프로브(대형 발주 차단·1주만)
+                    : IgnitionStage.Locked;       // 그 외(TimeBox·Probe) → 완전 잠금
+                if (to == IgnitionStage.ProbeReady)
+                    Volatile.Write(ref _probeRemaining, 1);
+                else
+                { Volatile.Write(ref _probeRemaining, 0); Volatile.Write(ref _windowEndTicks, 0L); }
+                Audit(from, to, "Downgrade", reason ?? "");
+                _stageInt = (int)to;
+                return to;
+            }
+        }
+
         // ── 점화 허용 판정 ────────────────────────────────────────────────────
 
         /// <summary>비소비 조회(UI용). 다중 AND 게이트 — 동결·단계·프로브·창을 모두 확인.</summary>

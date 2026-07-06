@@ -44,13 +44,19 @@ namespace StockManager.Common
         public readonly long   AlphaPipelineMode;           // TournamentPipelineMode: 0 Idle/1 Testing/2 Signing/3 Deployed/4 Paused
         public readonly long   AlphaPromoted;               // 승격 제출(PendingApproval) 누적
         public readonly double AlphaSigningSuccessRate;     // 서명 성공률 0..1
+        // v4.87.0 — 집행 미시구조: IgnitionLock FSM 단계 + 실시간 슬리피지/σ(raw) + 강등 누적.
+        public readonly long   IgnitionStageCode;           // 0 Locked/1 ProbeReady/2 TimeBoxOpen/3 MasterIgnited
+        public readonly long   SlippageRaw;                 // 최근 슬리피지(raw·10^8)
+        public readonly long   SlippageSigmaRaw;            // 롤링 σ(raw·10^8) — 워밍업/퇴화 시 0
+        public readonly long   ExecDowngrades;              // FSM 강등(Step-Down) 누적
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
                              long scenarioVersion = 0L, long scenarioWriterCollisions = 0L, long scenarioFrozen = 0L,
                              long alphaFactoryCycles = 0L, long alphaFactorySigned = 0L, long alphaFactoryRejected = 0L,
                              double alphaFactoryRecentRejRate = 0.0, long alphaFactorySuspended = 0L,
-                             long alphaPipelineMode = 0L, long alphaPromoted = 0L, double alphaSigningSuccessRate = 0.0)
+                             long alphaPipelineMode = 0L, long alphaPromoted = 0L, double alphaSigningSuccessRate = 0.0,
+                             long ignitionStageCode = 0L, long slippageRaw = 0L, long slippageSigmaRaw = 0L, long execDowngrades = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -70,6 +76,10 @@ namespace StockManager.Common
             AlphaPipelineMode         = alphaPipelineMode;
             AlphaPromoted             = alphaPromoted;
             AlphaSigningSuccessRate   = alphaSigningSuccessRate;
+            IgnitionStageCode         = ignitionStageCode;
+            SlippageRaw               = slippageRaw;
+            SlippageSigmaRaw          = slippageSigmaRaw;
+            ExecDowngrades            = execDowngrades;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -97,6 +107,12 @@ namespace StockManager.Common
             (long)TournamentPipelineMode.Paused   => "Paused",
             _ => "Unknown"
         };
+        // v4.87.0 — 집행 미시구조 UI 헬퍼.
+        public string  IgnitionStageName    => IgnitionLock.StageLabel((IgnitionStage)IgnitionStageCode);
+        public string  IgnitionStageCss     => IgnitionLock.StageCss((IgnitionStage)IgnitionStageCode);
+        public bool    ExecMasterIgnited    => IgnitionStageCode == (long)IgnitionStage.MasterIgnited;
+        public decimal SlippageDecimal      => SlippageRaw / (decimal)QMath.Scale;
+        public decimal SlippageSigmaDecimal => SlippageSigmaRaw / (decimal)QMath.Scale;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -170,6 +186,8 @@ namespace StockManager.Common
         private readonly ScenarioSeqlockMonitor? _scenario;   // v4.63.0 — 시나리오 변이 seqlock 통합(옵션·기본 null)
         private readonly AutonomousAlphaFactory? _alphaFactory; // v4.73.0 — 자율 알파 공장 카운터 통합(옵션·기본 null)
         private readonly StrategyEvolutionPipeline? _pipeline;  // v4.86.0 — 진화 토너먼트 파이프라인(옵션·기본 null)
+        private readonly IgnitionLock? _ignition;               // v4.87.0 — 점화 FSM 단계(옵션·기본 null)
+        private readonly ExecutionMicrostructureGuard? _execGuard; // v4.87.0 — 슬리피지/σ/강등(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -178,7 +196,9 @@ namespace StockManager.Common
                                       RingTelemetryChannel channel, Func<long>? nowTicks = null,
                                       ScenarioSeqlockMonitor? scenario = null,
                                       AutonomousAlphaFactory? alphaFactory = null,
-                                      StrategyEvolutionPipeline? pipeline = null)
+                                      StrategyEvolutionPipeline? pipeline = null,
+                                      IgnitionLock? ignition = null,
+                                      ExecutionMicrostructureGuard? execGuard = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -187,6 +207,8 @@ namespace StockManager.Common
             _scenario     = scenario;
             _alphaFactory = alphaFactory;
             _pipeline     = pipeline;
+            _ignition     = ignition;
+            _execGuard    = execGuard;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -223,11 +245,16 @@ namespace StockManager.Common
                 {
                     apMode = (long)pl.Mode; apPromoted = pl.Promoted; apSignRate = pl.SigningSuccessRate;
                 }
+                // v4.87.0 — 집행 미시구조(FSM 단계·슬리피지·σ·강등) 합류(미배선이면 0).
+                long ignCode = 0L, slipRaw = 0L, sigRaw = 0L, downgrades = 0L;
+                if (_ignition is { } ig) ignCode = (long)ig.Stage;
+                if (_execGuard is { } eg) { slipRaw = eg.LastSlipRaw; sigRaw = eg.LastSigmaRaw; downgrades = eg.Downgrades; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
                     afCycles, afSigned, afRejected, afRejRate, afSuspended,
-                    apMode, apPromoted, apSignRate));
+                    apMode, apPromoted, apSignRate,
+                    ignCode, slipRaw, sigRaw, downgrades));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
