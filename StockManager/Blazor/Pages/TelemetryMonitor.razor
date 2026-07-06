@@ -9,6 +9,7 @@
 @using System.Threading
 @inject RingTelemetryChannel Channel
 @inject OrderAttestationService Attestation
+@inject StrategyEvolutionPipeline Pipeline
 @inject IJSRuntime JS
 
 <div class="top">
@@ -157,6 +158,47 @@
         {
             <div class="kpi-sub" style="margin-top:6px">AutonomousAlphaFactory 배선됨 — 첫 24h 사이클 완료 후 지표 표시. RunCycle() 직접 호출로 즉시 확인 가능.</div>
         }
+    </div>
+
+    @* ══ 자율 전략 진화 토너먼트 파이프라인(v4.86.0) ══════════════════════════════ *@
+    @{
+        // 서명 성공률 표기(시도 없거나 0이면 — 로 정직 표기).
+        string signRate = (_frame.AlphaSigningSuccessRate > 0 || _frame.AlphaPromoted > 0)
+            ? (_frame.AlphaSigningSuccessRate * 100.0).ToString("F1") + "%" : "—";
+    }
+    <div class="kpi-card @(_frame.AlphaPipelinePaused ? "kpi-amber" : "")" style="margin-bottom:22px">
+        <div class="kpi-label">
+            🧬 자율 전략 진화 파이프라인
+            <span style="margin-left:8px;padding:2px 8px;border-radius:6px;background:@(_frame.AlphaPipelinePaused ? "#ff9800" : "rgba(120,140,170,0.35)");color:@(_frame.AlphaPipelinePaused ? "#111" : "#cfe");font-weight:700;font-size:10px">@(_frame.AlphaPipelineModeName)</span>
+        </div>
+        @if (_frame.AlphaPipelinePaused)
+        {
+            <div style="margin:8px 0;padding:10px 14px;background:rgba(255,152,0,0.14);border:1px solid #ff9800;border-radius:8px;font-size:12px;color:#ffcc80">
+                🟠 PAUSED — 알파 공장 밸브 SUSPENDED 또는 EmergencyFreeze 와 동기화되어 토너먼트가 자율 일시정지되었습니다.
+            </div>
+        }
+        <div style="display:flex;gap:20px;margin-top:6px;flex-wrap:wrap">
+            <div>
+                <div class="kpi-value" style="font-size:18px;font-family:var(--mono)">@(string.IsNullOrEmpty(Pipeline.CurrentGenomeId) ? "—" : Pipeline.CurrentGenomeId)</div>
+                <div class="kpi-sub">테스트 중 유전자 ID</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:var(--green,#4caf50)">@(string.IsNullOrEmpty(Pipeline.LastChampion) ? "—" : Pipeline.LastChampion)</div>
+                <div class="kpi-sub">최근 승격 챔피언</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.AlphaPromoted.ToString("N0"))</div>
+                <div class="kpi-sub">승격 제출 (PendingApproval)</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px">@signRate</div>
+                <div class="kpi-sub">서명 성공률</div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:8px">
+            🔒 승격 제출은 <b>PendingApproval</b> 까지만 — 지휘관 인간 서명 승인 + 실거래 이중키(ValveWired ∧ LiveArmingWired)
+            전까지 어떤 실주문 엔진에도 자동 배선되지 않습니다(liveArmed:false).
+        </div>
     </div>
 
     @* 데이터 없음 안내 *@

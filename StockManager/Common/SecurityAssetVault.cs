@@ -109,16 +109,27 @@ namespace StockManager.Common
         /// 자격증명 복호화 → SecretLease(using 스코프). ★무장·비봉인·비동결에서만 허용(fail-closed).
         /// 반환 리스는 반드시 using 으로 소비 — Dispose 시 평문 char 버퍼가 ZeroMemory 로 소거된다.
         /// </summary>
-        public SecretLease Reveal(string key)
+        /// <summary>기본 Reveal — 실 브로커 자격증명용. 무장 상태에서만 허용(liveArmed:false 펜스).</summary>
+        public SecretLease Reveal(string key) => Reveal(key, requireArmed: true);
+
+        /// <summary>
+        /// v4.86.0 — requireArmed 선택 Reveal. 실 브로커 자격증명(주문 송출 트리거)은 requireArmed:true(무장 펜스),
+        /// 서명 키 등 '주문 송출이 아닌' 비밀은 requireArmed:false 로 무장과 무관하게 복호화(단, 봉인·EmergencyFreeze
+        /// fail-closed 는 항상 적용). 메모리 와이프(SecretLease) 계약 동일.
+        /// </summary>
+        public SecretLease Reveal(string key, bool requireArmed)
         {
             if (string.IsNullOrEmpty(key)) throw new ArgumentException("빈 키", nameof(key));
             EnsureOpenOrThrow($"Reveal({key})");
 
-            // ★liveArmed:false 옵트인 펜스 — 실 자격증명 복호화는 무장 상태에서만.
-            bool armed;
-            try { armed = _isLiveArmed(); } catch { armed = false; }   // 술어 예외 → 미무장 취급(fail-closed)
-            if (!armed)
-                throw new InvalidOperationException($"SecurityAssetVault: 미무장 — Reveal({key}) 차단(liveArmed:false fail-closed)");
+            // ★liveArmed:false 옵트인 펜스 — 실 자격증명(주문 송출 트리거) 복호화는 무장 상태에서만.
+            if (requireArmed)
+            {
+                bool armed;
+                try { armed = _isLiveArmed(); } catch { armed = false; }   // 술어 예외 → 미무장 취급(fail-closed)
+                if (!armed)
+                    throw new InvalidOperationException($"SecurityAssetVault: 미무장 — Reveal({key}) 차단(liveArmed:false fail-closed)");
+            }
 
             string stored = _db.GetSetting(key) ?? "";
             if (!stored.StartsWith(Marker, StringComparison.Ordinal))

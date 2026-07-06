@@ -21,9 +21,30 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.85.0</Version>
-    <AssemblyVersion>4.85.0.0</AssemblyVersion>
-    <FileVersion>4.85.0.0</FileVersion>
+    <Version>4.86.0</Version>
+    <AssemblyVersion>4.86.0.0</AssemblyVersion>
+    <FileVersion>4.86.0.0</FileVersion>
+    <!-- v4.86.0 — ★자율 전략 진화 팩토리: 3중 게이트 파이프라인 + 금고 연동 ECDsa 서명 + FSM 관제. 4렌즈 적대검증(1결함 교정).
+         ★정직 회계: WalkForward.Analyze·StrategyTournament.Run·AlphaEngine.Compute·PromotionGateway(인간 서명 잠금)·
+         CartridgeCrypto(ECDsa P-256/SHA256)·SecurityAssetVault 는 모두 기존 존재. 자율 파이프라인에 이들이 미배선이던
+         갭만 결속(그린필드). 서명은 db.GetSecret(string) 대신 금고 SecretLease(와이프)로 하드닝.
+         [과제1/3] StrategyEvolutionPipeline(신규) — MA 유전자(CartStrategy)를 3중 게이트에 태운다: (G1) WalkForward.
+         Analyze OOS 강건성(IsRobust), (G2) StrategyTournament.Run 리그 데스매치(후보 Rank #1), (G3) AlphaEngine.Compute
+         진성 알파(전략 에쿼티 vs 벤치마크 OLS β/공분산, TrueAlphaPct>0). 통과분만 서명→PromotionGateway.Submit.
+         TournamentPipelineMode FSM(Idle/Testing/Signing/Deployed/Paused·Interlocked long·UI 락-프리). 동결/밸브
+         SUSPENDED → Paused 동기화. ★liveArmed:false 핵심 불변: 파이프라인은 Submit(=PendingApproval)까지만 — 자율
+         Approve/Activate 없음. StrategyActivationGate.CanRouteToLive(Active ∧ 실거래 이중키 ∧ 무장 술어) 기본 false =
+         자율 승격만으로 실주문 도달 확률 수학적 0. StrategyCompiler.FromMaCross 로 후보→StrategySpec 브릿지.
+         [과제2] AutonomousCartridgeSigner(신규) — EmergencyFreeze→폐기(fail-closed). 금고 SecretLease(requireArmed:false·
+         서명은 주문 아님)로 개인키 로드, CartridgeCrypto.SignZeroAlloc(stackalloc[32] SHA256 + SignHash·SignData(SHA256)
+         호환, 개인키 pkcs8 바이트 즉시 ZeroMemory)로 서명, 즉시 재검증 미스매치·재동결·키 유실 시 폐기 격리. Signed/
+         Trashed/SuccessRate. SecurityAssetVault.Reveal(requireArmed) 오버로드 추가(브로커 자격증명=true, 서명키=false).
+         [텔레메트리/UI] RingTelemetry +3(파이프라인 모드·승격 수·서명 성공률) + AlphaPipelineModeName/Paused. Ring
+         TelemetryPublisher 파이프라인 합류. TelemetryMonitor 🧬 진화 파이프라인 패널(모드 배지·테스트 유전자ID·챔피언·
+         승격 수·서명 성공률·Paused 동기화·liveArmed 고지) — 유전자ID/챔피언 문자열은 파이프라인 volatile 독출.
+         ★적대검증 교정(M): Gate3 AlphaEngine 입력의 에쿼티 곡선 날짜 오정렬(머리 정렬→longP+1 봉 위상차로 β/α 오염)
+         → 꼬리 정렬(equity[last]↔bench[last])로 교정. liveArmed/크립토/메모리/fail-closed 렌즈 결함 0.
+         테스트 +16(StrategyEvolutionPipelineTests 11·AutonomousCartridgeSignerTests 7 등). 빌드 0/0(메인+x86), 전체 1758 통과. -->
     <!-- v4.85.0 — ★3대 전술 과제: 보안 자산 금고 + QTickSpec 격자 방화벽 + 알파 공장 자기 제어 밸브. 4렌즈 적대검증 결함 0.
          [과제1] SecurityAssetVault(신규) — DPAPI(ProtectedData·CurrentUser·기존 Secret 과 enc:v1: 상호호환) 위에 메모리
          하드닝 가산: Reveal 은 평문 string 을 절대 만들지 않고 ArrayPool char[] 로 디코드해 SecretLease(using) 로 반환,
