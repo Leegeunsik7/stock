@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.87.0** (2026-07-01)  
+> 기준 버전: **v4.88.0** (2026-07-07)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.87.0)
+### 현황 (v4.88.0)
 
-- **총 테스트**: 1,776 (클린런)
+- **총 테스트**: 1,786 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.88.0 | 원장 보호 메시. `LedgerProtectionMesh`(`DbTransactionPayload` [Sequential,Pack=1] unmanaged 57B·참조 0·심볼 KSE 6자리 long → Bounded Channel TryWrite 무할당·논블로킹 핫패스). 전용 드레인 스레드: 큐→`AddTransaction`→★직후 `RecomputeAverage` 동일 스레드 순차(HANDOVER §12 장부/평단 디싱크 차단). fail-closed 2대(큐 90%/포화→ForceFreeze·영속화 예외→ForceFreeze). ★동결 인지 유휴(EmergencyFreeze 시 Enqueue 거부·Drain 즉시 0·잔여 큐 보존 → busy-spin·재시도/감사 폭주 차단). RingTelemetry +4 + TelemetryMonitor 🗄️ 원장 보호 패널(Pure CSS 게이지 0-70녹/70-90황/90+적). +10 테스트. 적대검증 4렌즈 확정 2결함(드레인 busy-spin·재시도 폭주) 교정. ★liveArmed:false 불변(순수 영속화 오프로드·발주/점화 무결합) |
 | v4.87.0 | 집행 리스크 통제. `SlippageSentinel` δ=0 고정소수점 3σ(`long[128]`·`RecordAndCheck3Sigma`·dev²>9·var sqrt 회피·워밍업<10 fail-closed) + `IgnitionLock.Downgrade`(한 단 강등: 마스터→프로브) + `ExecutionMicrostructureGuard`(3σ 2연속·레이턴시 100ms→Downgrade) + `OrderDrainWorker` fail-closed(드레인 예외·이중키 붕괴→ForceFreeze 영구 락업·`DrainOnce`). RingTelemetry +4 + TelemetryMonitor ⚡ 미시구조 패널. +18 테스트. 적대검증 4렌즈 결함 0. liveArmed:false 불변 |
 | v4.86.0 | 자율 전략 진화 팩토리. `StrategyEvolutionPipeline`(3중 게이트: WalkForward IsRobust·Tournament Rank#1·AlphaEngine TrueAlpha>0 → 서명 → PromotionGateway.Submit=PendingApproval) + `TournamentPipelineMode` FSM(락-프리·Paused 동기화). `AutonomousCartridgeSigner`(금고 SecretLease 키·`SignZeroAlloc` SHA256+SignHash·fail-closed 폐기) + `SecurityAssetVault.Reveal(requireArmed)`. `StrategyActivationGate`(liveArmed:false 증명·기본 false). RingTelemetry +3 + TelemetryMonitor 🧬 패널. +16 테스트. 적대검증 1교정(Gate3 에쿼티 날짜 꼬리정렬). ★자율 승격은 인간 서명 전까지 실주문 미배선 |
 | v4.85.0 | 3대 전술 과제(적대검증 4렌즈 결함 0). ①`SecurityAssetVault`(DPAPI + `SecretLease` char[] 풀·ZeroMemory 와이프 + 동결 연동 봉인 래치 + liveArmed Reveal 펜스). ②`KrxFxClearing.TryClearUsdToKrwBaseGuarded`(격자 오염 방화벽 — QScaleGuard 2중 검증·격자 디싱크 ForceFreeze). ③`AlphaRejectionValve`(롤링 거부율 95%↑ 자동 Suspend·수동 Suspend/Resume) + RingTelemetry Amber 필드 + TelemetryMonitor 🏭 Amber Alert. +24 테스트. liveArmed:false 불변 |
@@ -576,6 +577,7 @@ FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변
 자율 카트리지 서명기  → Common/AutonomousCartridgeSigner.cs  (v4.86.0, 금고 SecretLease 키·SignZeroAlloc·fail-closed 폐기)
 집행 미시구조 가드    → Common/ExecutionMicrostructureGuard.cs  (v4.87.0, 슬리피지 3σ 2연속·레이턴시 100ms → IgnitionLock.Downgrade)
 슬리피지 δ=0 3σ      → Common/SlippageSentinel.cs  (v4.87.0 가산, long[128] 고정소수점·dev²>9·var·워밍업<10 fail-closed)
+원장 보호 메시       → Common/LedgerProtectionMesh.cs  (v4.88.0, blittable 57B·Bounded Channel 무할당 핫패스·드레인 AddTransaction→RecomputeAverage 순차·fail-closed 2대·동결 인지 유휴)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

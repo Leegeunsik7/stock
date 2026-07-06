@@ -332,7 +332,14 @@ namespace StockManager.Blazor
             //   ★강등 ≠ 락업. 파이프라인 무결성 붕괴·예외는 OrderDrainWorker 가 ForceFreeze 로 별도 에스컬레이션.
             var execGuard = new ExecutionMicrostructureGuard(sentinel, ignition);
             services.AddSingleton(execGuard);
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard);
+            // v4.88.0 — 원장 보호 메시: 체결 원장 쓰기 + 평단 재계산을 발주 핫패스에서 비동기 분리(전용 드레인 스레드).
+            //   ★liveArmed:false 불변: 순수 영속화 오프로드 — 주문 발주/점화 FSM 무결합. 큐 90% 포화·영속화 예외 → ForceFreeze.
+            //   기본 생산자 미배선(핫패스가 Enqueue 결속 시 가동) — idle 이면 큐 깊이 0.
+            var ledgerMesh = new LedgerProtectionMesh(db, attestation);
+            ledgerMesh.Start();
+            services.AddSingleton(ledgerMesh);
+            FormClosed += (_, _) => { try { ledgerMesh.Dispose(); } catch { } };
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
