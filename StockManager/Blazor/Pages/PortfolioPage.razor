@@ -10,9 +10,9 @@
 @using System.Data
 
 <div class="top"><div class="hello"><h1>💼 포트폴리오</h1><p>보유 종목 손익 · 갱신 @_ts @if (_pollSec > 0 && AsOfCtx.IsLive) { <span class="livepulse">● LIVE @(_pollSec)초</span> }</p></div>
-<button class="addbtn" style="background:var(--up);margin:0 4px" @onclick="() => OpenTx(TransactionType.Buy)">➕ 매수 기록</button>
-<button class="addbtn" style="background:var(--down)" @onclick="() => OpenTx(TransactionType.Sell)">➖ 매도 기록</button>
-<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin:0 4px" @onclick="ToggleForm">@(_showForm?"✕ 닫기":"✎ 직접 등록")</button>
+<button class="addbtn" style="background:var(--up);margin:0 4px" @onclick="() => Open(FormMode.Buy)">➕ 매수 기록</button>
+<button class="addbtn" style="background:var(--down)" @onclick="() => Open(FormMode.Sell)">➖ 매도 기록</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin:0 4px" @onclick="() => Open(FormMode.Correct)">@((_showForm && _mode==FormMode.Correct)?"✕ 닫기":"✎ 직접 등록")</button>
 <label class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin:0 4px;display:inline-flex;align-items:center;gap:6px;cursor:default" title="실시간 자동 새로고침 주기">⚡ 자동
     <select class="srch" style="width:72px" @bind="_pollSec" @bind:after="OnPollChanged">
         <option value="0">끄기</option><option value="3">3초</option><option value="5">5초</option><option value="10">10초</option><option value="30">30초</option>
@@ -20,80 +20,85 @@
 </label>
 <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin-right:16px" @onclick="LoadAllAsync">🔄 새로고침</button></div>
 
-@* ===== 매수/매도 거래 기록 폼 — 저장 시 RecomputeAverage 연쇄 (원본 룰) ===== *@
-@if (_showTxForm)
-{
-    <div style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_txType==TransactionType.Buy?"var(--up)":"var(--down)");border-radius:var(--radius);padding:18px">
-        <div style="font-weight:700;margin-bottom:14px">@(_txType==TransactionType.Buy?"📈 매수 거래 기록":"📉 매도 거래 기록")</div>
-        <div style="margin-bottom:12px">
-            <label class="flbl">🔎 종목·코인 검색 (이름으로 찾기)</label>
-            <SymbolPicker OnPick="ApplyPickToTx" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:end">
-            <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" @bind:after="OnSymbolEdited" placeholder="005930 / AAPL" /></div>
-            <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
-            <div><label class="flbl">거래일시</label><input class="fin" type="datetime-local" value="@ExecAtText" @onchange="OnExecAtChanged" /></div>
-            <div><label class="flbl">수량 *</label><input class="fin" inputmode="decimal" value="@TxQtyText" @onchange="OnTxQtyChanged" placeholder="2.555 (코인 소수점)" /></div>
-            <div><label class="flbl">단가 *</label><input class="fin" inputmode="decimal" value="@TxPriceText" @onchange="OnTxPriceChanged" placeholder="97,299,615" /></div>
-            <div><label class="flbl">수수료</label><input class="fin" type="number" step="any" @bind="_tf.Commission" @bind:after="MarkFeesDirty" /></div>
-            <div><label class="flbl">세금</label><input class="fin" type="number" step="any" @bind="_tf.Tax" @bind:after="MarkFeesDirty" /></div>
-            <div><label class="flbl">증권사</label><input class="fin" list="brokerList" @bind="_tf.Broker" @bind:after="OnBrokerChanged" />
-                <datalist id="brokerList">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
-            <div style="grid-column:span 2"><label class="flbl">메모</label><input class="fin" @bind="_tf.Memo" /></div>
-        </div>
-        <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <b style="color:@(_txType==TransactionType.Buy?"var(--up)":"var(--down)")">총 금액: @TxTotal.ToString("N0")원</b>
-            <button class="addbtn" @onclick="SaveTx">✅ 저장</button>
-            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="() => _showTxForm = false">취소</button>
-            @if (!string.IsNullOrEmpty(_txMsg)) { <span style="color:var(--sub)">@_txMsg</span> }
-        </div>
-        <div style="margin-top:8px;color:var(--sub);font-size:12px">저장 시 전체 거래 이력으로 평균단가·수량이 자동 재계산됩니다 (이동평균법 · 전량 매도 시 평단 0).</div>
-        <div style="margin-top:4px;color:var(--sub);font-size:12px">💡 증권사를 고르면 수수료·세금이 자동 추정 입력됩니다 (직접 수정 가능 · 약정·이벤트·환율로 실제와 다를 수 있는 추정치). 코인은 거래세 없음.</div>
-    </div>
-}
-
-@* ===== 직접 등록(수정) 폼 — 기존 기능 유지 ===== *@
+@* ===== 통합 기록 폼 — 매수/매도(거래 이력 append→평단 자동 병합) · 직접보정(보유 합계 덮어쓰기)을 한 폼에서 모드 전환 =====
+   매수/매도는 _tf(거래 모델)·SaveTx(AddTransaction+RecomputeAverage), 직접보정은 _f(보유 모델)·Save(UpdateHoldingById/SaveHolding).
+   두 모델·입력 헬퍼는 그대로 유지(컨트롤드 입력·datetime·픽커 권위·수수료 dirty 불변식 보존) — 껍데기만 하나로 통일. *@
 @if (_showForm)
 {
-    <div style="margin:0 28px 18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px">
-        <div style="font-weight:700;margin-bottom:14px">@(_editId>0?"종목 수정":"종목 등록")</div>
-        @* 검색→자동 채움 — 코드를 몰라도 이름으로 찾는다(주식+코인 통합). 아래 칸은 선택 후 미세조정용 *@
+    <div style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_mode==FormMode.Buy?"var(--up)":_mode==FormMode.Sell?"var(--down)":"var(--line)");border-radius:var(--radius);padding:18px">
+        @* 모드 전환 탭 — 매수(빨강)/매도(파랑)/직접보정(중립). 전환 시 종목·시장·통화·증권사 컨텍스트 이월. *@
+        <div style="display:flex;gap:6px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+            <button class="pill @(_mode==FormMode.Buy?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Buy)">📈 매수</button>
+            <button class="pill @(_mode==FormMode.Sell?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Sell)">📉 매도</button>
+            <button class="pill @(_mode==FormMode.Correct?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Correct)">✎ 직접보정</button>
+            @if (_editId > 0 && _mode == FormMode.Correct) { <span class="tag">보유 수정 중</span> }
+            <span style="margin-left:auto;color:var(--sub);font-size:12px">@(_mode==FormMode.Correct ? "보유 합계를 직접 보정" : "거래 기록 → 평단 자동 병합(가중평균)")</span>
+        </div>
         <div style="margin-bottom:12px">
             <label class="flbl">🔎 종목·코인 검색 (이름으로 찾기 — 주식·비트코인 모두)</label>
-            <SymbolPicker OnPick="ApplyPickToForm" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
+            <SymbolPicker OnPick="ApplyPick" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
         </div>
-        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:end">
-            <div><label class="flbl">종목코드</label><input class="fin" @bind="_f.Symbol" placeholder="005930" /></div>
-            <div><label class="flbl">종목명</label><input class="fin" @bind="_f.Name" placeholder="삼성전자" /></div>
-            <div><label class="flbl">시장</label>
-                <select class="fin" @bind="_f.Market">
-                    @foreach (var m in Enum.GetValues<Market>()) { <option value="@m">@m</option> }
-                </select></div>
-            <div><label class="flbl">통화</label>
-                <select class="fin" @bind="_f.Currency">
-                    <option value="@Currency.KRW">KRW</option><option value="@Currency.USD">USD</option>
-                </select></div>
-            <div><label class="flbl">수량</label><input class="fin" inputmode="decimal" value="@FormQtyText" @onchange="OnFormQtyChanged" placeholder="2.555 (코인 소수점 가능)" /></div>
-            <div><label class="flbl">평균단가</label><input class="fin" inputmode="decimal" value="@FormAvgText" @onchange="OnFormAvgChanged" placeholder="20,000,000" /></div>
-            <div><label class="flbl">증권사</label><input class="fin" list="brokerListF" @bind="_f.Broker" @bind:after="OnFormBrokerChanged" />
-                <datalist id="brokerListF">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
-            <div><label class="flbl">수수료(누적)</label><input class="fin" type="number" step="any" @bind="_f.Commission" /></div>
-            <div><label class="flbl">세금(누적)</label><input class="fin" type="number" step="any" @bind="_f.Tax" /></div>
-        </div>
-        @if (_f.AvgPrice > 0 || _f.Quantity > 0)
+        @if (_mode != FormMode.Correct)
         {
-            <div style="margin-top:10px;color:var(--sub);font-size:13px">
-                평균단가 <b style="color:var(--ink)">@_f.AvgPrice.ToString("N0")원</b>
-                · 수량 <b style="color:var(--ink)">@FmtQty(_f.Quantity)</b>
-                · 매입금액 <b style="color:var(--ink)">@((_f.AvgPrice * _f.Quantity).ToString("N0"))원</b>
+            @* --- 매수/매도 모드 (거래 이벤트 → RecomputeAverage 병합) --- *@
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:end">
+                <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" @bind:after="OnSymbolEdited" placeholder="005930 / AAPL" /></div>
+                <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
+                <div><label class="flbl">거래일시</label><input class="fin" type="datetime-local" value="@ExecAtText" @onchange="OnExecAtChanged" /></div>
+                <div><label class="flbl">수량 *</label><input class="fin" inputmode="decimal" value="@TxQtyText" @onchange="OnTxQtyChanged" placeholder="2.555 (코인 소수점)" /></div>
+                <div><label class="flbl">단가 *</label><input class="fin" inputmode="decimal" value="@TxPriceText" @onchange="OnTxPriceChanged" placeholder="97,299,615" /></div>
+                <div><label class="flbl">수수료</label><input class="fin" type="number" step="any" @bind="_tf.Commission" @bind:after="MarkFeesDirty" /></div>
+                <div><label class="flbl">세금</label><input class="fin" type="number" step="any" @bind="_tf.Tax" @bind:after="MarkFeesDirty" /></div>
+                <div><label class="flbl">증권사</label><input class="fin" list="brokerList" @bind="_tf.Broker" @bind:after="OnBrokerChanged" />
+                    <datalist id="brokerList">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
+                <div style="grid-column:span 2"><label class="flbl">메모</label><input class="fin" @bind="_tf.Memo" /></div>
             </div>
+            <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <b style="color:@(_txType==TransactionType.Buy?"var(--up)":"var(--down)")">총 금액: @TxTotal.ToString("N0")원</b>
+                <button class="addbtn" @onclick="SaveTx">✅ 저장</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="CloseForm">취소</button>
+                @if (!string.IsNullOrEmpty(_txMsg)) { <span style="color:var(--sub)">@_txMsg</span> }
+            </div>
+            <div style="margin-top:8px;color:var(--sub);font-size:12px">저장 시 전체 거래 이력으로 평균단가·수량이 자동 재계산됩니다 (이동평균법 · 전량 매도 시 평단 0). <b>같은 종목을 추가 매수하면 평단이 가중평균으로 자동 병합</b>됩니다.</div>
+            <div style="margin-top:4px;color:var(--sub);font-size:12px">💡 증권사를 고르면 수수료·세금이 자동 추정 입력됩니다 (직접 수정 가능 · 약정·이벤트·환율로 실제와 다를 수 있는 추정치). 코인은 거래세 없음.</div>
         }
-        <div style="margin-top:14px;display:flex;gap:10px">
-            <button class="addbtn" @onclick="Save">@(_editId>0?"수정 저장":"등록")</button>
-            <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ResetForm">초기화</button>
-            @if (!string.IsNullOrEmpty(_formMsg)) { <span style="align-self:center;color:var(--sub)">@_formMsg</span> }
-        </div>
-        <div style="margin-top:8px;color:var(--sub);font-size:12px">ℹ️ 이 화면은 보유 <b>합계</b>(수량·평단·증권사·누적 수수료/세금)를 직접 보정합니다. 증권사를 바꾸면 수수료가 자동 추정됩니다(직접 수정 가능). 개별 거래의 거래일시·건별 수수료/세금은 <b>📈 매수/📉 매도 기록</b>으로 넣고 <b>📝 거래 이력</b>에서 확인합니다(보유 합계 수수료/세금은 거래로 자동 덮어쓰지 않으므로 이 화면에서 직접 관리).</div>
+        else
+        {
+            @* --- 직접보정 모드 (보유 합계 직접 덮어쓰기 — 기존 직접 등록/수정) --- *@
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:end">
+                <div><label class="flbl">종목코드</label><input class="fin" @bind="_f.Symbol" @bind:after="OnFormSymbolEdited" placeholder="005930" /></div>
+                <div><label class="flbl">종목명</label><input class="fin" @bind="_f.Name" placeholder="삼성전자" /></div>
+                <div><label class="flbl">시장</label>
+                    <select class="fin" @bind="_f.Market">
+                        @foreach (var m in Enum.GetValues<Market>()) { <option value="@m">@m</option> }
+                    </select></div>
+                <div><label class="flbl">통화</label>
+                    <select class="fin" @bind="_f.Currency">
+                        <option value="@Currency.KRW">KRW</option><option value="@Currency.USD">USD</option>
+                    </select></div>
+                <div><label class="flbl">수량</label><input class="fin" inputmode="decimal" value="@FormQtyText" @onchange="OnFormQtyChanged" placeholder="2.555 (코인 소수점 가능)" /></div>
+                <div><label class="flbl">평균단가</label><input class="fin" inputmode="decimal" value="@FormAvgText" @onchange="OnFormAvgChanged" placeholder="20,000,000" /></div>
+                <div><label class="flbl">증권사</label><input class="fin" list="brokerListF" @bind="_f.Broker" @bind:after="OnFormBrokerChanged" />
+                    <datalist id="brokerListF">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
+                <div><label class="flbl">수수료(누적)</label><input class="fin" type="number" step="any" @bind="_f.Commission" /></div>
+                <div><label class="flbl">세금(누적)</label><input class="fin" type="number" step="any" @bind="_f.Tax" /></div>
+            </div>
+            @if (_f.AvgPrice > 0 || _f.Quantity > 0)
+            {
+                <div style="margin-top:10px;color:var(--sub);font-size:13px">
+                    평균단가 <b style="color:var(--ink)">@_f.AvgPrice.ToString("N0")원</b>
+                    · 수량 <b style="color:var(--ink)">@FmtQty(_f.Quantity)</b>
+                    · 매입금액 <b style="color:var(--ink)">@((_f.AvgPrice * _f.Quantity).ToString("N0"))원</b>
+                </div>
+            }
+            <div style="margin-top:14px;display:flex;gap:10px">
+                <button class="addbtn" @onclick="Save">@(_editId>0?"수정 저장":"등록")</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ResetForm">초기화</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="CloseForm">닫기</button>
+                @if (!string.IsNullOrEmpty(_formMsg)) { <span style="align-self:center;color:var(--sub)">@_formMsg</span> }
+            </div>
+            <div style="margin-top:8px;color:var(--sub);font-size:12px">ℹ️ '직접보정'은 보유 <b>합계</b>(수량·평단·증권사·누적 수수료/세금)를 직접 덮어씁니다. 개별 거래로 남기고 평단을 자동 병합하려면 위 <b>📈 매수 / 📉 매도</b> 모드를 쓰세요(거래일시·건별 수수료는 <b>📝 거래 이력</b>에서 확인).</div>
+        }
     </div>
 }
 
@@ -207,13 +212,34 @@ else
             <button class="pill @(k==_holdFilter?"r":"b")" style="border:0;cursor:pointer;padding:5px 12px;font-size:12px" @onclick="() => _holdFilter = k">@lbl <span style="opacity:.7">@FilterCount(k)</span></button>
         }
     </div>
+    @* 정렬 — 전체/국내/해외/코인 모든 분류에 공통 적용. 일간 수익률은 시세 갱신 시 포착된 전일대비 등락. *@
+    <div style="display:flex;gap:8px;padding:2px 14px 8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:12px;color:var(--sub)">↕ 정렬</span>
+        <select class="srch" style="width:auto;min-width:118px" @bind="_sortKey" @bind:after="OnSortChanged">
+            <option value="val">평가금</option>
+            <option value="ret">총수익률</option>
+            <option value="day">일간 수익률</option>
+            <option value="name">가나다순</option>
+            <option value="custom">직접설정</option>
+        </select>
+        @if (_sortKey == "custom")
+        {
+            <span style="font-size:11.5px;color:var(--sub)">관리 열의 ▲▼ 로 순서를 지정하세요 (저장됨)</span>
+        }
+        else
+        {
+            <button class="pill b" style="border:0;cursor:pointer;padding:5px 11px;font-size:12px" @onclick="() => { _sortDesc = !_sortDesc; }">
+                @(_sortKey == "name" ? (_sortDesc ? "역순 ᐯ" : "가나다 ᐱ") : (_sortDesc ? "높은순 ᐯ" : "낮은순 ᐱ"))
+            </button>
+        }
+    </div>
     <div style="overflow:auto;max-height:calc(100vh - 392px)">
     <table class="ctbl dense">
         <thead><tr>
             <th>종목</th><th>시장</th><th style="text-align:right">수량</th>
             <th style="text-align:right">평균단가</th><th style="text-align:right">현재가</th>
-            <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th>
-            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:88px">관리</th>
+            <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th><th style="text-align:right">일간</th>
+            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:118px">관리</th>
         </tr></thead>
         <tbody>
             @foreach (var h in FilteredHoldings())
@@ -221,18 +247,26 @@ else
                 var fxr = h.Currency == Currency.USD ? _usdKrw : 1m;          // 평가액·손익은 KRW 환산 (원본 KrwValue 룰)
                 var pnl = (h.CurrentPrice - h.AvgPrice) * h.Quantity * fxr;
                 var ret = h.AvgPrice > 0 ? (h.CurrentPrice - h.AvgPrice) / h.AvgPrice * 100m : 0m;
+                var hasDay = _dayPct.TryGetValue(h.Symbol, out var day);      // 일간(전일대비) 등락% — 시세 갱신 시 포착
+                var sess = _session.TryGetValue(h.Symbol, out var sv) ? sv : "";   // 시간외/프리/애프터 세션
                 <tr>
                     <td><b>@h.Name</b><br/><small class="sub">@h.Symbol</small></td>
                     <td><small class="sub">@h.Market@(h.Currency == Currency.USD ? " · USD" : "")</small></td>
                     <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
                     <td class="num" style="text-align:right">@Formatter.Money(h.AvgPrice, h.Currency)</td>
-                    <td class="num" style="text-align:right"><span @key="@(h.Symbol + h.CurrentPrice)" class="tickcell @TickClass(h)">@Formatter.Money(h.CurrentPrice, h.Currency)</span></td>
+                    <td class="num" style="text-align:right"><span @key="@(h.Symbol + h.CurrentPrice)" class="tickcell @TickClass(h)">@Formatter.Money(h.CurrentPrice, h.Currency)</span>@if (SessLabel(sess) is { Length: > 0 } sl) { <span style="font-size:9.5px;padding:1px 4px;border-radius:4px;background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn);margin-left:4px" title="장 마감 후 시간외/애프터 세션 시세">@sl</span> }</td>
                     <td class="num" style="text-align:right">@((h.CurrentPrice * h.Quantity * fxr).ToString("N0"))</td>
                     <td class="num @(pnl>=0?"up":"down")" style="text-align:right">@pnl.ToString("+#,##0;-#,##0;0")</td>
                     <td class="num @(ret>=0?"up":"down")" style="text-align:right">@ret.ToString("+0.0;-0.0")%</td>
+                    <td class="num @(hasDay ? (day>=0?"up":"down") : "")" style="text-align:right">@(hasDay ? day.ToString("+0.0;-0.0")+"%" : "–")</td>
                     <td style="text-align:center">@SparkSvg(h.Symbol)</td>
                     <td style="text-align:center;white-space:nowrap">
-                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px" @onclick="() => Edit(h)">수정</button>
+                        @if (_sortKey == "custom")
+                        {
+                            <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px" title="위로" @onclick="() => MoveCustom(h, -1)">ᐱ</button>
+                            <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px;margin-left:2px" title="아래로" @onclick="() => MoveCustom(h, 1)">ᐯ</button>
+                        }
+                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Edit(h)">수정</button>
                         <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Delete(h)">삭제</button>
                     </td>
                 </tr>
@@ -372,7 +406,9 @@ else if (_tab == "corr")
 
 @code {
     private List<Holding> _holdings = new();
-    private bool _showForm, _showTxForm;
+    private bool _showForm;                       // 통합 기록 폼(매수/매도/직접보정) 단일 토글
+    private FormMode _mode = FormMode.Buy;         // 통합 폼 현재 모드
+    private enum FormMode { Buy, Sell, Correct }
     private int _editId;
     private string _ts = "", _formMsg = "", _txMsg = "", _flash = "";   // _flash: 저장 성공 확인 배너(폼 닫힌 뒤에도 표시)
     private decimal _totalValue, _totalPnl, _totalRet;
@@ -406,10 +442,54 @@ else if (_tab == "corr")
         { ("all", "전체"), ("dom", "🇰🇷 국내주식"), ("for", "🇺🇸 해외주식"), ("crypto", "₿ 코인") };
     private static string CatKey(AssetClass c) => c switch
     { AssetClass.DomesticStock => "dom", AssetClass.ForeignStock => "for", AssetClass.Crypto => "crypto", _ => "all" };
-    private IEnumerable<Holding> FilteredHoldings() =>
-        _holdFilter == "all" ? _holdings : _holdings.Where(h => CatKey(PortfolioBreakdown.Classify(h.Market)) == _holdFilter);
+    private IEnumerable<Holding> FilteredHoldings()
+    {
+        var src = _holdFilter == "all" ? _holdings : _holdings.Where(h => CatKey(PortfolioBreakdown.Classify(h.Market)) == _holdFilter);
+        return SortHoldings(src);
+    }
     private int FilterCount(string key) =>
         key == "all" ? _holdings.Count : _holdings.Count(h => CatKey(PortfolioBreakdown.Classify(h.Market)) == key);
+
+    // ----- 정렬 (전체/국내/해외/코인 모든 분류에 공통 적용) -----
+    private string _sortKey = "val";    // val 평가금 · ret 총수익률 · day 일간 · name 가나다 · custom 직접설정
+    private bool _sortDesc = true;      // name: false=가나다순, true=역순
+    private readonly Dictionary<string, decimal> _dayPct  = new(StringComparer.OrdinalIgnoreCase);  // 종목별 일간(전일대비) 등락%
+    private readonly Dictionary<string, string>  _session = new(StringComparer.OrdinalIgnoreCase);  // 종목별 세션(AFTER/PRE/POST)
+    private List<string> _customOrder = new();   // 직접설정 순서(심볼 나열) — Db.GetSetting 영속
+
+    // 정렬 기준 변경 시 방향 기본값 보정: 가나다는 오름차순(false), 그 외는 높은순(true).
+    private void OnSortChanged() => _sortDesc = _sortKey != "name";
+
+    // 정렬 코어는 순수 헬퍼(HoldingSort)에 위임 — 결정론·단위테스트 대상. 필터 후 현재 시세 컨텍스트를 넘긴다.
+    private IEnumerable<Holding> SortHoldings(IEnumerable<Holding> src) =>
+        HoldingSort.Sort(src, _sortKey, _sortDesc, _dayPct, _customOrder, _usdKrw);
+
+    private static string SessLabel(string s) => s switch { "AFTER" => "시간외", "PRE" => "프리", "POST" => "애프터", _ => "" };
+
+    // ----- 직접설정 순서 편집·영속 (Db.SetSetting/GetSetting) -----
+    private void EnsureCustomSeed()   // 진입/신규 종목 → 현재 목록 순서로 시드(누락 종목 뒤에 추가)
+    { foreach (var h in _holdings) if (!_customOrder.Contains(h.Symbol)) _customOrder.Add(h.Symbol); }
+    // dir: -1 위로, +1 아래로. ★현재 '표시 순서'(필터 적용된 화면) 기준으로 인접 종목과 스왑한다.
+    //   (전역 _customOrder 인접이 아니라 화면 인접 — 분류 필터가 켜져 있어도 화면상 위/아래로 정확히 한 칸 이동하고,
+    //    필터로 숨겨진 다른 분류 종목의 상대 순서를 건드리지 않는다.)
+    private void MoveCustom(Holding h, int dir)
+    {
+        EnsureCustomSeed();
+        var view = FilteredHoldings().Select(x => x.Symbol).ToList();   // 현재 화면(필터 적용) 순서
+        if (HoldingSort.MoveInView(_customOrder, view, h.Symbol, dir)) PersistCustomOrder();
+    }
+    private void PersistCustomOrder()
+    { try { Db.SetSetting("Portfolio.CustomOrder", string.Join(",", _customOrder)); } catch { } }
+    private void LoadCustomOrder()
+    {
+        try
+        {
+            var s = Db.GetSetting("Portfolio.CustomOrder");
+            _customOrder = string.IsNullOrWhiteSpace(s) ? new()
+                : s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        }
+        catch { _customOrder = new(); }
+    }
 
     private static string CatIcon(AssetClass c) => c switch
     { AssetClass.DomesticStock => "🇰🇷", AssetClass.ForeignStock => "🇺🇸", AssetClass.Crypto => "₿", _ => "•" };
@@ -428,7 +508,7 @@ else if (_tab == "corr")
         ("div","💸 배당 캘린더"), ("corr","🔗 상관관계") };
 
     // ----- 직접 등록 폼 -----
-    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public decimal Quantity; public decimal AvgPrice; public string Broker=""; public decimal Commission; public decimal Tax; }
+    private class Form { public string Symbol=""; public string Name=""; public Market Market=Market.KRX_KOSPI; public Currency Currency=Currency.KRW; public decimal Quantity; public decimal AvgPrice; public string Broker=""; public decimal Commission; public decimal Tax; public bool Picked; }
     private Form _f = new();
 
     // 검색→자동 채움 — SymbolPicker 가 고른 종목을 폼에 채운다(코드·이름·시장·통화). 수량/단가만 입력하면 됨.
@@ -439,10 +519,13 @@ else if (_tab == "corr")
     private void ApplyPickToForm(SymbolEntry e)
     {
         _editId = 0;
-        _f.Symbol = e.Code; _f.Name = e.Name; _f.Market = e.Market; _f.Currency = e.Currency;
+        _f.Symbol = e.Code; _f.Name = e.Name; _f.Market = e.Market; _f.Currency = e.Currency; _f.Picked = true;
         _fLastBroker = (_f.Broker ?? "").Trim();   // 자동추정 기준 동기화(기존 수수료 보존)
         _formMsg = $"'{e.Name}' 선택됨 — 신규 등록으로 전환. 수량·평균단가를 입력하세요.";
     }
+
+    // 직접보정 폼에서 종목코드를 손으로 바꾸면 픽커 권위 해제(코인/KOSDAQ 픽 후 다른 코드로 덮어쓸 때 시장 힌트 오적용 차단).
+    private void OnFormSymbolEdited() => _f.Picked = false;
     private void ApplyPickToTx(SymbolEntry e)
     {
         _tf.Symbol = e.Code; _tf.Name = e.Name; _tf.Market = e.Market; _tf.Currency = e.Currency; _tf.Picked = true;
@@ -576,6 +659,7 @@ else if (_tab == "corr")
 
     protected override async Task OnInitializedAsync()
     {
+        LoadCustomOrder();
         await LoadAllAsync();
         LoadAsOf();
         AsOfCtx.OnChange += OnAsOf;
@@ -611,7 +695,7 @@ else if (_tab == "corr")
             try { await Task.Delay(sec * 1000, ct); } catch { return; }
             if (ct.IsCancellationRequested) return;
             // 폴링 조건 미충족(끄기·과거시점·보유탭 아님·폼 입력 중) → 재렌더 건너뜀
-            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold" || _showTxForm || _showForm) continue;
+            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold" || _showForm) continue;
             await LoadAsync(persist: false);
             await InvokeAsync(StateHasChanged);
         }
@@ -699,17 +783,18 @@ else if (_tab == "corr")
             if (persist) { try { Db.SaveHolding(h); } catch { } }
         }
 
-        // 코인(Market.CRYPTO): 업비트 배치 시세(KRW) — 여러 코인 1회 호출. Symbol 은 "KRW-BTC" 형식.
+        // 코인(Market.CRYPTO): 업비트 배치 시세(KRW) — 여러 코인 1회 호출. Symbol 은 "KRW-BTC" 형식. 코인은 24h 거래라 세션 없음("").
         var coins = _holdings.Where(h => h.Market == Market.CRYPTO).ToList();
         if (coins.Count > 0)
         {
             try
             {
-                var ticks = await Upbit.GetTickersAsync(coins.Select(h => h.Symbol));
-                var map = ticks.Where(t => t.Price > 0)
-                    .ToDictionary(t => t.Market, t => t.Price, StringComparer.OrdinalIgnoreCase);
+                var ticks = (await Upbit.GetTickersAsync(coins.Select(h => h.Symbol))).Where(t => t.Price > 0).ToList();
+                var map = ticks.ToDictionary(t => t.Market, t => t.Price, StringComparer.OrdinalIgnoreCase);
+                var chg = ticks.ToDictionary(t => t.Market, t => t.ChangeRate * 100m, StringComparer.OrdinalIgnoreCase);   // 일간 등락%(부호 포함)
                 foreach (var h in coins)
-                    if (map.TryGetValue(h.Symbol, out var p)) Apply(h, p);
+                    if (map.TryGetValue(h.Symbol, out var p))
+                    { Apply(h, p); _dayPct[h.Symbol] = chg.TryGetValue(h.Symbol, out var c) ? c : 0m; _session[h.Symbol] = ""; }
             }
             catch { }
         }
@@ -723,17 +808,18 @@ else if (_tab == "corr")
             var tasks = stocks.Select(async h =>
             {
                 await gate.WaitAsync();
-                try
-                {
-                    var q = await Provider.GetQuoteAsync(h.Symbol, h.Market);
-                    return (h, price: (q != null && q.Price > 0) ? q.Price : (decimal?)null);
-                }
-                catch { return (h, price: (decimal?)null); }
+                try { return (h, q: await Provider.GetQuoteAsync(h.Symbol, h.Market)); }
+                catch { return (h, q: (Quote?)null); }
                 finally { gate.Release(); }
             }).ToList();
 
-            foreach (var (h, price) in await Task.WhenAll(tasks))
-                if (price is decimal p) Apply(h, p);
+            foreach (var (h, q) in await Task.WhenAll(tasks))
+                if (q != null && q.Price > 0)
+                {
+                    Apply(h, q.Price);
+                    _dayPct[h.Symbol] = q.ChangeRate;        // 일간 등락%(전일종가 대비 — 시간외 포함)
+                    _session[h.Symbol] = q.Session ?? "";    // 시간외/프리/애프터 세션 배지용
+                }
         }
     }
 
@@ -790,11 +876,53 @@ else if (_tab == "corr")
     private static string CorrColor(decimal v) =>
         v >= 0.7m ? "#dc3232" : v >= 0.3m ? "#c88250" : v >= -0.3m ? "#646464" : v >= -0.7m ? "#5082c8" : "#325adc";
 
-    // ===== 거래 기록 → 평단 재계산 연쇄 =====
-    private void OpenTx(TransactionType t)
+    // ===== 통합 기록 폼 열기/전환 =====
+    // 통합 폼 열기 — 매수/매도는 항상 새로, 직접보정(Correct)은 토글.
+    private void Open(FormMode m)
     {
-        _txType = t; _showTxForm = true; _showForm = false; _editId = 0;   // 거래 폼 전환 시 직접등록 편집 상태 해제
-        _txMsg = ""; _flash = ""; _tf = new(); _feesDirty = false; _lastBroker = "";   // 새 작업 시작 → 이전 확인배너 정리
+        if (m == FormMode.Correct && _showForm && _mode == FormMode.Correct) { CloseForm(); return; }
+        _showForm = true; _mode = m; _flash = "";
+        if (m == FormMode.Correct) { ResetForm(); }
+        else
+        {
+            _txType = m == FormMode.Buy ? TransactionType.Buy : TransactionType.Sell;
+            _editId = 0; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
+        }
+    }
+    private void CloseForm() { _showForm = false; _editId = 0; _flash = ""; }
+
+    // 모드 전환 — 종목/시장/통화/증권사 컨텍스트 이월(수정 중 '추가매수' 전환 시 종목 유지). 거래 모드로 가면 _editId 해제.
+    private void SwitchMode(FormMode m)
+    {
+        if (m == _mode) return;
+        string sym, name, broker; Market mk; Currency cur; bool picked;
+        if (_mode == FormMode.Correct)
+        { sym = _f.Symbol; name = _f.Name; mk = _f.Market; cur = _f.Currency; broker = _f.Broker; picked = _f.Picked; }
+        else
+        { sym = _tf.Symbol; name = _tf.Name; mk = _tf.Market; cur = _tf.Currency; broker = _tf.Broker; picked = _tf.Picked; }
+
+        _mode = m; _flash = "";
+        if (m == FormMode.Correct)
+        {
+            _editId = 0;   // 거래→직접보정 전환은 특정 보유행 편집이 아닌 신규 보정
+            _f = new() { Symbol = sym, Name = name, Market = mk, Currency = cur, Broker = broker };
+            _fLastBroker = (broker ?? "").Trim();
+            _formMsg = "직접보정 — 보유 합계(수량·평단)를 직접 입력/덮어씁니다.";
+        }
+        else
+        {
+            _txType = m == FormMode.Buy ? TransactionType.Buy : TransactionType.Sell;
+            _editId = 0;
+            _tf = new() { Symbol = sym, Name = name, Market = mk, Currency = cur, Broker = broker, Picked = picked, ExecutedAt = DateTime.Now };
+            _feesDirty = false; _lastBroker = (broker ?? "").Trim(); _txMsg = "";
+        }
+    }
+
+    // SymbolPicker 결과 → 현재 모드의 모델에 채움(공유 어댑터).
+    private void ApplyPick(SymbolEntry e)
+    {
+        if (_mode == FormMode.Correct) ApplyPickToForm(e);
+        else ApplyPickToTx(e);
     }
 
     private async Task SaveTx()
@@ -846,30 +974,24 @@ else if (_tab == "corr")
             _flash = $"⚠️ '{nm}' 거래 저장됐으나 보유 미생성 — 코드 [{tx.Symbol}] · 입력 {tx.Quantity} · DB저장값 {storedQ} · 거래 {txCnt}건 · 보유행 {(hExists ? $"있음(수량 {hQty})" : "없음")}. 이 문구를 캡처해 주세요.";
         else
             _flash = $"✅ '{nm}' {(_txType == TransactionType.Buy ? "매수" : "매도")} 저장됨 — 보유수량 {hQty} ({tx.Symbol}).";
-        _showTxForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
+        _showForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
         try { await LoadAsync(); LoadTransactions(); } catch { /* 시세 갱신 실패는 저장과 무관 — 다음 새로고침에 반영 */ }
     }
 
-    // ===== 직접 등록 (기존 기능) =====
-    // '직접 등록' 버튼은 항상 '신규 등록'을 연다 → 열 때마다 ResetForm으로 이전 수정 상태(_editId/_f)를 비운다.
-    //   (이전엔 수정 후 닫고 다시 열면 _editId가 잔류해, 새 종목을 입력·저장하면 엉뚱한 보유를 덮어쓰는 치명 버그)
-    private void ToggleForm()
-    {
-        _showForm = !_showForm;
-        _showTxForm = false; _flash = "";   // 새 작업 시작 → 이전 확인배너 정리
-        if (_showForm) ResetForm();   // 열 때 신규 등록으로 초기화
-        else _editId = 0;             // 닫을 때 편집 상태 해제
-    }
+    // ===== 직접보정 (기존 직접 등록) =====
+    // 통합 폼 '직접보정' 모드 신규 초기화. (편집 상태 _editId 잔류 시 새 종목이 엉뚱한 보유를 덮어쓰는 치명 버그 방지)
     private void ResetForm() { _f = new(); _editId = 0; _formMsg = ""; _fLastBroker = ""; }
 
+    // 보유행 '수정' → 통합 폼을 직접보정 모드로 열고 그 종목을 채운다(기존 수정 의미 유지 = 합계 보정).
+    //   추가매수로 평단을 병합하려면 폼에서 '📈 매수' 모드로 전환(SwitchMode가 종목 이월).
     private void Edit(Holding h)
     {
-        _editId = h.Id;
+        _editId = h.Id; _mode = FormMode.Correct;
         _f = new() { Symbol = h.Symbol, Name = h.Name, Market = h.Market, Currency = h.Currency,
                      Quantity = h.Quantity, AvgPrice = h.AvgPrice,
                      Broker = h.BrokerAccount, Commission = h.Commission, Tax = h.Tax };
         _fLastBroker = (h.BrokerAccount ?? "").Trim();   // 진입 시 자동추정이 기존 수수료를 덮지 않도록 기준 맞춤
-        _showForm = true; _showTxForm = false; _formMsg = ""; _flash = ""; _tab = "hold";
+        _showForm = true; _formMsg = ""; _flash = ""; _tab = "hold";
     }
 
     // 수정 폼에서 증권사가 '실제로' 바뀐 경우에만 수수료를 재추정(매수 기준 — 보유는 순매수 포지션, 거래세 없음).

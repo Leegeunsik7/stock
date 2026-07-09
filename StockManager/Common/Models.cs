@@ -58,6 +58,11 @@ namespace StockManager.Common
         public DateTime Timestamp { get; set; }
         public DataSource Source { get; set; }
 
+        // v4.89.0 — 시세 세션 구분(장 마감 후 시간외/애프터 지속 갱신 표시용). "" 정규장, "AFTER" KRX 시간외 단일가,
+        //   "PRE" 미국 프리마켓, "POST" 미국 애프터마켓. Price 는 해당 세션의 최신가(시간외가 있으면 그 값), PreviousClose 는
+        //   정규장 전일종가 유지 → ChangeRate 가 '전일종가 대비 시간외 포함 등락'을 나타낸다.
+        public string Session { get; set; } = "";
+
         // 계산 속성
         public decimal Change => Price - PreviousClose;
         public decimal ChangeRate =>

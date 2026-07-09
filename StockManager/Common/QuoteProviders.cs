@@ -62,39 +62,64 @@ namespace StockManager.Common
                 var json = await _http.GetStringAsync(url, ct);
                 using var doc = JsonDocument.Parse(json);
                 var data = doc.RootElement.GetProperty("datas")[0];
-
-                var price = Safe.JsonDec(data, "closePrice");
-                // ⚠️ 수정: compareToPreviousClosePrice는 "변동액"이지 "전일종가"가 아님
-                var delta = Safe.JsonDec(data, "compareToPreviousClosePrice");
-                var direction = Safe.JsonStr(data, "risingOrFalling");
-                var isDown = direction.StartsWith("FALL", StringComparison.OrdinalIgnoreCase)
-                          || direction.StartsWith("LOWER", StringComparison.OrdinalIgnoreCase);
-                var change = isDown ? -delta : delta;
-                var previousClose = price - change;
-
-                return new Quote
-                {
-                    Symbol = symbol,
-                    Name = Safe.JsonStr(data, "stockName"),
-                    Market = market,
-                    Currency = Currency.KRW,
-                    Price = price,
-                    PreviousClose = previousClose,
-                    Open = Safe.JsonDec(data, "openPrice"),
-                    High = Safe.JsonDec(data, "highPrice"),
-                    Low = Safe.JsonDec(data, "lowPrice"),
-                    Volume = Safe.JsonLong(data, "accumulatedTradingVolume"),
-                    TradingValue = Safe.JsonDec(data, "accumulatedTradingValue"),
-                    MarketCap = Safe.JsonDec(data, "marketCap"),
-                    Timestamp = DateTime.Now,
-                    Source = DataSource.Naver
-                };
+                return ParseRealtime(symbol, market, data);
             }
             catch (Exception ex)
             {
                 Log.Warn($"[Naver] {symbol} 조회 실패: {ex.Message}");
                 return null;
             }
+        }
+
+        // 네이버 realtime/domestic datas[0] → Quote (순수·테스트 대상). 등락 방향·시간외 단일가 반영.
+        public static Quote ParseRealtime(string symbol, Market market, JsonElement data)
+        {
+            var price = Safe.JsonDec(data, "closePrice");
+            // ⚠️ compareToPreviousClosePrice는 "변동액"이지 "전일종가"가 아님.
+            var delta = Safe.JsonDec(data, "compareToPreviousClosePrice");
+            // 등락 방향: 실제 응답 필드는 compareToPreviousPrice(객체).name = RISING/FALLING/UPPER_LIMIT/LOWER_LIMIT.
+            //   (기존 코드의 "risingOrFalling" 은 응답에 없는 필드라 항상 ""→상승 취급 → 하락일 전일종가·부호가 틀렸음. 실측 교정.)
+            var dirName = "";
+            if (data.TryGetProperty("compareToPreviousPrice", out var cmpEl) && cmpEl.ValueKind == JsonValueKind.Object
+                && cmpEl.TryGetProperty("name", out var nmEl)) dirName = nmEl.GetString() ?? "";
+            var isDown = dirName.Contains("FALL", StringComparison.OrdinalIgnoreCase)
+                      || dirName.Contains("LOWER", StringComparison.OrdinalIgnoreCase);
+            var change = isDown ? -delta : delta;
+            var previousClose = price - change;
+
+            var q = new Quote
+            {
+                Symbol = symbol,
+                Name = Safe.JsonStr(data, "stockName"),
+                Market = market,
+                Currency = Currency.KRW,
+                Price = price,
+                PreviousClose = previousClose,
+                Open = Safe.JsonDec(data, "openPrice"),
+                High = Safe.JsonDec(data, "highPrice"),
+                Low = Safe.JsonDec(data, "lowPrice"),
+                Volume = Safe.JsonLong(data, "accumulatedTradingVolume"),
+                TradingValue = Safe.JsonDec(data, "accumulatedTradingValue"),
+                MarketCap = Safe.JsonDec(data, "marketCap"),
+                Timestamp = DateTime.Now,
+                Source = DataSource.Naver
+            };
+
+            // v4.89.0 — 장 마감(15:30) 후 시간외 단일가 지속 갱신. 실측 응답:
+            //   "overMarketPriceInfo":{"overMarketStatus":"OPEN","overPrice":"282,000","compareToPreviousClosePrice":"4,500",...}
+            //   시간외 매매 중(OPEN)이고 overPrice>0 일 때만 현재가를 시간외가로 교체(전일종가는 정규장값 유지 →
+            //   ChangeRate 가 '전일종가 대비 시간외 포함 등락'). 시간외 미개장/필드 부재 시 정규장 종가 유지(fail-safe).
+            if (data.TryGetProperty("overMarketPriceInfo", out var om) && om.ValueKind == JsonValueKind.Object)
+            {
+                var overStatus = om.TryGetProperty("overMarketStatus", out var stEl) ? (stEl.GetString() ?? "") : "";
+                var overPrice = Safe.JsonDec(om, "overPrice");
+                if (overPrice > 0 && overStatus.Equals("OPEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    q.Price = overPrice;
+                    q.Session = "AFTER";
+                }
+            }
+            return q;
         }
 
         // v4.68.0 — 순차→병렬 전환: SemaphoreSlim(4)로 최대 4개 동시 fetch.
@@ -186,35 +211,55 @@ namespace StockManager.Common
         public async Task<Quote?> GetQuoteAsync(string symbol, Market market, CancellationToken ct = default)
         {
             var ys = YahooSymbol(symbol, market);
-            var url = $"https://query1.finance.yahoo.com/v8/finance/chart/{ys}?interval=1m&range=1d";
+            // v4.89.0 — includePrePost=true: 미국 프리/애프터마켓(정규장 마감 후 한국시간 새벽~오전) 시세를 함께 받는다.
+            var url = $"https://query1.finance.yahoo.com/v8/finance/chart/{ys}?interval=1m&range=1d&includePrePost=true";
             try
             {
                 var json = await _http.GetStringAsync(url, ct);
                 using var doc = JsonDocument.Parse(json);
                 var meta = doc.RootElement.GetProperty("chart").GetProperty("result")[0].GetProperty("meta");
-
-                return new Quote
-                {
-                    Symbol = symbol,
-                    Name = meta.TryGetProperty("longName", out var ln) ? (ln.GetString() ?? ys) : ys,
-                    Market = market,
-                    Currency = market >= Market.US_NYSE && market <= Market.US_AMEX ? Currency.USD : Currency.KRW,
-                    Price = Safe.JsonDec(meta, "regularMarketPrice"),
-                    PreviousClose = Safe.JsonDec(meta, "previousClose"),
-                    High = Safe.JsonDec(meta, "regularMarketDayHigh"),
-                    Low = Safe.JsonDec(meta, "regularMarketDayLow"),
-                    Volume = Safe.JsonLong(meta, "regularMarketVolume"),
-                    Timestamp = meta.TryGetProperty("regularMarketTime", out var rt)
-                        ? DateTimeOffset.FromUnixTimeSeconds(Safe.JsonLong(rt)).LocalDateTime
-                        : DateTime.Now,
-                    Source = DataSource.YahooFinance
-                };
+                return ParseChartMeta(symbol, ys, market, meta);
             }
             catch (Exception ex)
             {
                 Log.Warn($"[Yahoo] {symbol} 조회 실패: {ex.Message}");
                 return null;
             }
+        }
+
+        // Yahoo chart meta → Quote (순수·테스트 대상). includePrePost=true 응답에서 프리/애프터마켓 시세를 세션에 맞춰 채택.
+        public static Quote ParseChartMeta(string symbol, string ys, Market market, JsonElement meta)
+        {
+            // 정규장가 기준. 프리/애프터가 있으면 세션에 맞춰 그 값을 현재가로 채택(전일종가는 정규장값 유지).
+            var regular = Safe.JsonDec(meta, "regularMarketPrice");
+            var pre  = Safe.JsonDec(meta, "preMarketPrice");
+            var post = Safe.JsonDec(meta, "postMarketPrice");
+            var state = meta.TryGetProperty("marketState", out var msEl) ? (msEl.GetString() ?? "") : "";
+            decimal chosen = regular; string session = "";
+            // marketState: PRE / REGULAR / POST / POSTPOST / PREPRE / CLOSED. 애프터(POST·CLOSED)에 post 가 있으면 우선.
+            if (post > 0 && (state.StartsWith("POST", StringComparison.OrdinalIgnoreCase) || state.Equals("CLOSED", StringComparison.OrdinalIgnoreCase)))
+            { chosen = post; session = "POST"; }
+            else if (pre > 0 && state.StartsWith("PRE", StringComparison.OrdinalIgnoreCase))
+            { chosen = pre; session = "PRE"; }
+            if (chosen <= 0) { chosen = regular; session = ""; }   // fail-safe: 시간외가 없으면 정규장가
+
+            return new Quote
+            {
+                Symbol = symbol,
+                Name = meta.TryGetProperty("longName", out var ln) ? (ln.GetString() ?? ys) : ys,
+                Market = market,
+                Currency = market >= Market.US_NYSE && market <= Market.US_AMEX ? Currency.USD : Currency.KRW,
+                Price = chosen,
+                PreviousClose = Safe.JsonDec(meta, "previousClose"),
+                High = Safe.JsonDec(meta, "regularMarketDayHigh"),
+                Low = Safe.JsonDec(meta, "regularMarketDayLow"),
+                Volume = Safe.JsonLong(meta, "regularMarketVolume"),
+                Session = session,
+                Timestamp = meta.TryGetProperty("regularMarketTime", out var rt)
+                    ? DateTimeOffset.FromUnixTimeSeconds(Safe.JsonLong(rt)).LocalDateTime
+                    : DateTime.Now,
+                Source = DataSource.YahooFinance
+            };
         }
 
         // v4.68.0 — 순차→병렬 전환: SemaphoreSlim(3)로 최대 3개 동시 fetch.
