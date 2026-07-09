@@ -10,6 +10,7 @@
 @inject RingTelemetryChannel Channel
 @inject OrderAttestationService Attestation
 @inject StrategyEvolutionPipeline Pipeline
+@inject DeterministicWarmRestartEngine Recovery
 @inject IJSRuntime JS
 
 <div class="top">
@@ -301,6 +302,69 @@
         </div>
     </div>
 
+    @* ══ v4.90.0 결정론적 웜 스타트 복구 관제 패널 ═══════════════════════════════ *@
+    @{
+        var recStages = new[] { RecoveryState.Idle, RecoveryState.Validating, RecoveryState.Draining, RecoveryState.Escalating, RecoveryState.Stable };
+        double recBacklogPct = _frame.LedgerCapacity > 0 ? Math.Min(100.0, (double)_frame.RecoveryBacklog / _frame.LedgerCapacity * 100.0) : 0.0;
+        bool recRttWarn = _frame.ProbeRttMs > 50;
+    }
+    <div class="kpi-card @(_frame.RecoveryStage == RecoveryState.Frozen ? "kpi-alert" : (_frame.RecoveryActive ? "kpi-amber" : ""))" style="margin-bottom:22px">
+        <div class="kpi-label">🛠️ 웜 스타트 복구 관제 (Deterministic Warm-Restart Control Panel)</div>
+        @* 복구 단계 타임라인 배지 — Stable 녹 / Draining·Escalating 황색 점멸 / Idle 회 / Frozen 적. *@
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
+            @foreach (var st in recStages)
+            {
+                bool active = _frame.RecoveryStage == st;
+                <span class="rec-badge @(active ? RecoveryCss(st) : "rec-idle")" style="@(active ? "" : "opacity:.4")">@st</span>
+                @if (st != RecoveryState.Stable) { <span style="color:var(--muted,#888)">→</span> }
+            }
+            @if (_frame.RecoveryStage == RecoveryState.Frozen)
+            { <span class="rec-badge rec-frozen" style="margin-left:8px">⛔ FROZEN</span> }
+        </div>
+        <div style="display:flex;gap:20px;margin-top:12px;flex-wrap:wrap">
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.RecoveryStateName)</div>
+                <div class="kpi-sub">현재 복구 단계</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.RecoveryBacklog.ToString("N0"))</div>
+                <div class="kpi-sub">드레인 잔여 백로그</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:@(recRttWarn ? "#f44336" : "inherit")">@(_frame.ProbeRttMs.ToString("N0")) ms</div>
+                <div class="kpi-sub">프로브 파이프 RTT (≤50ms)</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px">@(_frame.ProbeSlippageSigmaDecimal.ToString("F2"))σ</div>
+                <div class="kpi-sub">프로브 슬리피지 (3σ 게이트)</div>
+            </div>
+        </div>
+        @* 백로그 소진 게이지(Pure CSS) *@
+        <div style="margin-top:10px">
+            <div class="kpi-sub" style="margin-bottom:4px">백로그 잔여 @(_frame.RecoveryBacklog.ToString("N0"))건</div>
+            <div style="height:12px;border-radius:6px;background:rgba(255,255,255,0.08);overflow:hidden">
+                <div style="height:100%;width:@(recBacklogPct.ToString("F1"))%;background:#ff9800;transition:width .2s"></div>
+            </div>
+        </div>
+        @* 🔐 운영자 서명 입력 → 수동 해제 + 웜 스타트 트리거(순수 HTML) *@
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border,rgba(255,255,255,0.08))">
+            <div class="kpi-sub" style="margin-bottom:6px">🔐 운영자 서명 입력 → 수동 해제 + 웜 스타트 (현재 게이팅: <b>@(Attestation.Mode)</b>)</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="text" @bind="_sig" @bind:event="oninput" placeholder="운영자 서명(예: OPERATOR-20260710-…)"
+                       style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,0.12));background:var(--card-bg,rgba(255,255,255,0.04));color:inherit;font-family:var(--mono)" />
+                <button @onclick="DoWarmRestart" disabled="@_frame.RecoveryActive"
+                        style="padding:8px 16px;border-radius:6px;border:0;cursor:pointer;background:#c0392b;color:#fff;font-weight:600;@(_frame.RecoveryActive ? "opacity:.5;cursor:not-allowed" : "")">
+                    🛠️ 웜 스타트 실행
+                </button>
+                @if (!string.IsNullOrEmpty(_recMsg)) { <span class="kpi-sub">@_recMsg</span> }
+            </div>
+            <div class="kpi-sub" style="margin-top:6px">
+                서명 확인 → 금고 해제·백로그 순차 드레인(동결창 가격정합성 펜스) → 점화 Locked→ProbeReady→1주 프로브(3σ·지연&lt;50ms 검증)→MasterIgnited.
+                복구 중에는 라이브 라우팅이 무조건 차단됩니다(주문 폭주 방지). 실패 시 즉시 재동결 + 금고 재봉인(fail-closed).
+            </div>
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -339,6 +403,14 @@
     .kpi-label { font-size: 11px; color: var(--muted, #888); text-transform: uppercase; letter-spacing: 0.05em; }
     .kpi-value { font-size: 22px; font-weight: 600; font-family: var(--mono); }
     .kpi-sub   { font-size: 11px; color: var(--muted, #888); }
+    /* v4.90.0 — 웜 스타트 복구 단계 배지: Stable 녹 / Draining·Escalating 황색 점멸 / Idle 회 / Frozen 적. */
+    .rec-badge      { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; font-family: var(--mono); }
+    .rec-idle       { background: rgba(255,255,255,0.08); color: var(--muted, #888); }
+    .rec-validating { background: rgba(255,152,0,0.18);   color: #ffb74d; }
+    .rec-busy       { background: rgba(255,152,0,0.22);   color: #ffb74d; animation: recpulse 1s ease-in-out infinite; }
+    .rec-stable     { background: rgba(76,175,80,0.20);   color: #66bb6a; }
+    .rec-frozen     { background: rgba(220,50,50,0.22);   color: #ff6b6b; }
+    @@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 </style>
 
 @code {
@@ -351,6 +423,31 @@
     private bool _chartReady;
     private PeriodicTimer? _timer;
     private CancellationTokenSource _cts = new();
+
+    // v4.90.0 — 웜 스타트 서명 입력·상태 메시지.
+    private string _sig = "";
+    private string _recMsg = "";
+
+    // 단계별 배지 CSS(타임라인). RingTelemetry.RecoveryStateCss 는 '현재 단계' 전용이라 각 단계 색은 이 헬퍼로.
+    private static string RecoveryCss(RecoveryState s) => s switch
+    {
+        RecoveryState.Stable                                  => "rec-stable",
+        RecoveryState.Draining or RecoveryState.Escalating    => "rec-busy",
+        RecoveryState.Frozen                                  => "rec-frozen",
+        RecoveryState.Validating                              => "rec-validating",
+        _                                                     => "rec-idle"
+    };
+
+    // 서명 확인 → 수동 해제 + 웜 스타트(단일 백그라운드 스레드). 동결 아님/공백 서명은 착화 거부(fail-closed 안내).
+    private void DoWarmRestart()
+    {
+        var sig = (_sig ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(sig)) { _recMsg = "운영자 서명을 입력하세요."; return; }
+        if (Attestation.Mode != GatingMode.EmergencyFreeze) { _recMsg = "동결(EmergencyFreeze) 상태가 아닙니다 — 웜 스타트 불필요."; return; }
+        _recMsg = "웜 스타트 시퀀스 착화 — 백그라운드 진행(단계 배지로 추적).";
+        _sig = "";                 // 서명 즉시 화면에서 제거(잔류 방지)
+        Recovery.Trigger(sig);     // mesh.Stop→ManualRelease→백로그 드레인(펜스)→점화 승격→Stable / 실패 시 재동결
+    }
 
     protected override void OnInitialized()
     {

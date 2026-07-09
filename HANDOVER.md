@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.89.0** (2026-07-09)  
+> 기준 버전: **v4.90.0** (2026-07-10)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.89.0)
+### 현황 (v4.90.0)
 
-- **총 테스트**: 1,801 (클린런)
+- **총 테스트**: 1,813 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.90.0 | 결정론적 웜 스타트 복구 엔진. `DeterministicWarmRestartEngine`(5상태 Idle/Validating/Draining/Escalating/Stable+Frozen). `BeginWarmRestart(서명)`: 동결 전제+서명 인가 → `mesh.Stop`(SingleReader 인계) → `ManualRelease`(Mode=Normal) → 금고 `SecretLease`(requireArmed:false·ArrayPool δ=0) → `LedgerProtectionMesh.RecoveryDrain`(동결창 가격정합성 펜스: 저장가 KRX 격자 미정렬>1raw·시세 괴리 8× → ForceFreeze) → 점화 승격(`SafeIgnitionSequencer.BeginIgnition` 재사용 — 격리 1주 프로브→3σ·지연→MasterIgnited) → Stable. 주문 폭주 방지 '복구기 잠금 펜스': `DispatchArming.ResolvePredicate(blockWhile)` 로 복구 중 `IsRecovering`이면 라이브 무장 술어(→CanRouteToLive) 무조건 false. RingTelemetry +4 + TelemetryMonitor 🛠️ 웜스타트 관제 패널(단계 타임라인 배지·백로그 게이지·서명 입력창). +12 테스트. 적대검증 6렌즈 4결함 교정(실패 수렴 무조건 ForceFreeze·펜스 밴드 저장가 고정·시세 괴리 가드). ★fail-closed 단일 소스·liveArmed:false 불변 |
 | v4.89.0 | 포트폴리오 UX(지휘관 요청 4건). ①다축 정렬 `HoldingSort`(평가금·총수익률·일간·가나다·직접설정 / 전체·국내·해외·코인 공통) — 직접설정은 `Db.SetSetting` 영속·`MoveInView` 필터뷰 기준 인접 스왑. ②장 마감 후 시간외/애프터 시세(실측 검증): Naver `overMarketPriceInfo.overPrice`(KRX 시간외 단일가)+하락 방향 필드 교정, Yahoo `includePrePost`+`marketState`(프리/애프터), `Quote.Session` 배지. ③매수/매도/직접등록/수정 → 단일 통합 폼(`_showForm`+`_mode` Buy/Sell/Correct)+모드 전환 탭. ④추가매수 가중평균 병합은 `RecomputeAverage`로 기존 구현(정직 회계) — 통합 폼으로 접근성만 개선. +15 테스트. 적대검증 4렌즈 2결함 교정(필터뷰 직접설정 재정렬·Correct→매수 시장권위). ★liveArmed:false 불변(UI+읽기전용 시세) |
 | v4.88.0 | 원장 보호 메시. `LedgerProtectionMesh`(`DbTransactionPayload` [Sequential,Pack=1] unmanaged 57B·참조 0·심볼 KSE 6자리 long → Bounded Channel TryWrite 무할당·논블로킹 핫패스). 전용 드레인 스레드: 큐→`AddTransaction`→★직후 `RecomputeAverage` 동일 스레드 순차(HANDOVER §12 장부/평단 디싱크 차단). fail-closed 2대(큐 90%/포화→ForceFreeze·영속화 예외→ForceFreeze). ★동결 인지 유휴(EmergencyFreeze 시 Enqueue 거부·Drain 즉시 0·잔여 큐 보존 → busy-spin·재시도/감사 폭주 차단). RingTelemetry +4 + TelemetryMonitor 🗄️ 원장 보호 패널(Pure CSS 게이지 0-70녹/70-90황/90+적). +10 테스트. 적대검증 4렌즈 확정 2결함(드레인 busy-spin·재시도 폭주) 교정. ★liveArmed:false 불변(순수 영속화 오프로드·발주/점화 무결합) |
 | v4.87.0 | 집행 리스크 통제. `SlippageSentinel` δ=0 고정소수점 3σ(`long[128]`·`RecordAndCheck3Sigma`·dev²>9·var sqrt 회피·워밍업<10 fail-closed) + `IgnitionLock.Downgrade`(한 단 강등: 마스터→프로브) + `ExecutionMicrostructureGuard`(3σ 2연속·레이턴시 100ms→Downgrade) + `OrderDrainWorker` fail-closed(드레인 예외·이중키 붕괴→ForceFreeze 영구 락업·`DrainOnce`). RingTelemetry +4 + TelemetryMonitor ⚡ 미시구조 패널. +18 테스트. 적대검증 4렌즈 결함 0. liveArmed:false 불변 |
@@ -581,6 +582,8 @@ FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변
 원장 보호 메시       → Common/LedgerProtectionMesh.cs  (v4.88.0, blittable 57B·Bounded Channel 무할당 핫패스·드레인 AddTransaction→RecomputeAverage 순차·fail-closed 2대·동결 인지 유휴)
 보유 목록 정렬       → Common/HoldingSort.cs  (v4.89.0, 순수·결정론 다축 정렬 평가금/수익률/일간/가나다ko-KR/직접설정 + MoveInView 필터뷰 재정렬)
 시간외/애프터 시세    → Common/QuoteProviders.cs  (v4.89.0, Naver overMarketPriceInfo.overPrice KRX 시간외·하락부호 교정 / Yahoo includePrePost pre·post — Quote.Session)
+웜 스타트 복구 엔진    → Common/DeterministicWarmRestartEngine.cs  (v4.90.0, 5상태 시퀀스·동결창 가격정합성 펜스·복구기 잠금 펜스·SafeIgnitionSequencer 재사용·FailClosed 단일 ForceFreeze)
+원장 복구 드레인      → Common/LedgerProtectionMesh.cs  (v4.90.0 RecoveryDrain: Stop 후 단일리더 인계 순차 드레인+펜스 훅 — v4.88.0 메시에 가산)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

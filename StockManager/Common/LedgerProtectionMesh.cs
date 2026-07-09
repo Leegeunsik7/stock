@@ -164,6 +164,30 @@ namespace StockManager.Common
             return n;
         }
 
+        /// <summary>드레인 직전 페이로드 검증 펜스(웜스타트 가격정합성). true=통과·false=오염(호출측이 ForceFreeze 책임).</summary>
+        public delegate bool RecoveryFence(in DbTransactionPayload payload);
+
+        /// <summary>
+        /// ★웜스타트 복구 전용 순차 드레인(단일 백그라운드 스레드). 반드시 Stop() 으로 자체 DrainLoop 를 종료
+        /// (SingleReader 인계)한 뒤 호출해야 한다 — _running 이면 InvalidOperationException(레이스 원천 차단).
+        /// 각 항목을 fence 로 검증 후 Persist(→AddTransaction→RecomputeAverage 연쇄). fence 위반(오염) 또는 Persist
+        /// 실패 시 그 항목은 영속화하지 않고 즉시 중단(잔여 큐 보존·드롭 금지). 반환: 영속화 성공 건수.
+        /// 위반 여부는 호출측이 _att.Mode(EmergencyFreeze) 또는 반환 건수로 판정.
+        /// </summary>
+        public int RecoveryDrain(RecoveryFence fence)
+        {
+            if (fence is null) throw new ArgumentNullException(nameof(fence));
+            if (_running) throw new InvalidOperationException("RecoveryDrain 전에 Stop() 필수 — SingleReader 인계 위반 차단.");
+            int n = 0;
+            while (_reader.TryRead(out var p))
+            {
+                if (!fence(in p)) break;      // 오염 — 호출측 펜스가 이미 ForceFreeze. 미영속화·중단(잔여 보존).
+                if (!Persist(in p)) break;    // 영속화 실패 — Persist 가 ForceFreeze. 중단.
+                n++;
+            }
+            return n;
+        }
+
         // 단일 페이로드 영속화 + ★연쇄 후속 연산(RecomputeAverage) 순차 보장. 실패 시 fail-closed.
         private bool Persist(in DbTransactionPayload p)
         {

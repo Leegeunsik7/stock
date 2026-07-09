@@ -21,9 +21,33 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.89.0</Version>
-    <AssemblyVersion>4.89.0.0</AssemblyVersion>
-    <FileVersion>4.89.0.0</FileVersion>
+    <Version>4.90.0</Version>
+    <AssemblyVersion>4.90.0.0</AssemblyVersion>
+    <FileVersion>4.90.0.0</FileVersion>
+    <!-- v4.90.0 — ★결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 안전 소화 + 점화 FSM 점진 승격. 6렌즈 적대검증(4결함 교정).
+         ★정직 회계: 점진 점화 승격(Locked→ProbeReady→1주 프로브→3σ·지연 검증→MasterIgnited·실패 시 ForceFreeze)은
+         SafeIgnitionSequencer.BeginIgnition 이 이미 완비 → 재구현 없이 Escalating 단계에서 호출. 보수정렬 명목 펜스는
+         QLedgerGuard.TryClearNotional·QMath.Notional 재사용(δ=0). 백로그 단일리더 드레인만 mesh 에 신설(RecoveryDrain).
+         [과제1] DeterministicWarmRestartEngine(5상태 Idle/Validating/Draining/Escalating/Stable+Frozen). BeginWarmRestart(서명):
+         동결 전제+서명 인가 → mesh.Stop(SingleReader 인계·펜스 우회 레이스 차단) → ManualRelease(Mode=Normal) → 금고
+         SecretLease 복호화(requireArmed:false·ArrayPool δ=0·best-effort) → RecoveryDrain(가격정합성 펜스) → 점화 승격 → Stable.
+         동결창 가격정합성 펜스(δ=0·결정론): 실시간 호가로 KRX 호가격자 결정, 보수정렬(매수올림/매도내림) 명목 vs 저장 명목
+         오차>1raw(격자 미정렬 오염) 또는 음수/0/오버플로 → 즉시 ForceFreeze 복귀(드레인 중단·잔여 큐 보존).
+         [과제2] 주문 폭주 방지 '복구기 잠금 펜스': 복구 진행 중 IsRecovering==true → DispatchArming.ResolvePredicate(blockWhile)
+         가 라이브 무장 술어를 무조건 false 로 감싸 StrategyActivationGate.CanRouteToLive 를 차단(프로브는 시퀀서 격리 경로라 무관).
+         점진 승격은 시퀀서 재사용(직결 금지·Locked 경유). 프로브 위반/타임아웃 → 시퀀서가 IgnitionLock.Lock + ForceFreeze,
+         엔진은 금고 재봉인(Seal).
+         [과제3] RingTelemetry +4(RecoveryStateCode·백로그 잔여·프로브 RTT·프로브 슬리피지σ raw) + RecoveryStateName/Css 헬퍼.
+         RingTelemetryPublisher 에 recovery 소스 합류(Sample). TelemetryMonitor 웜스타트 관제 패널(상태 타임라인 배지 +
+         백로그 게이지 + 프로브 RTT/σ) + 서명 입력창(ManualRelease/Trigger). Cell Size 256 to 512(필드 30개 대응).
+         ★liveArmed:false 불변: 프로브는 격리 브로커(실 자본 0)·복구 중 라이브 라우팅 차단. fail-closed: 서명/펜스/프로브/예외
+         전부 ForceFreeze 단일 소스 + 금고 재봉인. δ=0: 펜스 정수 산술·SecretLease ArrayPool 와이프. 결정론: 벽시계/RNG 불사용.
+         ★적대검증 4결함 교정: (#1·#2 CRITICAL) 프로브 승격 freeze:false 실패(이중키 미충족=기본 자세)에서 att 미재동결 →
+         ManualRelease 로 푼 Mode=Normal 잔존·비상동결 소멸 누수 → 실패 단일 수렴점(FailClosed)에서 무조건 ForceFreeze(멱등).
+         (#3 HIGH) 펜스가 tick 밴드를 실시간 호가로 잡아 마감 후 밴드 이동 시 정상 정렬 체결 오탐 동결 → 저장가 자기 밴드로 고정.
+         (#4 MED) 반대 방향 미탐 + 실제 시세 편차 미검사 → 저장가 밴드(격자 미탐 차단) + GrossDeviationFactor(기본 8×) 시세 괴리 가드.
+         ★버전 정합: 직전 포트폴리오 UX 가 v4.89.0 라벨 선점 → 본 엔진은 v4.90.0. (v4.89.0 csproj 주석 중복줄 fix-forward 포함)
+         빌드 0/0(메인+x86), 전체 1813 통과(+12: 복구락+CanRouteToLive·펜스 오염동결/온그리드/오탐없음/괴리·이중키 재동결·미동결 no-op·단일리더·텔레메트리). -->
     <!-- v4.89.0 — ★포트폴리오 UX(지휘관 요청 4건): 다축 정렬 + 장 마감 후 시간외/애프터 시세 + 매수/수정 통합 폼 + 추가매수 병합. 4렌즈 적대검증(2결함 교정).
          ★정직 회계: 추가매수 가중평균 병합(#4)은 RecomputeAverage 거래 replay 이동평균으로 이미 구현·테스트 고정 — 데이터 델타 없음.
          폴링 루프는 시간대 게이팅 없이 상시 폴링(정지 아님). 실제 갭은 (a) 정렬 UI 부재, (b) 프로바이더가 정규장 필드만 읽음, (c) 매수/수정 폼 이원화.
@@ -40,7 +64,6 @@
          ★liveArmed:false 불변: UI+읽기전용 시세 — 주문 발주/집행/원장 무관. 적대검증 4렌즈 확정 2결함(필터뷰 직접설정 재정렬·Correct→매수
          시장권위 이월) 교정. 테스트 +15(HoldingSort 5축·MoveInView 필터뷰/경계·Naver 하락부호/시간외/폐장·Yahoo 프리/애프터/폴백).
          빌드 0/0(메인+x86), 전체 1801 통과. -->
-    <!-- v4.88.0 — ★원장 보호 메시: SQLite WAL 영속화 + 평단 재계산을 50ms 발주 핫패스에서 완전 비동기 분리(폭발장 지터 차단). 4렌즈 적대검증(2결함 교정).
     <!-- v4.88.0 — ★원장 보호 메시: SQLite WAL 영속화 + 평단 재계산을 50ms 발주 핫패스에서 완전 비동기 분리(폭발장 지터 차단). 4렌즈 적대검증(2결함 교정).
          ★정직 회계: LocalDatabase.AddTransaction·PortfolioService.RecomputeAverage·OrderAttestationService.ForceFreeze·
          RingTelemetry/Publisher·TelemetryMonitor 는 모두 기존 존재. 본 단계는 그 사이 미배선이던 '비동기 오프로드 계층'만 신설.

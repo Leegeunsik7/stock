@@ -54,6 +54,11 @@ namespace StockManager.Common
         public readonly long   LedgerCapacity;              // 큐 용량(UI 포화% 산출)
         public readonly double LedgerAvgPersistMicros;      // 평균 영속화 소요(µs)
         public readonly long   LedgerWriteFailures;         // 누적 쓰기 실패(포화·영속화 예외)
+        // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 복구 단계·백로그 잔여·프로브 RTT·프로브 슬리피지σ.
+        public readonly long   RecoveryStateCode;           // 0 Idle/1 Validating/2 Draining/3 Escalating/4 Stable/5 Frozen
+        public readonly long   RecoveryBacklog;             // 드레인 잔여 백로그 개수
+        public readonly long   ProbeRttMs;                  // 최근 프로브 파이프라인 왕복 지연(ms)
+        public readonly long   ProbeSlippageSigmaRaw;       // 최근 프로브 관측 슬리피지 σ(raw·10^8)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -62,7 +67,8 @@ namespace StockManager.Common
                              double alphaFactoryRecentRejRate = 0.0, long alphaFactorySuspended = 0L,
                              long alphaPipelineMode = 0L, long alphaPromoted = 0L, double alphaSigningSuccessRate = 0.0,
                              long ignitionStageCode = 0L, long slippageRaw = 0L, long slippageSigmaRaw = 0L, long execDowngrades = 0L,
-                             long ledgerQueueDepth = 0L, long ledgerCapacity = 0L, double ledgerAvgPersistMicros = 0.0, long ledgerWriteFailures = 0L)
+                             long ledgerQueueDepth = 0L, long ledgerCapacity = 0L, double ledgerAvgPersistMicros = 0.0, long ledgerWriteFailures = 0L,
+                             long recoveryStateCode = 0L, long recoveryBacklog = 0L, long probeRttMs = 0L, long probeSlippageSigmaRaw = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -90,6 +96,10 @@ namespace StockManager.Common
             LedgerCapacity            = ledgerCapacity;
             LedgerAvgPersistMicros    = ledgerAvgPersistMicros;
             LedgerWriteFailures       = ledgerWriteFailures;
+            RecoveryStateCode         = recoveryStateCode;
+            RecoveryBacklog           = recoveryBacklog;
+            ProbeRttMs                = probeRttMs;
+            ProbeSlippageSigmaRaw     = probeSlippageSigmaRaw;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -127,6 +137,31 @@ namespace StockManager.Common
         public double  LedgerSaturationPct  => LedgerCapacity > 0 ? (double)LedgerQueueDepth / LedgerCapacity * 100.0 : 0.0;
         /// <summary>원장 오버플로 경보 — 큐 90% 이상 포화 또는 쓰기 실패 발생(전역 동결 신호).</summary>
         public bool    LedgerOverflowAlert  => LedgerSaturationPct >= 90.0 || LedgerWriteFailures > 0;
+        // v4.90.0 — 웜 스타트 복구 UI 헬퍼.
+        public RecoveryState RecoveryStage => (RecoveryState)RecoveryStateCode;
+        public string RecoveryStateName => RecoveryStage switch
+        {
+            RecoveryState.Idle       => "Idle",
+            RecoveryState.Validating => "Validating",
+            RecoveryState.Draining   => "Draining",
+            RecoveryState.Escalating => "Escalating",
+            RecoveryState.Stable     => "Stable",
+            RecoveryState.Frozen     => "Frozen",
+            _ => "Unknown"
+        };
+        /// <summary>상태 배지 CSS 색: Stable=녹 / Draining·Escalating=황(점멸) / Frozen·Validating=회·적 / Idle=중립.</summary>
+        public string RecoveryStateCss => RecoveryStage switch
+        {
+            RecoveryState.Stable     => "rec-stable",
+            RecoveryState.Draining   => "rec-busy",
+            RecoveryState.Escalating => "rec-busy",
+            RecoveryState.Frozen     => "rec-frozen",
+            RecoveryState.Validating => "rec-validating",
+            _ => "rec-idle"
+        };
+        /// <summary>복구 진행 중(검증/드레인/승격) — 라이브 라우팅 잠금 신호와 동치.</summary>
+        public bool RecoveryActive => RecoveryStage is RecoveryState.Validating or RecoveryState.Draining or RecoveryState.Escalating;
+        public decimal ProbeSlippageSigmaDecimal => ProbeSlippageSigmaRaw / (decimal)QMath.Scale;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -135,7 +170,8 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        [StructLayout(LayoutKind.Explicit, Size = 256)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.90.0 기준 필드 30개×8=240B → Data 128..368B. 512 로 상향(캐시라인 헤드룸 포함).
+        [StructLayout(LayoutKind.Explicit, Size = 512)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -203,6 +239,7 @@ namespace StockManager.Common
         private readonly IgnitionLock? _ignition;               // v4.87.0 — 점화 FSM 단계(옵션·기본 null)
         private readonly ExecutionMicrostructureGuard? _execGuard; // v4.87.0 — 슬리피지/σ/강등(옵션·기본 null)
         private readonly LedgerProtectionMesh? _ledger;         // v4.88.0 — 원장 보호 메시(옵션·기본 null)
+        private readonly DeterministicWarmRestartEngine? _recovery; // v4.90.0 — 웜 스타트 복구 엔진(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -214,7 +251,8 @@ namespace StockManager.Common
                                       StrategyEvolutionPipeline? pipeline = null,
                                       IgnitionLock? ignition = null,
                                       ExecutionMicrostructureGuard? execGuard = null,
-                                      LedgerProtectionMesh? ledger = null)
+                                      LedgerProtectionMesh? ledger = null,
+                                      DeterministicWarmRestartEngine? recovery = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -226,6 +264,7 @@ namespace StockManager.Common
             _ignition     = ignition;
             _execGuard    = execGuard;
             _ledger       = ledger;
+            _recovery     = recovery;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -270,13 +309,17 @@ namespace StockManager.Common
                 long ledDepth = 0L, ledCap = 0L, ledFails = 0L;
                 double ledMicros = 0.0;
                 if (_ledger is { } lm) { ledDepth = lm.QueueDepth; ledCap = lm.Capacity; ledMicros = lm.AvgPersistMicros; ledFails = lm.WriteFailures; }
+                // v4.90.0 — 웜 스타트 복구 엔진(복구 단계·백로그 잔여·프로브 RTT·슬리피지σ) 합류(미배선이면 0).
+                long rvState = 0L, rvBacklog = 0L, rvRtt = 0L, rvSig = 0L;
+                if (_recovery is { } rc) { rvState = rc.RecoveryStateCode; rvBacklog = rc.BacklogRemaining; rvRtt = rc.LastProbeLatencyMs; rvSig = rc.LastProbeSigmaRaw; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
                     afCycles, afSigned, afRejected, afRejRate, afSuspended,
                     apMode, apPromoted, apSignRate,
                     ignCode, slipRaw, sigRaw, downgrades,
-                    ledDepth, ledCap, ledMicros, ledFails));
+                    ledDepth, ledCap, ledMicros, ledFails,
+                    rvState, rvBacklog, rvRtt, rvSig));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

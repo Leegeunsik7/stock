@@ -308,8 +308,12 @@ namespace StockManager.Blazor
             var armingGate = new LiveArmingGate(ignition, attestation, () => BrokerHub.IsArmed(db));
             // v4.59.0 — 진공관 결속: 스위치 결정을 테스트 가능한 DispatchArming.ResolvePredicate 로 분리(인라인 삼항 제거).
             //   기본(미옵트인) → 상수 ()=>false(수학적 0). 옵트인 ON 일 때만 armingGate.IsArmed 결속. 술어 선택은 부팅 1회.
+            // v4.90.0 — 복구기 잠금 펜스: 웜 스타트 복구 진행 중(IsRecovering)이면 무장 술어를 무조건 false 로 감싼다
+            //   (동결 해제 직후 잠긴 전략들의 '주문 폭주(Order Rush)' 물리 차단). warmRestart 는 아래에서 생성돼 지연 클로저로 결속.
+            DeterministicWarmRestartEngine? warmRestartRef = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
-                cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate);
+                cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
+                blockWhile: () => warmRestartRef?.IsRecovering ?? false);
             var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation);
             var ringChannel    = new RingTelemetryChannel();
             // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher·페이지 transient) 카운터를 싱글톤
@@ -339,7 +343,29 @@ namespace StockManager.Blazor
             ledgerMesh.Start();
             services.AddSingleton(ledgerMesh);
             FormClosed += (_, _) => { try { ledgerMesh.Dispose(); } catch { } };
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh);
+            // v4.76.0 — 안전 점화 시퀀서(격리 1주 프로브→3σ·지연 검증→MasterIgnited). ★프로브는 격리 PaperBroker(IsLive=false)로만
+            //   — 실 자본 위험 0. ★ProbeReferencePrice>0(지정가 경로). MasterIgnited 도달 전까지 IgnitionLock=Locked·LiveArmingGate=false.
+            //   v4.90.0 — 웜 스타트 엔진이 Escalating 단계에서 이 시퀀서를 재사용하므로 조립 순서를 ringPublisher 앞으로 상향.
+            var probeBroker = new PaperBroker(db);
+            var ignitionSeq = new SafeIgnitionSequencer(
+                ignition, attestation, sentinel, probeBroker,
+                valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
+                liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false))
+            {
+                ProbeSymbol          = "005930",
+                ProbeReferencePrice  = 1.0,    // >0 필수(지정가 경로). 실 운영은 실제 호가 기준가 주입 권장.
+                MaxPipelineLatencyMs = 2_000,
+                MaxObservedSigma     = sentinel.AlertThresholdSigma,   // 센티넬 3σ 임계와 정렬
+            };
+            services.AddSingleton(ignitionSeq);    // ClearingAuthorityPage 와 동급 — /command 점화 트리거용
+            // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
+            //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
+            //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
+            var warmRestart = new DeterministicWarmRestartEngine(attestation, securityVault, ledgerMesh, ignitionSeq);
+            warmRestartRef = warmRestart;   // 복구기 잠금 펜스 지연 클로저 결속(위 armedPredicate)
+            services.AddSingleton(warmRestart);
+            FormClosed += (_, _) => { try { warmRestart.Dispose(); } catch { } };
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -373,23 +399,8 @@ namespace StockManager.Blazor
                 _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
             FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
 
-            // v4.76.0 — 과제1: 실 무장 안전 점화 시퀀서 배선. 두 옵트인 키(ValveWired ∧ LiveArmingWired)가
-            //   '동시' ON 일 때만 BeginIgnition 이 격리 1주 프로브→3σ·지연 검증→MasterIgnited 로 진행.
-            //   ★프로브는 반드시 격리 PaperBroker(IsLive=false)로 — 실 자본 위험 0(broker 가 IsLive 면 시퀀서가 거부→동결).
-            //   ★ProbeReferencePrice>0 필수(지정가 경로). 0=시장가는 dead-on-arrival(StockValidator·PaperBroker 양쪽 거부).
-            //   liveArmed:false 불변: MasterIgnited 도달 전까지 IgnitionLock=Locked·LiveArmingGate=false 유지.
-            var probeBroker = new PaperBroker(db);
-            var ignitionSeq = new SafeIgnitionSequencer(
-                ignition, attestation, sentinel, probeBroker,
-                valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
-                liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false))
-            {
-                ProbeSymbol          = "005930",
-                ProbeReferencePrice  = 1.0,    // >0 필수(지정가 경로). 실 운영은 실제 호가 기준가 주입 권장.
-                MaxPipelineLatencyMs = 2_000,
-                MaxObservedSigma     = sentinel.AlertThresholdSigma,   // 센티넬 3σ 임계와 정렬
-            };
-            services.AddSingleton(ignitionSeq);    // ClearingAuthorityPage 와 동급 — /command 점화 트리거용
+            // v4.76.0 안전 점화 시퀀서 + v4.90.0 웜 스타트 복구 엔진은 위(원장 메시 직후)에서 조립됨
+            //   — ringPublisher 가 warmRestart 를 참조하므로 순서를 상향했다(중복 조립 금지).
 
             // S18 #2 / S19 #4 — 중앙 관제 허브: 5대 핵심 센서를 단일 불변 스냅샷으로 취합
             services.AddSingleton(new SystemStatusAggregator(

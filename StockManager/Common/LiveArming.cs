@@ -74,9 +74,24 @@ namespace StockManager.Common
 
         /// <param name="gate">옵트인 시 평가할 실 무장 게이트(미배선이라도 호스트는 항상 구성 — 비-null 계약).</param>
         public static Func<bool> ResolvePredicate(bool wired, LiveArmingGate gate)
+            => ResolvePredicate(wired, gate, blockWhile: null);
+
+        /// <summary>
+        /// v4.90.0 — '복구기 잠금 펜스' 오버로드. blockWhile()==true 인 동안(웜 스타트 복구 진행 중) 무장 술어가
+        /// 무조건 false 를 반환하도록 한 겹 감싼다 → 동결 해제 직후 잠겨있던 전략들의 '주문 폭주(Order Rush)'를
+        /// 물리 차단(프로브는 별도 SafeIgnitionSequencer 경로라 이 술어에 의존하지 않음). blockWhile 평가 예외도 fail-closed.
+        /// </summary>
+        /// <param name="blockWhile">차단 신호(예: () =&gt; recoveryEngine.IsRecovering). null 이면 감싸지 않음.</param>
+        public static Func<bool> ResolvePredicate(bool wired, LiveArmingGate gate, Func<bool>? blockWhile)
         {
             if (gate is null) throw new ArgumentNullException(nameof(gate));
-            return wired ? gate.IsArmed : AlwaysFalse;   // 켜짐만 실 게이트, 아니면 수학적 0
+            if (!wired) return AlwaysFalse;                        // 미배선 = 수학적 0(격리)
+            if (blockWhile is null) return gate.IsArmed;           // 펜스 없음 = 기존 계약 그대로
+            return () =>
+            {
+                try { return !blockWhile() && gate.IsArmed(); }    // ★복구 중이면 gate 무관 무조건 false(주문 폭주 차단)
+                catch { return false; }                            // 펜스 평가 예외 → fail-closed(미무장)
+            };
         }
     }
 }
