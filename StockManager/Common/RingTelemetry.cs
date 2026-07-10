@@ -77,6 +77,12 @@ namespace StockManager.Common
         public readonly long   SentimentBreakerTripped;     // 감성 속도 브레이커 트립(0=정상·1=강등 트립)
         public readonly long   NewsUnanalyzedCount;         // 미분석(SentimentRaw==0) 격리 건수
         public readonly long   MentorFsmCode;               // AI 멘토 파이프라인 FSM(0 Idle/1 Analyzing/2 Advised/3 Amber)
+        // v4.94.0 — 초고속 집행·리스크 실드: 증거금 포화·예약 거부·다중 브로커 링 노드·MMF µs 레이턴시·패브릭 가드 트립.
+        public readonly long   MarginUtilizationRaw;        // 증거금 예약/예산 × 10^8(0..10^8) — 포화도
+        public readonly long   ReservationRejects;          // 락-프리 예약 거부 누적(경량 필터)
+        public readonly long   ShadowRingNodeMask;          // 다중 브로커 분산 링 활성 노드 비트마스크(AssetClass)
+        public readonly long   MmfLatencyMicros;            // MMF IPC 프레임 왕복 레이턴시(µs)
+        public readonly long   FabricGuardMask;             // ★가드 트립: bit0=리스크 실드 동결·bit1=MMF 오염 동결(오버레이 하드바인딩)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -91,7 +97,9 @@ namespace StockManager.Common
                              long kiwoomLinkCode = 0L, long tossLinkCode = 0L, long tossTokenRemainSec = 0L,
                              long endpointFirewallBlocks = 0L, long productionLiveMask = 0L,
                              long newsRatePerMin = 0L, long marketSentimentRaw = 0L, long semanticShockActive = 0L,
-                             long sentimentBreakerTripped = 0L, long newsUnanalyzedCount = 0L, long mentorFsmCode = 0L)
+                             long sentimentBreakerTripped = 0L, long newsUnanalyzedCount = 0L, long mentorFsmCode = 0L,
+                             long marginUtilizationRaw = 0L, long reservationRejects = 0L, long shadowRingNodeMask = 0L,
+                             long mmfLatencyMicros = 0L, long fabricGuardMask = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -138,6 +146,11 @@ namespace StockManager.Common
             SentimentBreakerTripped   = sentimentBreakerTripped;
             NewsUnanalyzedCount       = newsUnanalyzedCount;
             MentorFsmCode             = mentorFsmCode;
+            MarginUtilizationRaw      = marginUtilizationRaw;
+            ReservationRejects        = reservationRejects;
+            ShadowRingNodeMask        = shadowRingNodeMask;
+            MmfLatencyMicros          = mmfLatencyMicros;
+            FabricGuardMask           = fabricGuardMask;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -235,6 +248,29 @@ namespace StockManager.Common
         public bool    MarketBullish           => MarketSentimentRaw >= 30_000_000L;
         public bool    MarketBearish           => MarketSentimentRaw <= -30_000_000L;
         public string  MentorFsmName => MentorFsmCode switch { 0 => "Idle", 1 => "Analyzing", 2 => "Advised", 3 => "Amber", _ => "Unknown" };
+        // v4.94.0 — 초고속 집행·리스크 실드 UI 헬퍼.
+        public decimal MarginUtilization    => MarginUtilizationRaw / (decimal)QMath.Scale;              // 0..1
+        public double  MarginUtilizationPct => MarginUtilizationRaw / (double)QMath.Scale * 100.0;       // 0..100
+        public double  MarginRemainingPct   => Math.Clamp(100.0 - MarginUtilizationPct, 0.0, 100.0);    // 잔여 증거금 비율
+        public bool    MarginSaturated      => MarginUtilizationRaw >= 90_000_000L;                      // ≥90% 포화
+        public bool    ReservationBreached  => ReservationRejects > 0;
+        public bool    ShadowRingActive     => ShadowRingNodeMask != 0;
+        public int     ShadowRingNodeCount  => System.Numerics.BitOperations.PopCount((ulong)ShadowRingNodeMask);
+        public bool    MmfFabricActive      => MmfLatencyMicros > 0 || FabricGuardMask != 0;
+        public bool    RiskShieldFrozen     => (FabricGuardMask & 1L) != 0;
+        public bool    MmfFabricCorrupted   => (FabricGuardMask & 2L) != 0;
+        /// <summary>★리스크/패브릭 가드 동결 — 화면 전체 적색 경고등 오버레이 트리거.</summary>
+        public bool    FabricGuardTripped   => FabricGuardMask != 0;
+        /// <summary>동결 사유 코드(오버레이 하드바인딩 고지).</summary>
+        public string  FabricGuardReason => FabricGuardMask switch
+        {
+            0L => "",
+            1L => "PRE-TRADE RISK SHIELD — 한도 초과 계좌 잠금",
+            2L => "MMF FABRIC CORRUPTED — 공유메모리 오염 격리",
+            _  => "RISK SHIELD + MMF FABRIC — 복합 가드 동결",
+        };
+        /// <summary>초고속 집행·리스크 레이어 활성(어느 지표든 값 존재).</summary>
+        public bool    RiskExecActive => MarginUtilizationRaw > 0 || ReservationRejects > 0 || ShadowRingNodeMask != 0 || MmfLatencyMicros > 0 || FabricGuardMask != 0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -243,8 +279,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.93.0 기준 필드 45개×8=360B → Data 128..488B < 512(헤드룸 소진 근접·확장 시 상향 필요).
-        [StructLayout(LayoutKind.Explicit, Size = 512)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.94.0 기준 필드 50개×8=400B → Data 128..528B < 576(64배수·잔여 6슬롯).
+        //   (v4.93.0 은 45필드=360B→488B 로 512 헤드룸 3슬롯에 근접 → v4.94.0 5필드 추가로 512 초과 → 576 으로 상향.)
+        [StructLayout(LayoutKind.Explicit, Size = 576)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -316,6 +353,9 @@ namespace StockManager.Common
         private readonly DeterministicChaosGrid? _chaosGrid;        // v4.91.0 — 카오스 테스팅 그리드(옵션·기본 null)
         private readonly ProductionSwapController? _prodSwap;       // v4.92.0 — 프로덕션 스왑 컨트롤러(옵션·기본 null)
         private readonly NewsIntelController? _newsIntel;           // v4.93.0 — 뉴스 인텔 컨트롤러(옵션·기본 null)
+        private readonly PreTradeRiskShield? _riskShield;           // v4.94.0 — 발주 전 리스크 실드(옵션·기본 null)
+        private readonly MultiBrokerShadowRing? _shadowRing;        // v4.94.0 — 다중 브로커 섀도우 링(옵션·기본 null)
+        private readonly MmfIpcFabric? _mmfFabric;                  // v4.94.0 — MMF 제로레이턴시 패브릭(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -331,7 +371,10 @@ namespace StockManager.Common
                                       DeterministicWarmRestartEngine? recovery = null,
                                       DeterministicChaosGrid? chaosGrid = null,
                                       ProductionSwapController? prodSwap = null,
-                                      NewsIntelController? newsIntel = null)
+                                      NewsIntelController? newsIntel = null,
+                                      PreTradeRiskShield? riskShield = null,
+                                      MultiBrokerShadowRing? shadowRing = null,
+                                      MmfIpcFabric? mmfFabric = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -347,6 +390,9 @@ namespace StockManager.Common
             _chaosGrid    = chaosGrid;
             _prodSwap     = prodSwap;
             _newsIntel    = newsIntel;
+            _riskShield   = riskShield;
+            _shadowRing   = shadowRing;
+            _mmfFabric    = mmfFabric;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -405,6 +451,11 @@ namespace StockManager.Common
                 long niRate = 0L, niSent = 0L, niShock = 0L, niTrip = 0L, niUnan = 0L, niFsm = 0L;
                 if (_newsIntel is { } ni)
                 { niRate = ni.NewsRatePerMin; niSent = ni.MarketSentimentRaw; niShock = ni.SemanticShockActive; niTrip = ni.SentimentBreakerTripped; niUnan = ni.NewsUnanalyzedCount; niFsm = ni.MentorFsmCode; }
+                // v4.94.0 — 리스크 실드·다중 브로커 링·MMF 패브릭(증거금 포화·예약 거부·노드 마스크·µs 레이턴시·가드 트립) 합류(미배선이면 0).
+                long rsUtil = 0L, rsRej = 0L, mbMask = 0L, mmLat = 0L, guardMask = 0L;
+                if (_riskShield is { } rs) { rsUtil = rs.MarginUtilizationRaw; rsRej = rs.RejectCount; if (rs.Escalated) guardMask |= 1L; }
+                if (_shadowRing is { } sr) mbMask = sr.ActiveNodeMask;
+                if (_mmfFabric  is { } mf) { mmLat = mf.LastLatencyMicros; if (mf.IsCorrupted) guardMask |= 2L; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -415,7 +466,8 @@ namespace StockManager.Common
                     rvState, rvBacklog, rvRtt, rvSig,
                     cgTicks, cgFlags, cgPbt, cgQ,
                     psKiwoom, psToss, psTokenSec, psBlocks, psProdMask,
-                    niRate, niSent, niShock, niTrip, niUnan, niFsm));
+                    niRate, niSent, niShock, niTrip, niUnan, niFsm,
+                    rsUtil, rsRej, mbMask, mmLat, guardMask));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

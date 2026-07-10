@@ -5,6 +5,10 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- v4.94.0 — MmfIpcFabric 의 상주 공유메모리 락-프리 링(헤드/테일/시퀀스/하트비트)을 byte* 포인터로 δ=0
+         접근하기 위해 unsafe 블록을 허용한다. 사용 범위는 MmfIpcFabric 의 매핑 뷰 포인터 산술로 국한하고,
+         나머지 코드베이스의 'unsafe 회피(MemoryMarshal/Span)' 관례는 유지한다. TreatWarningsAsErrors 불변. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>StockManager</RootNamespace>
@@ -21,9 +25,26 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.93.0</Version>
-    <AssemblyVersion>4.93.0.0</AssemblyVersion>
-    <FileVersion>4.93.0.0</FileVersion>
+    <Version>4.94.0</Version>
+    <AssemblyVersion>4.94.0.0</AssemblyVersion>
+    <FileVersion>4.94.0.0</FileVersion>
+    <!-- v4.94.0 — ★초고속 집행·리스크 실드 완결: 발주 전 다요소 리스크 실드 + 다중 브로커 섀도우 링 + MMF 제로레이턴시 IPC 패브릭. 6렌즈 적대검증(확정 7·실질 4결함 교정).
+         ★정직 회계(정찰 6렌즈): OrderDrainWorker·GatedOrderDispatcher·QMath.Notional·QLedgerGuard·ForceFreeze 단일소스·IgnitionLock.Downgrade·RingBufferCore
+         seqlock·BridgeSerializer.Pack·DispatchArming.AlwaysFalse(실주문 수학적 0 정본)는 기존 재사용. 리스크/증거금/IExecutionGate/상주 MMF 링·unsafe 는 전무→신규.
+         [과제1] PreTradeRiskShield.cs: 락-프리 원자 증거금(revolving)·당일누적(monotone) 이중 예산 예약. ★Think Further TOCTOU 봉쇄 — reserve→check→compensate
+         CAS(스냅샷 기준 검증+원자 커밋, over-admit 수학적 불가)+next<init 오버플로 fail-closed. 경량 필터(단건 드롭)↔3-strike 에스컬레이션(ForceFreeze+Downgrade) 분리.
+         시장가 기준가 오라클 부재 fail-closed·무차입 공매도 가드. [과제2] MultiBrokerShadowRing.cs: IExtendedExecutionGate:IBroker(주문ID 왕복 PlaceTracked 로
+         IBroker.Place 취소불가 갭 해소)+AssetClass 자동 라우팅. ★Think Further 2PC 연쇄 롤백 센티널 — legB 실패/타임아웃→반대편 즉시 취소, 취소마저 실패=화해
+         불가 노출→Downgrade+ForceFreeze(조용한 스큐 봉쇄)+데드라인(50ms) 편입+멱등 롤백. [과제3] MmfIpcFabric.cs: MMF 상주 락-프리 SPSC 링·unsafe byte* δ=0
+         (AllowUnsafeBlocks 신설). ★Think Further 하트비트(20ms 단절→오염)+매 연산 경계검증(Magic·Capacity·Head/Tail 불변식·슬롯 Seq·Len)+공유값 불신(로컬 상수)+
+         라이터 mid-write 포이즌→ForceFreeze(MMF Fabric Corrupted). [UI] RingTelemetry +5(증거금 포화·예약 거부·브로커 링 노드·MMF µs·가드 마스크·Cell 512→576) +
+         TelemetryMonitor ⚡ 코어 패널(포화 Pure CSS 바·µs 타임라인·노드) + 가드 동결 적색 오버레이(사유 하드바인딩).
+         ★liveArmed:false: 실드 admit≠발주(IBroker 참조 없음)·MMF 전송≠브로커 소켓(intra-machine)·섀도우 링은 미무장 게이트 거부 — 이중키∧MasterIgnited∧AlwaysFalse 없이 실주문 0.
+         δ=0(실드 CAS·MMF 포인터 Buffer.MemoryCopy — 힙 0·전용스레드 300k 워밍업 측정)·결정론(주입 시계)·fail-closed·한국색상(적/청)·TreatWarningsAsErrors.
+         ★적대검증 확정 7(실질 4) 교정: (A HIGH·#2/#3/#5) 페어 legB 느린성공 취소실패가 legA 롤백에 가려져 단독 노출을 RolledBack 오보 → 양 leg 취소 AND 결합·실패 시
+         Exposed 승격. (B MED·#4/#6) MMF 하트비트 타임아웃(20ms)<Beat 주기(200ms) 허위 오염 → 배선 타임아웃 1000ms 정합. (C MED·#1) Dispose 순서 역전+타이머 콜백
+         중첩 use-after-free(언매핑 포인터 역참조 AccessViolation) → 인플라이트 드레인 가드(순서 무관). (D MED·#7) 섀도우 링 기본 비단조 벽시계(NTP 전진 시 허위 노출) →
+         단조 Stopwatch+tickFrequency. 테스트 +43(회귀 2). 빌드 0/0(메인+x86), 전체 1917 통과. -->
     <!-- v4.93.0 — ★정보 인텔리전스 레이어 완결: 실시간 뉴스 레이더 + AI 포트폴리오 멘토. 5렌즈 적대검증(확정 6·실질 5결함 교정).
          ★정직 회계: ZeroAllocJsonParser·RingBufferCore·QChaos.ApplyStress·IgnitionLock.Downgrade·SlippageSentinel 3σ 패턴·RingTelemetry seqlock 은 기존 재사용.
          [핵심] NewsIntelligence.cs: NewsPayload(Sequential·Pack=1, SentimentRaw==0=미분석 격리 센티널)·δ=0 NewsIntelParser(Utf8JsonReader span·숫자전용·

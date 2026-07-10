@@ -383,7 +383,30 @@ namespace StockManager.Blazor
             services.AddSingleton(sentimentBreaker);
             services.AddSingleton(newsIntel);   // TelemetryMonitor 🧠 뉴스 레이더 & AI 멘토 패널 주입 대상
             FormClosed += (_, _) => { try { newsIntel.Dispose(); } catch { } };
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel);
+            // v4.94.0 — 발주 전 리스크 실드(락-프리 원자 증거금/당일 예약). 시드는 모의 계좌 기준(PaperAccount 기본 1천만).
+            //   ★liveArmed:false 불변: 실드는 '허용/거부'만 — 발주 0바이트. admit 해도 하류 이중키∧MasterIgnited 게이트가 지배.
+            //   라이브 예수금(AccountPayload.Deposit) 소스는 미보존 → 실 예산 시드 배선은 별도 선결(정직 표기).
+            long marginBudgetRaw = QMoney.Of(10_000_000m).Raw;   // 증거금(매수여력) 예산 — 모의 시드 1천만원
+            long dailyLimitRaw   = QMoney.Of(50_000_000m).Raw;   // 당일 누적 투자한도 — 보수 기본 5천만원
+            var riskShield = new PreTradeRiskShield(marginBudgetRaw, dailyLimitRaw, attestation, ignition);
+            services.AddSingleton(riskShield);   // TelemetryMonitor ⚡ 리스크 실드 패널 주입 대상
+            // v4.94.0 — 다중 브로커 섀도우 집행 분산 링. ★게이트는 옵트인 등록(기본 0 노드 — liveArmed:false·라이브 게이트 미자동배선).
+            //   실 게이트 결속(키움 x86/토스)은 IsLive&IsArmed 옵트인 하 별도 단계. 링 자체는 라우팅·페어 원자성 센티널 인프라.
+            var shadowRing = new MultiBrokerShadowRing(
+                new System.Collections.Generic.Dictionary<AssetClass, IExtendedExecutionGate>(),
+                attestation, ignition);
+            services.AddSingleton(shadowRing);   // TelemetryMonitor ⚡ 다중 브로커 링 노드 상태 주입 대상
+            // v4.94.0 — MMF 제로레이턴시 IPC 패브릭(Writer 역할·상주 공유메모리 락-프리 링). unsafe 포인터 δ=0.
+            //   ★liveArmed:false 불변: '프레임 전송'만 — 외부 증권사 소켓 미오픈(그것은 x86 프록시 몫·주문 송출은 하류 게이트 지배).
+            //   리더(x86 프록시 MMF 클라)는 옵트인 결속 — 미결속이면 latency 0·무오염(정직 idle). 생성 실패는 무해 격리(null).
+            // ★하트비트 타임아웃(1000ms)은 상주 Writer 의 Beat 주기(ringTimer 200ms)보다 반드시 커야 한다 —
+            //   timeout ≤ keepalive 주기이면 유휴 구간마다 상대가 라이터를 사망으로 오판해 허위 오염(ForceFreeze)한다.
+            //   ★20ms 고속 사망감지 스펙은 옵트인 x86 프록시 리더 결속 시 '전용 고속 Beat + 20ms 타임아웃' 쌍으로 활성화한다.
+            MmfIpcFabric? mmfFabric = null;
+            try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000); }
+            catch { mmfFabric = null; }
+            if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -414,7 +437,7 @@ namespace StockManager.Blazor
             FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.
             var ringTimer = new System.Threading.Timer(
-                _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } }, null, dueTime: 0, period: 200);
+                _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } try { mmfFabric?.Beat(); } catch { } }, null, dueTime: 0, period: 200);
             FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
 
             // v4.76.0 안전 점화 시퀀서 + v4.90.0 웜 스타트 복구 엔진은 위(원장 메시 직후)에서 조립됨
