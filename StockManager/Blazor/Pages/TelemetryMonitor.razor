@@ -11,6 +11,7 @@
 @inject OrderAttestationService Attestation
 @inject StrategyEvolutionPipeline Pipeline
 @inject DeterministicWarmRestartEngine Recovery
+@inject DeterministicChaosGrid Chaos
 @inject IJSRuntime JS
 
 <div class="top">
@@ -365,6 +366,51 @@
         </div>
     </div>
 
+    @* ══ v4.91.0 결정론적 카오스 테스팅 그리드 관제 패널 ═══════════════════════════ *@
+    @{
+        var chaosBadges = new (bool on, string label, string css)[]
+        {
+            (_frame.ChaosKiwoomProxyDown, "Kiwoom Proxy Down", "chaos-red"),
+            (_frame.ChaosTossAuth401,     "Toss 401",          "chaos-amber"),
+            (_frame.ChaosFxSpike,         "FX 3σ Spike",       "chaos-red"),
+            (_frame.ChaosFxStale,         "FX 1s Stale",       "chaos-amber"),
+        };
+    }
+    <div class="kpi-card @(_frame.ChaosActive ? "kpi-amber" : "")" style="margin-bottom:22px">
+        <div class="kpi-label">🕹️ 결정론적 카오스 테스팅 그리드 (Deterministic Chaos Testing Grid) — 가상 시간선 복합 장애 내성</div>
+        <div style="display:flex;gap:20px;margin-top:8px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:18px">1000×</div><div class="kpi-sub">시뮬레이션 속도 배율</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@_frame.VirtualSeconds.ToString("N1")s</div><div class="kpi-sub">가상 시간 진행</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@_frame.PbtPasses.ToString("N0")</div><div class="kpi-sub">PBT 누적 통과</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@_frame.VirtualQueueDepth.ToString("N0")</div><div class="kpi-sub">가상 큐 깊이</div></div>
+        </div>
+        @* 카오스몽키 폭격 상태 — 레이저 배지(활성 적/황 글로우·비활성 회) *@
+        <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;align-items:center">
+            <span class="kpi-sub" style="margin-right:4px">카오스몽키 폭격 상태</span>
+            @foreach (var b in chaosBadges)
+            {
+                <span class="chaos-badge @(b.on ? b.css : "chaos-off")">@b.label</span>
+            }
+        </div>
+        @* 🎯 시드 재현 테스트 트리거 — 임의 시드로 특정 카오스 시나리오를 런타임 가상 재현(순수 HTML) *@
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border,rgba(255,255,255,0.08))">
+            <div class="kpi-sub" style="margin-bottom:6px">🎯 시드 재현 테스트 — 임의 시드로 결정론 카오스 시나리오를 가상 시간선에서 재현</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="text" @bind="_seed" @bind:event="oninput" placeholder="시드(예: 42)"
+                       style="width:160px;padding:8px 10px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,0.12));background:var(--card-bg,rgba(255,255,255,0.04));color:inherit;font-family:var(--mono)" />
+                <button @onclick="DoReproduceChaos"
+                        style="padding:8px 16px;border-radius:6px;border:0;cursor:pointer;background:#6b4fbb;color:#fff;font-weight:600">
+                    🕹️ 시드 재현 실행
+                </button>
+                @if (!string.IsNullOrEmpty(_chaosMsg)) { <span class="kpi-sub">@_chaosMsg</span> }
+            </div>
+            <div class="kpi-sub" style="margin-top:6px">
+                가상 시간 1000× 압축 · 시드 PRNG 로 [Kiwoom IPC 다운 · Toss 401 · FX 3σ/스테일] 동시 투하 → ForceFreeze 멱등·원장 명목 ≤1raw 정합 검증.
+                ★순수 인메모리 시뮬 — 외부 프로덕션 API 로 단 1바이트도 송출되지 않습니다(liveArmed:false 격리).
+            </div>
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -411,6 +457,11 @@
     .rec-stable     { background: rgba(76,175,80,0.20);   color: #66bb6a; }
     .rec-frozen     { background: rgba(220,50,50,0.22);   color: #ff6b6b; }
     @@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    /* v4.91.0 — 카오스몽키 레이저 배지: 활성=적/황 글로우, 비활성=회. */
+    .chaos-badge { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; font-family: var(--mono); }
+    .chaos-off   { background: rgba(255,255,255,0.06); color: var(--muted, #888); opacity: .5; }
+    .chaos-red   { background: rgba(220,50,50,0.22);  color: #ff6b6b; box-shadow: 0 0 8px rgba(220,50,50,0.55); }
+    .chaos-amber { background: rgba(255,152,0,0.22);  color: #ffb74d; box-shadow: 0 0 8px rgba(255,152,0,0.55); }
 </style>
 
 @code {
@@ -427,6 +478,18 @@
     // v4.90.0 — 웜 스타트 서명 입력·상태 메시지.
     private string _sig = "";
     private string _recMsg = "";
+
+    // v4.91.0 — 카오스 그리드 시드 재현 입력·상태 메시지.
+    private string _seed = "42";
+    private string _chaosMsg = "";
+
+    // 시드 재현 트리거 — 결정론 카오스 시나리오를 가상 시간선에서 백그라운드 재현(순수 인메모리·외부 API 0바이트).
+    private void DoReproduceChaos()
+    {
+        if (!int.TryParse((_seed ?? "").Trim(), out var seed)) { _chaosMsg = "정수 시드를 입력하세요."; return; }
+        _chaosMsg = $"시드 {seed} 카오스 시나리오 가상 재현 — 백그라운드 실행(1000× 압축 시간선).";
+        Chaos.ReproduceInBackground(seed, new ChaosGridConfig());
+    }
 
     // 단계별 배지 CSS(타임라인). RingTelemetry.RecoveryStateCss 는 '현재 단계' 전용이라 각 단계 색은 이 헬퍼로.
     private static string RecoveryCss(RecoveryState s) => s switch

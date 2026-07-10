@@ -59,6 +59,11 @@ namespace StockManager.Common
         public readonly long   RecoveryBacklog;             // 드레인 잔여 백로그 개수
         public readonly long   ProbeRttMs;                  // 최근 프로브 파이프라인 왕복 지연(ms)
         public readonly long   ProbeSlippageSigmaRaw;       // 최근 프로브 관측 슬리피지 σ(raw·10^8)
+        // v4.91.0 — 결정론적 카오스 테스팅 그리드: 가상 시간 진행·활성 카오스 플래그·PBT 누적 패스·가상 큐 깊이.
+        public readonly long   VirtualTimeTicks;            // 마지막 카오스 실행 경과 가상 tick(1000× 압축 시간선)
+        public readonly long   ChaosFlags;                  // 활성 장애 비트마스크(1 Kiwoom/2 Toss/4 FxSpike/8 FxStale)
+        public readonly long   PbtPasses;                   // 속성 기반 테스트(PBT) 누적 통과 수
+        public readonly long   VirtualQueueDepth;           // 가상 원장 큐 깊이(마지막 실행)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -68,7 +73,8 @@ namespace StockManager.Common
                              long alphaPipelineMode = 0L, long alphaPromoted = 0L, double alphaSigningSuccessRate = 0.0,
                              long ignitionStageCode = 0L, long slippageRaw = 0L, long slippageSigmaRaw = 0L, long execDowngrades = 0L,
                              long ledgerQueueDepth = 0L, long ledgerCapacity = 0L, double ledgerAvgPersistMicros = 0.0, long ledgerWriteFailures = 0L,
-                             long recoveryStateCode = 0L, long recoveryBacklog = 0L, long probeRttMs = 0L, long probeSlippageSigmaRaw = 0L)
+                             long recoveryStateCode = 0L, long recoveryBacklog = 0L, long probeRttMs = 0L, long probeSlippageSigmaRaw = 0L,
+                             long virtualTimeTicks = 0L, long chaosFlags = 0L, long pbtPasses = 0L, long virtualQueueDepth = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -100,6 +106,10 @@ namespace StockManager.Common
             RecoveryBacklog           = recoveryBacklog;
             ProbeRttMs                = probeRttMs;
             ProbeSlippageSigmaRaw     = probeSlippageSigmaRaw;
+            VirtualTimeTicks          = virtualTimeTicks;
+            ChaosFlags                = chaosFlags;
+            PbtPasses                 = pbtPasses;
+            VirtualQueueDepth         = virtualQueueDepth;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -162,6 +172,14 @@ namespace StockManager.Common
         /// <summary>복구 진행 중(검증/드레인/승격) — 라이브 라우팅 잠금 신호와 동치.</summary>
         public bool RecoveryActive => RecoveryStage is RecoveryState.Validating or RecoveryState.Draining or RecoveryState.Escalating;
         public decimal ProbeSlippageSigmaDecimal => ProbeSlippageSigmaRaw / (decimal)QMath.Scale;
+        // v4.91.0 — 카오스 그리드 UI 헬퍼.
+        public bool ChaosActive          => VirtualTimeTicks > 0 || ChaosFlags != 0;
+        public bool ChaosKiwoomProxyDown => (ChaosFlags & (long)ChaosFault.KiwoomProxyDown) != 0;
+        public bool ChaosTossAuth401     => (ChaosFlags & (long)ChaosFault.TossAuth401)     != 0;
+        public bool ChaosFxSpike         => (ChaosFlags & (long)ChaosFault.FxSpike)         != 0;
+        public bool ChaosFxStale         => (ChaosFlags & (long)ChaosFault.FxStale)         != 0;
+        /// <summary>가상 시간 경과를 초 단위(100ns tick → s)로. 1000× 압축 시간선의 진행 표시용.</summary>
+        public double VirtualSeconds     => VirtualTimeTicks / (double)TimeSpan.TicksPerSecond;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -170,7 +188,7 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.90.0 기준 필드 30개×8=240B → Data 128..368B. 512 로 상향(캐시라인 헤드룸 포함).
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.91.0 기준 필드 34개×8=272B → Data 128..400B < 512(헤드룸 충분·변경 불요).
         [StructLayout(LayoutKind.Explicit, Size = 512)]
         private struct Cell
         {
@@ -240,6 +258,7 @@ namespace StockManager.Common
         private readonly ExecutionMicrostructureGuard? _execGuard; // v4.87.0 — 슬리피지/σ/강등(옵션·기본 null)
         private readonly LedgerProtectionMesh? _ledger;         // v4.88.0 — 원장 보호 메시(옵션·기본 null)
         private readonly DeterministicWarmRestartEngine? _recovery; // v4.90.0 — 웜 스타트 복구 엔진(옵션·기본 null)
+        private readonly DeterministicChaosGrid? _chaosGrid;        // v4.91.0 — 카오스 테스팅 그리드(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -252,7 +271,8 @@ namespace StockManager.Common
                                       IgnitionLock? ignition = null,
                                       ExecutionMicrostructureGuard? execGuard = null,
                                       LedgerProtectionMesh? ledger = null,
-                                      DeterministicWarmRestartEngine? recovery = null)
+                                      DeterministicWarmRestartEngine? recovery = null,
+                                      DeterministicChaosGrid? chaosGrid = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -265,6 +285,7 @@ namespace StockManager.Common
             _execGuard    = execGuard;
             _ledger       = ledger;
             _recovery     = recovery;
+            _chaosGrid    = chaosGrid;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -312,6 +333,9 @@ namespace StockManager.Common
                 // v4.90.0 — 웜 스타트 복구 엔진(복구 단계·백로그 잔여·프로브 RTT·슬리피지σ) 합류(미배선이면 0).
                 long rvState = 0L, rvBacklog = 0L, rvRtt = 0L, rvSig = 0L;
                 if (_recovery is { } rc) { rvState = rc.RecoveryStateCode; rvBacklog = rc.BacklogRemaining; rvRtt = rc.LastProbeLatencyMs; rvSig = rc.LastProbeSigmaRaw; }
+                // v4.91.0 — 카오스 그리드(가상시간·플래그·PBT 패스·가상큐) 합류(미배선이면 0).
+                long cgTicks = 0L, cgFlags = 0L, cgPbt = 0L, cgQ = 0L;
+                if (_chaosGrid is { } cg) { cgTicks = cg.VirtualTimeTicks; cgFlags = cg.ChaosFlags; cgPbt = cg.PbtPasses; cgQ = cg.VirtualQueueDepth; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -319,7 +343,8 @@ namespace StockManager.Common
                     apMode, apPromoted, apSignRate,
                     ignCode, slipRaw, sigRaw, downgrades,
                     ledDepth, ledCap, ledMicros, ledFails,
-                    rvState, rvBacklog, rvRtt, rvSig));
+                    rvState, rvBacklog, rvRtt, rvSig,
+                    cgTicks, cgFlags, cgPbt, cgQ));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
