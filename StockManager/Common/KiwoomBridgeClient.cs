@@ -29,6 +29,9 @@ namespace StockManager.Common
         private readonly string                    _pipeName;
         private readonly int                       _heartbeatTimeoutMs;
         private readonly OrderAttestationService?  _attestation;
+        // v4.92.0 영지식 패킷 절연(옵트인) — 배선 시 주문 프레임 송신 직전 이중키∧점화 검문. 기본 null=레거시 통과(IPC 기구 테스트 무영향).
+        private readonly Func<bool>?               _orderArmed;
+        private readonly Func<IgnitionStage>?      _ignitionStage;
         // [v4.48.3] 주입식 클럭 — 기본은 실제 UtcNow. 테스트가 가상 시각으로 타임아웃 판정을 결정론 검증.
         private readonly Func<long>                _now;
         // ★v4.83.0 IPC 핑퐁 — >0 이면 pingIntervalMs 주기로 Ping 송신, Pong 수신이 생존성 갱신(양방향).
@@ -71,9 +74,13 @@ namespace StockManager.Common
             string                   pipeName           = BridgeSerializer.DefaultPipeName,
             int                      heartbeatTimeoutMs = DefaultTimeoutMs,
             Func<long>?              nowTicks           = null,
-            int                      pingIntervalMs     = 0)
+            int                      pingIntervalMs     = 0,
+            Func<bool>?              orderArmed         = null,
+            Func<IgnitionStage>?     ignitionStage      = null)
         {
             _attestation        = attestation;
+            _orderArmed         = orderArmed;
+            _ignitionStage      = ignitionStage;
             _pipeName           = pipeName;
             _heartbeatTimeoutMs = heartbeatTimeoutMs;
             _now                = nowTicks ?? (() => DateTime.UtcNow.Ticks);
@@ -115,6 +122,12 @@ namespace StockManager.Common
             if (_pipe is null || !_pipe.IsConnected)
                 throw new InvalidOperationException("KiwoomBridgeClient가 연결되지 않았습니다.");
             var buf = BridgeSerializer.PackOrderRequest(in req);
+            // ★v4.92.0 영지식 패킷 절연: 무장 인지가 배선된 경우, 미무장(이중키∧MasterIgnited 아님) 주문 프레임이면 파이프 강제 파괴 +
+            //   영구 동결 + throw(삼킴 금지). 상위 게이트웨이 버그로 미무장 주문이 흘러도 최하위에서 물리 차단. 미배선이면 레거시 통과.
+            if (_ignitionStage is not null)
+                ZeroLeakProtocolIsolator.AssertSendAllowed(buf,
+                    _orderArmed?.Invoke() ?? false, _ignitionStage(), _attestation,
+                    abort: () => { try { _pipe?.Dispose(); } catch { } _alive = false; });
             // 클라 송신 직렬화 — 주문과 Ping 이 동일 파이프에 동시 write 하여 프레임이 섞이는 것을 차단.
             await _sendGate.WaitAsync(ct);
             try { await _pipe.WriteAsync(buf, ct); await _pipe.FlushAsync(ct); }

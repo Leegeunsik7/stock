@@ -64,6 +64,12 @@ namespace StockManager.Common
         public readonly long   ChaosFlags;                  // 활성 장애 비트마스크(1 Kiwoom/2 Toss/4 FxSpike/8 FxStale)
         public readonly long   PbtPasses;                   // 속성 기반 테스트(PBT) 누적 통과 수
         public readonly long   VirtualQueueDepth;           // 가상 원장 큐 깊이(마지막 실행)
+        // v4.92.0 — 프로덕션 자격증명 결속: 브로커 연결상태·토큰 잔여수명·방화벽 차단·실전 엔드포인트 감지.
+        public readonly long   KiwoomLinkCode;              // BrokerLinkState 0 Disconnected/1 Connecting/2 Authenticated/3 SessionStale
+        public readonly long   TossLinkCode;                // BrokerLinkState
+        public readonly long   TossTokenRemainSec;          // 인증 토큰 잔여 수명(초)
+        public readonly long   EndpointFirewallBlocks;      // 엔드포인트 변이 방화벽 차단 누적(0=청정)
+        public readonly long   ProductionLiveMask;          // 실전 엔드포인트 감지 브로커 비트마스크(0=전부 모의/안전)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -74,7 +80,9 @@ namespace StockManager.Common
                              long ignitionStageCode = 0L, long slippageRaw = 0L, long slippageSigmaRaw = 0L, long execDowngrades = 0L,
                              long ledgerQueueDepth = 0L, long ledgerCapacity = 0L, double ledgerAvgPersistMicros = 0.0, long ledgerWriteFailures = 0L,
                              long recoveryStateCode = 0L, long recoveryBacklog = 0L, long probeRttMs = 0L, long probeSlippageSigmaRaw = 0L,
-                             long virtualTimeTicks = 0L, long chaosFlags = 0L, long pbtPasses = 0L, long virtualQueueDepth = 0L)
+                             long virtualTimeTicks = 0L, long chaosFlags = 0L, long pbtPasses = 0L, long virtualQueueDepth = 0L,
+                             long kiwoomLinkCode = 0L, long tossLinkCode = 0L, long tossTokenRemainSec = 0L,
+                             long endpointFirewallBlocks = 0L, long productionLiveMask = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -110,6 +118,11 @@ namespace StockManager.Common
             ChaosFlags                = chaosFlags;
             PbtPasses                 = pbtPasses;
             VirtualQueueDepth         = virtualQueueDepth;
+            KiwoomLinkCode            = kiwoomLinkCode;
+            TossLinkCode              = tossLinkCode;
+            TossTokenRemainSec        = tossTokenRemainSec;
+            EndpointFirewallBlocks    = endpointFirewallBlocks;
+            ProductionLiveMask        = productionLiveMask;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -180,6 +193,24 @@ namespace StockManager.Common
         public bool ChaosFxStale         => (ChaosFlags & (long)ChaosFault.FxStale)         != 0;
         /// <summary>가상 시간 경과를 초 단위(100ns tick → s)로. 1000× 압축 시간선의 진행 표시용.</summary>
         public double VirtualSeconds     => VirtualTimeTicks / (double)TimeSpan.TicksPerSecond;
+        // v4.92.0 — 프로덕션 스왑 UI 헬퍼.
+        public BrokerLinkState KiwoomLink => (BrokerLinkState)KiwoomLinkCode;
+        public BrokerLinkState TossLink   => (BrokerLinkState)TossLinkCode;
+        public static string LinkName(BrokerLinkState s) => s switch
+        {
+            BrokerLinkState.Disconnected => "Disconnected",
+            BrokerLinkState.Connecting   => "Connecting",
+            BrokerLinkState.Authenticated => "Authenticated",
+            BrokerLinkState.SessionStale => "SessionStale",
+            _ => "Unknown"
+        };
+        /// <summary>★실전 엔드포인트 접속 감지 — UI 는 적색 점멸 HIGH SENSITIVITY 고지.</summary>
+        public bool ProductionLiveDetected => ProductionLiveMask != 0;
+        /// <summary>모의/샌드박스 안전 상태(실전 미감지 ∧ 방화벽 청정).</summary>
+        public bool SandboxSafe            => ProductionLiveMask == 0 && EndpointFirewallBlocks == 0;
+        public bool EndpointFirewallClean  => EndpointFirewallBlocks == 0;
+        /// <summary>연결 텔레메트리 활성(어느 브로커든 Disconnected 초과이거나 방화벽 활동).</summary>
+        public bool ProdSwapActive => KiwoomLinkCode > 0 || TossLinkCode > 0 || ProductionLiveMask != 0 || EndpointFirewallBlocks != 0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -188,7 +219,7 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.91.0 기준 필드 34개×8=272B → Data 128..400B < 512(헤드룸 충분·변경 불요).
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.92.0 기준 필드 39개×8=312B → Data 128..440B < 512(헤드룸 충분·변경 불요).
         [StructLayout(LayoutKind.Explicit, Size = 512)]
         private struct Cell
         {
@@ -259,6 +290,7 @@ namespace StockManager.Common
         private readonly LedgerProtectionMesh? _ledger;         // v4.88.0 — 원장 보호 메시(옵션·기본 null)
         private readonly DeterministicWarmRestartEngine? _recovery; // v4.90.0 — 웜 스타트 복구 엔진(옵션·기본 null)
         private readonly DeterministicChaosGrid? _chaosGrid;        // v4.91.0 — 카오스 테스팅 그리드(옵션·기본 null)
+        private readonly ProductionSwapController? _prodSwap;       // v4.92.0 — 프로덕션 스왑 컨트롤러(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -272,7 +304,8 @@ namespace StockManager.Common
                                       ExecutionMicrostructureGuard? execGuard = null,
                                       LedgerProtectionMesh? ledger = null,
                                       DeterministicWarmRestartEngine? recovery = null,
-                                      DeterministicChaosGrid? chaosGrid = null)
+                                      DeterministicChaosGrid? chaosGrid = null,
+                                      ProductionSwapController? prodSwap = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -286,6 +319,7 @@ namespace StockManager.Common
             _ledger       = ledger;
             _recovery     = recovery;
             _chaosGrid    = chaosGrid;
+            _prodSwap     = prodSwap;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -336,6 +370,10 @@ namespace StockManager.Common
                 // v4.91.0 — 카오스 그리드(가상시간·플래그·PBT 패스·가상큐) 합류(미배선이면 0).
                 long cgTicks = 0L, cgFlags = 0L, cgPbt = 0L, cgQ = 0L;
                 if (_chaosGrid is { } cg) { cgTicks = cg.VirtualTimeTicks; cgFlags = cg.ChaosFlags; cgPbt = cg.PbtPasses; cgQ = cg.VirtualQueueDepth; }
+                // v4.92.0 — 프로덕션 스왑(연결상태·토큰수명·방화벽·실전감지) 합류(미배선이면 0).
+                long psKiwoom = 0L, psToss = 0L, psTokenSec = 0L, psBlocks = 0L, psProdMask = 0L;
+                if (_prodSwap is { } ps)
+                { psKiwoom = (long)ps.KiwoomLink; psToss = (long)ps.TossLink; psTokenSec = ps.TossTokenRemainSec; psBlocks = ps.FirewallBlocks; psProdMask = ps.ProductionLiveMask; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -344,7 +382,8 @@ namespace StockManager.Common
                     ignCode, slipRaw, sigRaw, downgrades,
                     ledDepth, ledCap, ledMicros, ledFails,
                     rvState, rvBacklog, rvRtt, rvSig,
-                    cgTicks, cgFlags, cgPbt, cgQ));
+                    cgTicks, cgFlags, cgPbt, cgQ,
+                    psKiwoom, psToss, psTokenSec, psBlocks, psProdMask));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

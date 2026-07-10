@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.91.0** (2026-07-10)  
+> 기준 버전: **v4.92.0** (2026-07-10)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.91.0)
+### 현황 (v4.92.0)
 
-- **총 테스트**: 1,829 (클린런)
+- **총 테스트**: 1,853 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.92.0 | 프로덕션 자격증명 결속 안전 인프라. `EndpointMutationFirewall`(소스 하드코딩 sandbox/real 도메인 host+port+scheme 화이트리스트 vs 주입 URL 교차검증 — off-by-one·플레이스홀더·평문 다운그레이드·모드↔도메인 불일치·★KIS 시세/주문 모드 drift → ForceFreeze 소켓오픈 무력화). `ZeroLeakProtocolIsolator`(송신 직전 주문 OpCode 스캔 — ★키움 바이너리 프레임 WireType=10 + KIS TR·Toss 경로 ASCII, 미무장 시 소켓 Abort+ForceFreeze+throw; `KiwoomBridgeClient.SendOrderAsync` 결속). `ProductionSwapController`(DI 싱글톤·연결상태 BrokerLinkState·토큰수명·실전 감지 텔레메트리). `ProductionCredentialBinder.WithSecret`(SecretLease δ=0 와이프·주문계열 requireArmed). RingTelemetry +5 + TelemetryMonitor 🔌 패널(실전 적색점멸 HIGH SENSITIVITY·모의 청색). +24 테스트. 적대검증 6렌즈 4결함 교정(바이너리 OpCode fail-open·스킴 다운그레이드·미결속·플레이스홀더). ★liveArmed:false(실 연결 옵트인/#if·주문 자격증명 무장 필요)·실 COM/WSS/FX 런타임은 검증불가 옵트인 |
 | v4.91.0 | 결정론적 카오스 테스팅 그리드. `DeterministicVirtualTime`(VirtualClock 단조·시간역전 throw / VirtualScheduler 이산사건 우선순위큐=가상 비동기 지연 큐·maxSteps 행 방어 / DeterministicPrng SplitMix64). `DeterministicChaosGrid`: 시드 PRNG 로 복합 장애(Kiwoom IPC 다운·Toss 401·FX 3σ/스테일) 투하 → `ForceFreeze` 단일 수렴. `VirtualProxyLink`(x86↔AnyCPU IPC 격리 스텁·메모리훼손 0). 디퍼런셜 원장(naive `QMath.Notional` vs 실 SQLite `MeshLedgerSink` per-row 재정수화 ≤1raw)·멱등·fail-open 적발. PBT `Explore`(수천 시드)+`ChaosShrinker`(최소 재현 역추적, sinkFactory 로 fail-open 가능 싱크 스윕). RingTelemetry +4 + TelemetryMonitor 🕹️ 카오스 그리드 패널(레이저 배지·시드 재현). +16 테스트(ConcurrencyStress 편입). 적대검증 6렌즈 확정 0·UNCERTAIN 1 정직 보강(탐지기 실효 음성 테스트·PBT 비공허·RejectedFills 단언). ★liveArmed:false(외부 API 0바이트·순수 인메모리)·시간역전/무한루프 물리 차단 |
 | v4.90.0 | 결정론적 웜 스타트 복구 엔진. `DeterministicWarmRestartEngine`(5상태 Idle/Validating/Draining/Escalating/Stable+Frozen). `BeginWarmRestart(서명)`: 동결 전제+서명 인가 → `mesh.Stop`(SingleReader 인계) → `ManualRelease`(Mode=Normal) → 금고 `SecretLease`(requireArmed:false·ArrayPool δ=0) → `LedgerProtectionMesh.RecoveryDrain`(동결창 가격정합성 펜스: 저장가 KRX 격자 미정렬>1raw·시세 괴리 8× → ForceFreeze) → 점화 승격(`SafeIgnitionSequencer.BeginIgnition` 재사용 — 격리 1주 프로브→3σ·지연→MasterIgnited) → Stable. 주문 폭주 방지 '복구기 잠금 펜스': `DispatchArming.ResolvePredicate(blockWhile)` 로 복구 중 `IsRecovering`이면 라이브 무장 술어(→CanRouteToLive) 무조건 false. RingTelemetry +4 + TelemetryMonitor 🛠️ 웜스타트 관제 패널(단계 타임라인 배지·백로그 게이지·서명 입력창). +12 테스트. 적대검증 6렌즈 4결함 교정(실패 수렴 무조건 ForceFreeze·펜스 밴드 저장가 고정·시세 괴리 가드). ★fail-closed 단일 소스·liveArmed:false 불변 |
 | v4.89.0 | 포트폴리오 UX(지휘관 요청 4건). ①다축 정렬 `HoldingSort`(평가금·총수익률·일간·가나다·직접설정 / 전체·국내·해외·코인 공통) — 직접설정은 `Db.SetSetting` 영속·`MoveInView` 필터뷰 기준 인접 스왑. ②장 마감 후 시간외/애프터 시세(실측 검증): Naver `overMarketPriceInfo.overPrice`(KRX 시간외 단일가)+하락 방향 필드 교정, Yahoo `includePrePost`+`marketState`(프리/애프터), `Quote.Session` 배지. ③매수/매도/직접등록/수정 → 단일 통합 폼(`_showForm`+`_mode` Buy/Sell/Correct)+모드 전환 탭. ④추가매수 가중평균 병합은 `RecomputeAverage`로 기존 구현(정직 회계) — 통합 폼으로 접근성만 개선. +15 테스트. 적대검증 4렌즈 2결함 교정(필터뷰 직접설정 재정렬·Correct→매수 시장권위). ★liveArmed:false 불변(UI+읽기전용 시세) |
@@ -587,6 +588,7 @@ FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변
 원장 복구 드레인      → Common/LedgerProtectionMesh.cs  (v4.90.0 RecoveryDrain: Stop 후 단일리더 인계 순차 드레인+펜스 훅 — v4.88.0 메시에 가산)
 가상 시간 패브릭      → Common/DeterministicVirtualTime.cs  (v4.91.0, VirtualClock 시간역전 throw·VirtualScheduler 이산사건 큐 maxSteps 행 방어·DeterministicPrng SplitMix64)
 카오스 테스팅 그리드   → Common/DeterministicChaosGrid.cs  (v4.91.0, 시드 결함 인젝터·VirtualProxyLink 격리스텁·디퍼런셜 원장 ≤1raw·PBT Explore+ChaosShrinker·In/MeshLedgerSink)
+프로덕션 스왑 안전 인프라 → Common/ProductionCredentialBinding.cs  (v4.92.0, EndpointMutationFirewall host+port+scheme+KIS drift·ZeroLeakProtocolIsolator 바이너리/ASCII 주문 OpCode 절연·ProductionSwapController·ProductionCredentialBinder SecretLease δ=0)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

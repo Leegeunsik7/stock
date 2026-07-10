@@ -21,9 +21,28 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.91.0</Version>
-    <AssemblyVersion>4.91.0.0</AssemblyVersion>
-    <FileVersion>4.91.0.0</FileVersion>
+    <Version>4.92.0</Version>
+    <AssemblyVersion>4.92.0.0</AssemblyVersion>
+    <FileVersion>4.92.0.0</FileVersion>
+    <!-- v4.92.0 — ★프로덕션 자격증명 결속 안전 인프라: 엔드포인트 변이 방화벽 + 영지식 패킷 절연 + 프로덕션 스왑 컨트롤러. 6렌즈 적대검증.
+         ★정직 회계: 3대 연동부(키움 COM #if KIWOOM_COM·토스 WSS/REST·HttpFxRateSource→QAcl→QFxCircuitBreaker)와 SecretLease 금고는 기존.
+         실 COM/WSS/FX 런타임 연결은 실 키·프로덕션 네트워크 부재로 in-repo 검증 불가 → 옵트인/#if 게이트 유지. 본 단계는 결속을 '안전하게' 만드는
+         검증 가능한 방어 인프라를 신설(실 연결 전 통과해야 하는 관문).
+         [고도화 A] EndpointMutationFirewall: 소스 하드코딩(ReadOnlySpan<char>) sandbox/real 도메인 화이트리스트 vs 주입 URL 교차검증. 1글자
+         불일치·플레이스홀더(.example)·모드↔도메인 불일치·★KIS 시세(KIS.IsPaper)/주문(Kis.UseRealDomain) 모드 분열(drift)이면 ForceFreeze 로 소켓
+         오픈 무력화. KIS 도메인은 실측 확정 단일 소스로 승격(3곳 중복 리터럴 통합).
+         [고도화 B] ZeroLeakProtocolIsolator: 최하위 송신 직전 아웃바운드 바이트(span) 주문 OpCode 스캔(SendOrder·TTTC08/VTTC08·/orders).
+         이중키(ValveWired∧LiveArmingWired)∧FSM MasterIgnited 아닌데 주문 패킷 감지 → 소켓/파이프 강제 Abort + ForceFreeze + throw(삼킴 금지).
+         [C] ProductionSwapController(DI 싱글톤·라이브 텔레메트리): 방화벽 게이트·브로커 연결상태(BrokerLinkState)·토큰 잔여수명·실전 감지 마스크.
+         ProductionCredentialBinder.WithSecret: SecretLease 를 span 으로 use 에 넘기고 즉시 Dispose(ZeroMemory 와이프) — 비밀 힙 영속 금지. 주문계열은 requireArmed:true.
+         [UI] RingTelemetry +5(키움/토스 링크 코드·토큰 잔여초·방화벽 통과·실전 감지) + TelemetryMonitor 🔌 프로덕션 스왑 패널(실전=적색 점멸 HIGH SENSITIVITY 고지·모의=청/회).
+         ★liveArmed:false: 실 소켓 오픈은 방화벽∧절연기 통과 시만·주문계열 자격증명은 무장 필요(미무장 로드 throw). fail-closed(ForceFreeze 원자 래치·핫패스 무블록).
+         δ=0(도메인/OpCode span ordinal 검색·SecretLease ArrayPool 와이프)·결정론(판정 순수). 한국색상은 UI.
+         ★적대검증 6렌즈 확정 4결함 교정: (#1 CRITICAL) 절연기가 ASCII 만 스캔해 키움 바이너리 IPC 주문 프레임(선두 WireType=10)을
+         미탐(fail-open) → BitConverter 선두 int32==OrderRequest 바이너리 판정 추가 + SendOrderAsync 결속(옵트인). (#2) 스킴 미검증(ws/http
+         다운그레이드 통과) → https/wss 강제. (#3) 방화벽/절연기 실 송신 미결속 → KiwoomBridgeClient.SendOrderAsync 에 절연기 결속(무장 술어 옵트인).
+         (#4) csproj 플레이스홀더 치환.
+         테스트 +24. 빌드 0/0(메인+x86), 전체 1853 통과. -->
     <!-- v4.91.0 — ★결정론적 카오스 테스팅 그리드: 가상 시간선(1000× 압축) 이산사건 시뮬로 시드 재현 복합 장애 내성 검증. 6렌즈 적대검증(확정 0·정직 보강).
          ★정직 회계: 시계 주입 시임(Func<long>/Func<DateTime>)·카오스 소스(QFxCircuitBreaker latch·ForceFreeze 단일소스·LedgerProtectionMesh)는 모두 기존.
          신규는 (a) 가상 시간 패브릭, (b) 카오스 인젝터/격리스텁/디퍼런셜/PBT 커널.
@@ -40,7 +59,6 @@
          결정론(벽시계/실난수 금지). 시간역전(VirtualClock)·무한루프(maxSteps) 물리 차단으로 테스트 러너 hang 원천 봉쇄.
          테스트 +16(ChaosGridTests: 시간역전·스케줄러 순서/무한루프방어·PRNG·인메모리/실메시 디퍼런셜·PBT 2000시드·탐지기실효·shrinking·격리스텁·텔레메트리).
          헤비 PBT/SQLite 는 ConcurrencyStress(DisableParallelization) 편입(δ=0 알로케이션 측정 교란 방지). 빌드 0/0(메인+x86), 전체 1829 통과(연속 3회 클린). -->
-    <!-- v4.90.0 — ★결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 안전 소화 + 점화 FSM 점진 승격. 6렌즈 적대검증(4결함 교정).
     <!-- v4.90.0 — ★결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 안전 소화 + 점화 FSM 점진 승격. 6렌즈 적대검증(4결함 교정).
          ★정직 회계: 점진 점화 승격(Locked→ProbeReady→1주 프로브→3σ·지연 검증→MasterIgnited·실패 시 ForceFreeze)은
          SafeIgnitionSequencer.BeginIgnition 이 이미 완비 → 재구현 없이 Escalating 단계에서 호출. 보수정렬 명목 펜스는

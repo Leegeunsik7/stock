@@ -411,6 +411,42 @@
         </div>
     </div>
 
+    @* ══ v4.92.0 프로덕션/샌드박스 자격증명 스왑 관제 패널 ═══════════════════════════ *@
+    <div class="kpi-card @(_frame.ProductionLiveDetected ? "kpi-alert" : "")" style="margin-bottom:22px">
+        <div class="kpi-label">🔌 프로덕션/샌드박스 자격증명 스왑 (Production/Sandbox Credential Swap)</div>
+        @if (_frame.ProductionLiveDetected)
+        {
+            <div class="prod-live-banner">🔴 [PRODUCTION LIVE ENDPOINT CONNECTED — HIGH SENSITIVITY]</div>
+        }
+        else
+        {
+            <div class="prod-safe-banner">🔵 SANDBOX / 모의 엔드포인트 — 안전 상태 (실전 미접속)</div>
+        }
+        <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+            <div>
+                <div style="font-size:16px"><span class="prod-badge @LinkCss(_frame.KiwoomLink)">@RingTelemetry.LinkName(_frame.KiwoomLink)</span></div>
+                <div class="kpi-sub">키움 x86 프록시</div>
+            </div>
+            <div>
+                <div style="font-size:16px"><span class="prod-badge @LinkCss(_frame.TossLink)">@RingTelemetry.LinkName(_frame.TossLink)</span></div>
+                <div class="kpi-sub">토스 프로덕션</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:@(_frame.TossTokenRemainSec > 0 && _frame.TossTokenRemainSec < 60 ? "#ff9800" : "inherit")">@(_frame.TossTokenRemainSec.ToString("N0"))s</div>
+                <div class="kpi-sub">인증 토큰 잔여 수명</div>
+            </div>
+            <div>
+                <div class="kpi-value" style="font-size:18px;color:@(_frame.EndpointFirewallClean ? "#66bb6a" : "#ff6b6b")">@(_frame.EndpointFirewallClean ? "PASS" : $"BLOCK ×{_frame.EndpointFirewallBlocks}")</div>
+                <div class="kpi-sub">엔드포인트 변이 방화벽</div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            소스 하드코딩 화이트리스트(sandbox/real 도메인) vs 주입 URL 교차검증 — 1글자 불일치·플레이스홀더(.example)·모드 분열(KIS 시세↔주문) 시
+            즉시 ForceFreeze 로 소켓 오픈 무력화. 송신 직전 주문 OpCode 스캔(영지식 절연) — 미무장 주문 패킷은 소켓 강제 파괴 + 영구 동결.
+            ★실전 엔드포인트라도 이중 키(ValveWired∧LiveArmingWired)∧MasterIgnited 없이는 실주문 확률 0(liveArmed:false).
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -462,6 +498,16 @@
     .chaos-off   { background: rgba(255,255,255,0.06); color: var(--muted, #888); opacity: .5; }
     .chaos-red   { background: rgba(220,50,50,0.22);  color: #ff6b6b; box-shadow: 0 0 8px rgba(220,50,50,0.55); }
     .chaos-amber { background: rgba(255,152,0,0.22);  color: #ffb74d; box-shadow: 0 0 8px rgba(255,152,0,0.55); }
+    /* v4.92.0 — 프로덕션 스왑: 실전 접속=적색 점멸(한국 관례 경보), 모의=청색 안전. 연결상태 배지. */
+    .prod-badge      { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; font-family: var(--mono); }
+    .prod-idle       { background: rgba(255,255,255,0.08); color: var(--muted, #888); }
+    .prod-connecting { background: rgba(255,152,0,0.20);  color: #ffb74d; }
+    .prod-stale      { background: rgba(255,152,0,0.22);  color: #ffb74d; animation: recpulse 1s ease-in-out infinite; }
+    .prod-auth       { background: rgba(76,175,80,0.20);  color: #66bb6a; }
+    .prod-live-banner { margin-top: 8px; padding: 10px 14px; border-radius: 8px; font-weight: 700; font-size: 14px;
+        background: rgba(220,50,50,0.22); color: #ff5252; border: 1px solid #e34d4d; animation: recpulse 0.8s ease-in-out infinite; }
+    .prod-safe-banner { margin-top: 8px; padding: 10px 14px; border-radius: 8px; font-weight: 600; font-size: 13px;
+        background: rgba(66,165,245,0.14); color: #42a5f5; border: 1px solid rgba(66,165,245,0.4); }
 </style>
 
 @code {
@@ -490,6 +536,15 @@
         _chaosMsg = $"시드 {seed} 카오스 시나리오 가상 재현 — 백그라운드 실행(1000× 압축 시간선).";
         Chaos.ReproduceInBackground(seed, new ChaosGridConfig());
     }
+
+    // v4.92.0 — 프로덕션 스왑 브로커 연결상태 배지 CSS(Authenticated 녹·Connecting 황·SessionStale 황 점멸·Disconnected 회).
+    private static string LinkCss(BrokerLinkState s) => s switch
+    {
+        BrokerLinkState.Authenticated => "prod-auth",
+        BrokerLinkState.Connecting    => "prod-connecting",
+        BrokerLinkState.SessionStale  => "prod-stale",
+        _                             => "prod-idle"
+    };
 
     // 단계별 배지 CSS(타임라인). RingTelemetry.RecoveryStateCss 는 '현재 단계' 전용이라 각 단계 색은 이 헬퍼로.
     private static string RecoveryCss(RecoveryState s) => s switch
