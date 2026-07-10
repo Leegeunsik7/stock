@@ -21,9 +21,22 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.92.0</Version>
-    <AssemblyVersion>4.92.0.0</AssemblyVersion>
-    <FileVersion>4.92.0.0</FileVersion>
+    <Version>4.93.0</Version>
+    <AssemblyVersion>4.93.0.0</AssemblyVersion>
+    <FileVersion>4.93.0.0</FileVersion>
+    <!-- v4.93.0 — ★정보 인텔리전스 레이어 완결: 실시간 뉴스 레이더 + AI 포트폴리오 멘토. 5렌즈 적대검증(확정 6·실질 5결함 교정).
+         ★정직 회계: ZeroAllocJsonParser·RingBufferCore·QChaos.ApplyStress·IgnitionLock.Downgrade·SlippageSentinel 3σ 패턴·RingTelemetry seqlock 은 기존 재사용.
+         [핵심] NewsIntelligence.cs: NewsPayload(Sequential·Pack=1, SentimentRaw==0=미분석 격리 센티널)·δ=0 NewsIntelParser(Utf8JsonReader span·숫자전용·
+         TryGet* 비throw fail-closed)·NewsDispatchRing(Channel DropOldest)·SemanticShockMatrix(β표×QMath.Notional floor)·SentimentVelocityBreaker
+         (long[128] 롤링 카운트 창·Int128 분산·하향 3σ→IgnitionLock.Downgrade). PortfolioMentorAdvisor.cs: NewsIntelController(백그라운드 BelowNormal
+         드레인·EMA 감성·도착률 링)·PortfolioMentorAdvisor.Advise(결정론 한국어)·NewsRadarSvg(네이티브 SVG polyline+닷).
+         [UI] RingTelemetry +6(뉴스속도/시장감성/세맨틱쇼크/브레이커트립/미분석수/멘토FSM) + TelemetryMonitor 🧠 패널 + 감성 브레이커 트립 앰버 오버레이.
+         ★liveArmed:false: LLM 은 [ShockClass,Severity] ACL DTO 만 추출(수치연산 없음)·멘토 조언/쇼크 클램프는 순수 텍스트·그림자 가치 — 실주문 경로 무접촉.
+         δ=0(파서 무할당·핫패스 격리 백그라운드 오프로드)·결정론(RNG/벽시계 미사용)·한국색상(호재 빨강/악재 파랑, SVG 하드코딩 #ff5252/#5082c8).
+         ★적대검증 5렌즈 확정 6결함(실질 5) 교정: (#1 파서 GetInt64/GetDecimal 이 범위밖 Number 에 throw→예외 힙할당·δ=0 위반) TryGet* 전환.
+         (#2·#4 EMA prev==0 센티널이 정당한 중립 EMA(0)과 충돌·이력 폐기) _ingested 카운트 판별. (#3 NewsRadarSvg 가 서구식 CSS up/down 토큰(초록/빨강)
+         사용→호재 초록 오채색·한국색상 위반) 하드코딩 #ff5252(빨강)/#5082c8(파랑). (#5 '5분 창' 문서≠128표본 카운트 창) 명명 정정. (#6 파서가 매칭 키의
+         컨테이너 값에 하강해 중첩 프로퍼티명 누수) 컨테이너 Skip + anyNumber 를 실제 Number 에만 게이트. 테스트 +21(회귀 4). 빌드 0/0(메인+x86), 전체 1874 통과. -->
     <!-- v4.92.0 — ★프로덕션 자격증명 결속 안전 인프라: 엔드포인트 변이 방화벽 + 영지식 패킷 절연 + 프로덕션 스왑 컨트롤러. 6렌즈 적대검증.
          ★정직 회계: 3대 연동부(키움 COM #if KIWOOM_COM·토스 WSS/REST·HttpFxRateSource→QAcl→QFxCircuitBreaker)와 SecretLease 금고는 기존.
          실 COM/WSS/FX 런타임 연결은 실 키·프로덕션 네트워크 부재로 in-repo 검증 불가 → 옵트인/#if 게이트 유지. 본 단계는 결속을 '안전하게' 만드는

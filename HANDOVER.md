@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.92.0** (2026-07-10)  
+> 기준 버전: **v4.93.0** (2026-07-10)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -14,7 +14,7 @@
 - 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
 - AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
 - **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
-- 1,776 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- 1,874 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.92.0)
+### 현황 (v4.93.0)
 
-- **총 테스트**: 1,853 (클린런)
+- **총 테스트**: 1,874 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.93.0 | 정보 인텔리전스 레이어 완결 — 실시간 뉴스 레이더 + AI 포트폴리오 멘토. `NewsIntelligence.cs`: δ=0 `NewsIntelParser`(Utf8JsonReader span·숫자전용·★TryGet* 비throw fail-closed — 범위밖 Number 예외 힙할당 차단)·`NewsPayload`(SentimentRaw==0=미분석 격리)·`NewsDispatchRing`(Channel DropOldest)·`SemanticShockMatrix`(β표×`QMath.Notional` 하향 floor)·`SentimentVelocityBreaker`(long[128] 롤링 카운트 창·Int128 분산·하향 3σ→`IgnitionLock.Downgrade`). `PortfolioMentorAdvisor.cs`: `NewsIntelController`(백그라운드 BelowNormal 드레인·EMA 감성[★_ingested 카운트 첫표본 판별]·도착률 링)·`Advise`(결정론 한국어)·`NewsRadarSvg`(네이티브 SVG polyline+닷·★한국색상 하드코딩 #ff5252 빨강/#5082c8 파랑). RingTelemetry +6 + TelemetryMonitor 🧠 패널 + 감성 브레이커 트립 앰버 오버레이. +21 테스트(회귀 4). 적대검증 5렌즈 확정 6(실질 5)결함 교정(파서 예외 힙할당·EMA 영교차 리셋·SVG 서구색·문서 창 오표기·중첩 키 누수). ★liveArmed:false(LLM 은 [ShockClass,Severity] ACL DTO 만·멘토 조언/쇼크 클램프 순수 텍스트·실주문 무접촉)·δ=0 핫패스 격리 |
 | v4.92.0 | 프로덕션 자격증명 결속 안전 인프라. `EndpointMutationFirewall`(소스 하드코딩 sandbox/real 도메인 host+port+scheme 화이트리스트 vs 주입 URL 교차검증 — off-by-one·플레이스홀더·평문 다운그레이드·모드↔도메인 불일치·★KIS 시세/주문 모드 drift → ForceFreeze 소켓오픈 무력화). `ZeroLeakProtocolIsolator`(송신 직전 주문 OpCode 스캔 — ★키움 바이너리 프레임 WireType=10 + KIS TR·Toss 경로 ASCII, 미무장 시 소켓 Abort+ForceFreeze+throw; `KiwoomBridgeClient.SendOrderAsync` 결속). `ProductionSwapController`(DI 싱글톤·연결상태 BrokerLinkState·토큰수명·실전 감지 텔레메트리). `ProductionCredentialBinder.WithSecret`(SecretLease δ=0 와이프·주문계열 requireArmed). RingTelemetry +5 + TelemetryMonitor 🔌 패널(실전 적색점멸 HIGH SENSITIVITY·모의 청색). +24 테스트. 적대검증 6렌즈 4결함 교정(바이너리 OpCode fail-open·스킴 다운그레이드·미결속·플레이스홀더). ★liveArmed:false(실 연결 옵트인/#if·주문 자격증명 무장 필요)·실 COM/WSS/FX 런타임은 검증불가 옵트인 |
 | v4.91.0 | 결정론적 카오스 테스팅 그리드. `DeterministicVirtualTime`(VirtualClock 단조·시간역전 throw / VirtualScheduler 이산사건 우선순위큐=가상 비동기 지연 큐·maxSteps 행 방어 / DeterministicPrng SplitMix64). `DeterministicChaosGrid`: 시드 PRNG 로 복합 장애(Kiwoom IPC 다운·Toss 401·FX 3σ/스테일) 투하 → `ForceFreeze` 단일 수렴. `VirtualProxyLink`(x86↔AnyCPU IPC 격리 스텁·메모리훼손 0). 디퍼런셜 원장(naive `QMath.Notional` vs 실 SQLite `MeshLedgerSink` per-row 재정수화 ≤1raw)·멱등·fail-open 적발. PBT `Explore`(수천 시드)+`ChaosShrinker`(최소 재현 역추적, sinkFactory 로 fail-open 가능 싱크 스윕). RingTelemetry +4 + TelemetryMonitor 🕹️ 카오스 그리드 패널(레이저 배지·시드 재현). +16 테스트(ConcurrencyStress 편입). 적대검증 6렌즈 확정 0·UNCERTAIN 1 정직 보강(탐지기 실효 음성 테스트·PBT 비공허·RejectedFills 단언). ★liveArmed:false(외부 API 0바이트·순수 인메모리)·시간역전/무한루프 물리 차단 |
 | v4.90.0 | 결정론적 웜 스타트 복구 엔진. `DeterministicWarmRestartEngine`(5상태 Idle/Validating/Draining/Escalating/Stable+Frozen). `BeginWarmRestart(서명)`: 동결 전제+서명 인가 → `mesh.Stop`(SingleReader 인계) → `ManualRelease`(Mode=Normal) → 금고 `SecretLease`(requireArmed:false·ArrayPool δ=0) → `LedgerProtectionMesh.RecoveryDrain`(동결창 가격정합성 펜스: 저장가 KRX 격자 미정렬>1raw·시세 괴리 8× → ForceFreeze) → 점화 승격(`SafeIgnitionSequencer.BeginIgnition` 재사용 — 격리 1주 프로브→3σ·지연→MasterIgnited) → Stable. 주문 폭주 방지 '복구기 잠금 펜스': `DispatchArming.ResolvePredicate(blockWhile)` 로 복구 중 `IsRecovering`이면 라이브 무장 술어(→CanRouteToLive) 무조건 false. RingTelemetry +4 + TelemetryMonitor 🛠️ 웜스타트 관제 패널(단계 타임라인 배지·백로그 게이지·서명 입력창). +12 테스트. 적대검증 6렌즈 4결함 교정(실패 수렴 무조건 ForceFreeze·펜스 밴드 저장가 고정·시세 괴리 가드). ★fail-closed 단일 소스·liveArmed:false 불변 |
@@ -589,6 +590,8 @@ FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변
 가상 시간 패브릭      → Common/DeterministicVirtualTime.cs  (v4.91.0, VirtualClock 시간역전 throw·VirtualScheduler 이산사건 큐 maxSteps 행 방어·DeterministicPrng SplitMix64)
 카오스 테스팅 그리드   → Common/DeterministicChaosGrid.cs  (v4.91.0, 시드 결함 인젝터·VirtualProxyLink 격리스텁·디퍼런셜 원장 ≤1raw·PBT Explore+ChaosShrinker·In/MeshLedgerSink)
 프로덕션 스왑 안전 인프라 → Common/ProductionCredentialBinding.cs  (v4.92.0, EndpointMutationFirewall host+port+scheme+KIS drift·ZeroLeakProtocolIsolator 바이너리/ASCII 주문 OpCode 절연·ProductionSwapController·ProductionCredentialBinder SecretLease δ=0)
+뉴스 인텔리전스 코어    → Common/NewsIntelligence.cs  (v4.93.0, δ=0 NewsIntelParser TryGet* fail-closed·NewsPayload 미분석 격리·NewsDispatchRing·SemanticShockMatrix β 하향 floor·SentimentVelocityBreaker long[128] 하향 3σ→IgnitionLock.Downgrade)
+뉴스 멘토·SVG 레이더   → Common/PortfolioMentorAdvisor.cs  (v4.93.0, NewsIntelController 백그라운드 드레인·EMA 감성·PortfolioMentorAdvisor 결정론 한국어·NewsRadarSvg 한국색상 하드코딩 #ff5252/#5082c8; liveArmed:false 순수 텍스트/그림자 가치)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

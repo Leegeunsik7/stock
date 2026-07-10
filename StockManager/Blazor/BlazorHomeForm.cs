@@ -374,7 +374,16 @@ namespace StockManager.Blazor
             //   실 3대 연동부(키움 COM·토스 WSS/REST·FX 피드) 런타임 결속은 옵트인/#if 게이트 — 결속 직전 이 컨트롤러 게이트를 통과해야 함.
             var prodSwap = new ProductionSwapController(attestation);
             services.AddSingleton(prodSwap);    // TelemetryMonitor 🔌 프로덕션 스왑 패널 주입 대상
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap);
+            // v4.93.0 — 정보 인텔리전스: 감성 속도 브레이커(3σ 하향 → IgnitionLock.Downgrade) + 뉴스 인텔 컨트롤러(백그라운드 드레인).
+            //   ★핫패스 격리: 뉴스 링을 전용 BelowNormal 스레드로 드레인 — 50ms 발주 드레인과 스레드 분리(자연어 폭주 지터 0).
+            //   ★liveArmed:false 불변: 조언/쇼크 클램프는 방어 방향(가치 하향·무장 하강)만 — 실주문 경로 무접촉.
+            var sentimentBreaker = new SentimentVelocityBreaker(ignition);
+            var newsIntel = new NewsIntelController(sentimentBreaker);
+            newsIntel.Start();
+            services.AddSingleton(sentimentBreaker);
+            services.AddSingleton(newsIntel);   // TelemetryMonitor 🧠 뉴스 레이더 & AI 멘토 패널 주입 대상
+            FormClosed += (_, _) => { try { newsIntel.Dispose(); } catch { } };
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

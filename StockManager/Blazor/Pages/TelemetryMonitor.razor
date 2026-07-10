@@ -12,6 +12,7 @@
 @inject StrategyEvolutionPipeline Pipeline
 @inject DeterministicWarmRestartEngine Recovery
 @inject DeterministicChaosGrid Chaos
+@inject NewsIntelController NewsIntel
 @inject IJSRuntime JS
 
 <div class="top">
@@ -20,6 +21,18 @@
         <p>SPMC 주문 디스패치 링의 실시간 지표 — 150ms 락-프리 폴링, 코어 무블록. SendErrors &gt; 0 = 비상 동결 확인.</p>
     </div>
 </div>
+
+@* ══ v4.93.0 감성 속도 서킷 브레이커 Amber 오버레이 ═══════════════════════════ *@
+@if (_frame.SentimentBreakerActive)
+{
+    <div style="margin:0 28px 18px;background:rgba(255,152,0,0.18);border:2px solid #ff9800;border-radius:10px;padding:18px 22px;animation:recpulse 1s ease-in-out infinite">
+        <div style="font-size:16px;font-weight:700;color:#ff9800;margin-bottom:6px">🟠 [SENTIMENT VELOCITY BREAKER TRIP — SYSTEM DOWNGRADED]</div>
+        <div style="font-size:13px;color:#ffcc80">
+            최근 5분 창 감성 3σ 하향 드리프트 폭주 감지 — 발주 무장 단계가 자동 강등되었습니다(MasterIgnited→ProbeReady).
+            &nbsp;신규 진입 보류 · 뉴스 진위 확인 후 운영자 재무장 필요.
+        </div>
+    </div>
+}
 
 @* ══ SendErrors 비상 경보 오버레이 ═══════════════════════════════════════════ *@
 @if (_frame.HasAlert)
@@ -447,6 +460,35 @@
         </div>
     </div>
 
+    @* ══ v4.93.0 실시간 뉴스 레이더 & AI 포트폴리오 멘토 패널 ═══════════════════════ *@
+    @{
+        decimal ms = _frame.MarketSentiment;
+        string msColor = _frame.MarketBullish ? "#ff5252" : _frame.MarketBearish ? "#5082c8" : "var(--muted,#888)";   // 한국색상: 호재 빨강·악재 파랑
+        string msLabel = _frame.MarketBullish ? "호재 우위" : _frame.MarketBearish ? "악재 우위" : "중립";
+        string mentorAdvice = PortfolioMentorAdvisor.Advise(new MentorInput(
+            0m, 0m, 0m, AssetClass.DomesticStock, 0m, ms, _frame.SemanticShockEngaged, _frame.SentimentBreakerActive));
+    }
+    <div class="kpi-card @(_frame.SentimentBreakerActive ? "kpi-amber" : "")" style="margin-bottom:22px">
+        <div class="kpi-label">🧠 실시간 뉴스 레이더 & AI 포트폴리오 멘토 (Realtime News Radar & AI Portfolio Mentor)</div>
+        <div style="display:flex;gap:20px;margin-top:8px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:18px">@(_frame.NewsRatePerMin.ToString("N0"))</div><div class="kpi-sub">뉴스 인입 (개/분)</div></div>
+            <div><div class="kpi-value" style="font-size:18px;color:@msColor">@ms.ToString("+0.00;-0.00")</div><div class="kpi-sub">시장 감성 · @msLabel</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@(_frame.NewsUnanalyzedCount.ToString("N0"))</div><div class="kpi-sub">미분석 격리</div></div>
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(_frame.SemanticShockEngaged ? "chaos-red" : "prod-idle")">@(_frame.SemanticShockEngaged ? "SHOCK" : "안정")</span></div><div class="kpi-sub">세맨틱 쇼크</div></div>
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(_frame.SentimentBreakerActive ? "chaos-amber" : "prod-auth")">@_frame.MentorFsmName</span></div><div class="kpi-sub">멘토 FSM</div></div>
+        </div>
+        @* SVG 마이크로차트 데모(호재 빨강·악재 파랑 뉴스 닷) — 포트폴리오 각 행에도 동일 NewsRadarSvg 로 결속. *@
+        <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+            @((MarkupString)NewsRadarSvg.Build(_demoSeries, _demoDots, 180, 34))
+            <span class="kpi-sub">시계열 선 위 뉴스 포획 시점 — 🔴 호재 / 🔵 악재 닷 인과 마킹</span>
+        </div>
+        @* AI 멘토 실시간 조언 카드(한국어·결정론 룰기반). ★조언은 텍스트일 뿐 — 실주문 무접촉. *@
+        <div style="margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--card-bg,rgba(255,255,255,0.04));border:1px solid var(--border,rgba(255,255,255,0.08))">
+            <div class="kpi-sub" style="margin-bottom:4px">💬 AI 멘토 조언</div>
+            <div style="font-size:13px;line-height:1.55">@mentorAdvice</div>
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -528,6 +570,10 @@
     // v4.91.0 — 카오스 그리드 시드 재현 입력·상태 메시지.
     private string _seed = "42";
     private string _chaosMsg = "";
+
+    // v4.93.0 — 🧠 패널 SVG 마이크로차트 데모 시계열 + 뉴스 닷(idx2 악재 파랑·idx5 호재 빨강). 실 운영은 종목별 시세/뉴스로 결속.
+    private static readonly decimal[] _demoSeries = { 100m, 101m, 99m, 98m, 102m, 105m, 103m, 107m };
+    private static readonly List<NewsRadarSvg.NewsDot> _demoDots = new() { new(2, false), new(5, true) };
 
     // 시드 재현 트리거 — 결정론 카오스 시나리오를 가상 시간선에서 백그라운드 재현(순수 인메모리·외부 API 0바이트).
     private void DoReproduceChaos()

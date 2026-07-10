@@ -70,6 +70,13 @@ namespace StockManager.Common
         public readonly long   TossTokenRemainSec;          // 인증 토큰 잔여 수명(초)
         public readonly long   EndpointFirewallBlocks;      // 엔드포인트 변이 방화벽 차단 누적(0=청정)
         public readonly long   ProductionLiveMask;          // 실전 엔드포인트 감지 브로커 비트마스크(0=전부 모의/안전)
+        // v4.93.0 — 정보 인텔리전스: 뉴스 인입속도·시장 감성·세맨틱 쇼크·감성 브레이커·미분석 격리·멘토 FSM.
+        public readonly long   NewsRatePerMin;              // 롤링 뉴스 인입 속도(개/분)
+        public readonly long   MarketSentimentRaw;          // 시장 감성 지표(QFixed -1..+1 × 10^8, 0=미분석)
+        public readonly long   SemanticShockActive;         // 세맨틱 쇼크 전파 가동(0=무·비트마스크 쇼크분류)
+        public readonly long   SentimentBreakerTripped;     // 감성 속도 브레이커 트립(0=정상·1=강등 트립)
+        public readonly long   NewsUnanalyzedCount;         // 미분석(SentimentRaw==0) 격리 건수
+        public readonly long   MentorFsmCode;               // AI 멘토 파이프라인 FSM(0 Idle/1 Analyzing/2 Advised/3 Amber)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -82,7 +89,9 @@ namespace StockManager.Common
                              long recoveryStateCode = 0L, long recoveryBacklog = 0L, long probeRttMs = 0L, long probeSlippageSigmaRaw = 0L,
                              long virtualTimeTicks = 0L, long chaosFlags = 0L, long pbtPasses = 0L, long virtualQueueDepth = 0L,
                              long kiwoomLinkCode = 0L, long tossLinkCode = 0L, long tossTokenRemainSec = 0L,
-                             long endpointFirewallBlocks = 0L, long productionLiveMask = 0L)
+                             long endpointFirewallBlocks = 0L, long productionLiveMask = 0L,
+                             long newsRatePerMin = 0L, long marketSentimentRaw = 0L, long semanticShockActive = 0L,
+                             long sentimentBreakerTripped = 0L, long newsUnanalyzedCount = 0L, long mentorFsmCode = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -123,6 +132,12 @@ namespace StockManager.Common
             TossTokenRemainSec        = tossTokenRemainSec;
             EndpointFirewallBlocks    = endpointFirewallBlocks;
             ProductionLiveMask        = productionLiveMask;
+            NewsRatePerMin            = newsRatePerMin;
+            MarketSentimentRaw        = marketSentimentRaw;
+            SemanticShockActive       = semanticShockActive;
+            SentimentBreakerTripped   = sentimentBreakerTripped;
+            NewsUnanalyzedCount       = newsUnanalyzedCount;
+            MentorFsmCode             = mentorFsmCode;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -211,6 +226,15 @@ namespace StockManager.Common
         public bool EndpointFirewallClean  => EndpointFirewallBlocks == 0;
         /// <summary>연결 텔레메트리 활성(어느 브로커든 Disconnected 초과이거나 방화벽 활동).</summary>
         public bool ProdSwapActive => KiwoomLinkCode > 0 || TossLinkCode > 0 || ProductionLiveMask != 0 || EndpointFirewallBlocks != 0;
+        // v4.93.0 — 정보 인텔리전스 UI 헬퍼.
+        public decimal MarketSentiment       => MarketSentimentRaw / (decimal)QMath.Scale;
+        public bool    SentimentBreakerActive => SentimentBreakerTripped != 0;   // ★Amber 오버레이 트리거(FSM 강등)
+        public bool    SemanticShockEngaged    => SemanticShockActive != 0;
+        public bool    NewsIntelActive         => NewsRatePerMin > 0 || MarketSentimentRaw != 0 || SemanticShockActive != 0 || SentimentBreakerTripped != 0 || MentorFsmCode > 0;
+        /// <summary>시장 감성 방향(한국색상: 호재/상승 빨강 ≥+0.3, 악재/하락 파랑 ≤−0.3, 그 외 중립).</summary>
+        public bool    MarketBullish           => MarketSentimentRaw >= 30_000_000L;
+        public bool    MarketBearish           => MarketSentimentRaw <= -30_000_000L;
+        public string  MentorFsmName => MentorFsmCode switch { 0 => "Idle", 1 => "Analyzing", 2 => "Advised", 3 => "Amber", _ => "Unknown" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -219,7 +243,7 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.92.0 기준 필드 39개×8=312B → Data 128..440B < 512(헤드룸 충분·변경 불요).
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.93.0 기준 필드 45개×8=360B → Data 128..488B < 512(헤드룸 소진 근접·확장 시 상향 필요).
         [StructLayout(LayoutKind.Explicit, Size = 512)]
         private struct Cell
         {
@@ -291,6 +315,7 @@ namespace StockManager.Common
         private readonly DeterministicWarmRestartEngine? _recovery; // v4.90.0 — 웜 스타트 복구 엔진(옵션·기본 null)
         private readonly DeterministicChaosGrid? _chaosGrid;        // v4.91.0 — 카오스 테스팅 그리드(옵션·기본 null)
         private readonly ProductionSwapController? _prodSwap;       // v4.92.0 — 프로덕션 스왑 컨트롤러(옵션·기본 null)
+        private readonly NewsIntelController? _newsIntel;           // v4.93.0 — 뉴스 인텔 컨트롤러(옵션·기본 null)
         private long _lastPublished;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
@@ -305,7 +330,8 @@ namespace StockManager.Common
                                       LedgerProtectionMesh? ledger = null,
                                       DeterministicWarmRestartEngine? recovery = null,
                                       DeterministicChaosGrid? chaosGrid = null,
-                                      ProductionSwapController? prodSwap = null)
+                                      ProductionSwapController? prodSwap = null,
+                                      NewsIntelController? newsIntel = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -320,6 +346,7 @@ namespace StockManager.Common
             _recovery     = recovery;
             _chaosGrid    = chaosGrid;
             _prodSwap     = prodSwap;
+            _newsIntel    = newsIntel;
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -374,6 +401,10 @@ namespace StockManager.Common
                 long psKiwoom = 0L, psToss = 0L, psTokenSec = 0L, psBlocks = 0L, psProdMask = 0L;
                 if (_prodSwap is { } ps)
                 { psKiwoom = (long)ps.KiwoomLink; psToss = (long)ps.TossLink; psTokenSec = ps.TossTokenRemainSec; psBlocks = ps.FirewallBlocks; psProdMask = ps.ProductionLiveMask; }
+                // v4.93.0 — 뉴스 인텔(인입속도·시장감성·쇼크·브레이커·미분석·멘토 FSM) 합류(미배선이면 0).
+                long niRate = 0L, niSent = 0L, niShock = 0L, niTrip = 0L, niUnan = 0L, niFsm = 0L;
+                if (_newsIntel is { } ni)
+                { niRate = ni.NewsRatePerMin; niSent = ni.MarketSentimentRaw; niShock = ni.SemanticShockActive; niTrip = ni.SentimentBreakerTripped; niUnan = ni.NewsUnanalyzedCount; niFsm = ni.MentorFsmCode; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -383,7 +414,8 @@ namespace StockManager.Common
                     ledDepth, ledCap, ledMicros, ledFails,
                     rvState, rvBacklog, rvRtt, rvSig,
                     cgTicks, cgFlags, cgPbt, cgQ,
-                    psKiwoom, psToss, psTokenSec, psBlocks, psProdMask));
+                    psKiwoom, psToss, psTokenSec, psBlocks, psProdMask,
+                    niRate, niSent, niShock, niTrip, niUnan, niFsm));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
