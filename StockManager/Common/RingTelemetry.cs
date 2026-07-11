@@ -83,6 +83,11 @@ namespace StockManager.Common
         public readonly long   ShadowRingNodeMask;          // 다중 브로커 분산 링 활성 노드 비트마스크(AssetClass)
         public readonly long   MmfLatencyMicros;            // MMF IPC 프레임 왕복 레이턴시(µs)
         public readonly long   FabricGuardMask;             // ★가드 트립: bit0=리스크 실드 동결·bit1=MMF 오염 동결(오버레이 하드바인딩)
+        // v4.95.0 — 무할당 순환 블랙박스: 링 포화도·초당 기록 속도·동결 덤프 상태·봉인 후 유실.
+        public readonly long   BlackboxSaturationRaw;       // 순환 링 포화도(0..1 × 10^8)
+        public readonly long   BlackboxRatePerSec;          // 초당 이산 사건 기록 속도
+        public readonly long   BlackboxDumpState;           // 0 유휴/1 봉인·덤프중/2 완료/3 실패(감사 매그넷 트리거)
+        public readonly long   BlackboxDroppedSealed;       // 봉인(동결) 후 드롭 누적
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -99,7 +104,9 @@ namespace StockManager.Common
                              long newsRatePerMin = 0L, long marketSentimentRaw = 0L, long semanticShockActive = 0L,
                              long sentimentBreakerTripped = 0L, long newsUnanalyzedCount = 0L, long mentorFsmCode = 0L,
                              long marginUtilizationRaw = 0L, long reservationRejects = 0L, long shadowRingNodeMask = 0L,
-                             long mmfLatencyMicros = 0L, long fabricGuardMask = 0L)
+                             long mmfLatencyMicros = 0L, long fabricGuardMask = 0L,
+                             long blackboxSaturationRaw = 0L, long blackboxRatePerSec = 0L,
+                             long blackboxDumpState = 0L, long blackboxDroppedSealed = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -151,6 +158,10 @@ namespace StockManager.Common
             ShadowRingNodeMask        = shadowRingNodeMask;
             MmfLatencyMicros          = mmfLatencyMicros;
             FabricGuardMask           = fabricGuardMask;
+            BlackboxSaturationRaw     = blackboxSaturationRaw;
+            BlackboxRatePerSec        = blackboxRatePerSec;
+            BlackboxDumpState         = blackboxDumpState;
+            BlackboxDroppedSealed     = blackboxDroppedSealed;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -271,6 +282,15 @@ namespace StockManager.Common
         };
         /// <summary>초고속 집행·리스크 레이어 활성(어느 지표든 값 존재).</summary>
         public bool    RiskExecActive => MarginUtilizationRaw > 0 || ReservationRejects > 0 || ShadowRingNodeMask != 0 || MmfLatencyMicros > 0 || FabricGuardMask != 0;
+        // v4.95.0 — 무할당 블랙박스 UI 헬퍼.
+        public decimal BlackboxSaturation    => BlackboxSaturationRaw / (decimal)QMath.Scale;              // 0..1
+        public double  BlackboxSaturationPct => Math.Clamp(BlackboxSaturationRaw / (double)QMath.Scale * 100.0, 0.0, 100.0);
+        public bool    BlackboxActive        => BlackboxSaturationRaw > 0 || BlackboxRatePerSec > 0 || BlackboxDumpState > 0;
+        /// <summary>★감사 오디트 매그넷 활성(동결 봉인·덤프중·완료·실패) — 헥스덤프 암흑적색 감사 모드 트리거.</summary>
+        public bool    BlackboxSealed        => BlackboxDumpState >= 1;
+        public bool    BlackboxDumpFailed    => BlackboxDumpState == 3;
+        public bool    BlackboxDumpDone      => BlackboxDumpState == 2;
+        public string  BlackboxDumpStateName => BlackboxDumpState switch { 0 => "ARMED", 1 => "SEALED·DUMPING", 2 => "DUMPED", 3 => "DUMP FAILED", _ => "?" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -279,8 +299,8 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.94.0 기준 필드 50개×8=400B → Data 128..528B < 576(64배수·잔여 6슬롯).
-        //   (v4.93.0 은 45필드=360B→488B 로 512 헤드룸 3슬롯에 근접 → v4.94.0 5필드 추가로 512 초과 → 576 으로 상향.)
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.95.0 기준 필드 54개×8=432B → Data 128..560B < 576(64배수·잔여 2슬롯).
+        //   (v4.94.0 50필드=400B→528B 로 576 헤드룸 6슬롯 → v4.95.0 블랙박스 4필드 추가로 54필드·잔여 2슬롯. 7개 이상 추가 시 640 상향.)
         [StructLayout(LayoutKind.Explicit, Size = 576)]
         private struct Cell
         {
@@ -356,7 +376,10 @@ namespace StockManager.Common
         private readonly PreTradeRiskShield? _riskShield;           // v4.94.0 — 발주 전 리스크 실드(옵션·기본 null)
         private readonly MultiBrokerShadowRing? _shadowRing;        // v4.94.0 — 다중 브로커 섀도우 링(옵션·기본 null)
         private readonly MmfIpcFabric? _mmfFabric;                  // v4.94.0 — MMF 제로레이턴시 패브릭(옵션·기본 null)
+        private readonly MmfFlightRecorder? _blackbox;              // v4.95.0 — 무할당 순환 블랙박스(옵션·기본 null)
+        private readonly CrashResilientDumper? _dumper;             // v4.95.0 — 동결 원자 덤퍼(옵션·기본 null)
         private long _lastPublished;
+        private long _lastBlackboxTotal;
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
 
@@ -374,7 +397,9 @@ namespace StockManager.Common
                                       NewsIntelController? newsIntel = null,
                                       PreTradeRiskShield? riskShield = null,
                                       MultiBrokerShadowRing? shadowRing = null,
-                                      MmfIpcFabric? mmfFabric = null)
+                                      MmfIpcFabric? mmfFabric = null,
+                                      MmfFlightRecorder? blackbox = null,
+                                      CrashResilientDumper? dumper = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -393,6 +418,9 @@ namespace StockManager.Common
             _riskShield   = riskShield;
             _shadowRing   = shadowRing;
             _mmfFabric    = mmfFabric;
+            _blackbox     = blackbox;
+            _dumper       = dumper;
+            _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -456,6 +484,16 @@ namespace StockManager.Common
                 if (_riskShield is { } rs) { rsUtil = rs.MarginUtilizationRaw; rsRej = rs.RejectCount; if (rs.Escalated) guardMask |= 1L; }
                 if (_shadowRing is { } sr) mbMask = sr.ActiveNodeMask;
                 if (_mmfFabric  is { } mf) { mmLat = mf.LastLatencyMicros; if (mf.IsCorrupted) guardMask |= 2L; }
+                // v4.95.0 — 블랙박스(포화도·초당 기록 속도·덤프 상태·봉인 후 유실) 합류(미배선이면 0).
+                long bbSat = 0L, bbRate = 0L, bbDump = 0L, bbDrop = 0L;
+                if (_blackbox is { } bb)
+                {
+                    bbSat = bb.SaturationRaw; bbDrop = bb.DroppedWhileSealed;
+                    long total = bb.TotalRecorded; long dBb = total - _lastBlackboxTotal;
+                    bbRate = (dTick > 0 && dBb > 0) ? (long)(dBb * (double)Stopwatch.Frequency / dTick) : 0L;
+                    _lastBlackboxTotal = total;
+                }
+                if (_dumper is { } dp) bbDump = (long)dp.State;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -467,7 +505,8 @@ namespace StockManager.Common
                     cgTicks, cgFlags, cgPbt, cgQ,
                     psKiwoom, psToss, psTokenSec, psBlocks, psProdMask,
                     niRate, niSent, niShock, niTrip, niUnan, niFsm,
-                    rsUtil, rsRej, mbMask, mmLat, guardMask));
+                    rsUtil, rsRej, mbMask, mmLat, guardMask,
+                    bbSat, bbRate, bbDump, bbDrop));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

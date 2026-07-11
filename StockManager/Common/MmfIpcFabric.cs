@@ -73,6 +73,7 @@ namespace StockManager.Common
 
         private readonly MmfFabricRole            _role;
         private readonly OrderAttestationService? _att;
+        private readonly MmfFlightRecorder?       _blackbox;   // v4.95.0 — 블랙박스(δ=0·null=no-op)
         private readonly Func<long>               _nowTicks;
         private readonly long                     _tickFrequency;    // ticks/sec(레이턴시 µs 환산)
         private readonly long                     _hbTimeoutTicks;   // 20ms in ticks
@@ -103,7 +104,7 @@ namespace StockManager.Common
         public MmfIpcFabric(string mapName, MmfFabricRole role, int capacity = 1024, int maxPayload = 4096,
                             OrderAttestationService? attestation = null,
                             Func<long>? nowTicks = null, long tickFrequency = 0,
-                            int heartbeatTimeoutMs = 20)
+                            int heartbeatTimeoutMs = 20, MmfFlightRecorder? blackbox = null)
         {
             if (string.IsNullOrWhiteSpace(mapName)) throw new ArgumentException("MMF 이름 필요", nameof(mapName));
             if (capacity < 2 || (capacity & (capacity - 1)) != 0) throw new ArgumentOutOfRangeException(nameof(capacity), "2 이상의 2의 거듭제곱");
@@ -111,6 +112,7 @@ namespace StockManager.Common
 
             _role          = role;
             _att           = attestation;
+            _blackbox      = blackbox;
             _nowTicks      = nowTicks ?? System.Diagnostics.Stopwatch.GetTimestamp;
             _tickFrequency = tickFrequency > 0 ? tickFrequency : System.Diagnostics.Stopwatch.Frequency;
             _hbTimeoutTicks= Math.Max(1, heartbeatTimeoutMs) * _tickFrequency / 1000L;
@@ -203,6 +205,7 @@ namespace StockManager.Common
                 Volatile.Write(ref HeadRef, head + 1);
                 Volatile.Write(ref EpochRef, Volatile.Read(ref EpochRef) + 1);   // 단일 라이터 — 비경합
                 Volatile.Write(ref WriterHbRef, _nowTicks());
+                _blackbox?.Record(FlightEventKind.MmfPublish, 0L, head, frame.Length, 0L, 3);
                 return true;
             }
             finally { Leave(); }
@@ -253,6 +256,7 @@ namespace StockManager.Common
                     Volatile.Write(ref _lastLatencyMicros, dt * 1_000_000L / _tickFrequency);
                 }
                 Volatile.Write(ref ReaderHbRef, _nowTicks());
+                _blackbox?.Record(FlightEventKind.MmfConsume, 0L, tail, frameLen, Volatile.Read(ref _lastLatencyMicros), 3);
                 return true;
             }
             finally { Leave(); }
@@ -313,6 +317,7 @@ namespace StockManager.Common
             Volatile.Write(ref _corrupted, 1);
             _lastReason = reason;
             Interlocked.Increment(ref _corruptionEvents);
+            _blackbox?.Record(FlightEventKind.MmfPoison, 0L, 0L, 0L, 0L, 3);
             try { if (_base != null) Volatile.Write(ref CorruptRef, 1L); } catch { }
             try { _att?.ForceFreeze("MmfIpcFabric: " + reason); } catch { }
         }

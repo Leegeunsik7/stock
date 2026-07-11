@@ -52,6 +52,9 @@ namespace StockManager.Common
         private volatile int         _modeInt    = (int)GatingMode.Normal;
         private readonly object      _lock       = new();
         private readonly List<AttestationAuditEntry> _log = new();
+        // v4.95.0 — 동결 옵저버(블랙박스 봉인·덤프 트리거). 락 밖에서 예외 삼킴 격발(핫패스 무블록·동결 완료 방해 금지).
+        //   ★계약: 옵저버는 무할당 링 enqueue + 신호만 — 동기 디스크 I/O 금지(ForceFreeze 는 MMF IPC·50ms 드레인 등 핫패스에서 호출됨).
+        private Action<AttestationAuditEntry>? _onFreeze;
 
         // ─ 허용 한도 (0 = 한 푼도 불일치 불허) ─────────────────────────────
         public decimal CashToleranceKrw  { get; init; } = 0m;
@@ -124,6 +127,8 @@ namespace StockManager.Common
                 if (!passed)
                     _modeInt = (int)GatingMode.EmergencyFreeze;  // volatile write
             }
+            // ★C#6: 정합 미스매치 동결도 표준 동결 경로 — 블랙박스 봉인·덤프가 유실되지 않도록 옵저버 격발(락 밖·예외 삼킴).
+            if (!passed) FireFreezeObservers(entry);
             return entry;
         }
 
@@ -174,7 +179,32 @@ namespace StockManager.Common
                 TrimLog();
                 _modeInt = (int)GatingMode.EmergencyFreeze;
             }
+            // ★동결 옵저버 격발 — 락 밖(AuditLog 독출 직렬화 회피)·예외 삼킴(동결 완료 방해 금지·fail-closed).
+            FireFreezeObservers(entry);
             return entry;
+        }
+
+        /// <summary>v4.95.0 — 동결 옵저버 등록(멀티캐스트·원자 결합). 블랙박스 덤퍼가 Seal+신호 격발에 사용.
+        /// ★옵저버는 무할당·무블록·무I/O 여야 함(ForceFreeze 는 핫패스에서 호출됨).</summary>
+        public void RegisterFreezeObserver(Action<AttestationAuditEntry> observer)
+        {
+            if (observer is null) throw new ArgumentNullException(nameof(observer));
+            Action<AttestationAuditEntry>? cur, combined;
+            do { cur = _onFreeze; combined = cur + observer; }
+            while (Interlocked.CompareExchange(ref _onFreeze, combined, cur) != cur);
+        }
+
+        /// <summary>동결 옵저버 격발 — ★U#1: 각 옵저버를 개별 try/catch 로 순회해 한 옵저버 예외가 뒤 옵저버(덤퍼 Seal+신호)를
+        /// 차단하지 못하게 한다. 락 밖 호출·무블록 계약(옵저버는 무I/O). ForceFreeze/Reconcile 동결 공용.</summary>
+        private void FireFreezeObservers(AttestationAuditEntry entry)
+        {
+            var obs = _onFreeze;
+            if (obs is null) return;
+            foreach (var d in obs.GetInvocationList())
+            {
+                try { ((Action<AttestationAuditEntry>)d)(entry); }
+                catch { /* 한 옵저버 예외가 동결·타 옵저버를 막지 못함 */ }
+            }
         }
 
         // ── ProcessFill: 실체결 vs 예상 주문 비교 감사 ───────────────────────────

@@ -112,18 +112,22 @@ namespace StockManager.Common
         private readonly RingConsumer<OrderProposal> _consumer;
         private readonly Func<bool>                  _isArmed;
         private readonly OrderAttestationService?    _att;    // Mission A: onSend throw → ForceFreeze(null 허용 = att 없음)
+        private readonly MmfFlightRecorder?          _blackbox;   // v4.95.0 — 블랙박스 이산 사건 기록(null=미배선·완전 no-op·δ=0)
         private long _forwarded;
         private long _gatedOut;
         private long _sendErrors;   // Mission A: downstream throw 누적(원자)
 
         /// <param name="attestation">선택적 — null 이면 ForceFreeze 미호출(테스트 시나리오). 앱 레벨은 반드시 주입.</param>
+        /// <param name="blackbox">선택적 — v4.95.0 블랙박스 기록계(null=미배선·완전 no-op). Record 는 δ=0.</param>
         public GatedOrderDispatcher(OrderDispatchRing ring, Func<bool> isArmed,
-                                    OrderAttestationService? attestation = null)
+                                    OrderAttestationService? attestation = null,
+                                    MmfFlightRecorder? blackbox = null)
         {
             if (ring is null) throw new ArgumentNullException(nameof(ring));
             _consumer = ring.CreateConsumer();
             _isArmed  = isArmed ?? throw new ArgumentNullException(nameof(isArmed));
             _att      = attestation;
+            _blackbox = blackbox;
         }
 
         /// <summary>무장 상태에서 실제 브로커로 송출된 제안 수(onSend 성공 시만 계상).</summary>
@@ -158,12 +162,14 @@ namespace StockManager.Common
                     {
                         onSend(p);
                         Interlocked.Increment(ref _forwarded);   // 성공 시만 계상
+                        _blackbox?.Record(FlightEventKind.OrderForwarded, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
                     }
                     catch (Exception ex)
                     {
                         // ★Mission A — downstream throw(브로커 단절·네트워크 오류) fail-closed 벽.
                         // ForceFreeze 는 항상 성공(멱등·audit append) — fail-open 절대 금지.
                         Interlocked.Increment(ref _sendErrors);
+                        _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
                         _att?.ForceFreeze("GatedOrderDispatcher downstream throw: " + ex.Message);
                         break;   // 추가 제안 처리 차단 — 동결 후 루프 폭주 방지
                     }
@@ -171,6 +177,7 @@ namespace StockManager.Common
                 else
                 {
                     Interlocked.Increment(ref _gatedOut);
+                    _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
                 }
             }
             return n;

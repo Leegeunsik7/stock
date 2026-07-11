@@ -92,12 +92,14 @@ namespace StockManager.Common
         /// <param name="dailyLimitRaw">당일 누적 투자한도 raw(10^8). (0, MaxSafeBudgetRaw] 범위 필수.</param>
         /// <param name="marketRefPriceRaw">시장가 주문 기준가 프로브(심볼코드→raw). null 이면 시장가 매수는 fail-closed 거부.</param>
         /// <param name="heldQtyRaw">보유수량 프로브(심볼코드→raw). null 이면 매도 공매도 검문 생략(보유 확인 불가 → 통과).</param>
+        /// <param name="blackbox">선택적 — v4.95.0 블랙박스 기록계(null=미배선·완전 no-op). Record 는 δ=0.</param>
         public PreTradeRiskShield(long marginBudgetRaw, long dailyLimitRaw,
                                   OrderAttestationService? attestation = null,
                                   IgnitionLock? ignition = null,
                                   int escalationStrikes = 3,
                                   Func<long, long>? marketRefPriceRaw = null,
-                                  Func<long, long>? heldQtyRaw = null)
+                                  Func<long, long>? heldQtyRaw = null,
+                                  MmfFlightRecorder? blackbox = null)
         {
             if (marginBudgetRaw <= 0 || marginBudgetRaw > MaxSafeBudgetRaw)
                 throw new ArgumentOutOfRangeException(nameof(marginBudgetRaw), "증거금 예산은 (0, long.Max/4] 범위여야 함(오버플로 안전)");
@@ -112,7 +114,10 @@ namespace StockManager.Common
             _escalationStrikes = escalationStrikes;
             _marketRefPriceRaw = marketRefPriceRaw;
             _heldQtyRaw        = heldQtyRaw;
+            _blackbox          = blackbox;
         }
+
+        private readonly MmfFlightRecorder? _blackbox;   // v4.95.0 — 블랙박스(δ=0·null=no-op)
 
         // ── 텔레메트리(락-프리 독출·무할당) ────────────────────────────────────
         public long MarginBudgetRaw   => _marginBudgetRaw;
@@ -183,6 +188,7 @@ namespace StockManager.Common
                 }
                 ClearStrikes();
                 Interlocked.Increment(ref _admitCount);
+                _blackbox?.Record(FlightEventKind.RiskAdmit, p.SymbolCode, 0L, p.QtyRaw, (long)OrderSide.Sell, 2);
                 decision = new RiskDecision(RiskVerdict.Admit, 0L);   // 매도는 증거금 예약 없음
                 return true;
             }
@@ -206,6 +212,7 @@ namespace StockManager.Common
 
             ClearStrikes();
             Interlocked.Increment(ref _admitCount);
+            _blackbox?.Record(FlightEventKind.RiskAdmit, p.SymbolCode, notional, p.QtyRaw, (long)OrderSide.Buy, 2);
             decision = new RiskDecision(RiskVerdict.Admit, notional);
             return true;
         }
@@ -279,6 +286,7 @@ namespace StockManager.Common
         private void Escalate(string reason)
         {
             Volatile.Write(ref _escalated, 1);
+            _blackbox?.Record(FlightEventKind.RiskEscalate, 0L, Interlocked.Read(ref _marginReservedRaw), Interlocked.Read(ref _consecutiveStrikes), 0L, 2);
             try { _att?.ForceFreeze("PreTradeRiskShield: " + reason); } catch { /* 동결 실패해도 거부 유지 */ }
             try { _ignition?.Downgrade("PreTradeRiskShield: " + reason); } catch { }
         }

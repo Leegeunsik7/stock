@@ -27,6 +27,7 @@ namespace StockManager.Common
         private readonly NewsDispatchRing           _ring;
         private readonly SentimentVelocityBreaker   _breaker;
         private readonly Func<long>                 _nowTicks;
+        private readonly MmfFlightRecorder?         _blackbox;   // v4.95.0 — 블랙박스(δ=0·null=no-op)
 
         private long _marketSentimentRaw;   // 시장 감성 EMA(QFixed)
         private long _unanalyzed;           // 미분석 격리 누적
@@ -42,11 +43,13 @@ namespace StockManager.Common
         private Thread?       _drainThread;
         private volatile bool _running;
 
-        public NewsIntelController(SentimentVelocityBreaker breaker, NewsDispatchRing? ring = null, Func<long>? nowTicks = null)
+        public NewsIntelController(SentimentVelocityBreaker breaker, NewsDispatchRing? ring = null, Func<long>? nowTicks = null,
+                                   MmfFlightRecorder? blackbox = null)
         {
             _breaker  = breaker ?? throw new ArgumentNullException(nameof(breaker));
             _ring     = ring ?? new NewsDispatchRing();
             _nowTicks = nowTicks ?? (() => DateTime.UtcNow.Ticks);
+            _blackbox = blackbox;
         }
 
         public NewsDispatchRing Ring => _ring;
@@ -80,6 +83,9 @@ namespace StockManager.Common
             if (p.ShockClass != NewsShockClass.None) Interlocked.Or(ref _shockMask, 1L << (int)p.ShockClass);
 
             if (p.IsUnanalyzed) { Interlocked.Increment(ref _unanalyzed); return; }   // ★미분석 격리(오작동 차단)
+
+            _blackbox?.Record(FlightEventKind.NewsIngest, p.SymbolCode, p.SentimentRaw, (long)p.ShockClass, p.SeverityRaw, 4);
+            if (_breaker.IsTripped) _blackbox?.Record(FlightEventKind.NewsBreakerTrip, p.SymbolCode, p.SentimentRaw, 0L, 0L, 4);
 
             // 시장 감성 EMA(α=0.2·정수). ★첫 표본 판별은 _ingested 카운트로 — 0을 '표본 없음' 센티널로 재사용하면
             //   정당한 중립 EMA(0)(예: prev=-2,cur=+8 → 0)와 충돌해 이력을 폐기·단일 표본 리셋하므로 금지.

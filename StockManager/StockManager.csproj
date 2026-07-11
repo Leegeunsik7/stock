@@ -25,9 +25,26 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.94.0</Version>
-    <AssemblyVersion>4.94.0.0</AssemblyVersion>
-    <FileVersion>4.94.0.0</FileVersion>
+    <Version>4.95.0</Version>
+    <AssemblyVersion>4.95.0.0</AssemblyVersion>
+    <FileVersion>4.95.0.0</FileVersion>
+    <!-- v4.95.0 — ★무할당 순환 커널 블랙박스 & 감사 오디트 매그넷 완결: 무할당 순환 비행 기록계 + 동결 원자 덤프·암호 봉인 + 헥스덤프 감사 UI. 6렌즈 적대검증(확정 12·실질 10결함 교정).
+         ★정직 회계(정찰 5렌즈): 기능(멀티라이터 순환 블랙박스·durable 동결 덤프·헥스덤프 UI·ForceFreeze 옵저버 훅)은 전무→신규. 이디엄 재사용 — Crc32.Compute·
+         SHA256.HashData(span,span)+stackalloc·[Sequential,Pack=1]+MemoryMarshal·SecurityAssetVault._sealed 봉인·MmfIpcFabric.Dispose 드레인·KiwoomFreezeRelay.FreezeOnce
+         (멱등 CAS·예외삼킴·무블록) 템플릿·%LOCALAPPDATA%\StockManager\ 경로·Canvas 0%-렌더. 기존 CrashRecoveryJournaler(단발 스냅샷)/MmfJournalStore(copy)와 중복 아님.
+         [과제1] MmfFlightRecorder.cs: 64B FlightRecordEvent[Sequential,Pack=1] + 사전할당 100k(→131072) 순환 링. ★Think Further Partial/Wrap-Torn 봉쇄 — Interlocked.Increment
+         인덱스 원자 선점 + 슬롯 tri-state(volatile int Empty/Writing/Ready) + 랩 가드 + 스냅샷 라이브 Sequence 재독 seqlock + Seal→Quiesce(_inFlight 배수). Record δ=0.
+         [과제2] CrashResilientDumper.cs: 동결 옵저버→봉인+격리 BelowNormal 스레드 덤프. ★Think Further 변조방지 — SHA256(변조탐지)+CRC32(오염탐지)+XOR LCG 난독, temp→
+         Flush(true)→원자 rename, 디스크 예외 시 핸들 정상 해제(Dispose)+temp 삭제+영구 Seal+ForceFreeze 무응답 격리(사유 박제). TryLoadAndVerify 재로드 검증(오버플로 fail-closed).
+         [과제3-배선] OrderAttestationService 동결 옵저버 훅(RegisterFreezeObserver 멀티캐스트 CAS·옵저버별 try/catch·락 밖 격발·ForceFreeze+Reconcile 공용). 핫패스 5곳(발주·리스크·MMF 발행/소비/오염·뉴스)에 δ=0 Record 결속.
+         [UI] RingTelemetry +4(포화도·기록속도·덤프상태·봉인유실·Cell 576 유지) + TelemetryMonitor 🗃️ 패널(포화 Pure CSS 바·기록속도) + 동결 시에만 무할당 글리프 헥스덤프 1회 정적 투사(암흑적색 감사모드).
+         ★liveArmed:false: 레코더/덤퍼/훅 전부 IBroker/소켓 참조 0 — 관측·영속화만. Record·덤프·Seal 이 이중키∧MasterIgnited∧AlwaysFalse 게이트에 우회 미생성.
+         δ=0(Record 사전할당 슬롯 struct 복사+Interlocked+volatile — 힙 0·전용스레드 300k 워밍업 측정·리스크실드 결속 후에도 무간섭)·결정론(주입 시계)·fail-closed·TreatWarningsAsErrors.
+         ★적대검증 확정 12(실질 10) 교정: (C1)스냅샷 seqlock 이 복사본 Sequence 만 검사해 복사 중 풀사이클 덮어쓰기 torn 을 놓침→라이브 슬롯 Sequence 재독. (C2)Seal 후 진행 라이터 커밋
+         →_inFlight 드레인(QuiesceAfterSeal). (C3)랩 라이터가 최신 슬롯 덮어씀→랩 가드 드롭. (C4)덤프 실패 시 재진입 ForceFreeze 옵저버가 Failed 를 Sealed 로 은폐→상태 CAS(Idle→Sealed)+Failed 최종.
+         (C5)SetHandleAsInvalid 가 OS 핸들 누수→temp 잠김→Dispose 정상 CloseHandle 로 교체. (C6)Reconcile 미스매치 동결이 옵저버 미격발→블랙박스 봉인·덤프 유실→Reconcile 도 옵저버 격발.
+         (C7)스냅샷 스캔 하한 부재로 wrap 링 O(head) 폭주→유효창 하한. (C9/C10)재로드 count*64 int 오버플로→소형파일 OOM(fail-open)→long 곱+파일길이 결속. (C11)rate 델타 기준 미초기화 첫샘플 스파이크.
+         (C12)기존 게이지 3곳 CSS width InvariantCulture 누락(콤마 로케일 바 붕괴). +U1 멀티캐스트 옵저버별 try/catch. 테스트 +22(회귀 3). 빌드 0/0(메인+x86), 전체 1939 통과. -->
     <!-- v4.94.0 — ★초고속 집행·리스크 실드 완결: 발주 전 다요소 리스크 실드 + 다중 브로커 섀도우 링 + MMF 제로레이턴시 IPC 패브릭. 6렌즈 적대검증(확정 7·실질 4결함 교정).
          ★정직 회계(정찰 6렌즈): OrderDrainWorker·GatedOrderDispatcher·QMath.Notional·QLedgerGuard·ForceFreeze 단일소스·IgnitionLock.Downgrade·RingBufferCore
          seqlock·BridgeSerializer.Pack·DispatchArming.AlwaysFalse(실주문 수학적 0 정본)는 기존 재사용. 리스크/증거금/IExecutionGate/상주 MMF 링·unsafe 는 전무→신규.
