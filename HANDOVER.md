@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v4.95.0** (2026-07-10)  
+> 기준 버전: **v4.96.0** (2026-07-10)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -14,7 +14,7 @@
 - 9개 WinForms 모듈 + Blazor 대시보드가 `LocalDatabase`를 공유
 - AI 분석/포트폴리오 멘토/미래가치 시뮬/카오스 진단 내장
 - **고정소수점(QFixed) 청산 척추** + **seqlock SPMC 링버퍼** + **3중 liveArmed:false 게이트**
-- 1,939 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- 1,957 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
@@ -387,9 +387,9 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 
 ## 9. 테스트 인프라
 
-### 현황 (v4.95.0)
+### 현황 (v4.96.0)
 
-- **총 테스트**: 1,939 (클린런)
+- **총 테스트**: 1,957 (클린런)
 - **플래키 0%**: Path A에서 전역 달성 (27회 연속 TRX-clean)
 - **빌드 게이트**: `TreatWarningsAsErrors=true`
 
@@ -469,6 +469,7 @@ NightlyResearch            — 야간 자동 리서치/퍼블리싱
 | v4.80.0 | 로드맵 1단계: 토스 인증 격리 — `TossTokenService`(락-프리 토큰 수명주기·핫패스↔갱신 분리·연속실패 임계 동결·만료 경계 fail-closed) + `ApiKeyVault.SaveToss/GetToss` + `BrokerHub.CreateToss`(옵트인 조립·ShadowClearing 래핑). +15 테스트. liveArmed:false 불변 |
 | v4.81.0 | 로드맵 3단계: 실시간 FX 서킷 브레이커 — `QFxCircuitBreaker`(10분 창 3σ 급변동·1s 스테일 → ForceFreeze·래치·시간+용량 축출 링) + `IFxRateSource`/`QFxFeedPump`(폴→Submit) + `QAcl.TryImportRate`. 가드 조회가 유일 청산 진입점(신선·닫힘 환율만 KrxFxClearing 로). +13 테스트. liveArmed:false 불변 |
 | v4.82.0 | 로드맵 2단계: 키움 x86 결속 검증 + COM 이벤트 핸들러 GC 방어. ★결정: COM 은 별도 x86 프로세스(KiwoomProxy) 격리 유지(메인 AnyCPU/64비트 불변) — WebView2+COM 동거 압박 구조적 차단. §2.2/§2.3 은 v4.78.0 완비. §2.1 델타: `BridgeSerializer` δ=0 span `Pack`(무할당) + `KiwoomProxyHost` 재사용 버퍼·`_sendLock`(per-event 할당 0 + 동시 파이프 write 레이스 차단). +4 테스트. liveArmed:false 불변 |
+| v4.96.0 | 실전 자본 영점 조절 및 무할당 실시간 청산 메쉬 완결 — 체결시점 이종 통화 제비용 δ=0 정산 + 정밀 잔여 캐리 가드 + 스펙큘러티브 2단계 청산 래치 + 예수금 영점. `LiveAccountingMesh.cs`(국내[원화 정수·매수 위탁·매도 위탁+★거래세+농특세 분리]/해외[달러·비율+센트 고정 혼합 양방향]/코인 δ=0 정산·단일 소스 `FeeTaxSchedule`로 4곳 불일치 상수 정직 통합. ★Think Further 1 정밀 잔여 캐리 가드 — 항목·통화별 독립 캐리[위탁/거래세/농특세/해외위탁/코인]에 floor 잔여 이월·spill → 누적오차 0 수렴. ★Think Further 2 스펙큘러티브 2단계 청산 래치 — 핫패스[단일 디스패치] 매수 CAS 델타 차감[매도 선차감 없음]+값타입 링[RingBufferCore] 발행 δ=0, 회계 스레드[BelowNormal] exact+캐리 확정·매도 대금 credit·평단 장부 영점. 통화별 예수금 셀 분리·보유 초과 매도 fail-closed·SeedPosition). RingTelemetry +5(누적 수수료 KRW/USD·캐리 오차·래치 큐·영점 상태·Cell 576→640) + TelemetryMonitor 📊 패널(소수점 투명·거래세/농특세 분리·녹색 영점 인디케이터·1raw 디싱크 암흑적색 오버레이). +18 테스트(회귀 5). 적대검증 6렌즈 확정 8 교정(공유 캐리 세목 오귀속→항목별 독립 캐리·보유초과 매도 유령현금→fail-closed·매도 수수료 선차감 오탐동결→선차감 제거·통화 commingling→KRW/USD 셀 분리·★OrderRejected freeze-storm 재도입→FillQty>0 필터·외부동결 State 미반영→IsFrozen 반영·_book 레이스→락). ★liveArmed:false(메쉬 IBroker/소켓 참조 0 — 내부 원장만 영점·외부 사출 0바이트) |
 | v4.95.0 | 무할당 순환 커널 블랙박스 & 감사 오디트 매그넷 완결 — 무할당 순환 비행 기록계 + 동결 원자 덤프·암호 봉인 + 헥스덤프 감사 UI. `MmfFlightRecorder.cs`(64B `FlightRecordEvent`[Sequential,Pack=1]·사전할당 100k→131072 순환 링·★멀티라이터 tri-state[Interlocked.Increment 인덱스 선점 + volatile State Empty/Writing/Ready]·랩 가드·스냅샷 라이브 Sequence 재독 seqlock·Seal→QuiesceAfterSeal[_inFlight 배수]·Record δ=0). `CrashResilientDumper.cs`(동결 옵저버→봉인+격리 BelowNormal 스레드 덤프·★SHA256 변조탐지+CRC32 오염탐지+XOR LCG 난독·temp→Flush(true)→원자 rename·디스크 예외 시 핸들 Dispose+temp 삭제+영구 Seal+ForceFreeze 무응답 격리·`TryLoadAndVerify` 재로드 검증[오버플로 fail-closed]·`.ms2dump`). `OrderAttestationService` 동결 옵저버 훅(`RegisterFreezeObserver` 멀티캐스트 CAS·옵저버별 try/catch·락 밖 격발·ForceFreeze+Reconcile 공용). 핫패스 5곳(발주·리스크·MMF 발행/소비/오염·뉴스)에 δ=0 `Record` 결속. RingTelemetry +4(포화도·기록속도·덤프상태·봉인유실·Cell 576 유지) + TelemetryMonitor 🗃️ 패널(포화 Pure CSS 바·기록속도) + 동결 시에만 무할당 글리프 헥스덤프 1회 정적 투사(암흑적색 감사모드·GC 폭탄 방지). +22 테스트(회귀 3). 적대검증 6렌즈 확정 12(실질 10)결함 교정(스냅샷 seqlock 복사본-Sequence torn→라이브 재독·Seal 후 커밋→_inFlight 드레인·랩 라이터 덮어씀→랩 가드·덤프실패 상태 은폐→CAS+Failed 최종·SetHandleAsInvalid 핸들누수→Dispose·Reconcile 동결 옵저버 미격발→격발·스캔 하한부재 O(head)→유효창 하한·재로드 count 오버플로 OOM→long 곱 결속·rate 첫샘플 스파이크·게이지 InvariantCulture). ★liveArmed:false(레코더/덤퍼/훅 IBroker·소켓 참조 0 — 관측·영속화만) |
 | v4.94.0 | 초고속 집행·리스크 실드 완결 — 발주 전 리스크 실드 + 다중 브로커 섀도우 링 + MMF 제로레이턴시 IPC 패브릭. `PreTradeRiskShield.cs`(락-프리 원자 증거금/당일 이중 예산 — ★reserve→check→compensate CAS 로 TOCTOU 봉쇄·over-admit 수학적 불가·next<init 오버플로 fail-closed·경량 필터↔3-strike ForceFreeze+Downgrade 분리·시장가 오라클/무차입 공매도 가드). `MultiBrokerShadowRing.cs`(`IExtendedExecutionGate:IBroker` 주문ID 왕복 PlaceTracked·AssetClass 라우팅·★2PC 연쇄 롤백 센티널: legB 실패→반대편 취소, 취소 실패=화해불가 노출→Downgrade+ForceFreeze·데드라인 50ms·멱등). `MmfIpcFabric.cs`(MMF 상주 락-프리 SPSC 링·unsafe byte* δ=0·`AllowUnsafeBlocks` 신설·★하트비트 20ms+경계검증+로컬상수 불신+mid-write 포이즌→ForceFreeze("MMF Fabric Corrupted")·인플라이트 드레인 가드로 Dispose use-after-free 차단). RingTelemetry +5(증거금 포화·예약 거부·브로커 링 노드·MMF µs·가드 마스크·Cell 512→576) + TelemetryMonitor ⚡ 코어 패널(포화 Pure CSS 바·µs 타임라인) + 가드 동결 적색 오버레이(사유 하드바인딩). +43 테스트(회귀 2). 적대검증 6렌즈 확정 7(실질 4)결함 교정(페어 느린성공 취소실패 노출 오보→Exposed·MMF 하트비트 타임아웃<Beat주기 허위오염→1000ms 정합·Dispose UAF→드레인 가드·비단조 벽시계→Stopwatch). ★liveArmed:false(실드 admit≠발주·MMF 전송≠브로커 소켓·미무장 게이트 거부 — 이중키∧MasterIgnited∧AlwaysFalse 없이 실주문 0) |
 | v4.93.0 | 정보 인텔리전스 레이어 완결 — 실시간 뉴스 레이더 + AI 포트폴리오 멘토. `NewsIntelligence.cs`: δ=0 `NewsIntelParser`(Utf8JsonReader span·숫자전용·★TryGet* 비throw fail-closed — 범위밖 Number 예외 힙할당 차단)·`NewsPayload`(SentimentRaw==0=미분석 격리)·`NewsDispatchRing`(Channel DropOldest)·`SemanticShockMatrix`(β표×`QMath.Notional` 하향 floor)·`SentimentVelocityBreaker`(long[128] 롤링 카운트 창·Int128 분산·하향 3σ→`IgnitionLock.Downgrade`). `PortfolioMentorAdvisor.cs`: `NewsIntelController`(백그라운드 BelowNormal 드레인·EMA 감성[★_ingested 카운트 첫표본 판별]·도착률 링)·`Advise`(결정론 한국어)·`NewsRadarSvg`(네이티브 SVG polyline+닷·★한국색상 하드코딩 #ff5252 빨강/#5082c8 파랑). RingTelemetry +6 + TelemetryMonitor 🧠 패널 + 감성 브레이커 트립 앰버 오버레이. +21 테스트(회귀 4). 적대검증 5렌즈 확정 6(실질 5)결함 교정(파서 예외 힙할당·EMA 영교차 리셋·SVG 서구색·문서 창 오표기·중첩 키 누수). ★liveArmed:false(LLM 은 [ShockClass,Severity] ACL DTO 만·멘토 조언/쇼크 클램프 순수 텍스트·실주문 무접촉)·δ=0 핫패스 격리 |
@@ -599,6 +600,7 @@ FX 서킷 브레이커     → Common/QFxCircuitBreaker.cs  (v4.81.0, 3σ 급변
 MMF 제로레이턴시 패브릭 → Common/MmfIpcFabric.cs  (v4.94.0, MMF 상주 락-프리 SPSC 링·unsafe byte* δ=0·하트비트 20ms+경계검증+mid-write 포이즌→ForceFreeze("MMF Fabric Corrupted")·인플라이트 드레인 가드; AllowUnsafeBlocks 신설·intra-machine IPC 라 브로커 소켓 미오픈)
 무할당 순환 블랙박스     → Common/MmfFlightRecorder.cs  (v4.95.0, 64B FlightRecordEvent·사전할당 100k 순환 링·멀티라이터 tri-state[Interlocked.Increment 선점+volatile State]·랩 가드·스냅샷 라이브 Sequence 재독 seqlock·Seal+QuiesceAfterSeal·Record δ=0·FlightHexRenderer 무할당 글리프)
 동결 원자 덤프·암호봉인   → Common/CrashResilientDumper.cs  (v4.95.0, ForceFreeze 옵저버→봉인+격리 스레드 덤프·SHA256+CRC32+XOR 봉인·temp→원자 rename·디스크 예외 시 핸들 Dispose+Seal+무응답 격리·TryLoadAndVerify 재로드 검증[오버플로 fail-closed]·.ms2dump; liveArmed:false 관측·영속화만)
+실시간 청산 메쉬(회계)   → Common/LiveAccountingMesh.cs  (v4.96.0, 체결시점 국내/해외/코인 제비용 δ=0 정산[거래세·농특세 분리·US 혼합]·FeeTaxSchedule 단일소스·정밀 잔여 캐리 가드[항목·통화별 독립·누적오차 0 수렴]·스펙큘러티브 2단계 청산 래치[핫 CAS 델타+회계 스레드 확정]·통화별 예수금 셀·보유 초과 매도 fail-closed·SeedPosition; 브릿지 FillReceived 결속은 FillQty>0 필터[freeze-storm 방지]; liveArmed:false IBroker/소켓 참조 0)
 키움 동결 릴레이     → Common/KiwoomFreezeRelay.cs  (v4.78.0 배선, ProxyLost/Error 멱등 동결)
 토스 브로커(스캐폴드) → Common/TossLiveBroker.cs  (v4.75.0, δ=0 인입·데코레이터 계약; v4.83.0 REST 401 동결·PumpLoop livelock 교정)
 토스 토큰 수명주기     → Common/TossTokenService.cs  (v4.80.0, 락-프리·핫패스↔갱신 분리·fail-closed·CreateToss 조립)

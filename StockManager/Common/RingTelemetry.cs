@@ -88,6 +88,12 @@ namespace StockManager.Common
         public readonly long   BlackboxRatePerSec;          // 초당 이산 사건 기록 속도
         public readonly long   BlackboxDumpState;           // 0 유휴/1 봉인·덤프중/2 완료/3 실패(감사 매그넷 트리거)
         public readonly long   BlackboxDroppedSealed;       // 봉인(동결) 후 드롭 누적
+        // v4.96.0 — 실시간 청산 메쉬: 누적 수수료 KRW/USD·정밀 잔여 캐리 오차·청산 래치 큐 깊이·예수금 영점 상태.
+        public readonly long   AccFeeKrwRaw;                // 누적 차감 제비용(원화, raw)
+        public readonly long   AccFeeUsdRaw;                // 누적 차감 제비용(달러, raw)
+        public readonly long   AccCarryErrorRaw;            // 정밀 잔여 캐리 오차(raw·<Scale 정상)
+        public readonly long   AccLatchDepth;               // 청산 래치 큐 미소화 깊이
+        public readonly long   AccStateCode;                // 0 유휴/1 가동(영점동기)/2 동결(디싱크)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -106,7 +112,9 @@ namespace StockManager.Common
                              long marginUtilizationRaw = 0L, long reservationRejects = 0L, long shadowRingNodeMask = 0L,
                              long mmfLatencyMicros = 0L, long fabricGuardMask = 0L,
                              long blackboxSaturationRaw = 0L, long blackboxRatePerSec = 0L,
-                             long blackboxDumpState = 0L, long blackboxDroppedSealed = 0L)
+                             long blackboxDumpState = 0L, long blackboxDroppedSealed = 0L,
+                             long accFeeKrwRaw = 0L, long accFeeUsdRaw = 0L, long accCarryErrorRaw = 0L,
+                             long accLatchDepth = 0L, long accStateCode = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -162,6 +170,11 @@ namespace StockManager.Common
             BlackboxRatePerSec        = blackboxRatePerSec;
             BlackboxDumpState         = blackboxDumpState;
             BlackboxDroppedSealed     = blackboxDroppedSealed;
+            AccFeeKrwRaw              = accFeeKrwRaw;
+            AccFeeUsdRaw              = accFeeUsdRaw;
+            AccCarryErrorRaw          = accCarryErrorRaw;
+            AccLatchDepth             = accLatchDepth;
+            AccStateCode              = accStateCode;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -291,6 +304,17 @@ namespace StockManager.Common
         public bool    BlackboxDumpFailed    => BlackboxDumpState == 3;
         public bool    BlackboxDumpDone      => BlackboxDumpState == 2;
         public string  BlackboxDumpStateName => BlackboxDumpState switch { 0 => "ARMED", 1 => "SEALED·DUMPING", 2 => "DUMPED", 3 => "DUMP FAILED", _ => "?" };
+        // v4.96.0 — 실시간 청산 메쉬 UI 헬퍼.
+        public decimal AccFeeKrw       => AccFeeKrwRaw / (decimal)QMath.Scale;
+        public decimal AccFeeUsd       => AccFeeUsdRaw / (decimal)QMath.Scale;
+        public decimal AccCarryError   => AccCarryErrorRaw / (decimal)QMath.Scale;
+        public bool    AccActive       => AccStateCode >= 1 || AccFeeKrwRaw > 0 || AccFeeUsdRaw > 0 || AccLatchDepth > 0;
+        public bool    AccFrozen       => AccStateCode == 2;
+        /// <summary>★예수금 영점 조절 녹색 인디케이터 — 가동 ∧ 미동결 ∧ 캐리 오차 &lt;1raw(드리프트 0).</summary>
+        public bool    AccZeroSynced   => AccStateCode == 1 && !AccFrozen && AccCarryErrorRaw < QMath.Scale;
+        /// <summary>1raw 초과 디싱크/오버플로 동결 — 암흑적색 오버레이 트리거.</summary>
+        public bool    AccDesyncFrozen => AccStateCode == 2;
+        public string  AccStateName    => AccStateCode switch { 0 => "IDLE", 1 => "ZERO-SYNC", 2 => "DESYNC FROZEN", _ => "?" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -299,9 +323,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.95.0 기준 필드 54개×8=432B → Data 128..560B < 576(64배수·잔여 2슬롯).
-        //   (v4.94.0 50필드=400B→528B 로 576 헤드룸 6슬롯 → v4.95.0 블랙박스 4필드 추가로 54필드·잔여 2슬롯. 7개 이상 추가 시 640 상향.)
-        [StructLayout(LayoutKind.Explicit, Size = 576)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.96.0 기준 필드 59개×8=472B → Data 128..600B < 640(64배수·잔여 5슬롯).
+        //   (v4.95.0 54필드=432B→560B 로 576 헤드룸 2슬롯 → v4.96.0 회계 5필드 추가로 59필드 → 576 초과 → 640 으로 상향. 5개 이상 추가 시 704.)
+        [StructLayout(LayoutKind.Explicit, Size = 640)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -378,6 +402,7 @@ namespace StockManager.Common
         private readonly MmfIpcFabric? _mmfFabric;                  // v4.94.0 — MMF 제로레이턴시 패브릭(옵션·기본 null)
         private readonly MmfFlightRecorder? _blackbox;              // v4.95.0 — 무할당 순환 블랙박스(옵션·기본 null)
         private readonly CrashResilientDumper? _dumper;             // v4.95.0 — 동결 원자 덤퍼(옵션·기본 null)
+        private readonly LiveAccountingMesh? _accounting;           // v4.96.0 — 실시간 청산 메쉬(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -399,7 +424,8 @@ namespace StockManager.Common
                                       MultiBrokerShadowRing? shadowRing = null,
                                       MmfIpcFabric? mmfFabric = null,
                                       MmfFlightRecorder? blackbox = null,
-                                      CrashResilientDumper? dumper = null)
+                                      CrashResilientDumper? dumper = null,
+                                      LiveAccountingMesh? accounting = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -420,6 +446,7 @@ namespace StockManager.Common
             _mmfFabric    = mmfFabric;
             _blackbox     = blackbox;
             _dumper       = dumper;
+            _accounting   = accounting;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -494,6 +521,10 @@ namespace StockManager.Common
                     _lastBlackboxTotal = total;
                 }
                 if (_dumper is { } dp) bbDump = (long)dp.State;
+                // v4.96.0 — 실시간 청산 메쉬(누적 수수료 KRW/USD·캐리 오차·래치 큐·영점 상태) 합류(미배선이면 0).
+                long acFeeKrw = 0L, acFeeUsd = 0L, acCarry = 0L, acLatch = 0L, acState = 0L;
+                if (_accounting is { } am)
+                { acFeeKrw = am.CumFeeKrwRaw; acFeeUsd = am.CumFeeUsdRaw; acCarry = am.CarryErrorRaw; acLatch = am.LatchQueueDepth; acState = (long)am.State; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -506,7 +537,8 @@ namespace StockManager.Common
                     psKiwoom, psToss, psTokenSec, psBlocks, psProdMask,
                     niRate, niSent, niShock, niTrip, niUnan, niFsm,
                     rsUtil, rsRej, mbMask, mmLat, guardMask,
-                    bbSat, bbRate, bbDump, bbDrop));
+                    bbSat, bbRate, bbDump, bbDrop,
+                    acFeeKrw, acFeeUsd, acCarry, acLatch, acState));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

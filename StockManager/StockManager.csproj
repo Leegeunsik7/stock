@@ -25,9 +25,23 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.95.0</Version>
-    <AssemblyVersion>4.95.0.0</AssemblyVersion>
-    <FileVersion>4.95.0.0</FileVersion>
+    <Version>4.96.0</Version>
+    <AssemblyVersion>4.96.0.0</AssemblyVersion>
+    <FileVersion>4.96.0.0</FileVersion>
+    <!-- v4.96.0 — ★실전 자본 영점 조절 및 무할당 실시간 청산 메쉬 완결: 체결시점 이종 통화 제비용 δ=0 정산 + 정밀 잔여 캐리 가드 + 스펙큘러티브 2단계 청산 래치 + 예수금 영점. 6렌즈 적대검증(확정 8·교정 완료).
+         ★정직 회계(정찰 6렌즈): 체결시점 δ=0 정산·농특세 분리·US 혼합수수료·잔여 캐리·2단계 래치·예수금 영점은 전무→신규. 수수료율이 기존 4곳(BrokerFeeSchedule·TradingCost·
+         PaperBroker·ZeroAllocTickEngine)에 불일치 중복 → 단일 소스 FeeTaxSchedule 로 정직 통합. 재사용: QMath.Notional·TryReserveInto CAS 패턴·RingBufferCore seqlock·ForceFreeze
+         단일 소스·구조적 브로커 절연(회계 파일에 SendOrderAsync/PostOrder 0건). QMath 미변경(잔여는 메쉬 내 Int128 인라인).
+         [핵심] LiveAccountingMesh.cs: 국내(원화 정수·매수 위탁·매도 위탁+거래세+농특세 분리)/해외(달러·비율+센트 고정 혼합 양방향)/코인 δ=0 정산. ★Think Further 1 정밀 잔여
+         캐리 가드 — 항목·통화별 독립 캐리(위탁/거래세/농특세/해외위탁/코인)에 floor 잔여 이월·spill → 각 세목 누적오차 0 수렴. ★Think Further 2 스펙큘러티브 2단계 청산 래치 —
+         핫패스(단일 디스패치 스레드) 매수 CAS 델타 차감(매도는 선차감 없음)+값타입 링 발행(δ=0), 회계 스레드(BelowNormal) exact+캐리 확정·매도 대금 credit·평단 장부 영점. 통화별 예수금 셀 분리.
+         [UI] RingTelemetry +5(누적 수수료 KRW/USD·캐리 오차·래치 큐·영점 상태·Cell 576→640) + TelemetryMonitor 📊 패널(소수점 투명·거래세/농특세 분리·녹색 영점 인디케이터) + 1raw 디싱크 동결 시 암흑적색 오버레이+사유 하드바인딩.
+         ★liveArmed:false: 메쉬는 내부 원장만 영점 조절 — IBroker/소켓 참조 0. 실전 정산이 나노초로 진행돼도 이중키(ValveWired∧LiveArmingWired)∧MasterIgnited 없이 외부 증권사로 허위 체결 동기화·주문 0바이트.
+         δ=0(OnFill 힙 0·전용 스레드 300k 워밍업 측정)·결정론(주입 시계)·fail-closed(초과인출·오버플로·보유초과매도·링추월→ForceFreeze).
+         ★적대검증 확정 8 교정: (C1/C7)공유 캐리 spill 오귀속(거래세/농특세 무한 드리프트)→항목·통화별 독립 캐리. (C2)보유 초과 매도가 명목 전액 credit(유령 현금)→보유 가드 fail-closed+SeedPosition.
+         (C3)매도 핫패스 수수료 선차감이 풀-인베스트 정상 매도 오탐 동결→매도 선차감 제거·확정 시 대금 credit 우선. (C4)단일 예수금 셀 통화 commingling→KRW/USD 셀 분리. (C5 CRITICAL)OrderRejected(FillQty=0)가
+         체결로 유입돼 정상 거부마다 전역 동결(freeze-storm 재도입)→FillQty>0 필터+OnFillPayload no-op. (C8)외부 ForceFreeze 시 State 미반영 거짓 녹색→State 가 IsFrozen 반영.
+         (U1/2/3)_book 무동기 public 독출 레이스→_book 락. 테스트 +18(회귀 5). 빌드 0/0(메인+x86), 전체 1957 통과. -->
     <!-- v4.95.0 — ★무할당 순환 커널 블랙박스 & 감사 오디트 매그넷 완결: 무할당 순환 비행 기록계 + 동결 원자 덤프·암호 봉인 + 헥스덤프 감사 UI. 6렌즈 적대검증(확정 12·실질 10결함 교정).
          ★정직 회계(정찰 5렌즈): 기능(멀티라이터 순환 블랙박스·durable 동결 덤프·헥스덤프 UI·ForceFreeze 옵저버 훅)은 전무→신규. 이디엄 재사용 — Crc32.Compute·
          SHA256.HashData(span,span)+stackalloc·[Sequential,Pack=1]+MemoryMarshal·SecurityAssetVault._sealed 봉인·MmfIpcFabric.Dispose 드레인·KiwoomFreezeRelay.FreezeOnce
