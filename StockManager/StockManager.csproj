@@ -25,9 +25,21 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.96.0</Version>
-    <AssemblyVersion>4.96.0.0</AssemblyVersion>
-    <FileVersion>4.96.0.0</FileVersion>
+    <Version>4.97.0</Version>
+    <AssemblyVersion>4.97.0.0</AssemblyVersion>
+    <FileVersion>4.97.0.0</FileVersion>
+    <!-- v4.97.0 — ★실거래 섀도우 인입 & 원자적 컷오버 게이트웨이 완결: 실 브로커 소켓은 시세·예수금·인증만 살리고 최하위 주문 송출을 IsShadowMode(기본 true)면 100% 바이패스(실 소켓 0바이트) + 전용 섀도우 청산 메쉬에 50ms 내 가상 체결 공급(슬리피지 모델). 5렌즈 적대검증(확정 4·교정 8).
+         ★정직 회계(정찰 6렌즈): 런타임 IsShadowMode 원자 flip·바이패스+미러+가상체결 분기·토스 REST 송출 절연·50ms 가상 청산 push 펌프는 전무→신규. 재사용: ZeroLeakProtocolIsolator(ContainsOrderOpcode·IsOrderSendAllowed·AssertSendAllowed)·
+         SafeIgnitionSequencer.BeginIgnition(이중키∧프로브∧3σ→MasterIgnited)·ManualRelease·IgnitionLock.Lock/Downgrade·SentimentVelocityBreaker(단측 3σ)·ShadowClearingTracer(1raw 대조)·ClearingAuthority volatile flip·ShadowNoiseConfig 슬리피지·LiveAccountingMesh.OnFill.
+         [핵심1] ShadowExecutionGateway.cs: 구조화 라우팅 TryRoute(섀도우=가상 청산 링 분기·δ=0) + 원시 바이트 최후 펜스 AllowOutboundBytes(토스 갭 보강·동결 직교 검문) + 50ms 가상 청산 펌프(raw 수량 OnFill 직결) + EnterLive/EnterShadow 원자 flip.
+         [핵심2] AtomicCutoverGate.cs(★Think Beyond Gemini): 2단 컷오버 — PreArm(BeginIgnition 재사용·섀도우 유지) → Cutover(이중키 재검·백로그 원자 플러시·EnterLive 단일 volatile write &lt;1ms). 자율 카나리 검역(RTT 단측 3σ→가역 되감기) + 듀얼트랙 1raw 대조(발산→경성 동결+섀도우 복귀) + 되감기 원자 롤백(EnterShadow·재컷오버 가역).
+         [갭 보강] 토스 TossHttpTransport.PostOrder/DeleteOrder 영지식 절연 결속(기존 무보호) + 키움 ExecutionBridgeBroker.Create 가 orderArmed/ignitionStage 주입(F1 절연기 미배선 보강).
+         [UI] RingTelemetry +5(섀도우모드·가상체결 RTT·컷오버 상태·카나리 편차·듀얼트랙 드리프트·Cell 640→704) + TelemetryMonitor 🕹️ 대시보드(섀도우=청색 [SHADOW FLIGHT ACTIVE] ↔ 컷오버=적색점멸 [PRODUCTION LIVE OPERATION]·2단 서명 컷오버).
+         ★liveArmed:false 이중 차단 인터락: ①IsShadowMode 면 실 송출 0바이트(스레드 경합·오염 주문 포함·영지식 격리 샌드박스 펜스 유닛테스트). ②컷오버해도 매 라우팅이 이중키(ValveWired∧LiveArmingWired)∧MasterIgnited 재평가 — 미충족·동결이면 실주문 0바이트+fail-closed 동결.
+         δ=0(TryRoute 힙 0·전용 스레드 300k 워밍업 측정)·결정론(주입 시계·시드 PRNG 는 비판정 펌프 전용)·fail-closed·섀도우 메쉬 전용 attestation(가상 체결이 라이브 동결 미오염).
+         ★적대검증 확정 4+자체판정 4 교정: (1)DI 이중 등록 shadowMesh 가 라이브 LiveAccountingMesh 를 last-wins 로 덮음→섀도우 메쉬 DI 미등록. (2)AllowOutboundBytes 동결 미검(fail-open)→직교 동결 검문. (3)듀얼트랙 off-by-one(&gt;=tol)→정상 1raw 관용(&gt;tol).
+         (4)듀얼트랙 동결이 섀도우 미복귀(ManualRelease 후 즉시 재라이브)→경성 동결 시 EnterShadow. (5)가상체결 FillQty 정수 절사로 코인 소수 유실+허위 카운트→raw OnFill 직결·수락분만 계수. (6)카나리 승격이 시드 베이스라인 표본 계수(검역창 붕괴)→컷오버 후 라이브 표본 별도 계수.
+         (7)토스 DeleteOrder 절연 갭→PostOrder 와 공용 펜스. (8)슬리피지 상한 클램프. 테스트 +26(회귀 6). 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 1983 통과. -->
     <!-- v4.96.0 — ★실전 자본 영점 조절 및 무할당 실시간 청산 메쉬 완결: 체결시점 이종 통화 제비용 δ=0 정산 + 정밀 잔여 캐리 가드 + 스펙큘러티브 2단계 청산 래치 + 예수금 영점. 6렌즈 적대검증(확정 8·교정 완료).
          ★정직 회계(정찰 6렌즈): 체결시점 δ=0 정산·농특세 분리·US 혼합수수료·잔여 캐리·2단계 래치·예수금 영점은 전무→신규. 수수료율이 기존 4곳(BrokerFeeSchedule·TradingCost·
          PaperBroker·ZeroAllocTickEngine)에 불일치 중복 → 단일 소스 FeeTaxSchedule 로 정직 통합. 재사용: QMath.Notional·TryReserveInto CAS 패턴·RingBufferCore seqlock·ForceFreeze

@@ -66,14 +66,20 @@ namespace StockManager.Common
             OrderAttestationService attestation,
             string pipeName = BridgeSerializer.DefaultPipeName,
             int heartbeatTimeoutMs = 500,
-            int pingIntervalMs = 0)
+            int pingIntervalMs = 0,
+            Func<bool>? orderArmed = null,
+            Func<IgnitionStage>? ignitionStage = null)
         {
+            // ★v4.97.0 — 영지식 송출 펜스 배선(F1 갭 보강): orderArmed/ignitionStage 를 클라이언트에 주입해야
+            //   SendOrderAsync 최하위의 ZeroLeakProtocolIsolator.AssertSendAllowed 가 활성화된다(미주입 시 레거시 바이패스였음).
             var bridge = new KiwoomBridgeClient(
                 attestation:        null,    // ProxyLost 이벤트로 처리하므로 이중 호출 방지
                 pipeName:           pipeName,
                 heartbeatTimeoutMs: heartbeatTimeoutMs,
                 nowTicks:           null,
-                pingIntervalMs:     pingIntervalMs);
+                pingIntervalMs:     pingIntervalMs,
+                orderArmed:         orderArmed,
+                ignitionStage:      ignitionStage);
 
             var audit  = new LiveAuditService(attestation);
             var broker = new ExecutionBridgeBroker(bridge, audit, attestation);
@@ -84,8 +90,10 @@ namespace StockManager.Common
         /// 프록시가 50ms 이상 Pong 을 못 주면 ProxyLost → KiwoomFreezeRelay/OnProxyLost → EmergencyFreeze 연쇄.</summary>
         public static (ExecutionBridgeBroker Broker, KiwoomBridgeClient Bridge) CreateFast(
             OrderAttestationService attestation,
-            string pipeName = BridgeSerializer.DefaultPipeName)
-            => Create(attestation, pipeName, FastHeartbeatTimeoutMs, FastPingIntervalMs);
+            string pipeName = BridgeSerializer.DefaultPipeName,
+            Func<bool>? orderArmed = null,
+            Func<IgnitionStage>? ignitionStage = null)
+            => Create(attestation, pipeName, FastHeartbeatTimeoutMs, FastPingIntervalMs, orderArmed, ignitionStage);
 
         // ── IBroker.Place ─────────────────────────────────────────────────────
 

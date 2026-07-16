@@ -94,6 +94,12 @@ namespace StockManager.Common
         public readonly long   AccCarryErrorRaw;            // 정밀 잔여 캐리 오차(raw·<Scale 정상)
         public readonly long   AccLatchDepth;               // 청산 래치 큐 미소화 깊이
         public readonly long   AccStateCode;                // 0 유휴/1 가동(영점동기)/2 동결(디싱크)
+        // v4.97.0 — 실거래 섀도우 인입 & 원자 컷오버: 섀도우모드·가상체결 RTT·컷오버 상태·카나리 편차·듀얼트랙 드리프트.
+        public readonly long   ShadowModeActive;            // 1 섀도우(자본 안전)/0 실전 라인
+        public readonly long   ShadowFillRttMicros;         // 최근 가상 체결 공급 RTT(µs)
+        public readonly long   CutoverStateCode;            // 0 섀도우/1 사전무장/2 검역/3 실전/4 되감김/5 동결
+        public readonly long   CanaryDeviationRaw;          // 최근 카나리 RTT 단측 편차(raw·>0 느려짐)
+        public readonly long   DualTrackDriftRaw;           // 최근 듀얼트랙(섀도우예측 vs 실체결) 드리프트(raw)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -114,7 +120,9 @@ namespace StockManager.Common
                              long blackboxSaturationRaw = 0L, long blackboxRatePerSec = 0L,
                              long blackboxDumpState = 0L, long blackboxDroppedSealed = 0L,
                              long accFeeKrwRaw = 0L, long accFeeUsdRaw = 0L, long accCarryErrorRaw = 0L,
-                             long accLatchDepth = 0L, long accStateCode = 0L)
+                             long accLatchDepth = 0L, long accStateCode = 0L,
+                             long shadowModeActive = 0L, long shadowFillRttMicros = 0L, long cutoverStateCode = 0L,
+                             long canaryDeviationRaw = 0L, long dualTrackDriftRaw = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -175,6 +183,11 @@ namespace StockManager.Common
             AccCarryErrorRaw          = accCarryErrorRaw;
             AccLatchDepth             = accLatchDepth;
             AccStateCode              = accStateCode;
+            ShadowModeActive          = shadowModeActive;
+            ShadowFillRttMicros       = shadowFillRttMicros;
+            CutoverStateCode          = cutoverStateCode;
+            CanaryDeviationRaw        = canaryDeviationRaw;
+            DualTrackDriftRaw         = dualTrackDriftRaw;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -315,6 +328,13 @@ namespace StockManager.Common
         /// <summary>1raw 초과 디싱크/오버플로 동결 — 암흑적색 오버레이 트리거.</summary>
         public bool    AccDesyncFrozen => AccStateCode == 2;
         public string  AccStateName    => AccStateCode switch { 0 => "IDLE", 1 => "ZERO-SYNC", 2 => "DESYNC FROZEN", _ => "?" };
+        // v4.97.0 — 섀도우/컷오버 UI 헬퍼(원자 배너 전환용 단일 불리언 게이트).
+        public bool    IsShadowFlight  => ShadowModeActive != 0L;                                  // 섀도우(자본 안전)
+        public bool    IsCutoverLive   => ShadowModeActive == 0L && CutoverStateCode >= 2L;        // 검역/실전(실 송출 라인)
+        public bool    ShadowWired     => IsShadowFlight || IsCutoverLive;                         // 서브시스템 배선 여부
+        public string  CutoverStateName => CutoverStateCode switch
+        { 0 => "SHADOW", 1 => "ARMED-READY", 2 => "CANARY-QUARANTINE", 3 => "LIVE", 4 => "ROLLED-BACK", 5 => "FROZEN", _ => "?" };
+        public double  ShadowFillRttMs => ShadowFillRttMicros / 1000.0;                            // 가상 체결 RTT(ms 표시)
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -323,9 +343,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.96.0 기준 필드 59개×8=472B → Data 128..600B < 640(64배수·잔여 5슬롯).
-        //   (v4.95.0 54필드=432B→560B 로 576 헤드룸 2슬롯 → v4.96.0 회계 5필드 추가로 59필드 → 576 초과 → 640 으로 상향. 5개 이상 추가 시 704.)
-        [StructLayout(LayoutKind.Explicit, Size = 640)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.97.0 기준 필드 64개×8=512B → Data 128..640B ≤ 704(64배수·잔여 8슬롯).
+        //   (v4.96.0 59필드=472B→640 잔여 5슬롯 → v4.97.0 섀도우/컷오버 5필드 추가로 64필드 → 640 정확소진 → 704 로 상향·헤드룸 8슬롯.)
+        [StructLayout(LayoutKind.Explicit, Size = 704)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -403,6 +423,8 @@ namespace StockManager.Common
         private readonly MmfFlightRecorder? _blackbox;              // v4.95.0 — 무할당 순환 블랙박스(옵션·기본 null)
         private readonly CrashResilientDumper? _dumper;             // v4.95.0 — 동결 원자 덤퍼(옵션·기본 null)
         private readonly LiveAccountingMesh? _accounting;           // v4.96.0 — 실시간 청산 메쉬(옵션·기본 null)
+        private readonly ShadowExecutionGateway? _shadowGateway;    // v4.97.0 — 실거래 섀도우 집행 게이트웨이(옵션·기본 null)
+        private readonly AtomicCutoverGate? _cutover;               // v4.97.0 — 원자적 컷오버 게이트(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -425,7 +447,9 @@ namespace StockManager.Common
                                       MmfIpcFabric? mmfFabric = null,
                                       MmfFlightRecorder? blackbox = null,
                                       CrashResilientDumper? dumper = null,
-                                      LiveAccountingMesh? accounting = null)
+                                      LiveAccountingMesh? accounting = null,
+                                      ShadowExecutionGateway? shadowGateway = null,
+                                      AtomicCutoverGate? cutover = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -447,6 +471,8 @@ namespace StockManager.Common
             _blackbox     = blackbox;
             _dumper       = dumper;
             _accounting   = accounting;
+            _shadowGateway = shadowGateway;
+            _cutover      = cutover;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -525,6 +551,10 @@ namespace StockManager.Common
                 long acFeeKrw = 0L, acFeeUsd = 0L, acCarry = 0L, acLatch = 0L, acState = 0L;
                 if (_accounting is { } am)
                 { acFeeKrw = am.CumFeeKrwRaw; acFeeUsd = am.CumFeeUsdRaw; acCarry = am.CarryErrorRaw; acLatch = am.LatchQueueDepth; acState = (long)am.State; }
+                // v4.97.0 — 섀도우 집행·컷오버(섀도우모드·가상체결 RTT·컷오버 상태·카나리 편차·듀얼트랙 드리프트) 합류(미배선이면 0).
+                long sgShadow = 0L, sgRtt = 0L, coState = 0L, coCanary = 0L, coDrift = 0L;
+                if (_shadowGateway is { } sg) { sgShadow = sg.IsShadowMode ? 1L : 0L; sgRtt = sg.LastFillRttMicros; }
+                if (_cutover is { } co) { coState = (long)co.State; coCanary = co.LastCanaryDeviationRaw; coDrift = co.LastDualTrackDriftRaw; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -538,7 +568,8 @@ namespace StockManager.Common
                     niRate, niSent, niShock, niTrip, niUnan, niFsm,
                     rsUtil, rsRej, mbMask, mmLat, guardMask,
                     bbSat, bbRate, bbDump, bbDrop,
-                    acFeeKrw, acFeeUsd, acCarry, acLatch, acState));
+                    acFeeKrw, acFeeUsd, acCarry, acLatch, acState,
+                    sgShadow, sgRtt, coState, coCanary, coDrift));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

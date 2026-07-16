@@ -15,6 +15,8 @@
 @inject NewsIntelController NewsIntel
 @inject MmfFlightRecorder Blackbox
 @inject LiveAccountingMesh Accounting
+@inject ShadowExecutionGateway Gateway
+@inject AtomicCutoverGate Cutover
 @inject IJSRuntime JS
 
 <div class="top">
@@ -620,6 +622,54 @@
         </div>
     </div>
 
+    @* ══ v4.97.0 원자적 컷오버 & 섀도우 플라이트 대시보드 ═══════════════════════════ *@
+    <div class="kpi-card @(Cutover.State == CutoverState.Frozen ? "kpi-alert" : "")" style="margin-bottom:22px">
+        <div class="kpi-label">🕹️ 원자적 컷오버 & 섀도우 플라이트 대시보드 (Atomic Cutover &amp; Shadow Flight Dashboard)</div>
+        @if (Cutover.IsLive)
+        {
+            <div class="prod-live-banner">🔴 [PRODUCTION LIVE OPERATION IN PROGRESS — MAXIMUM ATTENTION]</div>
+        }
+        else
+        {
+            <div class="prod-safe-banner">🔵 [SHADOW FLIGHT ACTIVE — CAPITAL IS 100% SAFE]</div>
+        }
+        <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @CutoverBadgeCss(Cutover.State)">@Cutover.State.ToString()</span></div><div class="kpi-sub">컷오버 상태</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@((Gateway.LastFillRttMicros / 1000.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture))<span style="font-size:12px">ms</span></div><div class="kpi-sub">가상 체결 RTT (≤50ms)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@Gateway.VirtualFillCount.ToString("N0")</div><div class="kpi-sub">가상 체결 누적</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@Gateway.BypassedCount.ToString("N0")</div><div class="kpi-sub">실 송출 바이패스(0바이트)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@Cutover.CanaryTripCount.ToString("N0") / @Cutover.RollbackCount.ToString("N0")</div><div class="kpi-sub">카나리 트립 / 되감기</div></div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            카나리 표본: <b>@Cutover.CanarySampleCount.ToString("N0")</b> · 편차: <b style="font-family:var(--mono)">@Cutover.LastCanaryDeviationRaw.ToString("N0") raw</b> (단측 3σ 상향=위험)
+            &nbsp;|&nbsp; 듀얼트랙 드리프트: <b style="font-family:var(--mono)">@Cutover.LastDualTrackDriftRaw.ToString("N0") raw</b> (&gt;1raw=동결 @Cutover.DualTrackFreezeCount.ToString("N0")회)
+            &nbsp;|&nbsp; 실 라우팅: <b>@Gateway.LiveRoutedCount.ToString("N0")</b> · 차단: <b>@Gateway.BlockedCount.ToString("N0")</b>
+        </div>
+        @* 🔐 운영자 서명 → 2단 원자 컷오버(사전무장 → <1ms flip). 순수 HTML. *@
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border,rgba(255,255,255,0.08))">
+            <div class="kpi-sub" style="margin-bottom:6px">🔐 운영자 서명 → 2단 원자 컷오버 (① 사전무장: 이중키∧격리프로브∧3σ · ② 컷오버: &lt;1ms 원자 flip)</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="text" @bind="_cutSig" @bind:event="oninput" placeholder="운영자 서명(예: CUTOVER-20260716-…)"
+                       style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;border:1px solid var(--border,rgba(255,255,255,0.12));background:var(--card-bg,rgba(255,255,255,0.04));color:inherit;font-family:var(--mono)" />
+                <button @onclick="DoPreArm"
+                        style="padding:8px 16px;border-radius:6px;border:0;cursor:pointer;background:#2e6da4;color:#fff;font-weight:600">🛡️ ① 사전무장</button>
+                <button @onclick="DoCutover"
+                        style="padding:8px 16px;border-radius:6px;border:0;cursor:pointer;background:#c0392b;color:#fff;font-weight:600">🚀 ② 원자 컷오버</button>
+                @if (Cutover.IsLive)
+                {
+                    <button @onclick="DoRollback"
+                            style="padding:8px 16px;border-radius:6px;border:0;cursor:pointer;background:#42a5f5;color:#fff;font-weight:600">↩️ 되감기</button>
+                }
+                @if (!string.IsNullOrEmpty(_cutMsg)) { <span class="kpi-sub">@_cutMsg</span> }
+            </div>
+            <div class="kpi-sub" style="margin-top:6px">
+                실 브로커 소켓은 시세·예수금·인증만 수신하고, IsShadowMode(기본 ON)면 최하위 주문 송출을 100% 바이패스(실 소켓 0바이트) — 가로챈 주문은 전용 섀도우 청산 메쉬에 50ms 내 가상 체결로 공급(슬리피지 모델).
+                ★이중 차단 인터락: 사전무장(이중키 ValveWired∧LiveArmingWired 동시∧격리 프로브∧3σ)이 성공해야만 원자 flip 가능하며, flip 후에도 매 발주가 이중키∧MasterIgnited 를 재평가 — 미충족 시 실주문 0바이트+fail-closed 동결(liveArmed:false).
+                ★Think Beyond: 컷오버 직후 카나리 검역(RTT 단측 3σ) 실패 시 &lt;0.1ms 가역 되감기, 듀얼트랙(섀도우 예측 vs 실체결) 1raw 발산 시 경성 동결.
+            </div>
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -702,6 +752,10 @@
     private string _seed = "42";
     private string _chaosMsg = "";
 
+    // v4.97.0 — 원자 컷오버 서명 입력·상태 메시지.
+    private string _cutSig = "";
+    private string _cutMsg = "";
+
     // v4.93.0 — 🧠 패널 SVG 마이크로차트 데모 시계열 + 뉴스 닷(idx2 악재 파랑·idx5 호재 빨강). 실 운영은 종목별 시세/뉴스로 결속.
     private static readonly decimal[] _demoSeries = { 100m, 101m, 99m, 98m, 102m, 105m, 103m, 107m };
     private static readonly List<NewsRadarSvg.NewsDot> _demoDots = new() { new(2, false), new(5, true) };
@@ -754,6 +808,39 @@
         _sig = "";                 // 서명 즉시 화면에서 제거(잔류 방지)
         Recovery.Trigger(sig);     // mesh.Stop→ManualRelease→백로그 드레인(펜스)→점화 승격→Stable / 실패 시 재동결
     }
+
+    // v4.97.0 — 2단 컷오버 핸들러(순수 UI 스레드). 서명 공백은 fail-closed 거부. 컷오버 성공/거부 사유를 그대로 표출.
+    private void DoPreArm()
+    {
+        var sig = (_cutSig ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(sig)) { _cutMsg = "운영자 서명을 입력하세요."; return; }
+        _cutMsg = Cutover.PreArm(sig).Reason;   // 이중키∧격리프로브∧3σ → MasterIgnited(섀도우 유지)
+    }
+
+    private void DoCutover()
+    {
+        var sig = (_cutSig ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(sig)) { _cutMsg = "운영자 서명을 입력하세요."; return; }
+        var r = Cutover.Cutover(sig);           // 사전무장 확인·이중키 재검 → <1ms 원자 flip
+        _cutSig = "";                            // 서명 즉시 화면에서 제거(잔류 방지)
+        _cutMsg = r.Reason;
+    }
+
+    private void DoRollback()
+    {
+        Cutover.RollbackToShadow("운영자 수동 되감기 — 섀도우 플라이트 복귀");   // EnterShadow() 원자 flip(<0.1ms)
+        _cutMsg = "되감기 완료 — 섀도우 플라이트로 복귀(자본 100% 안전).";
+    }
+
+    // 컷오버 상태 배지 CSS(SHADOW=중립·ARMED=연결중·CANARY=스테일 점멸·LIVE/FROZEN=적색).
+    private static string CutoverBadgeCss(CutoverState s) => s switch
+    {
+        CutoverState.ArmedReady       => "prod-connecting",
+        CutoverState.CanaryQuarantine => "prod-stale",
+        CutoverState.Live             => "chaos-red",
+        CutoverState.Frozen           => "chaos-red",
+        _                             => "prod-idle",   // Shadow / RolledBack
+    };
 
     protected override void OnInitialized()
     {

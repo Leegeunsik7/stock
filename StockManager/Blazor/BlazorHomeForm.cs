@@ -379,6 +379,27 @@ namespace StockManager.Blazor
                 MaxObservedSigma     = sentinel.AlertThresholdSigma,   // 센티넬 3σ 임계와 정렬
             };
             services.AddSingleton(ignitionSeq);    // ClearingAuthorityPage 와 동급 — /command 점화 트리거용
+            // v4.97.0 — 실거래 섀도우 인입 & 원자적 컷오버 게이트웨이: 실 브로커 소켓은 시세/예수금/인증만 살리고, 최하위 주문
+            //   송출은 IsShadowMode(기본 true)면 100% 바이패스(실 소켓 0바이트). 가로챈 주문은 전용 섀도우 청산 메쉬에 50ms 내
+            //   가상 체결로 공급(슬리피지 모델). ★liveArmed:false 불변: 기본 섀도우=자본 100% 안전. 실전 전환은 오직
+            //   AtomicCutoverGate.PreArm(이중키∧프로브∧3σ 의식)→Cutover(원자 flip)의 명시 2단으로만. 섀도우 메쉬는 전용
+            //   attestation(격리)이라 가상 체결이 라이브 동결을 오염시키지 않음(freeze-pollution 방지·정찰 렌즈 C).
+            var shadowAtt  = new OrderAttestationService();
+            var shadowMesh = new LiveAccountingMesh(QMoney.Of(10_000_000m).Raw, shadowAtt);
+            shadowMesh.Start();
+            // ★DI 미등록 의도적: shadowMesh 도 LiveAccountingMesh 타입이라 AddSingleton 하면 라이브 accountingMesh(위) 등록을
+            //   last-wins 로 덮어써 @inject LiveAccountingMesh(📊 패널)가 섀도우 장부로 오해소됨. 게이트웨이가 참조를 보유하므로 DI 불필요.
+            FormClosed += (_, _) => { try { shadowMesh.Dispose(); } catch { } };
+            var shadowGateway = new ShadowExecutionGateway(liveAttestation: attestation, shadowMesh: shadowMesh);
+            shadowGateway.StartPump();
+            services.AddSingleton(shadowGateway);   // TelemetryMonitor 🕹️ 컷오버 & 섀도우 플라이트 대시보드 주입 대상
+            FormClosed += (_, _) => { try { shadowGateway.Dispose(); } catch { } };
+            var cutoverGate = new AtomicCutoverGate(
+                shadowGateway, ignitionSeq, ignition, attestation,
+                valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
+                liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false),
+                blackbox: blackbox);
+            services.AddSingleton(cutoverGate);     // TelemetryMonitor 🕹️ 컷오버 트리거(PreArm/Cutover)용
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -427,7 +448,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

@@ -47,6 +47,8 @@ namespace StockManager.Common
         RiskAdmit = 10, RiskReject = 11, RiskEscalate = 12,       // PreTradeRiskShield
         MmfPublish = 20, MmfConsume = 21, MmfPoison = 22,         // MmfIpcFabric
         NewsIngest = 30, NewsBreakerTrip = 31,                    // NewsIntelController
+        CutoverArmed = 40, CutoverLive = 41, CutoverRollback = 42, // v4.97.0 AtomicCutoverGate
+        CanaryTrip = 43, DualTrackFreeze = 44,                    // v4.97.0 카나리/듀얼트랙 방어
         Freeze = 90,                                             // ForceFreeze 격발
     }
 

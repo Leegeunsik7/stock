@@ -358,18 +358,56 @@ namespace StockManager.Common
         private readonly Func<string>? _bearer;  // OAuth 토큰 공급(openQuestions — 미주입 시 인증 헤더 생략)
         private readonly ITossSocket? _socket;   // WS 추상(미주입 시 ConnectAndSubscribe throw → fail-closed)
         private readonly OrderAttestationService? _att;  // ★인증 실패(401/403) fail-closed 채널
+        // ★v4.97.0 — 토스 송출 경계 영지식 절연(기존 갭 보강). 키움 SendOrderAsync 와 동일한 최하위 펜스를 토스 REST 에도 결속.
+        private readonly Func<bool>? _orderArmed;              // 이중키(ValveWired∧LiveArmingWired) 무장 술어(미주입=false)
+        private readonly Func<IgnitionStage>? _ignitionStage; // 점화 FSM 단계 공급(미주입=펜스 비활성=레거시)
+        private readonly ShadowExecutionGateway? _shadowGateway; // 섀도우 게이트웨이(우선 — 섀도우면 실 송출 0바이트 바이패스)
+        private int _aborted;                                  // 절연 위반 abort 래치(1=송출 영구 차단)
 
         public TossHttpTransport(string baseUrl, Func<string>? bearerTokenProvider = null, ITossSocket? socket = null,
-                                 OrderAttestationService? attestation = null)
+                                 OrderAttestationService? attestation = null,
+                                 Func<bool>? orderArmed = null, Func<IgnitionStage>? ignitionStage = null,
+                                 ShadowExecutionGateway? shadowGateway = null)
         {
             _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://api.toss-invest.example" : baseUrl;
             _bearer  = bearerTokenProvider;
             _socket  = socket;
             _att     = attestation;
+            _orderArmed     = orderArmed;
+            _ignitionStage  = ignitionStage;
+            _shadowGateway  = shadowGateway;
+        }
+
+        /// <summary>
+        /// ★v4.97.0 영지식 송출 절연(공용 펜스) — 실 HTTP 송신 '직전' 최하위 검문. 주문 계열 경로('/orders' 포함)에서만 발동.
+        /// 반환 non-null = 실 송출 금지 사유(섀도우 0바이트 바이패스/abort 래치). null = 송출 진행. 라이브-미무장 주문은 abort+ForceFreeze+throw(삼킴 금지).
+        /// 콜드 패스라 검증용 바이트 할당 허용.
+        /// </summary>
+        private string? FenceOutbound(string pathAndQuery)
+        {
+            if (_shadowGateway is null && _ignitionStage is null) return null;   // 미배선 — 레거시 통과(하위호환)
+            if (Volatile.Read(ref _aborted) != 0) return "토스 운반체 절연 abort 래치 — 송출 영구 차단(fail-closed)";
+            byte[] probe = Encoding.UTF8.GetBytes(pathAndQuery);
+            bool dualKey = _orderArmed?.Invoke() ?? false;
+            IgnitionStage stage = _ignitionStage?.Invoke() ?? IgnitionStage.Locked;
+            Action abort = () => Volatile.Write(ref _aborted, 1);
+            if (_shadowGateway is { } gw)
+            {
+                // 섀도우 우선: 섀도우면 실 송출 0바이트 바이패스, 라이브-미무장 주문이면 내부 AssertSendAllowed 가 abort+ForceFreeze+throw.
+                if (!gw.AllowOutboundBytes(probe, dualKey, stage, abort))
+                    return "[SHADOW] 토스 실 송출 차단 — 와이어 0바이트(가상 청산 경로로 우회)";
+            }
+            else
+            {
+                // 게이트웨이 미배선 — 절연기 직접(미무장 주문 패킷 → abort+ForceFreeze+throw, 삼킴 금지).
+                ZeroLeakProtocolIsolator.AssertSendAllowed(probe, dualKey, stage, _att, abort);
+            }
+            return null;
         }
 
         public (bool ok, string body) PostOrder(string pathAndQuery, string jsonBody)
         {
+            if (FenceOutbound(pathAndQuery) is { } blocked) return (false, blocked);
             using var req = new HttpRequestMessage(HttpMethod.Post, _baseUrl + pathAndQuery)
             {
                 Content = new StringContent(jsonBody, Encoding.UTF8, "application/json"),
@@ -380,7 +418,10 @@ namespace StockManager.Common
 
         public void DeleteOrder(string orderId)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Delete, _baseUrl + "/v1/orders/" + Uri.EscapeDataString(orderId));
+            // ★취소도 주문 계열 송출('/v1/orders/{id}') — 섀도우면 실 DELETE 0바이트 바이패스, 라이브-미무장이면 절연기 차단.
+            string path = "/v1/orders/" + Uri.EscapeDataString(orderId);
+            if (FenceOutbound(path) is not null) return;
+            using var req = new HttpRequestMessage(HttpMethod.Delete, _baseUrl + path);
             AttachAuth(req);
             _ = SendRead(req);
         }
