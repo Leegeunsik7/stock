@@ -25,9 +25,18 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.3.0</Version>
-    <AssemblyVersion>5.3.0.0</AssemblyVersion>
-    <FileVersion>5.3.0.0</FileVersion>
+    <Version>5.4.0</Version>
+    <AssemblyVersion>5.4.0.0</AssemblyVersion>
+    <FileVersion>5.4.0.0</FileVersion>
+    <!-- v5.4.0 — ★다중 전략 인터리빙 공존 & 실시간 바스켓 리밸런서(Multi-Strategy Interleaved Mesh): 격리된 복수 알파 두뇌를 단일 프로세스 안전 공존시키고 매수/매도를 미시 상쇄해 거래비용 극한 압축. 6렌즈 적대검증.
+         ★정직 회계(정찰 5차원): 신규 = MultiStrategyInterleavedMesh(δ=0 락프리 팬아웃·정수 가중치 자본 물리 분할·무할당 자본 가드)·RealTimeBasketNetter(대향 상쇄)·WashTradeGuard(자전거래 차단)·CrossStrategyContagionFirewall(전염 방화벽)·RingTelemetry +6. 재사용 = IHotStrategy.OnQuote·OrderProposal.GenomeId(전략 라우팅 키)·OrderDispatchRing.PublishRaw·GatedOrderDispatcher(무장 게이트)·StrategyStateCarrier(per-lane 통계)·PreTradeRiskShield CAS 관용구(재구현)·LiveAccountingMesh.FloorChargeCarry(가중치 분할 사상)·IgnitionLock(전역 캐스케이드 백스톱).
+         [과제1] MultiStrategyInterleavedMesh.cs: 복수 IHotStrategy 레인이 단일 OnQuote 스트림을 δ=0 락프리 팬아웃(stackalloc 인텐트·힙 0) 공유·소비. 전역 예수금을 정수 가중치 비율로 물리 분할(Repartition: floor+잔여 결정론 귀속·Σ==전역). 무할당 자본 가드(익스포저 기반: 레인 순 포지션이 서브버짓 1raw 초과 시 fail-closed 거부·타 전략 예산 잠식 불가). ProcessTick: 팬아웃→네팅→자전거래 가드→잔여만 사출(단일 소비자).
+         [과제2] RealTimeBasketNetter.cs: 동일 틱 대향 주문(A 매수 100·B 매도 100)을 나노초 인터리빙 대조로 내부 상쇄(Crossed 물리 사출 0), 잔여(Residual)만 하류 50ms 드레인 링 사출. 왕복 수수료·거래세 중복 누수 차단. 각 전략 장부는 자기 의도대로 가상 갱신. 절감 효율 2×상쇄/총 bps(≤100%·Int128 무오버플로).
+         [과제3] WashTradeGuard.cs: 네팅 우회 미세 시간차(마이크로 윈도우) 대향 주문의 교차 자전거래 레이스를 심볼 해시 슬롯(packed side|ticks·락프리)으로 전제 감지 → 무효화(OrderRejected). 거래소 자전거래 셧다운 방어. 시각 역행(dt&lt;0)도 fail-closed.
+         [★Think Beyond] CrossStrategyContagionFirewall.cs: 교차 전략 리스크 캐스케이드/공진 파멸을 3층 구조 봉쇄. ①자본 구획 격벽: 봉인 전략 자본을 재분배하지 않고 격리 예치(distributable=전역-격리) — '건강 전략이 죽은 전략 리스크 상속' 캐스케이드 구조적 불가(B 반응형 초월). ②δ=0 공동낙폭 비트셋 공진: 전략별 손실-에폭 ulong 비트셋 popcount(loss[i]&amp;loss[j]) 로 동기 낙폭 하드웨어 POPCNT 포착(A 부동소수 상관 초월·완전 결정론) → 주도 전략 봉인. ③손실 속도 퓨즈: 연속 낙폭 자폭 즉시 봉인. 다수 봉인 시 IgnitionLock 전역 백스톱(1회 래치).
+         [UI] RingTelemetry +6(활성 전략 수·봉인 레인·네팅 절감·자전거래 거부·공진 메트릭·자본 포화·Cell 832→896·93필드) + TelemetryMonitor 🔀 패널(전략 구획 자본 포화 다중 분할 가로 바·황색 [STRATEGY LAUNCH BUFFER MUTED - RESEGMENTING CAPITALS] 진압 배너·암흑자색 캐스케이드 오버레이+64bit 헥스).
+         ★liveArmed:false: 팬아웃/네팅/상쇄/잔여/봉인은 전부 GatedOrderDispatcher 무장∧이중키∧MasterIgnited 하류 — 미무장 시 실 송출 0바이트(유닛 실증). 자전거래 거부는 드레인 전 차단(실주문 경로 신설 아님). δ=0(팬아웃/네팅/Admit 핫패스 힙 0·전용 스레드 400k 측정)·결정론(정수 가중치·주입 시각·정수 popcount)·fail-closed(자본 초과·동결·시각 역행 거부).
+         테스트 +25(회귀 4). 적대검증 6렌즈 확정 10(중복 제거 6)교정: ★봉인 후 Repartition 격리 자본 재분배(격벽 붕괴 critical)→distributable=전역-격리, ★예약 반납 워터폴 불일치+성공 경로 잔여 예약 미반납 누수(high)→예약 셀 폐기·익스포저 기반 booking 리팩터(누수 클래스 원천 제거), ★Firewall MarkResult vs AdvanceEpoch lost-update(fail-open)→Interlocked.Exchange 원자 read-clear, ★WashGuard 시각 역행 fail-open→fail-closed, ★NettingEfficiencyBps 곱셈 오버플로→Int128, ★캐스케이드 백스톱 매 에폭 재발화→1회 래치. 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2086 통과. -->
     <!-- v5.3.0 — ★무정지 전략 핫패치 게이트 & ALC 격리 그리드(Hot-Strategy Reload Gate & ALC Isolation Grid): 메인 어셈블리·브로커 소켓·청산 메쉬가 살아있는 채로 알파 전략 바이너리만 메모리상 무정지 교체. 6렌즈 적대검증.
          ★정직 회계(정찰): 신규 = HotStrategyReloadGate(수거 ALC 격리·CAS 래치·원자 스왑·서명 fail-closed)·StrategyStateCarrier(δ=0 blittable 상태 이월)·ZombieAssemblyShield(세대 펜스+WeakReference 수거 어테스테이션)·IHotStrategy 계약·RingTelemetry +5. 재사용 = AssemblyLoadContext(PluginLoadContext 수거 ALC 선례)·CAS 래치(OrderDispatchRing.EnterPublish 관용구)·Interlocked.Exchange 참조 스왑·IgnitionLock.Downgrade·GatedOrderDispatcher(무장 게이트)·OrderAttestationService(동결 게이트).
          [과제1] HotStrategyReloadGate.cs: 신규 전략 DLL 인입→서명 검증(fail-closed)→수거 가능 AssemblyLoadContext(isCollectible:true) 격리 로드→CAS 래치로 구버전 핫패스 진입 원자 차단→신버전 원자 바인딩(Interlocked.Exchange)→상태 이월→세대 전진→구 ALC Unload. OnQuote 핫패스는 δ=0(Volatile 참조 독출+가상 호출+long 반환·힙 0). LoadCollectible 은 운영자 옵트인·AssemblyDependencyResolver 의존성 해석.

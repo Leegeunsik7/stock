@@ -32,6 +32,10 @@
 @inject HotStrategyReloadGate ReloadGate
 @inject StrategyStateCarrier StateCarrier
 @inject ZombieAssemblyShield Zombie
+@inject MultiStrategyInterleavedMesh Mesh
+@inject RealTimeBasketNetter Netter
+@inject WashTradeGuard WashGuard
+@inject CrossStrategyContagionFirewall Firewall
 @inject IJSRuntime JS
 
 <div class="top">
@@ -872,6 +876,84 @@
             메인 어셈블리·브로커 소켓·청산 메쉬가 살아있는 채로 알파 전략 바이너리만 수거 가능 ALC(isCollectible)에 격리 로드→CAS 래치로 구버전 핫패스 원자 차단→신버전 원자 바인딩(Interlocked.Exchange)→상태 이월→구 ALC Unload.
             ★Think Beyond 세대 펜스+WeakReference 어테스테이션: 핫스왑마다 세대 전진 — 구 ALC 누출 이벤트는 세대 불일치로 δ=0 거부(고아 방어), 구 ALC 는 grace(5s) 롤링 수거 확인 후 미수거 시 좀비 격리+IgnitionLock.Downgrade.
             ★liveArmed:false: 핫스왑은 무장 상태 무접촉 — 교체 전략의 신호도 무장 게이트(이중키∧MasterIgnited) 하류라 미무장 시 실 송출 0바이트. 서명 검증기 미배선이면 어떤 Reload 도 거부(fail-closed).
+        </div>
+    </div>
+
+    @* ══ v5.4.0 다중 전략 인터리빙 메쉬 & 바스켓 네팅 코어 ═══════════════════════ *@
+    @{
+        int  msActive  = Mesh.ActiveLaneCount;
+        int  msSealed  = Mesh.SealedLaneCount;
+        int  msMuted   = Mesh.MutedLaneCount;
+        int  msLanes   = Mesh.LaneCount;
+        long msSatBps  = Mesh.CapitalSaturationBps;
+        long netSaved  = Netter.SavedCostRawCum;
+        long netEff    = Netter.NettingEfficiencyBps;
+        long netEvents = Netter.NetEvents;
+        long crossed   = Netter.CrossedQtyCum;
+        long washRej   = WashGuard.Rejections;
+        long washAdm   = WashGuard.Admits;
+        long fwRes     = Firewall.ResonanceMetric;
+        long fwSeals   = Firewall.SealCount;
+        long fwCasc    = Firewall.Cascades;
+        long fwEpochs  = Firewall.Epochs;
+        bool cascade   = fwCasc > 0;
+        bool muted     = !cascade && (msSealed + msMuted + fwSeals) > 0;
+        // 포렌식 코드(64bit): [공진16|봉인16|캐스케이드16|자전거래거부16]
+        long mHex = ((fwRes & 0xFFFF) << 48) | ((fwSeals & 0xFFFF) << 32) | ((fwCasc & 0xFFFF) << 16) | (washRej & 0xFFFF);
+        decimal savedDec = netSaved / 100_000_000m;
+    }
+    @if (cascade)
+    {
+        <div style="margin:0 28px 18px;background:rgba(60,10,90,0.34);border:2px solid #7b1fa2;border-radius:10px;padding:18px 22px;animation:recpulse 0.7s ease-in-out infinite">
+            <div style="font-size:16px;font-weight:700;color:#ce93d8;margin-bottom:6px">🟪 [CROSS-STRATEGY RISK CASCADE — 교차 전략 전염·자본 구획 봉인·전역 강등 수렴]</div>
+            <div style="font-size:13px;color:#e1bee7;font-family:var(--mono)">
+                FORENSIC ERR CODE: <b>0x@(mHex.ToString("X16"))</b> &nbsp;|&nbsp; 공진 @fwRes.ToString("N0") · 봉인 구획 @fwSeals.ToString("N0") · 캐스케이드 @fwCasc.ToString("N0") · 자전거래 거부 @washRej.ToString("N0")
+            </div>
+        </div>
+    }
+    else if (muted)
+    {
+        <div style="margin:0 28px 18px;background:rgba(255,193,7,0.18);border:2px solid #ffc107;border-radius:10px;padding:16px 20px;animation:recpulse 0.9s ease-in-out infinite">
+            <div style="font-size:15px;font-weight:700;color:#ffca28">🟡 [STRATEGY LAUNCH BUFFER MUTED - RESEGMENTING CAPITALS] — 공진/자폭 전략 구획 봉인·생존 구획 자본 재분할</div>
+        </div>
+    }
+    <div class="kpi-card @(cascade ? "kpi-alert" : (muted ? "kpi-amber" : "kpi-hotswap-ok"))" style="margin-bottom:22px">
+        <div class="kpi-label">🔀 다중 전략 인터리빙 메쉬 & 바스켓 네팅 코어 (Multi-Strategy Interleaved Mesh &amp; Netting)</div>
+        @* 전략별 자본 포화 다중 분할 가로 바(Pure CSS·레인마다 세로 포화 게이지·봉인=자색/진압=황색/포화高=적색) *@
+        <div style="margin-top:10px">
+            <div class="kpi-sub" style="margin-bottom:4px">전략 구획 자본 포화 — 활성 @msActive · 봉인/진압 @(msSealed + msMuted) · 총 @msLanes 레인</div>
+            @if (msLanes > 0)
+            {
+                <div style="display:flex;height:20px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,0.06);gap:1px">
+                    @for (int i = 0; i < msLanes; i++)
+                    {
+                        var st = Mesh.LaneStateOf(i);
+                        long satI = Mesh.LaneSaturationBps(i);
+                        double fill = Math.Clamp(satI / 100.0, 0.0, 100.0);
+                        string segColor = st == LaneState.Sealed ? "#7b1fa2" : st == LaneState.Muted ? "#ffb300" : (satI >= 9000 ? "#e34d4d" : satI >= 6000 ? "#ffb300" : "#4caf50");
+                        <div style="flex:1;position:relative;background:rgba(255,255,255,0.05)" title="레인 @i 포화 @((satI/100.0).ToString("F1"))%">
+                            <div style="position:absolute;bottom:0;left:0;right:0;height:@(fill.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))%;background:@segColor;transition:height .2s"></div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="height:20px;border-radius:6px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted,#888)">대기 — 운영자 전략 레인 등록 전(시세 수신·레인 등록은 무장 무관)</div>
+            }
+        </div>
+        <div style="display:flex;gap:20px;margin-top:12px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:18px">@msActive<span style="font-size:12px"> / @msLanes</span></div><div class="kpi-sub">활성 공존 전략(총 레인)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">₩@savedDec.ToString("N0")</div><div class="kpi-sub">누적 네팅 절감(상쇄 @crossed.ToString("N0")·효율 @((netEff/100.0).ToString("F1"))%)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@netEvents.ToString("N0")</div><div class="kpi-sub">네팅 처리 틱</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@washRej.ToString("N0")</div><div class="kpi-sub">★자전거래 차단(통과 @washAdm.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(cascade ? "chaos-red" : fwSeals > 0 ? "chaos-amber" : "prod-auth")">@fwRes.ToString("N0")</span></div><div class="kpi-sub">★공진 메트릭(봉인 @fwSeals·캐스케이드 @fwCasc·에폭 @fwEpochs)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@((msSatBps/100.0).ToString("F1"))%</div><div class="kpi-sub">전체 자본 포화도</div></div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            복수 격리 알파 두뇌가 단일 시세 스트림을 δ=0 락프리 팬아웃 공유·소비. 전역 예수금을 정수 가중치 비율로 물리 분할(무할당 자본 가드: 1raw 초과 발주 차단·타 전략 예산 잠식 불가). 동일 틱 대향 주문은 내부 상쇄(왕복 수수료·세 절감), 잔여만 하류 사출.
+            ★Think Beyond 교차 전략 전염 방화벽: 봉인 자본 재분배 금지(구획 격벽)+δ=0 공동낙폭 비트셋 공진(popcount)+손실속도 퓨즈 → 주도 전략 봉인, 다수 봉인 시 IgnitionLock 전역 백스톱. 자전거래 가드는 마이크로 윈도우 대향 주문 무효화(거래소 자전거래 셧다운 방어).
+            ★liveArmed:false: 팬아웃/네팅/상쇄/잔여는 전부 무장 게이트(이중키∧MasterIgnited) 하류 — 미무장 시 실 송출 0바이트. 자전거래 거부도 드레인 전 차단이지 실주문 경로 신설 아님.
         </div>
     </div>
 

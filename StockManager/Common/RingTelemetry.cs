@@ -127,6 +127,13 @@ namespace StockManager.Common
         public readonly long   StateCarryRttNs;             // 최근 상태 이월 RTT(ns)
         public readonly long   ZombieAssemblyCount;         // 좀비 어셈블리(언로드 실패) 누적
         public readonly long   OrphanEventsRejected;        // 세대 펜스 거부 고아 이벤트 누적
+        // v5.4.0 — 다중 전략 인터리빙 메쉬 & 바스켓 네팅: 활성 전략·봉인·네팅 절감·자전거래·공진·자본 포화.
+        public readonly long   ActiveStrategyCount;         // 활성 공존 전략 인스턴스 수
+        public readonly long   SealedLaneCount;             // 봉인/진압된 전략 레인 수(방화벽·자전거래)
+        public readonly long   NettingSavedCostRaw;         // 누적 네팅 왕복 비용 절감(raw·수수료+세)
+        public readonly long   WashTradeRejections;         // 자전거래 차단막 거부 누적
+        public readonly long   ResonanceMetric;             // 최대 쌍 공동낙폭 공진 메트릭(위험 수치)
+        public readonly long   CapitalSaturationBps;        // 전 레인 자본 포화도(bps·예약/할당)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -158,7 +165,9 @@ namespace StockManager.Common
                              long imbalanceScoreRaw = 0L, long liquiditySlicesEmitted = 0L, long orderThrottleCount = 0L,
                              long slippageSavedBps = 0L, long toxicityCode = 0L,
                              long strategyGeneration = 0L, long strategyBuildTicks = 0L, long stateCarryRttNs = 0L,
-                             long zombieAssemblyCount = 0L, long orphanEventsRejected = 0L)
+                             long zombieAssemblyCount = 0L, long orphanEventsRejected = 0L,
+                             long activeStrategyCount = 0L, long sealedLaneCount = 0L, long nettingSavedCostRaw = 0L,
+                             long washTradeRejections = 0L, long resonanceMetric = 0L, long capitalSaturationBps = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -247,6 +256,12 @@ namespace StockManager.Common
             StateCarryRttNs             = stateCarryRttNs;
             ZombieAssemblyCount         = zombieAssemblyCount;
             OrphanEventsRejected        = orphanEventsRejected;
+            ActiveStrategyCount         = activeStrategyCount;
+            SealedLaneCount             = sealedLaneCount;
+            NettingSavedCostRaw         = nettingSavedCostRaw;
+            WashTradeRejections         = washTradeRejections;
+            ResonanceMetric             = resonanceMetric;
+            CapitalSaturationBps        = capitalSaturationBps;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -422,6 +437,10 @@ namespace StockManager.Common
         // v5.3.0 — 무정지 전략 핫패치 UI 헬퍼.
         public bool    ZombieDetected    => ZombieAssemblyCount > 0L;
         public double  StateCarryRttMicros => StateCarryRttNs / 1000.0;   // ns→µs 표시
+        // v5.4.0 — 다중 전략 인터리빙 & 네팅 UI 헬퍼.
+        public bool    StrategyMuted       => SealedLaneCount > 0L;                       // 봉인/진압 발생 → amber 경고
+        public decimal NettingSavedCost    => NettingSavedCostRaw / (decimal)QMath.Scale;  // 절감 비용(통화 단위)
+        public double  CapitalSaturationPct => CapitalSaturationBps / 100.0;              // bps→% 표시
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -430,9 +449,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.3.0 기준 필드 87개×8=696B → Data 128..824B ≤ 832(64배수·잔여 1슬롯=8B).
-        //   (v5.2.0 82필드=656B→832 잔여 6슬롯 → v5.3.0 핫패치 5필드 추가로 87필드 → 잔여 1슬롯. ★2필드 초과 추가 시 Size 832→896 상향 필수.)
-        [StructLayout(LayoutKind.Explicit, Size = 832)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.4.0 기준 필드 93개×8=744B → Data 128..872B ≤ 896(64배수·잔여 3슬롯=24B).
+        //   (v5.3.0 87필드=696B→832 잔여 1슬롯 → v5.4.0 다중전략 6필드 추가로 93필드 → Size 832→896 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
+        [StructLayout(LayoutKind.Explicit, Size = 896)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -527,6 +546,10 @@ namespace StockManager.Common
         private readonly HotStrategyReloadGate? _reloadGate;      // v5.3.0 — 무정지 전략 핫패치 게이트(옵션·기본 null)
         private readonly StrategyStateCarrier? _stateCarrier;     // v5.3.0 — 상태 이월 캐리어(옵션·기본 null)
         private readonly ZombieAssemblyShield? _zombieShield;     // v5.3.0 — 좀비 어셈블리 방어막(옵션·기본 null)
+        private readonly MultiStrategyInterleavedMesh? _mesh;     // v5.4.0 — 다중 전략 인터리빙 메쉬(옵션·기본 null)
+        private readonly RealTimeBasketNetter? _netter;           // v5.4.0 — 실시간 바스켓 네터(옵션·기본 null)
+        private readonly WashTradeGuard? _washGuard;              // v5.4.0 — 자전거래 차단막(옵션·기본 null)
+        private readonly CrossStrategyContagionFirewall? _firewall; // v5.4.0 — 교차 전략 전염 방화벽(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -566,7 +589,11 @@ namespace StockManager.Common
                                       ToxicFlowSentinel? toxic = null,
                                       HotStrategyReloadGate? reloadGate = null,
                                       StrategyStateCarrier? stateCarrier = null,
-                                      ZombieAssemblyShield? zombieShield = null)
+                                      ZombieAssemblyShield? zombieShield = null,
+                                      MultiStrategyInterleavedMesh? mesh = null,
+                                      RealTimeBasketNetter? netter = null,
+                                      WashTradeGuard? washGuard = null,
+                                      CrossStrategyContagionFirewall? firewall = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -605,6 +632,10 @@ namespace StockManager.Common
             _reloadGate   = reloadGate;
             _stateCarrier = stateCarrier;
             _zombieShield = zombieShield;
+            _mesh         = mesh;
+            _netter       = netter;
+            _washGuard    = washGuard;
+            _firewall     = firewall;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -710,6 +741,12 @@ namespace StockManager.Common
                 if (_reloadGate is { } rg) { stGen = rg.Generation; stBuild = rg.ActiveBuildTicks; }
                 if (_stateCarrier is { } scr) carryRtt = scr.LastHandoverRttNs;
                 if (_zombieShield is { } zs) { zombie = zs.ZombieCount; orphan = zs.OrphanEventsRejected; }
+                // v5.4.0 — 다중 전략 인터리빙 메쉬·네팅·자전거래·전염 방화벽 합류(미배선이면 0).
+                long msActive = 0L, msSealed = 0L, nettSaved = 0L, washRej = 0L, resonance = 0L, capSat = 0L;
+                if (_mesh is { } m) { msActive = m.ActiveLaneCount; msSealed = m.SealedLaneCount + m.MutedLaneCount; capSat = m.CapitalSaturationBps; }
+                if (_netter is { } nt) nettSaved = nt.SavedCostRawCum;
+                if (_washGuard is { } wgd) washRej = wgd.Rejections;
+                if (_firewall is { } fw) { resonance = fw.ResonanceMetric; if (msSealed == 0L) msSealed = fw.SealCount; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -728,7 +765,8 @@ namespace StockManager.Common
                     gnState, gnDep, cpDrift, brCeil, ksState, dmState,
                     wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode,
                     mlImb, mlSlices, thrCount, savedBps, toxCode,
-                    stGen, stBuild, carryRtt, zombie, orphan));
+                    stGen, stBuild, carryRtt, zombie, orphan,
+                    msActive, msSealed, nettSaved, washRej, resonance, capSat));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

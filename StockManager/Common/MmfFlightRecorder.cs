@@ -55,6 +55,8 @@ namespace StockManager.Common
         OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
         LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
         StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어
+        BasketNetted = 83, WashTradeRejected = 84, StrategyFanout = 85,   // v5.4.0 다중 전략 인터리빙·네팅·자전거래 방어
+        RiskCascade = 86, CapitalResegment = 87,                         // v5.4.0 교차 전략 캐스케이드 방화벽·자본 재분할
         Freeze = 90,                                             // ForceFreeze 격발
     }
 

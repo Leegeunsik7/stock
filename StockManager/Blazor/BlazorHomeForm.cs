@@ -458,6 +458,21 @@ namespace StockManager.Blazor
             var reloadGate = new HotStrategyReloadGate(stateCarrier, zombieShield,
                 verifyProvenance: null, requireProvenance: true, attestation: attestation, blackbox: blackbox);
             services.AddSingleton(reloadGate);   // TelemetryMonitor 🔌 핫스트래티지 리로드 게이트 패널 주입 대상
+            // v5.4.0 — 다중 전략 인터리빙 공존 & 실시간 바스켓 리밸런서. ★liveArmed:false 불변: 팬아웃/네팅/상쇄/잔여 사출은
+            //   전부 무장 게이트 하류 — 잔여도 GatedOrderDispatcher 이중키∧MasterIgnited 없이 실 송출 0바이트. 자전거래 가드는 드레인 전 거부.
+            //   네터: 동일 틱 대향 주문 내부 상쇄(왕복 수수료·세 절감), 잔여만 dispatchRing 사출. 방화벽: 공진/자폭 구획 봉인+캐스케이드 시 IgnitionLock 백스톱.
+            //   ★자본 물리 분할은 전역 모의 예수금 위 논리 오버레이(가중치 정수비). 실 전략 인스턴스 레인 등록·OnQuote 펌프는 운영자 옵트인(현 dormant·시세 수신은 무장 무관).
+            var basketNetter = new RealTimeBasketNetter(roundTripCostBps: 46);   // 한국 관례 왕복 비용 근사(거래세+수수료)
+            services.AddSingleton(basketNetter);
+            long washWindowTicks = System.Diagnostics.Stopwatch.Frequency / 100;   // 10ms 대향 금지 마이크로 윈도우
+            var washGuard = new WashTradeGuard(washWindowTicks, capacity: 1024, blackbox: blackbox);
+            services.AddSingleton(washGuard);
+            var contagionFirewall = new CrossStrategyContagionFirewall(capacity: 16, resonanceThreshold: 6, velocityFuse: 8, cascadeSeals: 3, ignition: ignition, blackbox: blackbox);
+            services.AddSingleton(contagionFirewall);
+            var strategyMesh = new MultiStrategyInterleavedMesh(capacity: 16, meshGenomeId: 0L, ring: dispatchRing, attestation: attestation,
+                netter: basketNetter, washGuard: washGuard, firewall: contagionFirewall, blackbox: blackbox);
+            strategyMesh.Repartition(QMoney.Of(10_000_000m).Raw);   // 전역 예수금(모의 시드) 가중치 분할 준비 — 레인 등록 전엔 무동작
+            services.AddSingleton(strategyMesh);   // TelemetryMonitor 🔀 다중전략 인터리빙 메쉬 패널 주입 대상
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -506,7 +521,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
