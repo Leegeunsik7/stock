@@ -22,6 +22,10 @@
 @inject BlastRadiusLimiter BlastRadius
 @inject RemoteKillSwitch KillSwitch
 @inject DeadmanReverseCutover Deadman
+@inject LiveSessionWatchdog Watchdog
+@inject AutonomousFailoverController Failover
+@inject ThreadStarvationSensor Starvation
+@inject AdaptiveOrphanReaper OrphanReaper
 @inject IJSRuntime JS
 
 <div class="top">
@@ -708,6 +712,51 @@
                 ★실 계좌 접속·자격증명 인가·1주 실 사출은 운영자(사람)가 이중키+서명으로 직접 수행 — 본 대시보드는 안전 골격의 상태 관측 + Red Team 훈련 컨트롤만 제공.
                 킬스위치는 서명 검증 후 &lt;0.1ms 내 ForceFreeze+금고 재봉인+소켓 Abort 로 수렴(블랙박스 10만 패킷 자동 보존). 데드맨은 30초 생존신호 소실 시 자동 섀도우 역-컷오버.
             </div>
+        </div>
+    </div>
+
+    @* ══ v5.1.0 자율 무정지 복구 & 실전 라이브 감시망 ═══════════════════════════ *@
+    @{
+        bool wdComa = Watchdog.Health == SessionHealth.Coma;
+        bool foActive = Failover.Active == ActiveChannel.Standby;
+        bool chDown = Failover.Active == ActiveChannel.None;
+        bool bsFrozen = OrphanReaper.Freezes > 0;
+        bool wdHealthy = !wdComa && Failover.Active == ActiveChannel.Primary && !bsFrozen;
+        long bsHex = (OrphanReaper.Freezes << 24) | ((OrphanReaper.Orphans & 0xFFFF) << 8) | (Failover.Failovers & 0xFF);
+    }
+    @if (bsFrozen)
+    {
+        <div style="margin:0 28px 18px;background:rgba(150,10,10,0.30);border:2px solid #b40000;border-radius:10px;padding:18px 22px;animation:recpulse 0.7s ease-in-out infinite">
+            <div style="font-size:16px;font-weight:700;color:#ff3030;margin-bottom:6px">🟥 [BLACK SWAN DEFENSE — 자본 묶임 강제 동결(고아주문 재수확 데드라인 초과)]</div>
+            <div style="font-size:13px;color:#ffb0b0;font-family:var(--mono)">
+                FORENSIC ERR CODE: <b>0x@(bsHex.ToString("X8"))</b> &nbsp;|&nbsp; 고아 탐지 @OrphanReaper.Orphans.ToString("N0") · 자본 회수 @OrphanReaper.Reclaimed.ToString("N0") · 강제 동결 @OrphanReaper.Freezes.ToString("N0")
+            </div>
+        </div>
+    }
+    else if (foActive || chDown)
+    {
+        <div style="margin:0 28px 18px;background:rgba(255,193,7,0.18);border:2px solid #ffc107;border-radius:10px;padding:16px 20px;animation:recpulse 1s ease-in-out infinite">
+            <div style="font-size:15px;font-weight:700;color:#ffca28">🟡 @(chDown ? "[ALL CHANNELS DOWN — FAIL-CLOSED FREEZE]" : "[AUTONOMOUS FAILOVER IN PROGRESS - ROUTING TO STANDBY]")</div>
+        </div>
+    }
+    <div class="kpi-card @(bsFrozen || chDown ? "kpi-alert" : (wdComa || foActive ? "kpi-amber" : ""))" style="margin-bottom:22px">
+        <div class="kpi-label">🐕 Autonomous Live Watchdog & Healing Core — 자율 무정지 복구 감시망</div>
+        @if (wdHealthy)
+        {
+            <div class="prod-safe-banner">🔵 [ALL SESSIONS HEALTHY — WATCHDOG & HEALING CORE NOMINAL]</div>
+        }
+        <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(wdComa ? "chaos-red" : "prod-auth")">@Watchdog.Health.ToString()</span></div><div class="kpi-sub">① 세션 감시견 (Coma @Watchdog.ComaCount.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@((Watchdog.LastLatencyTicks / 10.0).ToString("F0", System.Globalization.CultureInfo.InvariantCulture))<span style="font-size:12px">µs</span></div><div class="kpi-sub">세션 왕복 지연</div></div>
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(chDown ? "chaos-red" : foActive ? "chaos-amber" : "prod-auth")">@Failover.Active.ToString()</span></div><div class="kpi-sub">② 활성 채널 (페일오버 @Failover.Failovers.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@((Starvation.AvailabilityScoreMilli / 10.0).ToString("F0", System.Globalization.CultureInfo.InvariantCulture))<span style="font-size:12px">%</span></div><div class="kpi-sub">③ 쓰레드풀 가용성 (아사 @Starvation.Starvations.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@OrphanReaper.InFlightCount.ToString("N0")</div><div class="kpi-sub">④ 고아 감시 in-flight</div></div>
+            <div><div class="kpi-value" style="font-size:16px"><span class="prod-badge @(bsFrozen ? "chaos-red" : OrphanReaper.Orphans > 0 ? "chaos-amber" : "prod-auth")">@(bsFrozen ? "FROZEN" : OrphanReaper.Orphans > 0 ? "ORPHANS" : "NOMINAL")</span></div><div class="kpi-sub">★블랙스완 방어선</div></div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            ① 20ms 핑퐁 RTT 연속 3회 100ms 초과→Coma 진단→IgnitionLock.Downgrade + 격리 소켓 리셋. ② 채널 물리 장애→대안 채널 자율 라우팅(exactly-once dedup @Failover.DedupBlocks.ToString("N0") 차단·복구 @Failover.Recoveries.ToString("N0")), 양채널 다운→fail-closed. ③ ThreadPool 아사+지터→SetMinThreads 프로비저닝(@Starvation.Provisions.ToString("N0")).
+            ④ ★Think Beyond: 발주 후 종단 응답 무도착(자본 허공 묶임)을 실측 RTT 분포 적응형 데드라인으로 탐지→진상 조회 자본 회수(heal)→불확정+재수확 데드라인 초과 시 fail-closed 동결.
+            ★liveArmed:false: 모든 자율 복구는 '더 안전한 방향(강등/동결/섀도우)'으로만 — 페일오버·세션 리셋이 백만 번 일어나도 이중키(ValveWired∧LiveArmingWired)∧MasterIgnited 없이는 실주문 0바이트.
         </div>
     </div>
 

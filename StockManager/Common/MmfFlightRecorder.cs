@@ -51,6 +51,8 @@ namespace StockManager.Common
         CanaryTrip = 43, DualTrackFreeze = 44,                    // v4.97.0 카나리/듀얼트랙 방어
         GenesisSynced = 50, CanaryReconcile = 51, BlastRadiusBreach = 52, // v5.0.0 실전 총점화
         KillSwitchTrip = 53, DeadmanRevert = 54, RedTeamDrill = 55,       // v5.0.0 Red Team·데드맨
+        ComaDiagnosed = 60, ChannelFailover = 61, ThreadStarvation = 62, // v5.1.0 자율 라이브 감시망
+        OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
         Freeze = 90,                                             // ForceFreeze 격발
     }
 

@@ -107,6 +107,14 @@ namespace StockManager.Common
         public readonly long   BlastRadiusCeilingRaw;       // 카나리 검역창 명목 상한(raw·long.MaxValue=무제한)
         public readonly long   KillSwitchStateCode;         // 0 대기/1 발동됨
         public readonly long   DeadmanStateCode;            // 0 유휴/1 감시중/2 역-컷오버됨
+        // v5.1.0 — 자율 라이브 감시망: 세션 지연·Coma·페일오버·쓰레드풀 가용성·블랙스완(고아) 방어선.
+        public readonly long   SessionLatencyMicros;        // 최근 세션 왕복 지연(µs)
+        public readonly long   SessionHealthCode;           // 0 건강/1 Coma(혼수)
+        public readonly long   FailoverActiveChannel;       // 0 Primary/1 Standby/2 None(양채널 다운)
+        public readonly long   FailoverCount;               // 자율 페일오버 누적
+        public readonly long   ThreadPoolAvailabilityMilli; // ThreadPool 가용성 점수(0..1000·높을수록 건강)
+        public readonly long   OrphanInFlight;              // 현재 미해제(in-flight) 주문 수
+        public readonly long   BlackSwanDefenseCode;        // 0 정상/1 고아 탐지/2 강제 동결(자본 묶임 방어)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -131,7 +139,10 @@ namespace StockManager.Common
                              long shadowModeActive = 0L, long shadowFillRttMicros = 0L, long cutoverStateCode = 0L,
                              long canaryDeviationRaw = 0L, long dualTrackDriftRaw = 0L,
                              long genesisStateCode = 0L, long genesisDepositKrwRaw = 0L, long canaryNetDriftRaw = 0L,
-                             long blastRadiusCeilingRaw = 0L, long killSwitchStateCode = 0L, long deadmanStateCode = 0L)
+                             long blastRadiusCeilingRaw = 0L, long killSwitchStateCode = 0L, long deadmanStateCode = 0L,
+                             long sessionLatencyMicros = 0L, long sessionHealthCode = 0L, long failoverActiveChannel = 0L,
+                             long failoverCount = 0L, long threadPoolAvailabilityMilli = 0L, long orphanInFlight = 0L,
+                             long blackSwanDefenseCode = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -203,6 +214,13 @@ namespace StockManager.Common
             BlastRadiusCeilingRaw     = blastRadiusCeilingRaw;
             KillSwitchStateCode       = killSwitchStateCode;
             DeadmanStateCode          = deadmanStateCode;
+            SessionLatencyMicros        = sessionLatencyMicros;
+            SessionHealthCode           = sessionHealthCode;
+            FailoverActiveChannel       = failoverActiveChannel;
+            FailoverCount               = failoverCount;
+            ThreadPoolAvailabilityMilli = threadPoolAvailabilityMilli;
+            OrphanInFlight              = orphanInFlight;
+            BlackSwanDefenseCode        = blackSwanDefenseCode;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -358,6 +376,16 @@ namespace StockManager.Common
         public bool    DeadmanReverted   => DeadmanStateCode == 2L;
         public bool    BlastRadiusActive => BlastRadiusCeilingRaw > 0L && BlastRadiusCeilingRaw != long.MaxValue;
         public decimal GenesisDepositKrw => GenesisDepositKrwRaw / (decimal)QMath.Scale;
+        // v5.1.0 — 자율 라이브 감시망 UI 헬퍼.
+        public bool    SessionComa       => SessionHealthCode != 0L;
+        public bool    FailoverActive    => FailoverActiveChannel == 1L;                 // Standby 라우팅 중
+        public bool    ChannelsDown      => FailoverActiveChannel == 2L;                 // 양채널 다운
+        public string  ActiveChannelName => FailoverActiveChannel switch { 0 => "PRIMARY", 1 => "STANDBY", 2 => "NONE", _ => "?" };
+        public double  ThreadPoolAvailability => ThreadPoolAvailabilityMilli / 1000.0;   // 0..1
+        public bool    BlackSwanFrozen   => BlackSwanDefenseCode == 2L;
+        public string  BlackSwanName     => BlackSwanDefenseCode switch { 0 => "NOMINAL", 1 => "ORPHANS", 2 => "FROZEN", _ => "?" };
+        /// <summary>자율 감시망 종합 건강(청색 인디케이터 게이트) — Coma/페일오버/양채널다운/블랙스완 중 하나라도 있으면 false.</summary>
+        public bool    WatchdogHealthy   => !SessionComa && FailoverActiveChannel == 0L && BlackSwanDefenseCode == 0L;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -366,9 +394,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.0.0 기준 필드 70개×8=560B → Data 128..688B ≤ 704(64배수·잔여 2슬롯=16B).
-        //   (v4.97.0 64필드=512B→704 헤드룸 8슬롯 → v5.0.0 실전 총점화 6필드 추가로 70필드 → 잔여 2슬롯. ★2필드 초과 추가 시 Size 704→768 상향 필수.)
-        [StructLayout(LayoutKind.Explicit, Size = 704)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.1.0 기준 필드 77개×8=616B → Data 128..744B ≤ 768(64배수·잔여 3슬롯=24B).
+        //   (v5.0.0 70필드=560B→704 잔여 2슬롯 → v5.1.0 자율 감시망 7필드 추가로 77필드 → 704 초과 → 768 로 상향·헤드룸 3슬롯.)
+        [StructLayout(LayoutKind.Explicit, Size = 768)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -453,6 +481,10 @@ namespace StockManager.Common
         private readonly BlastRadiusLimiter? _blastRadius;         // v5.0.0 — 블래스트 반경 제한기(옵션·기본 null)
         private readonly RemoteKillSwitch? _killSwitch;            // v5.0.0 — 원격 킬스위치(옵션·기본 null)
         private readonly DeadmanReverseCutover? _deadman;         // v5.0.0 — 데드맨 역-컷오버(옵션·기본 null)
+        private readonly LiveSessionWatchdog? _watchdog;          // v5.1.0 — 세션 하트비트 감시견(옵션·기본 null)
+        private readonly AutonomousFailoverController? _failover; // v5.1.0 — 자율 채널 페일오버(옵션·기본 null)
+        private readonly ThreadStarvationSensor? _starvation;     // v5.1.0 — 쓰레드 아사 센서(옵션·기본 null)
+        private readonly AdaptiveOrphanReaper? _reaper;           // v5.1.0 — 적응형 고아주문 사냥꾼(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -482,7 +514,11 @@ namespace StockManager.Common
                                       CanaryLiveProbe? canaryProbe = null,
                                       BlastRadiusLimiter? blastRadius = null,
                                       RemoteKillSwitch? killSwitch = null,
-                                      DeadmanReverseCutover? deadman = null)
+                                      DeadmanReverseCutover? deadman = null,
+                                      LiveSessionWatchdog? watchdog = null,
+                                      AutonomousFailoverController? failover = null,
+                                      ThreadStarvationSensor? starvation = null,
+                                      AdaptiveOrphanReaper? reaper = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -511,6 +547,10 @@ namespace StockManager.Common
             _blastRadius  = blastRadius;
             _killSwitch   = killSwitch;
             _deadman      = deadman;
+            _watchdog     = watchdog;
+            _failover     = failover;
+            _starvation   = starvation;
+            _reaper       = reaper;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -600,6 +640,12 @@ namespace StockManager.Common
                 if (_blastRadius is { } br) brCeil = br.CeilingRaw;
                 if (_killSwitch is { } ks) ksState = (long)ks.State;
                 if (_deadman is { } dm) dmState = (long)dm.State;
+                // v5.1.0 — 자율 라이브 감시망(세션 지연 µs·Coma·페일오버·쓰레드풀 가용성·고아 in-flight·블랙스완 방어선) 합류(미배선이면 0).
+                long wdLat = 0L, wdHealth = 0L, foChan = 0L, foCount = 0L, tpAvail = 0L, orInFlight = 0L, bsCode = 0L;
+                if (_watchdog is { } wd) { wdLat = wd.LastLatencyTicks / 10L; wdHealth = (long)wd.Health; }   // 100ns ticks→µs(÷10)
+                if (_failover is { } fo) { foChan = (long)fo.ResolveChannel(); foCount = fo.Failovers; }
+                if (_starvation is { } ts) tpAvail = ts.AvailabilityScoreMilli;
+                if (_reaper is { } rp) { orInFlight = rp.InFlightCount; bsCode = rp.Freezes > 0 ? 2L : (rp.Orphans > 0 ? 1L : 0L); }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -615,7 +661,8 @@ namespace StockManager.Common
                     bbSat, bbRate, bbDump, bbDrop,
                     acFeeKrw, acFeeUsd, acCarry, acLatch, acState,
                     sgShadow, sgRtt, coState, coCanary, coDrift,
-                    gnState, gnDep, cpDrift, brCeil, ksState, dmState));
+                    gnState, gnDep, cpDrift, brCeil, ksState, dmState,
+                    wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

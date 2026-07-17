@@ -25,9 +25,18 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.0.0</Version>
-    <AssemblyVersion>5.0.0.0</AssemblyVersion>
-    <FileVersion>5.0.0.0</FileVersion>
+    <Version>5.1.0</Version>
+    <AssemblyVersion>5.1.0.0</AssemblyVersion>
+    <FileVersion>5.1.0.0</FileVersion>
+    <!-- v5.1.0 — ★자율 무정지 복구 & 실전 라이브 감시망(Autonomous Live Watchdog & Recovery): 실물 자본 상주 중 물리 인프라 마비·OS 자원 고갈을 스스로 극복·치료. 4렌즈 적대검증.
+         ★정직 회계(정찰 4렌즈): 신규 = LiveSessionWatchdog(Coma FSM)·AutonomousFailoverController(채널 페일오버+exactly-once)·ThreadStarvationSensor(ThreadPool 아사)·AdaptiveOrphanReaper(적응형 고아 자본회수)·RingTelemetry +7. 재사용 = ExecutionMicrostructureGuard(연속카운팅 원형)·IgnitionLock.Downgrade·MultiBrokerRouter(페일오버 CAS 원형)·SlippageSentinel/CanaryRttSentinel(δ=0 단측 3σ 링)·OrderProposal.OrderId(dedup 키)·ForceFreeze·ShadowExecutionGateway 펜스.
+         [과제1] LiveSessionWatchdog.cs: 실 토스/키움 20ms 핑퐁 RTT 를 폴해 연속 3회 100ms 데드라인 초과→'인프라 혼수상태(Coma)' 진단(CAS 1회)→IgnitionLock.Downgrade + 격리 소켓 리셋. ExecutionMicrostructureGuard 연속카운팅 미러(재발명 금지). 무할당 판정·주입 시계.
+         [과제2] AutonomousFailoverController.cs: 채널(키움 x86 프록시) 물리 장애→대기 주문을 대안 채널(토스)로 자율 라우팅. exactly-once = ①단조 OrderId 단일 커서(재발주 원천 부재) + ②TryClaimDispatch 락-프리 CAS seen-ring dedup 백스톱. 양방향 무정지 복구(Standby↔Primary)·양채널 다운→fail-closed 동결.
+         [과제3] ThreadStarvationSensor.cs: .NET ThreadPool 가용성 + CLR 스케줄링 지터를 무할당 단측 3σ 감시→아사 시 SetMinThreads 프로비저닝 + 핫패스 전용 스레드 우선순위 일시 상향(소유 스레드·try/finally 복원). ★결정론 격리: 지터/풀 값은 인프라 액션·텔레메트리에만, 트레이딩 판정 입력 절대 미유입.
+         [★Think Beyond] AdaptiveOrphanReaper.cs: 브로커 대기열 목졸림으로 체결/거부 응답이 영원히 안 와 자본이 허공에 묶이는 최파멸 리스크를, ★고정이 아닌 실측 RTT 분포 적응형 데드라인(mean+Kσ·δ=0 롤링)으로 고아 선언→진상 조회 자본 회수(미체결=예약 해제 heal·체결=장부 확정)→불확정+재수확 데드라인 초과 시 fail-closed. '탐지 후 정지'를 넘는 '자율 힐링'.
+         [UI] RingTelemetry +7(세션 지연 µs·Coma·페일오버·쓰레드풀 가용성·고아 in-flight·블랙스완 방어선·Cell 704→768) + TelemetryMonitor 🐕 Autonomous Live Watchdog 패널(청색 건강↔황색섬광 페일오버 [ROUTING TO STANDBY]↔암적색점멸+헥스 에러코드 블랙스완 동결).
+         ★liveArmed:false: 모든 자율 복구는 더 안전한 방향으로만 — 페일오버/세션 리셋 백만 회에도 이중키∧MasterIgnited 없이 실주문 0바이트(유닛테스트 실증). δ=0(감시견 Observe·페일오버 클레임 힙 0·전용 스레드 300k 워밍업 측정)·결정론(주입 시계·인프라값 판정 격리)·fail-closed.
+         테스트 +17(회귀 3). 적대검증 4렌즈 확정 13(중복제거 5)교정: ★Reaper Register publish-before-populate TOCTOU(stale id 오고아·자본 오회수)→중간 Claiming 상태+발행순서, ★Failover dedup false-negative(CAS 실패 단일 recheck fall-through)→재시도 루프, Starvation 가용성 0↔미측정 센티넬 충돌(완전 아사를 100% 건강 오표시)→_measured 플래그, Starvation pollMs 무시(Timer 하드코딩 50)→_pollMs, Reaper RTT Int128 tear→seqlock. 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2021 통과. -->
     <!-- v5.0.0 — ★실전 총점화(Live Total Ignition) 3단계 안전 골격 완결: docs/v5.0.0-PhasedIgnition-Blueprint.md 예약 마일스톤(지휘관 실계좌 최종 점화). ★실 접속·자격증명·1주 실 사출은 운영자(사람) 이중키+서명 영역 — 소프트웨어는 안전 골격만. 4렌즈 적대검증.
          ★정직 회계(정찰 4렌즈): 신규 = 실 예수금 1raw 재시딩(LiveAccountingMesh.GenesisSeedDeposit·ctor만 있던 예수금 시딩에 1회성 genesis 래치 추가)·건별 net 정산 스냅샷(Finalize)·블래스트 반경 제한기·원격 킬스위치·데드맨 역-컷오버·RTT 단위 정규화 카나리 프로브. 재사용 = AtomicCutoverGate(PreArm/Cutover/ObserveCanaryRtt/ReconcileDualTrack/RollbackToShadow)·SafeIgnitionSequencer·SecurityAssetVault.Seal·MmfFlightRecorder/CrashResilientDumper·GatedOrderDispatcher(블래스트 반경만 옵션 배선)·ForceFreeze 단일 소스.
          [Phase1 Genesis] LiveAccountGenesis.cs: IsShadowMode==true 하드 검문(TOCTOU 재검) 하에서만 운영자 쿼리 델리게이트로 취득한 실 예수금/미수한도를 라이브 청산 메쉬에 1raw 시딩. 자격증명·소켓 무접촉(값만 수신·관심사 분리)·쿼리 실패/음수/2회차/체결후/동결 fail-closed.

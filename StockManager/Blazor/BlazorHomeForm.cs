@@ -420,6 +420,24 @@ namespace StockManager.Blazor
             var deadman = new DeadmanReverseCutover(cutoverGate, TimeSpan.FromSeconds(30), blackbox: blackbox);
             services.AddSingleton(deadman);
             FormClosed += (_, _) => { try { deadman.Dispose(); } catch { } };
+            // v5.1.0 — 자율 무정지 복구 & 실전 라이브 감시망. ★전부 '더 안전한 방향(강등/동결/섀도우)'으로만 작동(liveArmed:false).
+            //   ① LiveSessionWatchdog: 20ms 핑퐁 RTT 연속 3회 100ms 초과→Coma→IgnitionLock.Downgrade. latencyProbe 는 실 세션 배선 시 주입(드라이런 미기동).
+            var liveWatchdog = new LiveSessionWatchdog(ignition, resetSocket: null, latencyProbe: null, blackbox: blackbox);
+            services.AddSingleton(liveWatchdog);
+            FormClosed += (_, _) => { try { liveWatchdog.Dispose(); } catch { } };
+            //   ② AutonomousFailoverController: 채널 물리 장애→대안 채널 자율 라우팅·exactly-once dedup·양채널 다운 fail-closed. 실 채널 배선은 운영자 옵트인.
+            var failover = new AutonomousFailoverController(attestation, blackbox: blackbox);
+            services.AddSingleton(failover);
+            //   ③ ThreadStarvationSensor: ThreadPool 아사+CLR 지터 감시→SetMinThreads 프로비저닝. 순수 인프라(트레이딩 판정 무관)라 즉시 기동.
+            var starvation = new ThreadStarvationSensor(
+                provisionThreads: () => { try { ThreadPool.GetMinThreads(out int w, out int io); ThreadPool.SetMinThreads(w + 4, io); } catch { } },
+                blackbox: blackbox);
+            starvation.Start();
+            services.AddSingleton(starvation);
+            FormClosed += (_, _) => { try { starvation.Dispose(); } catch { } };
+            //   ④ ★Think Beyond AdaptiveOrphanReaper: 발주 후 종단 응답 무도착(자본 허공 묶임)을 실측 RTT 분포 적응형 데드라인으로 탐지→진상 조회 자본 회수→불확정 fail-closed. reconcile/reclaim 은 운영자 옵트인.
+            var orphanReaper = new AdaptiveOrphanReaper(attestation, reconcile: null, reclaim: null);
+            services.AddSingleton(orphanReaper);
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -468,7 +486,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
