@@ -323,7 +323,10 @@ namespace StockManager.Blazor
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => warmRestartRef?.IsRecovering ?? false);
-            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation, blackbox);
+            // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
+            var blastRadius = new BlastRadiusLimiter();
+            services.AddSingleton(blastRadius);
+            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation, blackbox, blastRadius);
             var ringChannel    = new RingTelemetryChannel();
             // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher·페이지 transient) 카운터를 싱글톤
             //   브리지로 받아 중앙 샘플러가 합류. FutureSimPage 가 매 틱 Report → ringPublisher.Sample 이 Read → 채널 발행.
@@ -400,6 +403,23 @@ namespace StockManager.Blazor
                 liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false),
                 blackbox: blackbox);
             services.AddSingleton(cutoverGate);     // TelemetryMonitor 🕹️ 컷오버 트리거(PreArm/Cutover)용
+            // v5.0.0 — 실전 총점화 3단계 소프트웨어. ★실 접속·자격증명·1주 사출은 운영자(사람)가 수행 — 아래는 그 안전 골격.
+            //   Phase1 Genesis: 실 예수금을 라이브 청산 메쉬에 1raw 시딩(IsShadowMode 하드 검문). 쿼리 델리게이트는 운영자 배선.
+            //   Phase2 Canary: 컷오버 후 RTT 단위 정규화 검역 + 건별 net 정산 1raw 대조(AtomicCutoverGate 재사용).
+            //   Phase3 RedTeam: 원격 킬스위치(서명→금고 재봉인+소켓 Abort+ForceFreeze) + 데드맨 역-컷오버(생존신호 소실→자동 섀도우).
+            //   ★liveArmed:false: 전부 '더 안전한 방향(정지/섀도우)'으로만 작동. 실 소켓/웹훅 수신 표면 미개방(운영자 옵트인).
+            var accountGenesis = new LiveAccountGenesis(accountingMesh, shadowGateway, attestation, blackbox);
+            services.AddSingleton(accountGenesis);
+            var canaryProbe = new CanaryLiveProbe(cutoverGate, accountingMesh, blackbox);
+            services.AddSingleton(canaryProbe);
+            // 킬스위치: 서명 검증(기본 비공백 — 운영자가 실 서명 검증기로 교체)·금고 재봉인(securityVault.Seal)·Abort 콜백(섀도우 복귀 보강).
+            var killSwitch = new RemoteKillSwitch(attestation, s => !string.IsNullOrWhiteSpace(s), securityVault,
+                abortSockets: () => { try { shadowGateway.EnterShadow(); } catch { } }, blackbox: blackbox);
+            services.AddSingleton(killSwitch);
+            // 데드맨: 30초 생존신호 데드라인. 감시 시작(StartWatching)은 컷오버 성공 후 운영자/대시보드가 격발(기본 Idle).
+            var deadman = new DeadmanReverseCutover(cutoverGate, TimeSpan.FromSeconds(30), blackbox: blackbox);
+            services.AddSingleton(deadman);
+            FormClosed += (_, _) => { try { deadman.Dispose(); } catch { } };
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -448,7 +468,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

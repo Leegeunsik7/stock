@@ -25,9 +25,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>4.97.0</Version>
-    <AssemblyVersion>4.97.0.0</AssemblyVersion>
-    <FileVersion>4.97.0.0</FileVersion>
+    <Version>5.0.0</Version>
+    <AssemblyVersion>5.0.0.0</AssemblyVersion>
+    <FileVersion>5.0.0.0</FileVersion>
+    <!-- v5.0.0 — ★실전 총점화(Live Total Ignition) 3단계 안전 골격 완결: docs/v5.0.0-PhasedIgnition-Blueprint.md 예약 마일스톤(지휘관 실계좌 최종 점화). ★실 접속·자격증명·1주 실 사출은 운영자(사람) 이중키+서명 영역 — 소프트웨어는 안전 골격만. 4렌즈 적대검증.
+         ★정직 회계(정찰 4렌즈): 신규 = 실 예수금 1raw 재시딩(LiveAccountingMesh.GenesisSeedDeposit·ctor만 있던 예수금 시딩에 1회성 genesis 래치 추가)·건별 net 정산 스냅샷(Finalize)·블래스트 반경 제한기·원격 킬스위치·데드맨 역-컷오버·RTT 단위 정규화 카나리 프로브. 재사용 = AtomicCutoverGate(PreArm/Cutover/ObserveCanaryRtt/ReconcileDualTrack/RollbackToShadow)·SafeIgnitionSequencer·SecurityAssetVault.Seal·MmfFlightRecorder/CrashResilientDumper·GatedOrderDispatcher(블래스트 반경만 옵션 배선)·ForceFreeze 단일 소스.
+         [Phase1 Genesis] LiveAccountGenesis.cs: IsShadowMode==true 하드 검문(TOCTOU 재검) 하에서만 운영자 쿼리 델리게이트로 취득한 실 예수금/미수한도를 라이브 청산 메쉬에 1raw 시딩. 자격증명·소켓 무접촉(값만 수신·관심사 분리)·쿼리 실패/음수/2회차/체결후/동결 fail-closed.
+         [Phase2 Canary] CanaryLiveProbe.cs: 실 브로커 RTT(100ns ticks)를 µs 로 단위 정규화해 자율 카나리 검역(단측 3σ)에 공급(베이스라인·실측 단위 통일). 체결 확정(FillsFinalized) 후 broker net 정산금액을 백엔드 Remainder Carry Guard 계산치(LastFillNetRaw)와 1raw 대조(ReconcileDualTrack 재사용). ★Think Beyond A BlastRadiusLimiter.cs: 검역창 동안 명목 상한을 송출 초크포인트(GatedOrderDispatcher.Drain armed 후·onSend 전)에서 물리 강제 — 완전 무장이어도 상한 초과 대형 주문(fat-finger/버그) 경성 fail-closed 동결.
+         [Phase3 RedTeam] RedTeamDefense.cs: RemoteKillSwitch(서명 검증→ForceFreeze+금고 재봉인 Seal+소켓 Abort 원자 수렴 &lt;0.1ms·위조 서명 무동작·수신 네트워크 표면 미개방) + ★Think Beyond B DeadmanReverseCutover(운영자 생존 신호 Beat 데드라인 소실→자동 RollbackToShadow 역-컷오버·수동 안전망). 블랙박스 10만 패킷 보존은 ForceFreeze→CrashResilientDumper 옵저버 자동 격발.
+         [UI] RingTelemetry +6(Genesis 상태·실 예수금·Canary net 드리프트·블래스트 반경·킬스위치·데드맨·Cell 704 유지·70필드) + TelemetryMonitor 🎯 실전 총점화 대시보드(3단계 상태 배지·킬스위치 서명 비상정지·데드맨 감시/생존신호 컨트롤·킬스위치 발동 적색 배너).
+         ★liveArmed:false: 소프트웨어 자율 실주문 0(실 실행은 사람 이중키∧MasterIgnited∧서명). Genesis 는 섀도우에서만. 킬스위치·데드맨·블래스트 반경은 전부 '더 안전한 방향(정지/섀도우/차단)'으로만 작동. δ=0(블래스트/킬스위치 판정 힙 0)·결정론(주입 시계)·fail-closed·섀도우 메쉬 전용 attestation.
+         테스트 +16. 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 1999 통과. -->
     <!-- v4.97.0 — ★실거래 섀도우 인입 & 원자적 컷오버 게이트웨이 완결: 실 브로커 소켓은 시세·예수금·인증만 살리고 최하위 주문 송출을 IsShadowMode(기본 true)면 100% 바이패스(실 소켓 0바이트) + 전용 섀도우 청산 메쉬에 50ms 내 가상 체결 공급(슬리피지 모델). 5렌즈 적대검증(확정 4·교정 8).
          ★정직 회계(정찰 6렌즈): 런타임 IsShadowMode 원자 flip·바이패스+미러+가상체결 분기·토스 REST 송출 절연·50ms 가상 청산 push 펌프는 전무→신규. 재사용: ZeroLeakProtocolIsolator(ContainsOrderOpcode·IsOrderSendAllowed·AssertSendAllowed)·
          SafeIgnitionSequencer.BeginIgnition(이중키∧프로브∧3σ→MasterIgnited)·ManualRelease·IgnitionLock.Lock/Downgrade·SentimentVelocityBreaker(단측 3σ)·ShadowClearingTracer(1raw 대조)·ClearingAuthority volatile flip·ShadowNoiseConfig 슬리피지·LiveAccountingMesh.OnFill.

@@ -100,6 +100,13 @@ namespace StockManager.Common
         public readonly long   CutoverStateCode;            // 0 섀도우/1 사전무장/2 검역/3 실전/4 되감김/5 동결
         public readonly long   CanaryDeviationRaw;          // 최근 카나리 RTT 단측 편차(raw·>0 느려짐)
         public readonly long   DualTrackDriftRaw;           // 최근 듀얼트랙(섀도우예측 vs 실체결) 드리프트(raw)
+        // v5.0.0 — 실전 총점화: Genesis 상태·실 예수금·Canary net 대조·블래스트 반경·킬스위치·데드맨.
+        public readonly long   GenesisStateCode;            // 0 대기/1 동기화완료/2 거부
+        public readonly long   GenesisDepositKrwRaw;        // Genesis 시딩된 실 예수금(원화, raw)
+        public readonly long   CanaryNetDriftRaw;           // 최근 카나리 건별 net 정산 대조 드리프트(raw)
+        public readonly long   BlastRadiusCeilingRaw;       // 카나리 검역창 명목 상한(raw·long.MaxValue=무제한)
+        public readonly long   KillSwitchStateCode;         // 0 대기/1 발동됨
+        public readonly long   DeadmanStateCode;            // 0 유휴/1 감시중/2 역-컷오버됨
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -122,7 +129,9 @@ namespace StockManager.Common
                              long accFeeKrwRaw = 0L, long accFeeUsdRaw = 0L, long accCarryErrorRaw = 0L,
                              long accLatchDepth = 0L, long accStateCode = 0L,
                              long shadowModeActive = 0L, long shadowFillRttMicros = 0L, long cutoverStateCode = 0L,
-                             long canaryDeviationRaw = 0L, long dualTrackDriftRaw = 0L)
+                             long canaryDeviationRaw = 0L, long dualTrackDriftRaw = 0L,
+                             long genesisStateCode = 0L, long genesisDepositKrwRaw = 0L, long canaryNetDriftRaw = 0L,
+                             long blastRadiusCeilingRaw = 0L, long killSwitchStateCode = 0L, long deadmanStateCode = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -188,6 +197,12 @@ namespace StockManager.Common
             CutoverStateCode          = cutoverStateCode;
             CanaryDeviationRaw        = canaryDeviationRaw;
             DualTrackDriftRaw         = dualTrackDriftRaw;
+            GenesisStateCode          = genesisStateCode;
+            GenesisDepositKrwRaw      = genesisDepositKrwRaw;
+            CanaryNetDriftRaw         = canaryNetDriftRaw;
+            BlastRadiusCeilingRaw     = blastRadiusCeilingRaw;
+            KillSwitchStateCode       = killSwitchStateCode;
+            DeadmanStateCode          = deadmanStateCode;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -335,6 +350,14 @@ namespace StockManager.Common
         public string  CutoverStateName => CutoverStateCode switch
         { 0 => "SHADOW", 1 => "ARMED-READY", 2 => "CANARY-QUARANTINE", 3 => "LIVE", 4 => "ROLLED-BACK", 5 => "FROZEN", _ => "?" };
         public double  ShadowFillRttMs => ShadowFillRttMicros / 1000.0;                            // 가상 체결 RTT(ms 표시)
+        // v5.0.0 — 실전 총점화 UI 헬퍼.
+        public string  GenesisStateName => GenesisStateCode switch { 0 => "PENDING", 1 => "SYNCED", 2 => "REFUSED", _ => "?" };
+        public bool    GenesisSynced     => GenesisStateCode == 1L;
+        public bool    KillSwitchTripped => KillSwitchStateCode != 0L;
+        public string  DeadmanStateName  => DeadmanStateCode switch { 0 => "IDLE", 1 => "WATCHING", 2 => "REVERTED", _ => "?" };
+        public bool    DeadmanReverted   => DeadmanStateCode == 2L;
+        public bool    BlastRadiusActive => BlastRadiusCeilingRaw > 0L && BlastRadiusCeilingRaw != long.MaxValue;
+        public decimal GenesisDepositKrw => GenesisDepositKrwRaw / (decimal)QMath.Scale;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -343,8 +366,8 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v4.97.0 기준 필드 64개×8=512B → Data 128..640B ≤ 704(64배수·잔여 8슬롯).
-        //   (v4.96.0 59필드=472B→640 잔여 5슬롯 → v4.97.0 섀도우/컷오버 5필드 추가로 64필드 → 640 정확소진 → 704 로 상향·헤드룸 8슬롯.)
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.0.0 기준 필드 70개×8=560B → Data 128..688B ≤ 704(64배수·잔여 2슬롯=16B).
+        //   (v4.97.0 64필드=512B→704 헤드룸 8슬롯 → v5.0.0 실전 총점화 6필드 추가로 70필드 → 잔여 2슬롯. ★2필드 초과 추가 시 Size 704→768 상향 필수.)
         [StructLayout(LayoutKind.Explicit, Size = 704)]
         private struct Cell
         {
@@ -425,6 +448,11 @@ namespace StockManager.Common
         private readonly LiveAccountingMesh? _accounting;           // v4.96.0 — 실시간 청산 메쉬(옵션·기본 null)
         private readonly ShadowExecutionGateway? _shadowGateway;    // v4.97.0 — 실거래 섀도우 집행 게이트웨이(옵션·기본 null)
         private readonly AtomicCutoverGate? _cutover;               // v4.97.0 — 원자적 컷오버 게이트(옵션·기본 null)
+        private readonly LiveAccountGenesis? _genesis;              // v5.0.0 — 실전 계좌 결속(옵션·기본 null)
+        private readonly CanaryLiveProbe? _canaryProbe;            // v5.0.0 — 카나리 종단 검증(옵션·기본 null)
+        private readonly BlastRadiusLimiter? _blastRadius;         // v5.0.0 — 블래스트 반경 제한기(옵션·기본 null)
+        private readonly RemoteKillSwitch? _killSwitch;            // v5.0.0 — 원격 킬스위치(옵션·기본 null)
+        private readonly DeadmanReverseCutover? _deadman;         // v5.0.0 — 데드맨 역-컷오버(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -449,7 +477,12 @@ namespace StockManager.Common
                                       CrashResilientDumper? dumper = null,
                                       LiveAccountingMesh? accounting = null,
                                       ShadowExecutionGateway? shadowGateway = null,
-                                      AtomicCutoverGate? cutover = null)
+                                      AtomicCutoverGate? cutover = null,
+                                      LiveAccountGenesis? genesis = null,
+                                      CanaryLiveProbe? canaryProbe = null,
+                                      BlastRadiusLimiter? blastRadius = null,
+                                      RemoteKillSwitch? killSwitch = null,
+                                      DeadmanReverseCutover? deadman = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -473,6 +506,11 @@ namespace StockManager.Common
             _accounting   = accounting;
             _shadowGateway = shadowGateway;
             _cutover      = cutover;
+            _genesis      = genesis;
+            _canaryProbe  = canaryProbe;
+            _blastRadius  = blastRadius;
+            _killSwitch   = killSwitch;
+            _deadman      = deadman;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -555,6 +593,13 @@ namespace StockManager.Common
                 long sgShadow = 0L, sgRtt = 0L, coState = 0L, coCanary = 0L, coDrift = 0L;
                 if (_shadowGateway is { } sg) { sgShadow = sg.IsShadowMode ? 1L : 0L; sgRtt = sg.LastFillRttMicros; }
                 if (_cutover is { } co) { coState = (long)co.State; coCanary = co.LastCanaryDeviationRaw; coDrift = co.LastDualTrackDriftRaw; }
+                // v5.0.0 — 실전 총점화(Genesis 상태·실 예수금·Canary net 대조·블래스트 반경·킬스위치·데드맨) 합류(미배선이면 0).
+                long gnState = 0L, gnDep = 0L, cpDrift = 0L, brCeil = 0L, ksState = 0L, dmState = 0L;
+                if (_genesis is { } gn) { gnState = (long)gn.State; gnDep = gn.SyncedDepositKrwRaw; }
+                if (_canaryProbe is { } cp) cpDrift = cp.LastNetDriftRaw;
+                if (_blastRadius is { } br) brCeil = br.CeilingRaw;
+                if (_killSwitch is { } ks) ksState = (long)ks.State;
+                if (_deadman is { } dm) dmState = (long)dm.State;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -569,7 +614,8 @@ namespace StockManager.Common
                     rsUtil, rsRej, mbMask, mmLat, guardMask,
                     bbSat, bbRate, bbDump, bbDrop,
                     acFeeKrw, acFeeUsd, acCarry, acLatch, acState,
-                    sgShadow, sgRtt, coState, coCanary, coDrift));
+                    sgShadow, sgRtt, coState, coCanary, coDrift,
+                    gnState, gnDep, cpDrift, brCeil, ksState, dmState));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

@@ -49,6 +49,8 @@ namespace StockManager.Common
         NewsIngest = 30, NewsBreakerTrip = 31,                    // NewsIntelController
         CutoverArmed = 40, CutoverLive = 41, CutoverRollback = 42, // v4.97.0 AtomicCutoverGate
         CanaryTrip = 43, DualTrackFreeze = 44,                    // v4.97.0 카나리/듀얼트랙 방어
+        GenesisSynced = 50, CanaryReconcile = 51, BlastRadiusBreach = 52, // v5.0.0 실전 총점화
+        KillSwitchTrip = 53, DeadmanRevert = 54, RedTeamDrill = 55,       // v5.0.0 Red Team·데드맨
         Freeze = 90,                                             // ForceFreeze 격발
     }
 

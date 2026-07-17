@@ -113,21 +113,25 @@ namespace StockManager.Common
         private readonly Func<bool>                  _isArmed;
         private readonly OrderAttestationService?    _att;    // Mission A: onSend throw → ForceFreeze(null 허용 = att 없음)
         private readonly MmfFlightRecorder?          _blackbox;   // v4.95.0 — 블랙박스 이산 사건 기록(null=미배선·완전 no-op·δ=0)
+        private readonly BlastRadiusLimiter?         _blastRadius;   // v5.0.0 — 카나리 검역창 명목 상한 물리 강제(null=무제한·하위호환)
         private long _forwarded;
         private long _gatedOut;
         private long _sendErrors;   // Mission A: downstream throw 누적(원자)
 
         /// <param name="attestation">선택적 — null 이면 ForceFreeze 미호출(테스트 시나리오). 앱 레벨은 반드시 주입.</param>
         /// <param name="blackbox">선택적 — v4.95.0 블랙박스 기록계(null=미배선·완전 no-op). Record 는 δ=0.</param>
+        /// <param name="blastRadius">선택적 — v5.0.0 블래스트 반경 제한기(null=무제한). 명목 상한 초과 시 fail-closed 동결.</param>
         public GatedOrderDispatcher(OrderDispatchRing ring, Func<bool> isArmed,
                                     OrderAttestationService? attestation = null,
-                                    MmfFlightRecorder? blackbox = null)
+                                    MmfFlightRecorder? blackbox = null,
+                                    BlastRadiusLimiter? blastRadius = null)
         {
             if (ring is null) throw new ArgumentNullException(nameof(ring));
             _consumer = ring.CreateConsumer();
             _isArmed  = isArmed ?? throw new ArgumentNullException(nameof(isArmed));
             _att      = attestation;
             _blackbox = blackbox;
+            _blastRadius = blastRadius;
         }
 
         /// <summary>무장 상태에서 실제 브로커로 송출된 제안 수(onSend 성공 시만 계상).</summary>
@@ -158,6 +162,23 @@ namespace StockManager.Common
                 catch { armed = false; }
                 if (armed)
                 {
+                    // ★v5.0.0 블래스트 반경 물리 강제 — 무장 통과 직후·송출 직전 단일 초크포인트. 검역창 명목 상한 초과=경성 동결(fail-closed).
+                    //   완전 무장 상태여도 카나리 1주 상한을 초과하는 대형 주문(fat-finger/버그)은 여기서 물리 차단. 무제한(null/미설정)이면 통과.
+                    if (_blastRadius is { } br)
+                    {
+                        long notional;
+                        // ★시장가(PriceRaw<=0)는 명목 미상 — 상한 활성 중이면 '무한 명목'으로 취급해 물리 차단(대형 시장가 fat-finger 봉쇄).
+                        //   PreTradeRiskShield 의 시장가=미상 fail-closed 관례와 정렬. 상한 비활성(무제한)이면 무영향(0 통과).
+                        if (p.PriceRaw <= 0) notional = br.Active ? long.MaxValue : 0L;
+                        else { try { notional = QMath.Notional(p.PriceRaw, p.QtyRaw, roundUp: true); } catch (OverflowException) { notional = long.MaxValue; } }
+                        if (!br.Check(notional))
+                        {
+                            Interlocked.Increment(ref _sendErrors);
+                            _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
+                            _att?.ForceFreeze($"블래스트 반경 초과 — 명목 {notional} > 상한 {br.CeilingRaw}(카나리 검역창 물리 상한·fail-closed)");
+                            break;
+                        }
+                    }
                     try
                     {
                         onSend(p);

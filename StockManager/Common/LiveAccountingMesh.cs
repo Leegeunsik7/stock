@@ -100,6 +100,9 @@ namespace StockManager.Common
         // 텔레메트리(회계 스레드 write·UI Interlocked read).
         private long _cumFeeKrwRaw, _cumFeeUsdRaw, _cumStampRaw, _cumFarmRaw;
         private long _fillsAccepted, _fillsFinalized, _droppedFills;
+        private int  _genesisLatch;   // ★v5.0.0 Genesis 1회성 예수금 재시딩 래치(0=미시딩·1=완료)
+        private long _lastNetRaw, _lastNetFeeRaw, _lastNetSideRaw;   // ★v5.0.0 Canary 건별 net 정산 스냅샷(수수료 대조용)
+        private long _netSeq;   // ★v5.0.0 net 스냅샷 seqlock 버전(짝=안정·홀=쓰기중) — (seq,net) 일관 독출용
         // per-symbol 장부 — 회계 스레드 write + public 독출 → ★_book 락으로 보호(U#1/2/3).
         private readonly object _bookLock = new();
         private readonly Dictionary<long, (long qtyRaw, long costRaw)> _book = new();
@@ -159,6 +162,32 @@ namespace StockManager.Common
         }
         public long LatchQueueDepth     { get { long d = _ring.Published - _consumer.Cursor; return d < 0 ? 0 : d; } }
         public bool DepositZeroSynced   => !IsFrozen && AvailableDepositRaw >= 0 && AvailableUsdRaw >= 0 && CarryErrorRaw < QMath.Scale;
+        // ★v5.0.0 Genesis/Canary 관측.
+        public bool GenesisSynced       => Volatile.Read(ref _genesisLatch) != 0;                 // 실 예수금 1raw 재시딩 완료 여부
+        public long LastFillNetRaw      => Interlocked.Read(ref _lastNetRaw);                      // 최근 확정 체결 순정산금액(매수=-예수금 차감·매도=+대금 순증, raw)
+        public long LastFillNetFeeRaw   => Interlocked.Read(ref _lastNetFeeRaw);                   // 최근 확정 체결 제비용 합(raw)
+        public OrderSide LastFillNetSide => Interlocked.Read(ref _lastNetSideRaw) >= 0 ? OrderSide.Buy : OrderSide.Sell;
+
+        /// <summary>
+        /// ★v5.0.0 net 스냅샷 seqlock 일관 독출 — (seq,net,fee,side) 를 torn 없이 원자 그룹으로 반환. seq 는 짝수 단조(체결당 +2)로
+        /// Canary 대조의 dedup 키·일관 페어 보증. 확정 체결이 없거나(seq==0) 경합 지속 시 false. 무할당.
+        /// </summary>
+        public bool TryReadLatestNet(out long netRaw, out long feeRaw, out long side, out long seq)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                long v1 = Volatile.Read(ref _netSeq);
+                if ((v1 & 1L) == 0L)                              // 짝수 = 안정
+                {
+                    long n = Interlocked.Read(ref _lastNetRaw);
+                    long f = Interlocked.Read(ref _lastNetFeeRaw);
+                    long s = Interlocked.Read(ref _lastNetSideRaw);
+                    long v2 = Volatile.Read(ref _netSeq);
+                    if (v1 == v2) { netRaw = n; feeRaw = f; side = s; seq = v1; return v1 > 0L; }
+                }
+            }
+            netRaw = 0; feeRaw = 0; side = 0; seq = 0; return false;
+        }
 
         // UI 소수점 투명 표출 헬퍼(raw→decimal, 표출 직전 1회 변환).
         public decimal CumFeeKrw        => CumFeeKrwRaw / (decimal)QMath.Scale;
@@ -186,6 +215,28 @@ namespace StockManager.Common
                 _book[symbolCode] = (checked(p.qtyRaw + qtyRaw), checked(p.costRaw + costRaw));
             }
             Interlocked.Add(ref _bookValueRaw, costRaw);
+        }
+
+        /// <summary>
+        /// ★v5.0.0 Phase1(Genesis) — 실 예수금 1raw 재시딩. 최초 1회만(genesis 래치)·체결 발생 전(idle)·미동결에서만 성공.
+        /// genesis 시점 회계 스레드는 idle(링 비어있음)이라 Interlocked.Exchange 안전. 음수·2회차·체결후·동결이면 fail-closed 거부(false).
+        /// ★실 예수금 데이터는 운영자가 SecurityAssetVault 인가 자격증명으로 쿼리해 주입(소프트웨어는 값만 받아 장부 영점).
+        /// </summary>
+        public bool GenesisSeedDeposit(long krwRaw, long usdRaw)
+        {
+            if (krwRaw < 0 || usdRaw < 0) return false;
+            if (IsFrozen) return false;
+            // ★OnFill 과 동일한 단일 생산자 게이트(_producing)를 취해 첫 체결과의 TOCTOU 경합 봉쇄 — 체결 진행 중이면 거부.
+            if (Interlocked.CompareExchange(ref _producing, 1, 0) != 0) return false;
+            try
+            {
+                if (Interlocked.Read(ref _fillsAccepted) != 0) return false;               // 체결 시작 후 재시딩 금지(2단계 상계 정합성)
+                if (Interlocked.CompareExchange(ref _genesisLatch, 1, 0) != 0) return false; // 1회성
+                Interlocked.Exchange(ref _availableKrwRaw, krwRaw);
+                Interlocked.Exchange(ref _availableUsdRaw, usdRaw);
+                return true;
+            }
+            finally { Volatile.Write(ref _producing, 0); }
         }
 
         /// <summary>편의 — FillPayload(브릿지 수신) → OnFill. ★키움 브릿지=국내(KRW). 해외/코인은 별도 브릿지가 kind 명시.</summary>
@@ -267,11 +318,13 @@ namespace StockManager.Common
             catch (OverflowException) { Freeze("확정 제비용 오버플로"); return; }
 
             bool krw = IsKrw(ev.Kind);
+            long net = 0;   // ★예수금 순변동(매수=-(명목+수수료)·매도=+명목-수수료) — Canary 정산 대조용
             try
             {
                 if (ev.Side == OrderSide.Buy)
                 {
                     long exactDebit = checked(notional + exactFees);
+                    net = -exactDebit;
                     // 추정↔실제 상계(est≥exact → 초과 홀드 반납). 통화 셀 라우팅.
                     long after = krw ? Interlocked.Add(ref _availableKrwRaw, ev.EstDebitRaw - exactDebit)
                                      : Interlocked.Add(ref _availableUsdRaw, ev.EstDebitRaw - exactDebit);
@@ -286,6 +339,7 @@ namespace StockManager.Common
                     if (ev.QtyRaw > held) { Freeze("매도 수량이 보유 초과 — 유령 예수금 봉쇄"); return; }
 
                     // ★대금 credit '먼저' → 수수료 차감(중간 음수 오탐 없음·C#3). 순변동 = +명목 - exact수수료.
+                    net = checked(notional - exactFees);
                     long a1 = krw ? Interlocked.Add(ref _availableKrwRaw, notional) : Interlocked.Add(ref _availableUsdRaw, notional);
                     long a2 = krw ? Interlocked.Add(ref _availableKrwRaw, -exactFees) : Interlocked.Add(ref _availableUsdRaw, -exactFees);
                     if (a2 < 0) { Freeze("확정 후 예수금 음수(매도 정산)"); return; }
@@ -294,6 +348,13 @@ namespace StockManager.Common
             }
             catch (OverflowException) { Freeze("확정 상계 오버플로"); return; }
 
+            // ★v5.0.0 Canary 건별 net 정산 스냅샷(제비용 차감 후 예수금 순변동) — Remainder Carry Guard 대조 소스.
+            //   seqlock: 홀(쓰기중)→3필드 기록→짝(완료). TryReadLatestNet 이 (seq,net) 를 torn 없이 일관 독출.
+            Interlocked.Increment(ref _netSeq);   // → 홀(쓰기 시작)
+            Interlocked.Exchange(ref _lastNetRaw, net);
+            Interlocked.Exchange(ref _lastNetFeeRaw, exactFees);
+            Interlocked.Exchange(ref _lastNetSideRaw, ev.Side == OrderSide.Buy ? 1L : -1L);
+            Interlocked.Increment(ref _netSeq);   // → 짝(쓰기 완료)
             Interlocked.Increment(ref _fillsFinalized);
         }
 
