@@ -53,6 +53,7 @@ namespace StockManager.Common
         KillSwitchTrip = 53, DeadmanRevert = 54, RedTeamDrill = 55,       // v5.0.0 Red Team·데드맨
         ComaDiagnosed = 60, ChannelFailover = 61, ThreadStarvation = 62, // v5.1.0 자율 라이브 감시망
         OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
+        LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
         Freeze = 90,                                             // ForceFreeze 격발
     }
 

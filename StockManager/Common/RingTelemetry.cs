@@ -115,6 +115,12 @@ namespace StockManager.Common
         public readonly long   ThreadPoolAvailabilityMilli; // ThreadPool 가용성 점수(0..1000·높을수록 건강)
         public readonly long   OrphanInFlight;              // 현재 미해제(in-flight) 주문 수
         public readonly long   BlackSwanDefenseCode;        // 0 정상/1 고아 탐지/2 강제 동결(자본 묶임 방어)
+        // v5.2.0 — 미시 유동성 슬라이서 & 스로틀: 5호가 비대칭·슬라이스·스로틀·슬리피지 절감·독약 유동성.
+        public readonly long   ImbalanceScoreRaw;           // 5호가 잔량 비대칭 지수([-Scale,+Scale]·+매수우세)
+        public readonly long   LiquiditySlicesEmitted;      // 누적 사출 슬라이스 수
+        public readonly long   OrderThrottleCount;          // 스로틀(Hold) 작동 누적
+        public readonly long   SlippageSavedBps;            // 누적 슬리피지 절감 추정(bps·덤프 대비 회피)
+        public readonly long   ToxicityCode;                // 0 Clear/1 Caution/2 Toxic(독약 유동성)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -142,7 +148,9 @@ namespace StockManager.Common
                              long blastRadiusCeilingRaw = 0L, long killSwitchStateCode = 0L, long deadmanStateCode = 0L,
                              long sessionLatencyMicros = 0L, long sessionHealthCode = 0L, long failoverActiveChannel = 0L,
                              long failoverCount = 0L, long threadPoolAvailabilityMilli = 0L, long orphanInFlight = 0L,
-                             long blackSwanDefenseCode = 0L)
+                             long blackSwanDefenseCode = 0L,
+                             long imbalanceScoreRaw = 0L, long liquiditySlicesEmitted = 0L, long orderThrottleCount = 0L,
+                             long slippageSavedBps = 0L, long toxicityCode = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -221,6 +229,11 @@ namespace StockManager.Common
             ThreadPoolAvailabilityMilli = threadPoolAvailabilityMilli;
             OrphanInFlight              = orphanInFlight;
             BlackSwanDefenseCode        = blackSwanDefenseCode;
+            ImbalanceScoreRaw           = imbalanceScoreRaw;
+            LiquiditySlicesEmitted      = liquiditySlicesEmitted;
+            OrderThrottleCount          = orderThrottleCount;
+            SlippageSavedBps            = slippageSavedBps;
+            ToxicityCode                = toxicityCode;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -386,6 +399,13 @@ namespace StockManager.Common
         public string  BlackSwanName     => BlackSwanDefenseCode switch { 0 => "NOMINAL", 1 => "ORPHANS", 2 => "FROZEN", _ => "?" };
         /// <summary>자율 감시망 종합 건강(청색 인디케이터 게이트) — Coma/페일오버/양채널다운/블랙스완 중 하나라도 있으면 false.</summary>
         public bool    WatchdogHealthy   => !SessionComa && FailoverActiveChannel == 0L && BlackSwanDefenseCode == 0L;
+        // v5.2.0 — 미시 유동성 UI 헬퍼.
+        public double  ImbalanceScore    => ImbalanceScoreRaw / (double)QMath.Scale;              // [-1,+1]·+매수우세
+        public string  ToxicityName      => ToxicityCode switch { 0 => "CLEAR", 1 => "CAUTION", 2 => "TOXIC", _ => "?" };
+        public bool    ToxicFlowActive   => ToxicityCode >= 1L;                                    // Caution 이상
+        public bool    ToxicFlowFrozen   => ToxicityCode >= 2L;                                    // Toxic(강등 수렴)
+        /// <summary>매수측 잔량 비중(0..100%) — 양방향 게이지 좌측 폭. 중립 50%.</summary>
+        public double  BidDepthPercent   => 50.0 + ImbalanceScore * 50.0;
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -394,9 +414,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.1.0 기준 필드 77개×8=616B → Data 128..744B ≤ 768(64배수·잔여 3슬롯=24B).
-        //   (v5.0.0 70필드=560B→704 잔여 2슬롯 → v5.1.0 자율 감시망 7필드 추가로 77필드 → 704 초과 → 768 로 상향·헤드룸 3슬롯.)
-        [StructLayout(LayoutKind.Explicit, Size = 768)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.2.0 기준 필드 82개×8=656B → Data 128..784B ≤ 832(64배수·잔여 6슬롯=48B).
+        //   (v5.1.0 77필드=616B→768 잔여 3슬롯 → v5.2.0 미시 유동성 5필드 추가로 82필드 → 768 초과 → 832 로 상향·헤드룸 6슬롯.)
+        [StructLayout(LayoutKind.Explicit, Size = 832)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -485,6 +505,9 @@ namespace StockManager.Common
         private readonly AutonomousFailoverController? _failover; // v5.1.0 — 자율 채널 페일오버(옵션·기본 null)
         private readonly ThreadStarvationSensor? _starvation;     // v5.1.0 — 쓰레드 아사 센서(옵션·기본 null)
         private readonly AdaptiveOrphanReaper? _reaper;           // v5.1.0 — 적응형 고아주문 사냥꾼(옵션·기본 null)
+        private readonly MicroLiquiditySlicer? _slicer;           // v5.2.0 — 미시 유동성 슬라이서(옵션·기본 null)
+        private readonly AdaptiveOrderThrottle? _throttle;        // v5.2.0 — 적응형 오더 스로틀(옵션·기본 null)
+        private readonly ToxicFlowSentinel? _toxic;               // v5.2.0 — 독약 유동성 센티널(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -518,7 +541,10 @@ namespace StockManager.Common
                                       LiveSessionWatchdog? watchdog = null,
                                       AutonomousFailoverController? failover = null,
                                       ThreadStarvationSensor? starvation = null,
-                                      AdaptiveOrphanReaper? reaper = null)
+                                      AdaptiveOrphanReaper? reaper = null,
+                                      MicroLiquiditySlicer? slicer = null,
+                                      AdaptiveOrderThrottle? throttle = null,
+                                      ToxicFlowSentinel? toxic = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -551,6 +577,9 @@ namespace StockManager.Common
             _failover     = failover;
             _starvation   = starvation;
             _reaper       = reaper;
+            _slicer       = slicer;
+            _throttle     = throttle;
+            _toxic        = toxic;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -646,6 +675,11 @@ namespace StockManager.Common
                 if (_failover is { } fo) { foChan = (long)fo.ResolveChannel(); foCount = fo.Failovers; }
                 if (_starvation is { } ts) tpAvail = ts.AvailabilityScoreMilli;
                 if (_reaper is { } rp) { orInFlight = rp.InFlightCount; bsCode = rp.Freezes > 0 ? 2L : (rp.Orphans > 0 ? 1L : 0L); }
+                // v5.2.0 — 미시 유동성 슬라이서/스로틀/독약 유동성 합류(미배선이면 0).
+                long mlImb = 0L, mlSlices = 0L, thrCount = 0L, savedBps = 0L, toxCode = 0L;
+                if (_slicer is { } sl) { mlImb = sl.LastImbalanceRaw; mlSlices = sl.SlicesEmitted; savedBps = sl.CumSavedBps; }
+                if (_throttle is { } th) thrCount = th.Throttled;
+                if (_toxic is { } tox) toxCode = (long)tox.Verdict;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -662,7 +696,8 @@ namespace StockManager.Common
                     acFeeKrw, acFeeUsd, acCarry, acLatch, acState,
                     sgShadow, sgRtt, coState, coCanary, coDrift,
                     gnState, gnDep, cpDrift, brCeil, ksState, dmState,
-                    wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode));
+                    wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode,
+                    mlImb, mlSlices, thrCount, savedBps, toxCode));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

@@ -25,9 +25,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.1.0</Version>
-    <AssemblyVersion>5.1.0.0</AssemblyVersion>
-    <FileVersion>5.1.0.0</FileVersion>
+    <Version>5.2.0</Version>
+    <AssemblyVersion>5.2.0.0</AssemblyVersion>
+    <FileVersion>5.2.0.0</FileVersion>
+    <!-- v5.2.0 — ★미시 유동성 슬라이서 & 적응형 오더 스로틀(Micro-Liquidity Slicer & Adaptive Order Throttle): 시장 호가 깊이를 µs 분해해 슬리피지 비용을 극한 압축하고 증권사 쓰로틀링 한도를 우회. 4렌즈 적대검증.
+         ★정직 회계(정찰 3렌즈): 신규 = L2Depth(C#12 InlineArray δ=0 5호가)·MicroLiquiditySlicer(즉시체결 잔량 슬라이싱)·AdaptiveOrderThrottle(시간창 1s/10s rate)·ToxicFlowSentinel(독약 유동성 합성 3등급)·RingTelemetry +5. 재사용 = QMath/QQty/QPrice·OrderDispatchRing.PublishRaw·GatedOrderDispatcher(무장 게이트)·IgnitionLock.Downgrade·SlippageSentinel 단측 3σ 링·TwapVwapExecutor 분할 수학 개념.
+         [과제1] MicroLiquiditySlicer.cs: 실 웹소켓 L2 5호가(신규 L2Depth·InlineArray unmanaged) 잔량을 δ=0 µs 추적, 대규모 주문을 5호가 즉시체결 가능 잔량분만 발라 미니 TWAP 균등 분할→50ms 드레인 링(OrderDispatchRing.PublishRaw) 동기 사출. ComputeImbalance/ComputeFillableQty/SliceInto/EstimateDumpSlippageBps 는 힙 0.
+         [과제2] AdaptiveOrderThrottle.cs: 최근 1s/10s 창 송출 패킷 수를 무할당 시간버킷 링(long[10]·epoch CAS 리셋)으로 추적, 브로커/거래소 상한 90% 도달 시 핫패스 집행을 마이크로 스로틀(Hold). ★시간창 rate 카운터는 신규(기존 롤링 링은 표본 카운트).
+         [★Think Beyond] ToxicFlowSentinel.cs: 독약 유동성(Toxic Flow/Adverse Selection)·유동성 증발(Phantom) 방어. ①비대칭 가속도(|Δimbalance|) 단측 3σ + ②스프레드 EWMA 확대∨호가 RTT 급증(유령) + ③북워크 독성 베토(가시 잔량을 등급으로 할인: Clear 100%·Caution 50%·Toxic 0%) 합성 3등급 → Toxic 시 슬라이서 홀드+IgnitionLock.Downgrade, Caution 시 슬라이스 절반 축소+슬리피지 보수화. 하드 임계(|imb|>90%) 병치로 워밍업 맹점 방어.
+         [UI] RingTelemetry +5(5호가 비대칭 지수·누적 슬라이스·스로틀 카운트·슬리피지 절감 bps·독약 유동성 상태·Cell 768→832) + TelemetryMonitor 🚦 패널(매수/매도 양방향 게이지 Pure CSS·스로틀 황색섬광 [ORDER THROTTLING ACTIVE]·독성 암흑자색 오버레이+헥스 에러코드).
+         ★liveArmed:false: 슬라이서/스로틀/독성 방어는 전부 흐름을 줄이는 방향만 — 슬라이스도 무장 게이트 하류라 이중키∧MasterIgnited 없이 실 송출 0바이트(유닛 실증). δ=0(비대칭/슬라이싱 핫패스 힙 0·전용 스레드 300k 워밍업 측정)·결정론(주입 시계·시간버킷)·fail-closed(스로틀 90% Hold·독성 Downgrade). 슬리피지 절감 bps 는 '전량 덤프 시 북워크 슬리피지' 반사실 추정.
+         테스트 +17(회귀 3). 적대검증 4렌즈 확정 3(FP 7)교정: ★스로틀 버킷 리셋-vs-증가 lost-update(언더카운트 fail-open)→원자 패킹 버킷(sec<<24|count) CAS, Current1sRate 프리즈→Rate1s(tick) stale-aware, EstimateDumpSlippageBps 얇은 북 remainder 과소평가→유령 깊이 보수 페널티. 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2038 통과. -->
     <!-- v5.1.0 — ★자율 무정지 복구 & 실전 라이브 감시망(Autonomous Live Watchdog & Recovery): 실물 자본 상주 중 물리 인프라 마비·OS 자원 고갈을 스스로 극복·치료. 4렌즈 적대검증.
          ★정직 회계(정찰 4렌즈): 신규 = LiveSessionWatchdog(Coma FSM)·AutonomousFailoverController(채널 페일오버+exactly-once)·ThreadStarvationSensor(ThreadPool 아사)·AdaptiveOrphanReaper(적응형 고아 자본회수)·RingTelemetry +7. 재사용 = ExecutionMicrostructureGuard(연속카운팅 원형)·IgnitionLock.Downgrade·MultiBrokerRouter(페일오버 CAS 원형)·SlippageSentinel/CanaryRttSentinel(δ=0 단측 3σ 링)·OrderProposal.OrderId(dedup 키)·ForceFreeze·ShadowExecutionGateway 펜스.
          [과제1] LiveSessionWatchdog.cs: 실 토스/키움 20ms 핑퐁 RTT 를 폴해 연속 3회 100ms 데드라인 초과→'인프라 혼수상태(Coma)' 진단(CAS 1회)→IgnitionLock.Downgrade + 격리 소켓 리셋. ExecutionMicrostructureGuard 연속카운팅 미러(재발명 금지). 무할당 판정·주입 시계.

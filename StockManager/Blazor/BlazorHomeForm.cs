@@ -438,6 +438,15 @@ namespace StockManager.Blazor
             //   ④ ★Think Beyond AdaptiveOrphanReaper: 발주 후 종단 응답 무도착(자본 허공 묶임)을 실측 RTT 분포 적응형 데드라인으로 탐지→진상 조회 자본 회수→불확정 fail-closed. reconcile/reclaim 은 운영자 옵트인.
             var orphanReaper = new AdaptiveOrphanReaper(attestation, reconcile: null, reclaim: null);
             services.AddSingleton(orphanReaper);
+            // v5.2.0 — 미시 유동성 슬라이서 & 적응형 오더 스로틀. ★전부 '주문 흐름을 줄이는(축소/Hold/강등)' 방향만(liveArmed:false).
+            //   스로틀: 초당 주문 상한(운영자 브로커 한도로 튜닝) 90% 도달 시 Hold. 독약 유동성 센티널: Toxic→IgnitionLock.Downgrade(강등·영구락업 아님).
+            //   슬라이서: L2 5호가 즉시체결 잔량분만 발라 미니 TWAP 분할 → dispatchRing(무장 게이트 하류). 실 L2 피드는 운영자 옵트인(시세 수신은 무장 무관).
+            var orderThrottle = new AdaptiveOrderThrottle(maxPerSec: 20);
+            services.AddSingleton(orderThrottle);
+            var toxicSentinel = new ToxicFlowSentinel(ignition, rescaleSlippage: null, blackbox: blackbox);
+            services.AddSingleton(toxicSentinel);
+            var liquiditySlicer = new MicroLiquiditySlicer(dispatchRing, toxicSentinel, orderThrottle, blackbox: blackbox);
+            services.AddSingleton(liquiditySlicer);
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -486,7 +495,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
