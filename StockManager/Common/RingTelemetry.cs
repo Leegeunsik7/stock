@@ -121,6 +121,12 @@ namespace StockManager.Common
         public readonly long   OrderThrottleCount;          // 스로틀(Hold) 작동 누적
         public readonly long   SlippageSavedBps;            // 누적 슬리피지 절감 추정(bps·덤프 대비 회피)
         public readonly long   ToxicityCode;                // 0 Clear/1 Caution/2 Toxic(독약 유동성)
+        // v5.3.0 — 무정지 전략 핫패치: 활성 세대·빌드ts·이월 RTT·좀비·고아 이벤트.
+        public readonly long   StrategyGeneration;          // 현 활성 전략 세대(핫스왑 카운트)
+        public readonly long   StrategyBuildTicks;          // 활성 전략 빌드 타임스탬프(ticks·0=미배선)
+        public readonly long   StateCarryRttNs;             // 최근 상태 이월 RTT(ns)
+        public readonly long   ZombieAssemblyCount;         // 좀비 어셈블리(언로드 실패) 누적
+        public readonly long   OrphanEventsRejected;        // 세대 펜스 거부 고아 이벤트 누적
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -150,7 +156,9 @@ namespace StockManager.Common
                              long failoverCount = 0L, long threadPoolAvailabilityMilli = 0L, long orphanInFlight = 0L,
                              long blackSwanDefenseCode = 0L,
                              long imbalanceScoreRaw = 0L, long liquiditySlicesEmitted = 0L, long orderThrottleCount = 0L,
-                             long slippageSavedBps = 0L, long toxicityCode = 0L)
+                             long slippageSavedBps = 0L, long toxicityCode = 0L,
+                             long strategyGeneration = 0L, long strategyBuildTicks = 0L, long stateCarryRttNs = 0L,
+                             long zombieAssemblyCount = 0L, long orphanEventsRejected = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -234,6 +242,11 @@ namespace StockManager.Common
             OrderThrottleCount          = orderThrottleCount;
             SlippageSavedBps            = slippageSavedBps;
             ToxicityCode                = toxicityCode;
+            StrategyGeneration          = strategyGeneration;
+            StrategyBuildTicks          = strategyBuildTicks;
+            StateCarryRttNs             = stateCarryRttNs;
+            ZombieAssemblyCount         = zombieAssemblyCount;
+            OrphanEventsRejected        = orphanEventsRejected;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -406,6 +419,9 @@ namespace StockManager.Common
         public bool    ToxicFlowFrozen   => ToxicityCode >= 2L;                                    // Toxic(강등 수렴)
         /// <summary>매수측 잔량 비중(0..100%) — 양방향 게이지 좌측 폭. 중립 50%.</summary>
         public double  BidDepthPercent   => 50.0 + ImbalanceScore * 50.0;
+        // v5.3.0 — 무정지 전략 핫패치 UI 헬퍼.
+        public bool    ZombieDetected    => ZombieAssemblyCount > 0L;
+        public double  StateCarryRttMicros => StateCarryRttNs / 1000.0;   // ns→µs 표시
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -414,8 +430,8 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.2.0 기준 필드 82개×8=656B → Data 128..784B ≤ 832(64배수·잔여 6슬롯=48B).
-        //   (v5.1.0 77필드=616B→768 잔여 3슬롯 → v5.2.0 미시 유동성 5필드 추가로 82필드 → 768 초과 → 832 로 상향·헤드룸 6슬롯.)
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.3.0 기준 필드 87개×8=696B → Data 128..824B ≤ 832(64배수·잔여 1슬롯=8B).
+        //   (v5.2.0 82필드=656B→832 잔여 6슬롯 → v5.3.0 핫패치 5필드 추가로 87필드 → 잔여 1슬롯. ★2필드 초과 추가 시 Size 832→896 상향 필수.)
         [StructLayout(LayoutKind.Explicit, Size = 832)]
         private struct Cell
         {
@@ -508,6 +524,9 @@ namespace StockManager.Common
         private readonly MicroLiquiditySlicer? _slicer;           // v5.2.0 — 미시 유동성 슬라이서(옵션·기본 null)
         private readonly AdaptiveOrderThrottle? _throttle;        // v5.2.0 — 적응형 오더 스로틀(옵션·기본 null)
         private readonly ToxicFlowSentinel? _toxic;               // v5.2.0 — 독약 유동성 센티널(옵션·기본 null)
+        private readonly HotStrategyReloadGate? _reloadGate;      // v5.3.0 — 무정지 전략 핫패치 게이트(옵션·기본 null)
+        private readonly StrategyStateCarrier? _stateCarrier;     // v5.3.0 — 상태 이월 캐리어(옵션·기본 null)
+        private readonly ZombieAssemblyShield? _zombieShield;     // v5.3.0 — 좀비 어셈블리 방어막(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastTicks;
@@ -544,7 +563,10 @@ namespace StockManager.Common
                                       AdaptiveOrphanReaper? reaper = null,
                                       MicroLiquiditySlicer? slicer = null,
                                       AdaptiveOrderThrottle? throttle = null,
-                                      ToxicFlowSentinel? toxic = null)
+                                      ToxicFlowSentinel? toxic = null,
+                                      HotStrategyReloadGate? reloadGate = null,
+                                      StrategyStateCarrier? stateCarrier = null,
+                                      ZombieAssemblyShield? zombieShield = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -580,6 +602,9 @@ namespace StockManager.Common
             _slicer       = slicer;
             _throttle     = throttle;
             _toxic        = toxic;
+            _reloadGate   = reloadGate;
+            _stateCarrier = stateCarrier;
+            _zombieShield = zombieShield;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
@@ -680,6 +705,11 @@ namespace StockManager.Common
                 if (_slicer is { } sl) { mlImb = sl.LastImbalanceRaw; mlSlices = sl.SlicesEmitted; savedBps = sl.CumSavedBps; }
                 if (_throttle is { } th) thrCount = th.Throttled;
                 if (_toxic is { } tox) toxCode = (long)tox.Verdict;
+                // v5.3.0 — 무정지 전략 핫패치(세대·빌드ts·이월 RTT·좀비·고아 이벤트) 합류(미배선이면 0).
+                long stGen = 0L, stBuild = 0L, carryRtt = 0L, zombie = 0L, orphan = 0L;
+                if (_reloadGate is { } rg) { stGen = rg.Generation; stBuild = rg.ActiveBuildTicks; }
+                if (_stateCarrier is { } scr) carryRtt = scr.LastHandoverRttNs;
+                if (_zombieShield is { } zs) { zombie = zs.ZombieCount; orphan = zs.OrphanEventsRejected; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -697,7 +727,8 @@ namespace StockManager.Common
                     sgShadow, sgRtt, coState, coCanary, coDrift,
                     gnState, gnDep, cpDrift, brCeil, ksState, dmState,
                     wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode,
-                    mlImb, mlSlices, thrCount, savedBps, toxCode));
+                    mlImb, mlSlices, thrCount, savedBps, toxCode,
+                    stGen, stBuild, carryRtt, zombie, orphan));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

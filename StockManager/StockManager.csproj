@@ -25,9 +25,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.2.0</Version>
-    <AssemblyVersion>5.2.0.0</AssemblyVersion>
-    <FileVersion>5.2.0.0</FileVersion>
+    <Version>5.3.0</Version>
+    <AssemblyVersion>5.3.0.0</AssemblyVersion>
+    <FileVersion>5.3.0.0</FileVersion>
+    <!-- v5.3.0 — ★무정지 전략 핫패치 게이트 & ALC 격리 그리드(Hot-Strategy Reload Gate & ALC Isolation Grid): 메인 어셈블리·브로커 소켓·청산 메쉬가 살아있는 채로 알파 전략 바이너리만 메모리상 무정지 교체. 6렌즈 적대검증.
+         ★정직 회계(정찰): 신규 = HotStrategyReloadGate(수거 ALC 격리·CAS 래치·원자 스왑·서명 fail-closed)·StrategyStateCarrier(δ=0 blittable 상태 이월)·ZombieAssemblyShield(세대 펜스+WeakReference 수거 어테스테이션)·IHotStrategy 계약·RingTelemetry +5. 재사용 = AssemblyLoadContext(PluginLoadContext 수거 ALC 선례)·CAS 래치(OrderDispatchRing.EnterPublish 관용구)·Interlocked.Exchange 참조 스왑·IgnitionLock.Downgrade·GatedOrderDispatcher(무장 게이트)·OrderAttestationService(동결 게이트).
+         [과제1] HotStrategyReloadGate.cs: 신규 전략 DLL 인입→서명 검증(fail-closed)→수거 가능 AssemblyLoadContext(isCollectible:true) 격리 로드→CAS 래치로 구버전 핫패스 진입 원자 차단→신버전 원자 바인딩(Interlocked.Exchange)→상태 이월→세대 전진→구 ALC Unload. OnQuote 핫패스는 δ=0(Volatile 참조 독출+가상 호출+long 반환·힙 0). LoadCollectible 은 운영자 옵트인·AssemblyDependencyResolver 의존성 해석.
+         [과제2] StrategyStateCarrier.cs: 구버전 전략의 진행 중 주문(In-Flight)과 누적 통계(실현손익·최대낙폭·누적체결)를 blittable StrategyState(C#12 InlineArray Fixed8Long) 값 복사로 신버전에 δ=0 원자 소유권 이월 — 구 ALC 타입 참조를 절단해 언로드 봉쇄(좀비화) 방지. 이월 RTT ns 주입 시계 측정.
+         [★Think Beyond] ZombieAssemblyShield.cs: 동적 언로드의 두 파멸 리스크(영구 메모리 누수=좀비 어셈블리, 교체 찰나 진입 패킷의 고아화)를 단일 메커니즘 '세대 펜스+WeakReference 수거 어테스테이션'으로 동시 방어. ①세대 펜스: 핫스왑마다 세대 전진, 구 ALC 누출 이벤트는 AcceptEvent 세대 불일치로 δ=0 거부(고아 방어·즉시). ②WeakReference 어테스테이션: 구 ALC Unload 후 grace(5s) 롤링 수거 확인, 창 초과 생존 시 좀비 격리+IgnitionLock.Downgrade(강등·클램프).
+         [UI] RingTelemetry +5(활성 전략 세대·빌드ts·상태 이월 RTT ns·좀비 수·고아 이벤트 거부·Cell 832 유지·87필드) + TelemetryMonitor 🔌 패널(활성 버전/빌드ts·구 ALC 수거 배지·이월 RTT·좀비 누수/고아 거부·청색 healthy/amber [DYNAMIC RE-INITIALIZATION IN PROGRESS - LEAPING TO NEW MODEL] 스왑/자주색 좀비 오버레이+64bit 헥스 포렌식).
+         ★liveArmed:false: 핫스왑은 무장 상태 무접촉 — 교체 전략의 신호도 GatedOrderDispatcher 무장 게이트∧이중키∧MasterIgnited 하류라 미무장 시 실 송출 0바이트(유닛 실증). 자율 Activate 없음(운영자 서명). 서명 검증기 미배선이면 어떤 Reload 도 거부(fail-closed 기본). δ=0(OnQuote/세대펜스 핫패스 힙 0·전용 스레드 300k 워밍업 측정)·결정론(주입 시계·단조 세대).
+         테스트 +23(회귀 6). 적대검증 6렌즈 확정 3(중복 8건·FP 2)교정: ★LoadCollectible 이 Reload 거부(fail-closed 기본 포함) 시 로드된 수거 ALC 미언로드·미등록→추적 불가 좀비 누수→거부 시 alc.Unload 정리(형제 분기 정합), ★ZombieAssemblyShield.SweepOnce 프로덕션 미호출→수거 어테스테이션·Downgrade 사문화+슬롯 미회수로 16회 초과 핫스왑 시 허위 좀비 오발→200ms 스윕 펌프+1s 능동 GC 콜드 타이머 배선+만원 시 수거분 인라인 회수 후 재시도+유휴 스킵, ★RecordFill 첫 체결 PeakEquity 미시딩→음수 순자산 시 유령 낙폭→첫 체결 실측 고점 시딩. 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2061 통과. -->
     <!-- v5.2.0 — ★미시 유동성 슬라이서 & 적응형 오더 스로틀(Micro-Liquidity Slicer & Adaptive Order Throttle): 시장 호가 깊이를 µs 분해해 슬리피지 비용을 극한 압축하고 증권사 쓰로틀링 한도를 우회. 4렌즈 적대검증.
          ★정직 회계(정찰 3렌즈): 신규 = L2Depth(C#12 InlineArray δ=0 5호가)·MicroLiquiditySlicer(즉시체결 잔량 슬라이싱)·AdaptiveOrderThrottle(시간창 1s/10s rate)·ToxicFlowSentinel(독약 유동성 합성 3등급)·RingTelemetry +5. 재사용 = QMath/QQty/QPrice·OrderDispatchRing.PublishRaw·GatedOrderDispatcher(무장 게이트)·IgnitionLock.Downgrade·SlippageSentinel 단측 3σ 링·TwapVwapExecutor 분할 수학 개념.
          [과제1] MicroLiquiditySlicer.cs: 실 웹소켓 L2 5호가(신규 L2Depth·InlineArray unmanaged) 잔량을 δ=0 µs 추적, 대규모 주문을 5호가 즉시체결 가능 잔량분만 발라 미니 TWAP 균등 분할→50ms 드레인 링(OrderDispatchRing.PublishRaw) 동기 사출. ComputeImbalance/ComputeFillableQty/SliceInto/EstimateDumpSlippageBps 는 힙 0.

@@ -29,6 +29,9 @@
 @inject MicroLiquiditySlicer Slicer
 @inject AdaptiveOrderThrottle Throttle
 @inject ToxicFlowSentinel Toxic
+@inject HotStrategyReloadGate ReloadGate
+@inject StrategyStateCarrier StateCarrier
+@inject ZombieAssemblyShield Zombie
 @inject IJSRuntime JS
 
 <div class="top">
@@ -814,6 +817,64 @@
         </div>
     </div>
 
+    @* ══ v5.3.0 무정지 전략 핫패치 게이트 & ALC 격리 그리드 ═══════════════════════ *@
+    @{
+        long hgGen        = ReloadGate.Generation;
+        string hgVer      = ReloadGate.ActiveVersion;
+        long hgBuild      = ReloadGate.ActiveBuildTicks;
+        bool hgSwapping   = ReloadGate.Swapping;
+        long hgReloads    = ReloadGate.Reloads;
+        long hgRejects    = ReloadGate.Rejects;
+        long hgUnloads    = ReloadGate.Unloads;
+        long zbCount      = Zombie.ZombieCount;
+        long zbCollected  = Zombie.CollectedCount;
+        int  zbPending    = Zombie.PendingUnloads;
+        long zbOrphan     = Zombie.OrphanEventsRejected;
+        long scRttNs      = StateCarrier.LastHandoverRttNs;
+        long scHandovers  = StateCarrier.Handovers;
+        int  scInflight   = StateCarrier.InFlightCount;
+        bool zbLeak       = zbCount > 0;
+        bool alcCollected = hgUnloads > 0 && zbPending == 0 && !zbLeak;   // 언로드분 전부 GC 수거 완료
+        // 포렌식 코드(64bit): [좀비16|세대16|대기16|고아16]
+        long zHex = ((zbCount & 0xFFFF) << 48) | ((hgGen & 0xFFFF) << 32) | (((long)zbPending & 0xFFFF) << 16) | (zbOrphan & 0xFFFF);
+    }
+    @if (zbLeak)
+    {
+        <div style="margin:0 28px 18px;background:rgba(60,10,90,0.34);border:2px solid #7b1fa2;border-radius:10px;padding:18px 22px;animation:recpulse 0.7s ease-in-out infinite">
+            <div style="font-size:16px;font-weight:700;color:#ce93d8;margin-bottom:6px">🟪 [ZOMBIE ASSEMBLY LEAK — 구 전략 ALC 수거 실패·참조 누출·점화 강등]</div>
+            <div style="font-size:13px;color:#e1bee7;font-family:var(--mono)">
+                FORENSIC ERR CODE: <b>0x@(zHex.ToString("X16"))</b> &nbsp;|&nbsp; 좀비 @zbCount.ToString("N0") · 세대 @hgGen.ToString("N0") · 언로드 대기 @zbPending.ToString("N0") · 고아 이벤트 거부 @zbOrphan.ToString("N0")
+            </div>
+        </div>
+    }
+    else if (hgSwapping)
+    {
+        <div style="margin:0 28px 18px;background:rgba(255,193,7,0.18);border:2px solid #ffc107;border-radius:10px;padding:16px 20px;animation:recpulse 0.8s ease-in-out infinite">
+            <div style="font-size:15px;font-weight:700;color:#ffca28">🟡 [DYNAMIC RE-INITIALIZATION IN PROGRESS - LEAPING TO NEW MODEL] — 무정지 전략 핫스왑 진행 중·구버전 핫패스 원자 차단</div>
+        </div>
+    }
+    <div class="kpi-card @(zbLeak ? "kpi-alert" : (hgSwapping ? "kpi-amber" : "kpi-hotswap-ok"))" style="margin-bottom:22px">
+        <div class="kpi-label">🔌 무정지 전략 핫패치 게이트 & ALC 격리 그리드 (Hot-Strategy Reload Gate &amp; ALC Isolation)</div>
+        <div style="display:flex;gap:20px;margin-top:12px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:18px">@hgVer</div><div class="kpi-sub">활성 전략 버전 (세대 @hgGen.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:16px;font-family:var(--mono)">@hgBuild.ToString("N0")</div><div class="kpi-sub">빌드 타임스탬프(ticks)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@scRttNs.ToString("N0")<span style="font-size:12px">ns</span></div><div class="kpi-sub">상태 이월 RTT(In-Flight @scInflight · 이월 @scHandovers.ToString("N0")회)</div></div>
+            <div>
+                <div class="kpi-value" style="font-size:16px">
+                    <span class="prod-badge @(zbLeak ? "chaos-red" : alcCollected ? "prod-auth" : "prod-idle")">@(zbLeak ? "누수" : alcCollected ? "GC 수거 완료" : "수거 대기")</span>
+                </div>
+                <div class="kpi-sub">구 ALC 수거(수거 @zbCollected.ToString("N0") · 대기 @zbPending.ToString("N0"))</div>
+            </div>
+            <div><div class="kpi-value" style="font-size:18px">@zbCount.ToString("N0") / @zbOrphan.ToString("N0")</div><div class="kpi-sub">★좀비 누수 / 고아 이벤트 거부</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@hgReloads.ToString("N0") / @hgRejects.ToString("N0") / @hgUnloads.ToString("N0")</div><div class="kpi-sub">리로드 / 거부 / 언로드</div></div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            메인 어셈블리·브로커 소켓·청산 메쉬가 살아있는 채로 알파 전략 바이너리만 수거 가능 ALC(isCollectible)에 격리 로드→CAS 래치로 구버전 핫패스 원자 차단→신버전 원자 바인딩(Interlocked.Exchange)→상태 이월→구 ALC Unload.
+            ★Think Beyond 세대 펜스+WeakReference 어테스테이션: 핫스왑마다 세대 전진 — 구 ALC 누출 이벤트는 세대 불일치로 δ=0 거부(고아 방어), 구 ALC 는 grace(5s) 롤링 수거 확인 후 미수거 시 좀비 격리+IgnitionLock.Downgrade.
+            ★liveArmed:false: 핫스왑은 무장 상태 무접촉 — 교체 전략의 신호도 무장 게이트(이중키∧MasterIgnited) 하류라 미무장 시 실 송출 0바이트. 서명 검증기 미배선이면 어떤 Reload 도 거부(fail-closed).
+        </div>
+    </div>
+
     @* 데이터 없음 안내 *@
     @if (!_frame.HasActivity)
     {
@@ -848,6 +909,11 @@
     .kpi-card.kpi-amber {
         border-color: rgba(255, 152, 0, 0.6);
         background: rgba(255, 152, 0, 0.08);
+    }
+    /* v5.3.0 — 핫스왑 정상(healthy): 청색 안정(시스템 상태색 — 시세 방향 아님). 스왑 중 amber / 좀비 누수 적. */
+    .kpi-card.kpi-hotswap-ok {
+        border-color: rgba(66, 133, 244, 0.45);
+        background: rgba(66, 133, 244, 0.07);
     }
     .kpi-label { font-size: 11px; color: var(--muted, #888); text-transform: uppercase; letter-spacing: 0.05em; }
     .kpi-value { font-size: 22px; font-weight: 600; font-family: var(--mono); }

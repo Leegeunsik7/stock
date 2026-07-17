@@ -447,6 +447,17 @@ namespace StockManager.Blazor
             services.AddSingleton(toxicSentinel);
             var liquiditySlicer = new MicroLiquiditySlicer(dispatchRing, toxicSentinel, orderThrottle, blackbox: blackbox);
             services.AddSingleton(liquiditySlicer);
+            // v5.3.0 — 무정지 전략 핫패치 게이트 & ALC 격리 그리드. ★liveArmed:false 불변: 핫스왑은 무장 상태 무접촉 —
+            //   교체 전략의 신호도 GatedOrderDispatcher 무장 게이트∧이중키∧MasterIgnited 하류라 실 송출 0. 자율 Activate 없음.
+            //   좀비 실드(세대 펜스+WeakReference 어테스테이션): 구 ALC 수거 실패 시 IgnitionLock.Downgrade(강등·클램프). 고아 이벤트 δ=0 거부.
+            //   ★기본 배선은 검증기 미주입 + requireProvenance:true → 서명 검증기 배선 전까지 어떤 Reload 도 거부(fail-closed). 실 전략 DLL 로드는 운영자 옵트인.
+            var stateCarrier = new StrategyStateCarrier();
+            services.AddSingleton(stateCarrier);
+            var zombieShield = new ZombieAssemblyShield(ignition, blackbox: blackbox);
+            services.AddSingleton(zombieShield);
+            var reloadGate = new HotStrategyReloadGate(stateCarrier, zombieShield,
+                verifyProvenance: null, requireProvenance: true, attestation: attestation, blackbox: blackbox);
+            services.AddSingleton(reloadGate);   // TelemetryMonitor 🔌 핫스트래티지 리로드 게이트 패널 주입 대상
             // v4.90.0 — 결정론적 웜 스타트 복구 엔진: 동결 해제 후 원장 백로그 소화(동결창 가격정합성 펜스) + 점화 FSM 점진 승격.
             //   ★기존 싱글톤(attestation·securityVault·ledgerMesh·ignitionSeq) 공유 — 새 인스턴스 금지(백로그·봉인 래치가 그 인스턴스에만).
             //   fail-closed(ForceFreeze 단일 소스 + 금고 재봉인)·δ=0(펜스 정수 산술·SecretLease ArrayPool)·결정론.
@@ -495,7 +506,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -525,9 +536,18 @@ namespace StockManager.Blazor
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.
+            //   ★v5.3.0 적대검증(high) 교정 — 좀비 실드 스윕 펌프 합류: SweepOnce 는 프로덕션에 호출부가 없어 수거 어테스테이션·
+            //   슬롯 회수가 사문화됐었다. 200ms 저가 스윕(driveGc:false)으로 수거 슬롯 회수+텔레메트리 갱신+자연수거 좀비 격발.
+            //   (활성 등록 0이면 SweepOnce 는 즉시 반환 — 유휴 무부하. 락 범위는 실드 자체 _gate 라 단일 라이터 계약 무간섭.)
             var ringTimer = new System.Threading.Timer(
-                _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } try { mmfFabric?.Beat(); } catch { } }, null, dueTime: 0, period: 200);
+                _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } try { mmfFabric?.Beat(); } catch { } try { zombieShield.SweepOnce(); } catch { } }, null, dueTime: 0, period: 200);
             FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
+            // ★좀비 실드 능동 수거 타이머(콜드·1s < grace 5s) — 수거 가능 ALC 의 WeakReference 는 GC 이후에만 사멸하므로,
+            //   grace 판정 전에 driveGc:true 로 배출을 능동 유도해 '게으른 GC' 로 인한 허위 좀비 격발을 봉쇄. 대기 등록이 있을 때만
+            //   GC 를 유발(SweepOnce 유휴 스킵). 핫스왑 저빈도라 평시엔 무동작. δ=0 발주 핫패스와 스레드 분리(스레드풀 타이머).
+            var zombieSweepTimer = new System.Threading.Timer(
+                _ => { try { zombieShield.SweepOnce(driveGc: true); } catch { } }, null, dueTime: 1000, period: 1000);
+            FormClosed += (_, _) => { try { zombieSweepTimer.Dispose(); } catch { } };
 
             // v4.76.0 안전 점화 시퀀서 + v4.90.0 웜 스타트 복구 엔진은 위(원장 메시 직후)에서 조립됨
             //   — ringPublisher 가 warmRestart 를 참조하므로 순서를 상향했다(중복 조립 금지).

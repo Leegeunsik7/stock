@@ -54,6 +54,7 @@ namespace StockManager.Common
         ComaDiagnosed = 60, ChannelFailover = 61, ThreadStarvation = 62, // v5.1.0 자율 라이브 감시망
         OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
         LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
+        StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어
         Freeze = 90,                                             // ForceFreeze 격발
     }
 
