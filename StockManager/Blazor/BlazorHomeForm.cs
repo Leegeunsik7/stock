@@ -81,7 +81,7 @@ namespace StockManager.Blazor
             var freezeRelay = new KiwoomFreezeRelay(attestation, bridge, com: null);
             freezeRelay.Attach();
             services.AddSingleton(freezeRelay);
-            FormClosed += (_, _) => { try { freezeRelay.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("freezeRelay", () => freezeRelay.Dispose());
             services.AddSingleton(attestation);            // S12 #2 — 거래 증적 감사 (ForceFreeze 게이트)
             // v4.95.0 — 무할당 순환 커널 블랙박스 + 동결 원자 덤퍼(감사 오디트 매그넷). 조기 생성 — 핫패스 엔진들이 Record 결속.
             //   ★스레드 격리: Record 는 δ=0 락-프리 push(50ms 드레인·MMF IPC 무간섭). 동결 시 덤프는 전용 BelowNormal 스레드(무I/O 핫패스).
@@ -91,7 +91,7 @@ namespace StockManager.Blazor
             var blackboxDumper = new CrashResilientDumper(blackbox, attestation);
             blackboxDumper.Start();            // att 동결 옵저버 등록(Seal+신호) + 격리 덤프 스레드 기동
             services.AddSingleton(blackboxDumper);
-            FormClosed += (_, _) => { try { blackboxDumper.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("blackboxDumper", () => blackboxDumper.Dispose());
             // v4.85.0 — 보안 자산 금고(DPAPI + 메모리 와이프 + 동결 연동 봉인). ★Reveal 은 liveArmed:false 옵트인
             //   펜스 뒤(무장 시에만 실 자격증명 복호화). EmergencyFreeze 감지 시 금고 영구 봉인(재복호화 원천 차단).
             var securityVault = new SecurityAssetVault(db, attestation, () => BrokerHub.IsArmed(db));
@@ -255,8 +255,8 @@ namespace StockManager.Blazor
                 greenhouseActivator.Activate(Market.KRX_KOSPI);
             services.AddSingleton(greenhouseActivator);
             // 종료 순서: 온실 정지(라이터 차단) → 펌프 Dispose(Join 후 최종 플러시). 동시 라이터 torn write 차단.
-            FormClosed += (_, _) => greenhouseActivator.Deactivate();
-            FormClosed += (_, _) => { try { flushPump?.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("greenhouse.Deactivate", () => greenhouseActivator.Deactivate());
+            FormClosed += (_, _) => ShutdownTrace.Step("flushPump", () => flushPump?.Dispose());
 
             // S25-a — 라이브 캔들 인그레스(옵트인). 방벽: 네트워크는 지연·고갈만(→staleness fail-closed),
             //   결정 오염 불가(→BulkheadCandleSource 0반환·LiveCandleFeed 검증 드롭). 실거래선(liveArmed:false) 무관.
@@ -278,7 +278,7 @@ namespace StockManager.Blazor
                     });
                 ingress.Start();
                 services.AddSingleton(ingress);
-                FormClosed += (_, _) => { try { ingress.Dispose(); } catch { } };
+                FormClosed += (_, _) => ShutdownTrace.Step("ingress", () => ingress.Dispose());
             }
 
             // S20 #4 — 드라이런 종단 조립체: 게이트 + 가상 멀티계좌 메시 결속.
@@ -336,7 +336,7 @@ namespace StockManager.Blazor
             var alphaFactory = new AutonomousAlphaFactory(db, attestation);
             alphaFactory.Start();
             services.AddSingleton(alphaFactory);
-            FormClosed += (_, _) => { try { alphaFactory.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("alphaFactory", () => alphaFactory.Dispose());
             // v4.86.0 — 자율 전략 진화: 금고 연동 서명기 + 3중 게이트(WalkForward·Tournament·AlphaEngine) 파이프라인.
             //   ★liveArmed:false 불변: 파이프라인은 PromotionGateway.Submit(=PendingApproval)까지만 — 자율 Approve/
             //   Activate 없음. 서명은 연구 산출물(.ms2cart)이며 실주문 아님. 파이프라인 지표는 ringPublisher.Sample 이 합류.
@@ -354,7 +354,7 @@ namespace StockManager.Blazor
             var ledgerMesh = new LedgerProtectionMesh(db, attestation);
             ledgerMesh.Start();
             services.AddSingleton(ledgerMesh);
-            FormClosed += (_, _) => { try { ledgerMesh.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("ledgerMesh", () => ledgerMesh.Dispose());
             // v4.96.0 — 실시간 청산 메쉬: 체결 즉시 실전 제비용(수수료·거래세·농특세·해외 혼합) δ=0 정산 + 예수금 영점 조절.
             //   ★2단계 청산 래치: 핫패스(단일 디스패치 스레드) CAS 델타 차감 + 값타입 링 발행 → 회계 스레드가 exact+캐리 확정.
             //   ★liveArmed:false 불변: 내부 원장만 영점 조절 — IBroker/소켓 참조 0. 외부로 허위 체결 동기화·주문 0바이트 사출.
@@ -366,7 +366,7 @@ namespace StockManager.Blazor
             //   ★C#5 freeze-storm 방지: OrderRejected/미체결도 같은 FillReceived 채널로 FillQty=0 이 흐르므로(KiwoomFreezeRelay 가
             //   FillReceived 를 의도적 미구독하는 이유), 실체결(FillQty>0)만 회계에 전달 — 정상 거부가 메쉬를 동결시키지 않게.
             bridge.FillReceived += fp => { if (fp.FillQty > 0) { try { accountingMesh.OnFillPayload(fp); } catch { } } };
-            FormClosed += (_, _) => { try { accountingMesh.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("accountingMesh", () => accountingMesh.Dispose());
             // v4.76.0 — 안전 점화 시퀀서(격리 1주 프로브→3σ·지연 검증→MasterIgnited). ★프로브는 격리 PaperBroker(IsLive=false)로만
             //   — 실 자본 위험 0. ★ProbeReferencePrice>0(지정가 경로). MasterIgnited 도달 전까지 IgnitionLock=Locked·LiveArmingGate=false.
             //   v4.90.0 — 웜 스타트 엔진이 Escalating 단계에서 이 시퀀서를 재사용하므로 조립 순서를 ringPublisher 앞으로 상향.
@@ -392,11 +392,11 @@ namespace StockManager.Blazor
             shadowMesh.Start();
             // ★DI 미등록 의도적: shadowMesh 도 LiveAccountingMesh 타입이라 AddSingleton 하면 라이브 accountingMesh(위) 등록을
             //   last-wins 로 덮어써 @inject LiveAccountingMesh(📊 패널)가 섀도우 장부로 오해소됨. 게이트웨이가 참조를 보유하므로 DI 불필요.
-            FormClosed += (_, _) => { try { shadowMesh.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("shadowMesh", () => shadowMesh.Dispose());
             var shadowGateway = new ShadowExecutionGateway(liveAttestation: attestation, shadowMesh: shadowMesh);
             shadowGateway.StartPump();
             services.AddSingleton(shadowGateway);   // TelemetryMonitor 🕹️ 컷오버 & 섀도우 플라이트 대시보드 주입 대상
-            FormClosed += (_, _) => { try { shadowGateway.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("shadowGateway", () => shadowGateway.Dispose());
             var cutoverGate = new AtomicCutoverGate(
                 shadowGateway, ignitionSeq, ignition, attestation,
                 valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
@@ -419,12 +419,12 @@ namespace StockManager.Blazor
             // 데드맨: 30초 생존신호 데드라인. 감시 시작(StartWatching)은 컷오버 성공 후 운영자/대시보드가 격발(기본 Idle).
             var deadman = new DeadmanReverseCutover(cutoverGate, TimeSpan.FromSeconds(30), blackbox: blackbox);
             services.AddSingleton(deadman);
-            FormClosed += (_, _) => { try { deadman.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("deadman", () => deadman.Dispose());
             // v5.1.0 — 자율 무정지 복구 & 실전 라이브 감시망. ★전부 '더 안전한 방향(강등/동결/섀도우)'으로만 작동(liveArmed:false).
             //   ① LiveSessionWatchdog: 20ms 핑퐁 RTT 연속 3회 100ms 초과→Coma→IgnitionLock.Downgrade. latencyProbe 는 실 세션 배선 시 주입(드라이런 미기동).
             var liveWatchdog = new LiveSessionWatchdog(ignition, resetSocket: null, latencyProbe: null, blackbox: blackbox);
             services.AddSingleton(liveWatchdog);
-            FormClosed += (_, _) => { try { liveWatchdog.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("liveWatchdog", () => liveWatchdog.Dispose());
             //   ② AutonomousFailoverController: 채널 물리 장애→대안 채널 자율 라우팅·exactly-once dedup·양채널 다운 fail-closed. 실 채널 배선은 운영자 옵트인.
             var failover = new AutonomousFailoverController(attestation, blackbox: blackbox);
             services.AddSingleton(failover);
@@ -434,7 +434,7 @@ namespace StockManager.Blazor
                 blackbox: blackbox);
             starvation.Start();
             services.AddSingleton(starvation);
-            FormClosed += (_, _) => { try { starvation.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("starvation", () => starvation.Dispose());
             //   ④ ★Think Beyond AdaptiveOrphanReaper: 발주 후 종단 응답 무도착(자본 허공 묶임)을 실측 RTT 분포 적응형 데드라인으로 탐지→진상 조회 자본 회수→불확정 fail-closed. reconcile/reclaim 은 운영자 옵트인.
             var orphanReaper = new AdaptiveOrphanReaper(attestation, reconcile: null, reclaim: null);
             services.AddSingleton(orphanReaper);
@@ -479,7 +479,7 @@ namespace StockManager.Blazor
             var warmRestart = new DeterministicWarmRestartEngine(attestation, securityVault, ledgerMesh, ignitionSeq);
             warmRestartRef = warmRestart;   // 복구기 잠금 펜스 지연 클로저 결속(위 armedPredicate)
             services.AddSingleton(warmRestart);
-            FormClosed += (_, _) => { try { warmRestart.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("warmRestart", () => warmRestart.Dispose());
             // v4.91.0 — 결정론적 카오스 테스팅 그리드: 시드 재현 가능한 복합 장애를 가상 시간선에서 투하·검증.
             //   ★liveArmed:false 불변: 순수 인메모리 시뮬 — 실 소켓/파이프/프로세스 미생성(외부 API 0바이트). 라이브 발주 무영향.
             var chaosGrid = new DeterministicChaosGrid();
@@ -497,7 +497,7 @@ namespace StockManager.Blazor
             newsIntel.Start();
             services.AddSingleton(sentimentBreaker);
             services.AddSingleton(newsIntel);   // TelemetryMonitor 🧠 뉴스 레이더 & AI 멘토 패널 주입 대상
-            FormClosed += (_, _) => { try { newsIntel.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("newsIntel", () => newsIntel.Dispose());
             // v4.94.0 — 발주 전 리스크 실드(락-프리 원자 증거금/당일 예약). 시드는 모의 계좌 기준(PaperAccount 기본 1천만).
             //   ★liveArmed:false 불변: 실드는 '허용/거부'만 — 발주 0바이트. admit 해도 하류 이중키∧MasterIgnited 게이트가 지배.
             //   라이브 예수금(AccountPayload.Deposit) 소스는 미보존 → 실 예산 시드 배선은 별도 선결(정직 표기).
@@ -520,7 +520,7 @@ namespace StockManager.Blazor
             MmfIpcFabric? mmfFabric = null;
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
-            if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => { try { mmfFabric.Dispose(); } catch { } }; }
+            if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => ShutdownTrace.Step("mmfFabric", () => mmfFabric.Dispose()); }
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
@@ -549,20 +549,20 @@ namespace StockManager.Blazor
                 attestation: attestation,
                 dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false));
             services.AddSingleton(drainWorker);
-            FormClosed += (_, _) => { try { drainWorker.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.
             //   ★v5.3.0 적대검증(high) 교정 — 좀비 실드 스윕 펌프 합류: SweepOnce 는 프로덕션에 호출부가 없어 수거 어테스테이션·
             //   슬롯 회수가 사문화됐었다. 200ms 저가 스윕(driveGc:false)으로 수거 슬롯 회수+텔레메트리 갱신+자연수거 좀비 격발.
             //   (활성 등록 0이면 SweepOnce 는 즉시 반환 — 유휴 무부하. 락 범위는 실드 자체 _gate 라 단일 라이터 계약 무간섭.)
             var ringTimer = new System.Threading.Timer(
                 _ => { try { ringPublisher.Sample(); } catch { } try { latencyPublisher.Sample(); } catch { } try { mmfFabric?.Beat(); } catch { } try { zombieShield.SweepOnce(); } catch { } }, null, dueTime: 0, period: 200);
-            FormClosed += (_, _) => { try { ringTimer.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("ringTimer", () => ringTimer.Dispose());
             // ★좀비 실드 능동 수거 타이머(콜드·1s < grace 5s) — 수거 가능 ALC 의 WeakReference 는 GC 이후에만 사멸하므로,
             //   grace 판정 전에 driveGc:true 로 배출을 능동 유도해 '게으른 GC' 로 인한 허위 좀비 격발을 봉쇄. 대기 등록이 있을 때만
             //   GC 를 유발(SweepOnce 유휴 스킵). 핫스왑 저빈도라 평시엔 무동작. δ=0 발주 핫패스와 스레드 분리(스레드풀 타이머).
             var zombieSweepTimer = new System.Threading.Timer(
                 _ => { try { zombieShield.SweepOnce(driveGc: true); } catch { } }, null, dueTime: 1000, period: 1000);
-            FormClosed += (_, _) => { try { zombieSweepTimer.Dispose(); } catch { } };
+            FormClosed += (_, _) => ShutdownTrace.Step("zombieSweepTimer", () => zombieSweepTimer.Dispose());
 
             // v4.76.0 안전 점화 시퀀서 + v4.90.0 웜 스타트 복구 엔진은 위(원장 메시 직후)에서 조립됨
             //   — ringPublisher 가 warmRestart 를 참조하므로 순서를 상향했다(중복 조립 금지).
@@ -581,13 +581,32 @@ namespace StockManager.Blazor
             Controls.Add(view);
         }
 
+        // ★종료 진단 계측 — 종료 지연 원인 특정용. WM_CLOSE(최초 진입)부터 각 단계 소요를 %LOCALAPPDATA%\MS2E.StockSuite\
+        //   shutdown_trace.log 에 기록한다. WM_CLOSE→OnFormClosing 갭(WebView2 pre-close)·핸들러 소요를 분리 실측.
+        protected override void WndProc(ref System.Windows.Forms.Message m)
+        {
+            if (m.Msg == 0x0010) ShutdownTrace.Begin("WM_CLOSE");   // WM_CLOSE — 사용자 닫기 최초 수신 시각
+            base.WndProc(ref m);
+        }
+
+        protected override void OnFormClosing(System.Windows.Forms.FormClosingEventArgs e)
+        {
+            ShutdownTrace.Begin("OnFormClosing");   // WM_CLOSE 를 못 거친 경로(코드 종료) 대비 — 이미 시작됐으면 no-op
+            ShutdownTrace.Mark("OnFormClosing enter");
+            base.OnFormClosing(e);
+            ShutdownTrace.Mark("OnFormClosing exit");
+        }
+
         // ★즉시 종료 보장 — 등록된 FormClosed 핸들러(저널·원장·회계 플러시, 상태 스냅샷, 워커 Dispose)가 전부 완료된
         //   직후 프로세스를 즉시 종료한다. WinForms 폼 Dispose 단계의 WebView2(브라우저 프로세스) graceful teardown(수 초)을
         //   건너뛰어 '닫으면 바로 닫힘'을 보장. 모든 워커 스레드는 IsBackground 이라 OS 가 회수하고, 데이터 영속화(SQLite WAL·
         //   저널 플러시·스냅샷)는 base.OnFormClosed 에서 동기 완료되므로 하드 종료가 안전하다.
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            ShutdownTrace.Mark("OnFormClosed enter — FormClosed 핸들러 실행 시작");
             base.OnFormClosed(e);   // 모든 FormClosed 핸들러 실행 완료(플러시·Join·스냅샷) 후
+            ShutdownTrace.Mark("OnFormClosed base done — 전 핸들러 완료");
+            ShutdownTrace.Flush();
             try { System.Environment.Exit(0); } catch { }
         }
 
@@ -675,8 +694,8 @@ namespace StockManager.Blazor
 
             FormClosed += (_, _) =>
             {
-                try { _snapshotTimer?.Dispose(); } catch { }
-                try { hydration.Snapshot(); } catch { }   // 종료 시 최종 상태 영속화
+                ShutdownTrace.Step("snapshotTimer", () => _snapshotTimer?.Dispose());
+                ShutdownTrace.Step("hydration.Snapshot", () => hydration.Snapshot());   // 종료 시 최종 상태 영속화
             };
 
             return (hydration, journaler);
