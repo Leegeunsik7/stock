@@ -1,7 +1,7 @@
 @* ============================================================================
    IndexTickerBar — v4.64.0: 실시간 지수·선물 스트립(포트폴리오 허브 상단)
-   기존 GlobalIndexService(Yahoo v8·60초 폴링·실데이터)를 재사용 — 별도 fetch 없이 구독만.
-   표시: 코스피·코스닥·나스닥·나스닥선물·다우·S&P. OnRefreshed 구독 → InvokeAsync(StateHasChanged).
+   GlobalIndexService 재사용 — 국내(코스피·코스닥)는 네이버 realtime 12초, 해외/선물은 Yahoo v8 60초. 구독만.
+   표시: 코스피·코스닥·나스닥·나스닥선물·다우·S&P·S&P선물(ES=F)·러셀2000선물(RTY=F). OnRefreshed → InvokeAsync(StateHasChanged).
    ※ 한국 야간/주간 선물(코스피200)은 무인증 피드 부재로 미표시(정직) — KIS futureoption 배선 시 합류 가능.
    ============================================================================ *@
 @implements IDisposable
@@ -24,8 +24,8 @@
 </div>
 
 @code {
-    // 큐레이션 — 사용자 요청(코스피·코스닥 실시간 + 나스닥·나스닥선물·다우). S&P 동반.
-    private static readonly string[] _show = { "^KS11", "^KQ11", "^IXIC", "NQ=F", "^DJI", "^GSPC" };
+    // 큐레이션 — 코스피·코스닥 실시간 + 나스닥·나스닥선물·다우·S&P. v5.4.1 S&P 선물(ES=F)·러셀2000 선물(RTY=F) 추가.
+    private static readonly string[] _show = { "^KS11", "^KQ11", "^IXIC", "NQ=F", "^DJI", "^GSPC", "ES=F", "RTY=F" };
     private bool _any;
 
     protected override void OnInitialized()
