@@ -110,6 +110,7 @@ namespace StockManager.Common
         private readonly OrderAttestationService  _gate;
         private readonly Thread                   _worker;
         private volatile bool                     _stop;
+        private readonly ManualResetEventSlim      _wake = new(false);   // 인터럽터블 대기 — Dispose 시 즉시 기상(종료 지연 제거)
         private readonly AlphaRejectionValve      _valve = new();   // v4.85.0 자기 제어 밸브(거부율 95%↑ 자동 정지)
 
         public int CyclesCompleted   { get; private set; }
@@ -153,9 +154,9 @@ namespace StockManager.Common
                 try { RunCycle(); }
                 catch { /* 사이클 예외는 루프를 중단하지 않음 */ }
 
-                // 24h 대기 — 1분 간격으로 stop 신호 확인
-                for (int m = 0; m < 1440 && !_stop; m++)
-                    Thread.Sleep(TimeSpan.FromMinutes(1));
+                // 24h 대기 — ★인터럽터블(ManualResetEventSlim). Dispose 가 _wake.Set() 하면 즉시 반환해 종료가 지연되지 않는다.
+                //   (기존 1분 단위 Thread.Sleep 은 stop 신호를 최대 60초 뒤에야 관측해 Join(5s) 타임아웃까지 종료가 프리즈됐음.)
+                if (!_stop) { try { _wake.Wait(TimeSpan.FromHours(24)); } catch { return; } }
             }
         }
 
@@ -246,7 +247,9 @@ namespace StockManager.Common
         public void Dispose()
         {
             _stop = true;
+            try { _wake.Set(); } catch { }   // 상주 대기 즉시 기상 → Join 이 타임아웃 없이 반환(종료 지연 제거)
             try { _worker.Join(TimeSpan.FromSeconds(5)); } catch { }
+            try { _wake.Dispose(); } catch { }
         }
     }
 }

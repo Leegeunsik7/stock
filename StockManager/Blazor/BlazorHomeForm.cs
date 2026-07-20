@@ -581,6 +581,16 @@ namespace StockManager.Blazor
             Controls.Add(view);
         }
 
+        // ★즉시 종료 보장 — 등록된 FormClosed 핸들러(저널·원장·회계 플러시, 상태 스냅샷, 워커 Dispose)가 전부 완료된
+        //   직후 프로세스를 즉시 종료한다. WinForms 폼 Dispose 단계의 WebView2(브라우저 프로세스) graceful teardown(수 초)을
+        //   건너뛰어 '닫으면 바로 닫힘'을 보장. 모든 워커 스레드는 IsBackground 이라 OS 가 회수하고, 데이터 영속화(SQLite WAL·
+        //   저널 플러시·스냅샷)는 base.OnFormClosed 에서 동기 완료되므로 하드 종료가 안전하다.
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            base.OnFormClosed(e);   // 모든 FormClosed 핸들러 실행 완료(플러시·Join·스냅샷) 후
+            try { System.Environment.Exit(0); } catch { }
+        }
+
         // ── v4.69.0: IModuleBridge DI 어댑터 ─────────────────────────────────────
         // ModuleBridge(정적) 에 STA 마샬링이 이미 내장되어 있으므로 단순 위임으로 충분.
         private sealed class HostBoundModuleBridge : IModuleBridge

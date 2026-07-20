@@ -25,7 +25,10 @@
    두 모델·입력 헬퍼는 그대로 유지(컨트롤드 입력·datetime·픽커 권위·수수료 dirty 불변식 보존) — 껍데기만 하나로 통일. *@
 @if (_showForm)
 {
-    <div style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_mode==FormMode.Buy?"var(--up)":_mode==FormMode.Sell?"var(--down)":"var(--line)");border-radius:var(--radius);padding:18px">
+    @* ★focusin/focusout(버블링) 으로 폼 내 입력 활성 여부를 추적 — 자동 폴링은 '입력에 실제 포커스가 있을 때만' 재렌더를
+       억제하고, 포커스가 없으면 폼이 열려 있어도 보유표 시세를 라이브 갱신한다(폼 열어둔 채 시세 정지 현상 해소). *@
+    <div @onfocusin="() => _formEditing = true" @onfocusout="() => _formEditing = false"
+         style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_mode==FormMode.Buy?"var(--up)":_mode==FormMode.Sell?"var(--down)":"var(--line)");border-radius:var(--radius);padding:18px">
         @* 모드 전환 탭 — 매수(빨강)/매도(파랑)/직접보정(중립). 전환 시 종목·시장·통화·증권사 컨텍스트 이월. *@
         <div style="display:flex;gap:6px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
             <button class="pill @(_mode==FormMode.Buy?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Buy)">📈 매수</button>
@@ -121,6 +124,11 @@
         <div class="k-lab">수익률</div>
         <div class="k-val @(_totalRet>=0?"up":"down")">@_totalRet.ToString("+0.0;-0.0")%</div>
         <div class="k-row"><span class="sub" style="font-size:11px">원가 대비</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">오늘 등락</div>
+        <div class="k-val @(_todayPct>=0?"up":"down")">@_todayPct.ToString("+0.0;-0.0")%</div>
+        <div class="k-row"><span class="@(_todayPnl>=0?"up":"down")" style="font-size:11px">@_todayPnl.ToString("+#,##0;-#,##0;0")원</span><span class="sub" style="font-size:11px">전일 대비</span></div>
     </div>
     <div class="kpi">
         <div class="k-lab">보유 종목</div>
@@ -407,11 +415,13 @@ else if (_tab == "corr")
 @code {
     private List<Holding> _holdings = new();
     private bool _showForm;                       // 통합 기록 폼(매수/매도/직접보정) 단일 토글
+    private bool _formEditing;                     // 폼 내 입력에 포커스 있음 — 이때만 폴링 재렌더 억제(입력 리셋 방지)
     private FormMode _mode = FormMode.Buy;         // 통합 폼 현재 모드
     private enum FormMode { Buy, Sell, Correct }
     private int _editId;
     private string _ts = "", _formMsg = "", _txMsg = "", _flash = "";   // _flash: 저장 성공 확인 배너(폼 닫힌 뒤에도 표시)
     private decimal _totalValue, _totalPnl, _totalRet;
+    private decimal _todayPnl, _todayPct;         // 오늘(일간) 등락 — 전일 평가액 대비 하루 변동(₩·%)
     private decimal _usdKrw = 1380m;   // 환율 실패 시 직전 캐시값 유지 (원본 룰)
     private List<CategoryAgg> _cats = new();   // 자산군 3분류 집계(국내·해외·코인)
     private CancellationTokenSource? _cts;
@@ -684,8 +694,9 @@ else if (_tab == "corr")
     private void OnAsOf() { if (!AsOfCtx.IsLive) _tab = "hold"; LoadAsOf(); InvokeAsync(StateHasChanged); }   // AS-OF 진입 시 보유탭 고정(다른 탭의 현재가 누수 차단)
 
     // 자동 새로고침 폴링. 주기는 _pollSec(초). 끄기(0)·과거시점(AS-OF)·보유 탭 아님·폼 입력 중이면 건너뛴다.
-    //   ★폼 입력 중(_showTxForm/_showForm) 폴링 금지 — 폴링의 StateHasChanged 재렌더가 입력 중인 컨트롤드 입력
-    //     (수량·단가·거래일시)을 리셋해 '0.13 입력이 0으로 저장'되던 치명 버그를 막는다.
+    //   ★폼 입력에 포커스가 있을 때만(_showForm && _formEditing) 폴링 재렌더 금지 — 재렌더가 입력 중인 컨트롤드 입력
+    //     (수량·단가·거래일시)을 리셋해 '0.13 입력이 0으로 저장'되던 치명 버그를 막는다. 폼이 열려 있어도 입력 포커스가
+    //     없으면 보유표 시세는 라이브 갱신한다(폼 열어둔 채 시세가 정지하던 현상 해소). 폴링은 _f/_tf 폼 모델을 건드리지 않음.
     //   자동 폴링은 persist:false 로 'DB 저장 없이' 메모리 시세만 갱신(저장은 초기·수동 때만). 시세 fetch는 병렬.
     private async Task Loop(CancellationToken ct)
     {
@@ -695,7 +706,7 @@ else if (_tab == "corr")
             try { await Task.Delay(sec * 1000, ct); } catch { return; }
             if (ct.IsCancellationRequested) return;
             // 폴링 조건 미충족(끄기·과거시점·보유탭 아님·폼 입력 중) → 재렌더 건너뜀
-            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold" || _showForm) continue;
+            if (_pollSec <= 0 || !AsOfCtx.IsLive || _tab != "hold" || (_showForm && _formEditing)) continue;
             await LoadAsync(persist: false);
             await InvokeAsync(StateHasChanged);
         }
@@ -767,6 +778,21 @@ else if (_tab == "corr")
             var cost = _holdings.Sum(h => h.AvgPrice * h.Quantity * (h.Currency == Currency.USD ? _usdKrw : 1m));
             _totalPnl = _totalValue - cost;
             _totalRet = cost > 0 ? _totalPnl / cost * 100m : 0m;
+            // 오늘(일간) 등락 — 종목별 전일 대비 등락%(_dayPct)로 오늘 하루 평가액 변동을 집계. 전일 평가액이 기준(원가 아님).
+            //   전일 평가액 = 현재 평가액 / (1 + 등락%/100). 등락% 미포착 종목은 변동 0(전일=현재)으로 취급해 왜곡 방지.
+            decimal todayGain = 0m, prevBase = 0m;
+            foreach (var h in _holdings)
+            {
+                decimal fxr2 = h.Currency == Currency.USD ? _usdKrw : 1m;
+                decimal cur  = h.CurrentPrice * h.Quantity * fxr2;
+                decimal d    = _dayPct.TryGetValue(h.Symbol, out var dv) ? dv : 0m;   // 전일 대비 %
+                decimal denom = 1m + d / 100m;
+                decimal prev  = denom != 0m ? cur / denom : cur;                       // 전일 평가액
+                todayGain += cur - prev;
+                prevBase  += prev;
+            }
+            _todayPnl = todayGain;
+            _todayPct = prevBase > 0 ? todayGain / prevBase * 100m : 0m;
             _cats = PortfolioBreakdown.Compute(_holdings, _usdKrw);   // 국내·해외·코인 3분류 집계
             _ts = DateTime.Now.ToString("HH:mm:ss");
         }
