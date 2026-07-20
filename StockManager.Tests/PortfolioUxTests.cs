@@ -145,6 +145,45 @@ namespace StockManager.Tests
             Assert.Equal("", q.Session);
         }
 
+        // ★부호 반전 회귀(실 API 재현): name 이 영문 enum 이 아니어도(한글/부재) code(4/5=하락)로 하락 판정해야 함.
+        //   실 네이버 API 는 name 이 "FALLING" 이 아닐 수 있어 name-only 판정이 전 종목·지수를 상승으로 오판했음.
+        [Theory]
+        [InlineData("{\"code\":\"5\",\"name\":\"하락\"}")]     // 한글 name
+        [InlineData("{\"code\":\"5\"}")]                        // name 부재(code만)
+        [InlineData("{\"code\":\"4\",\"name\":\"하한가\"}")]   // 하한
+        [InlineData("{\"code\":5}")]                            // code 가 숫자형
+        [InlineData("{\"text\":\"하락\"}")]                    // code 부재·한글 text 폴백
+        public void Naver_DownDetectedByCode_NotEnglishName(string cmp)
+        {
+            var data = Datas("{\"stockName\":\"테스트\",\"closePrice\":\"70,000\",\"compareToPreviousClosePrice\":\"1,000\"," +
+                             "\"compareToPreviousPrice\":" + cmp + "}");
+            var q = NaverFinanceProvider.ParseRealtime("005930", Market.KRX_KOSPI, data);
+            Assert.Equal(71000m, q.PreviousClose);   // ★하락 → 전일종가 > 현재가
+            Assert.True(q.ChangeRate < 0, $"하락 미검출 — cmp={cmp}");
+        }
+
+        [Theory]
+        [InlineData("{\"code\":\"2\",\"name\":\"상승\"}")]
+        [InlineData("{\"code\":\"1\"}")]                        // 상한
+        public void Naver_UpDetectedByCode(string cmp)
+        {
+            var data = Datas("{\"stockName\":\"테스트\",\"closePrice\":\"71,000\",\"compareToPreviousClosePrice\":\"1,000\"," +
+                             "\"compareToPreviousPrice\":" + cmp + "}");
+            var q = NaverFinanceProvider.ParseRealtime("005930", Market.KRX_KOSPI, data);
+            Assert.Equal(70000m, q.PreviousClose);   // 상승 → 전일종가 < 현재가
+            Assert.True(q.ChangeRate > 0);
+        }
+
+        [Fact]
+        public void Naver_DirectionIsDown_CodeUnit()
+        {
+            Assert.True(NaverFinanceProvider.DirectionIsDown(Datas("{\"compareToPreviousPrice\":{\"code\":\"5\"}}")));
+            Assert.True(NaverFinanceProvider.DirectionIsDown(Datas("{\"compareToPreviousPrice\":{\"code\":\"4\"}}")));
+            Assert.False(NaverFinanceProvider.DirectionIsDown(Datas("{\"compareToPreviousPrice\":{\"code\":\"2\"}}")));
+            Assert.False(NaverFinanceProvider.DirectionIsDown(Datas("{\"compareToPreviousPrice\":{\"code\":\"1\"}}")));
+            Assert.False(NaverFinanceProvider.DirectionIsDown(Datas("{\"closePrice\":\"1\"}")));   // 방향 필드 부재 → 상승(기본)
+        }
+
         // ── §3 Yahoo 파싱 (프리/애프터 + 폴백) ────────────────────────────────
 
         private static JsonElement Meta(string inner)

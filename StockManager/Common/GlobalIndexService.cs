@@ -116,13 +116,9 @@ namespace StockManager.Common
                         var json = await HttpPool.Shared.GetStringAsync(url, ct);
                         using var doc = System.Text.Json.JsonDocument.Parse(json);
                         var data = doc.RootElement.GetProperty("datas")[0];
-                        var last  = Safe.JsonDec(data, "closePrice");                       // 현재 지수(콤마 문자열도 파싱)
-                        var delta = Safe.JsonDec(data, "compareToPreviousClosePrice");      // 변동 크기(부호는 방향 필드로)
-                        var dir = "";
-                        if (data.TryGetProperty("compareToPreviousPrice", out var cmp) && cmp.ValueKind == System.Text.Json.JsonValueKind.Object
-                            && cmp.TryGetProperty("name", out var nm)) dir = nm.GetString() ?? "";
-                        bool down = dir.Contains("FALL", StringComparison.OrdinalIgnoreCase) || dir.Contains("LOWER", StringComparison.OrdinalIgnoreCase);
-                        var change = down ? -delta : delta;
+                        var last  = Safe.JsonDec(data, "closePrice");                            // 현재 지수(콤마 문자열도 파싱)
+                        var delta = Math.Abs(Safe.JsonDec(data, "compareToPreviousClosePrice")); // 변동 크기(부호는 방향 코드로)
+                        var change = NaverFinanceProvider.DirectionIsDown(data) ? -delta : delta;  // ★code(4/5=하락) 기준 — 부호 반전 교정
                         if (last > 0)
                         {
                             Upsert(new IndexRow(sym, name, "🇰🇷", "아시아", last, last - change, "KRW"));

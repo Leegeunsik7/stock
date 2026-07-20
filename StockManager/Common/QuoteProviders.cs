@@ -75,15 +75,11 @@ namespace StockManager.Common
         public static Quote ParseRealtime(string symbol, Market market, JsonElement data)
         {
             var price = Safe.JsonDec(data, "closePrice");
-            // ⚠️ compareToPreviousClosePrice는 "변동액"이지 "전일종가"가 아님.
-            var delta = Safe.JsonDec(data, "compareToPreviousClosePrice");
-            // 등락 방향: 실제 응답 필드는 compareToPreviousPrice(객체).name = RISING/FALLING/UPPER_LIMIT/LOWER_LIMIT.
-            //   (기존 코드의 "risingOrFalling" 은 응답에 없는 필드라 항상 ""→상승 취급 → 하락일 전일종가·부호가 틀렸음. 실측 교정.)
-            var dirName = "";
-            if (data.TryGetProperty("compareToPreviousPrice", out var cmpEl) && cmpEl.ValueKind == JsonValueKind.Object
-                && cmpEl.TryGetProperty("name", out var nmEl)) dirName = nmEl.GetString() ?? "";
-            var isDown = dirName.Contains("FALL", StringComparison.OrdinalIgnoreCase)
-                      || dirName.Contains("LOWER", StringComparison.OrdinalIgnoreCase);
+            // ⚠️ compareToPreviousClosePrice는 "변동 크기"(부호 없음/모호)지 "전일종가"가 아님 → 크기는 Abs, 부호는 방향 코드로 결정.
+            var delta = Math.Abs(Safe.JsonDec(data, "compareToPreviousClosePrice"));
+            // 등락 방향: ★code(1상한·2상승·3보합·4하한·5하락) 우선 — 실 네이버 API 는 name 이 영문 enum 이 아닐 수 있어(한글/부재)
+            //   name-only 판정이 하락을 상승으로 오판(전 종목·지수 + 표시) 했음. code 는 목/실 API 모두 안정 → DirectionIsDown 로 교정.
+            var isDown = DirectionIsDown(data);
             var change = isDown ? -delta : delta;
             var previousClose = price - change;
 
@@ -120,6 +116,26 @@ namespace StockManager.Common
                 }
             }
             return q;
+        }
+
+        /// <summary>
+        /// ★네이버 등락 방향 판정(하락=true·순수·테스트 대상). compareToPreviousPrice.code(1상한·2상승·3보합·4하한·5하락)가
+        /// 목 JSON·실 네이버 API 모두에서 안정적이라 이를 우선 사용. code 부재 시에만 name/text(한글 하락/하한·영문 FALL/LOWER) 폴백.
+        /// (기존 name-only 판정은 실 API 가 영문 enum 을 안 줄 때 전부 상승으로 오판 → 지수·일간 부호 반전 버그. 실측 교정.)
+        /// </summary>
+        public static bool DirectionIsDown(JsonElement data)
+        {
+            if (!data.TryGetProperty("compareToPreviousPrice", out var cmp) || cmp.ValueKind != JsonValueKind.Object)
+                return false;
+            var code = cmp.TryGetProperty("code", out var cd)
+                ? (cd.ValueKind == JsonValueKind.String ? (cd.GetString() ?? "") : cd.GetRawText().Trim('"'))
+                : "";
+            if (code is "4" or "5") return true;              // 4 하한·5 하락
+            if (code is "1" or "2" or "3") return false;      // 1 상한·2 상승·3 보합
+            var t = (cmp.TryGetProperty("name", out var nm) ? nm.GetString() : null)
+                 ?? (cmp.TryGetProperty("text", out var tx) ? tx.GetString() : null) ?? "";
+            return t.Contains("하락") || t.Contains("하한")
+                || t.Contains("FALL", StringComparison.OrdinalIgnoreCase) || t.Contains("LOWER", StringComparison.OrdinalIgnoreCase);
         }
 
         // v4.68.0 — 순차→병렬 전환: SemaphoreSlim(4)로 최대 4개 동시 fetch.
