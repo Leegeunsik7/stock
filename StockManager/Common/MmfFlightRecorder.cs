@@ -57,7 +57,9 @@ namespace StockManager.Common
         StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어
         BasketNetted = 83, WashTradeRejected = 84, StrategyFanout = 85,   // v5.4.0 다중 전략 인터리빙·네팅·자전거래 방어
         RiskCascade = 86, CapitalResegment = 87,                         // v5.4.0 교차 전략 캐스케이드 방화벽·자본 재분할
+        LogFabricStall = 88, KernelJitterHold = 89,                      // v5.5.0 로그 패브릭 드롭·커널 지터 안전 홀드
         Freeze = 90,                                             // ForceFreeze 격발
+        DiskStallFreeze = 91, PageFaultThrash = 92,                      // v5.5.0 디스크 I/O stall·페이지폴트 thrashing 방어
     }
 
     /// <summary>블랙박스 레코드 — 정확히 64바이트 고정 blittable(참조 0·힙 0). MemoryMarshal 로 바이트 직렬화.</summary>

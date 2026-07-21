@@ -134,6 +134,15 @@ namespace StockManager.Common
         public readonly long   WashTradeRejections;         // 자전거래 차단막 거부 누적
         public readonly long   ResonanceMetric;             // 최대 쌍 공동낙폭 공진 메트릭(위험 수치)
         public readonly long   CapitalSaturationBps;        // 전 레인 자본 포화도(bps·예약/할당)
+        // v5.5.0 — 영지식 로깅 패브릭 & 커널 지터 센티널: 로그 영속속도·큐·드롭·압축비·커널지터·안전홀드·NIC드롭·I/O방어상태.
+        public readonly long   LogPersistBytesPerSec;       // 초당 이진 로그 영속 바이트(MB/s 파생)
+        public readonly long   LogQueueDepth;               // 디스크 I/O 백그라운드 큐 포화도(미소비 이벤트)
+        public readonly long   LogDroppedTotal;             // 링 만원 드롭-오래된-것 누적(디스크 stall 징후)
+        public readonly long   LogCompressionBps;           // 압축비 bps(압축/원본 ×10000·낮을수록 효율↑)
+        public readonly long   KernelJitterMicros;          // OS 커널 정밀 지터(µs·최근)
+        public readonly long   KernelSafeHold;              // 커널/페이지 안전 홀드 활성(0/1)
+        public readonly long   NicDropsEstimate;            // NIC 링버퍼 패킷 드롭 추정 누적
+        public readonly long   IoDefenseStatus;             // OS/HW 방어선 상태(0 정상·1 페이지 홀드·2 디스크 stall 동결)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -167,7 +176,10 @@ namespace StockManager.Common
                              long strategyGeneration = 0L, long strategyBuildTicks = 0L, long stateCarryRttNs = 0L,
                              long zombieAssemblyCount = 0L, long orphanEventsRejected = 0L,
                              long activeStrategyCount = 0L, long sealedLaneCount = 0L, long nettingSavedCostRaw = 0L,
-                             long washTradeRejections = 0L, long resonanceMetric = 0L, long capitalSaturationBps = 0L)
+                             long washTradeRejections = 0L, long resonanceMetric = 0L, long capitalSaturationBps = 0L,
+                             long logPersistBytesPerSec = 0L, long logQueueDepth = 0L, long logDroppedTotal = 0L,
+                             long logCompressionBps = 0L, long kernelJitterMicros = 0L, long kernelSafeHold = 0L,
+                             long nicDropsEstimate = 0L, long ioDefenseStatus = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -262,6 +274,14 @@ namespace StockManager.Common
             WashTradeRejections         = washTradeRejections;
             ResonanceMetric             = resonanceMetric;
             CapitalSaturationBps        = capitalSaturationBps;
+            LogPersistBytesPerSec       = logPersistBytesPerSec;
+            LogQueueDepth               = logQueueDepth;
+            LogDroppedTotal             = logDroppedTotal;
+            LogCompressionBps           = logCompressionBps;
+            KernelJitterMicros          = kernelJitterMicros;
+            KernelSafeHold              = kernelSafeHold;
+            NicDropsEstimate            = nicDropsEstimate;
+            IoDefenseStatus             = ioDefenseStatus;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -441,6 +461,11 @@ namespace StockManager.Common
         public bool    StrategyMuted       => SealedLaneCount > 0L;                       // 봉인/진압 발생 → amber 경고
         public decimal NettingSavedCost    => NettingSavedCostRaw / (decimal)QMath.Scale;  // 절감 비용(통화 단위)
         public double  CapitalSaturationPct => CapitalSaturationBps / 100.0;              // bps→% 표시
+        // v5.5.0 — 로깅 패브릭 & 커널 지터 UI 헬퍼.
+        public double  LogPersistMbPerSec  => LogPersistBytesPerSec / 1_048_576.0;        // B/s → MB/s
+        public double  CompressionPct      => LogCompressionBps / 100.0;                  // bps → %(압축 후 비율)
+        public bool    KernelHolding       => KernelSafeHold != 0L;                       // 안전 홀드 → amber
+        public bool    IoFrozen            => IoDefenseStatus >= 2L;                       // 디스크 stall 동결 → 자주색
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -449,9 +474,9 @@ namespace StockManager.Common
         private const int CacheLine = 64;
 
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
-        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.4.0 기준 필드 93개×8=744B → Data 128..872B ≤ 896(64배수·잔여 3슬롯=24B).
-        //   (v5.3.0 87필드=696B→832 잔여 1슬롯 → v5.4.0 다중전략 6필드 추가로 93필드 → Size 832→896 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
-        [StructLayout(LayoutKind.Explicit, Size = 896)]
+        //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.5.0 기준 필드 101개×8=808B → Data 128..936B ≤ 960(64배수·잔여 3슬롯=24B).
+        //   (v5.4.0 93필드→896 잔여 3슬롯 → v5.5.0 로깅/지터 8필드 추가로 101필드 → Size 896→960 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
+        [StructLayout(LayoutKind.Explicit, Size = 960)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -550,8 +575,12 @@ namespace StockManager.Common
         private readonly RealTimeBasketNetter? _netter;           // v5.4.0 — 실시간 바스켓 네터(옵션·기본 null)
         private readonly WashTradeGuard? _washGuard;              // v5.4.0 — 자전거래 차단막(옵션·기본 null)
         private readonly CrossStrategyContagionFirewall? _firewall; // v5.4.0 — 교차 전략 전염 방화벽(옵션·기본 null)
+        private readonly ZeroAllocAsyncCompressedLogger? _logger;   // v5.5.0 — 무할당 압축 로거(옵션·기본 null)
+        private readonly KernelJitterSpikeSentinel? _kernelJitter;  // v5.5.0 — 커널 지터 센티널(옵션·기본 null)
+        private readonly IoBackpressureFirewall? _ioFirewall;       // v5.5.0 — I/O 역류 방화벽(옵션·기본 null)
         private long _lastPublished;
         private long _lastBlackboxTotal;
+        private long _lastLogCompBytes;   // v5.5.0 — 로그 영속 rate 델타 기준선
         private long _lastTicks;
         private int  _sampling;   // 단일 라이터 CAS 가드(동시 Sample 금지)
 
@@ -593,7 +622,10 @@ namespace StockManager.Common
                                       MultiStrategyInterleavedMesh? mesh = null,
                                       RealTimeBasketNetter? netter = null,
                                       WashTradeGuard? washGuard = null,
-                                      CrossStrategyContagionFirewall? firewall = null)
+                                      CrossStrategyContagionFirewall? firewall = null,
+                                      ZeroAllocAsyncCompressedLogger? logger = null,
+                                      KernelJitterSpikeSentinel? kernelJitter = null,
+                                      IoBackpressureFirewall? ioFirewall = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -636,7 +668,11 @@ namespace StockManager.Common
             _netter       = netter;
             _washGuard    = washGuard;
             _firewall     = firewall;
+            _logger       = logger;
+            _kernelJitter = kernelJitter;
+            _ioFirewall   = ioFirewall;
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
+            _lastLogCompBytes  = _logger?.CompBytesCum ?? 0L;      // v5.5.0 — 로그 rate 기준선(첫 샘플 허위 스파이크 제거)
             _lastPublished = _ring.Published;
             _lastTicks     = _nowTicks();
         }
@@ -747,6 +783,17 @@ namespace StockManager.Common
                 if (_netter is { } nt) nettSaved = nt.SavedCostRawCum;
                 if (_washGuard is { } wgd) washRej = wgd.Rejections;
                 if (_firewall is { } fw) { resonance = fw.ResonanceMetric; if (msSealed == 0L) msSealed = fw.SealCount; }
+                // v5.5.0 — 로깅 패브릭(영속 rate·큐·드롭·압축비)·커널 지터(µs·홀드·NIC drop)·I/O 방어선(상태) 합류(미배선이면 0).
+                long logBps = 0L, logQ = 0L, logDrop = 0L, logComp = 10000L, kJit = 0L, kHold = 0L, nicDrop = 0L, ioStat = 0L;
+                if (_logger is { } lg)
+                {
+                    logQ = lg.QueueDepth; logDrop = lg.DroppedTotal; logComp = lg.CompressionRatioBps;
+                    long lc = lg.CompBytesCum; long dLc = lc - _lastLogCompBytes;
+                    logBps = (dTick > 0 && dLc > 0) ? (long)(dLc * (double)Stopwatch.Frequency / dTick) : 0L;
+                    _lastLogCompBytes = lc;
+                }
+                if (_kernelJitter is { } kj) { kJit = kj.LastJitterMicros; nicDrop = kj.NicDropsEstimate; if (kj.SafeHoldActive) kHold = 1L; }
+                if (_ioFirewall is { } iofw) { ioStat = iofw.StatusCode; if (iofw.PageThrashHoldActive) kHold = 1L; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -766,7 +813,8 @@ namespace StockManager.Common
                     wdLat, wdHealth, foChan, foCount, tpAvail, orInFlight, bsCode,
                     mlImb, mlSlices, thrCount, savedBps, toxCode,
                     stGen, stBuild, carryRtt, zombie, orphan,
-                    msActive, msSealed, nettSaved, washRej, resonance, capSat));
+                    msActive, msSealed, nettSaved, washRej, resonance, capSat,
+                    logBps, logQ, logDrop, logComp, kJit, kHold, nicDrop, ioStat));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

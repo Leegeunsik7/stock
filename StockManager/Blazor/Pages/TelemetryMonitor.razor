@@ -36,6 +36,9 @@
 @inject RealTimeBasketNetter Netter
 @inject WashTradeGuard WashGuard
 @inject CrossStrategyContagionFirewall Firewall
+@inject ZeroAllocAsyncCompressedLogger Ms2Logger
+@inject KernelJitterSpikeSentinel KernelJitter
+@inject IoBackpressureFirewall IoFirewall
 @inject IJSRuntime JS
 
 <div class="top">
@@ -954,6 +957,70 @@
             복수 격리 알파 두뇌가 단일 시세 스트림을 δ=0 락프리 팬아웃 공유·소비. 전역 예수금을 정수 가중치 비율로 물리 분할(무할당 자본 가드: 1raw 초과 발주 차단·타 전략 예산 잠식 불가). 동일 틱 대향 주문은 내부 상쇄(왕복 수수료·세 절감), 잔여만 하류 사출.
             ★Think Beyond 교차 전략 전염 방화벽: 봉인 자본 재분배 금지(구획 격벽)+δ=0 공동낙폭 비트셋 공진(popcount)+손실속도 퓨즈 → 주도 전략 봉인, 다수 봉인 시 IgnitionLock 전역 백스톱. 자전거래 가드는 마이크로 윈도우 대향 주문 무효화(거래소 자전거래 셧다운 방어).
             ★liveArmed:false: 팬아웃/네팅/상쇄/잔여는 전부 무장 게이트(이중키∧MasterIgnited) 하류 — 미무장 시 실 송출 0바이트. 자전거래 거부도 드레인 전 차단이지 실주문 경로 신설 아님.
+        </div>
+    </div>
+
+    @* ══ v5.5.0 영지식 초고속 로깅 패브릭 & 커널 지터 센티널 ═══════════════════════ *@
+    @{
+        long lgPushed  = Ms2Logger.PushedTotal;
+        long lgDropped = Ms2Logger.DroppedTotal;
+        long lgQueue   = Ms2Logger.QueueDepth;
+        long lgFrames  = Ms2Logger.FramesWritten;
+        long lgErrors  = Ms2Logger.DrainErrors;
+        double lgCompPct = Ms2Logger.CompressionRatioBps / 100.0;   // 압축 후 비율(%)
+        double lgMbSec = _frame.LogPersistMbPerSec;                 // 초당 영속(MB/s·Sample 산출)
+        long kjMicros  = KernelJitter.LastJitterMicros;
+        long kjSpikes  = KernelJitter.JitterSpikes;
+        long kjGcSpk   = KernelJitter.GcPauseSpikes;
+        long kjGcMic   = KernelJitter.LastGcPauseSpikeMicros;
+        long kjNic     = KernelJitter.NicDropsEstimate;
+        long kjEsc     = KernelJitter.Escalations;
+        bool kjHold    = KernelJitter.SafeHoldActive;
+        long ioStatus  = IoFirewall.StatusCode;
+        long ioPageSpk = IoFirewall.PageFaultSpikes;
+        long ioTouchUs = IoFirewall.LastTouchMicros;
+        long ioStalls  = IoFirewall.DiskStalls;
+        bool ioPageHold = IoFirewall.PageThrashHoldActive;
+        bool ioFrozen  = IoFirewall.DiskStallFrozen;
+        bool holding   = kjHold || ioPageHold;
+        // 포렌식 코드(64bit): [지터µs16|GC스파이크16|페이지폴트16|드롭16]
+        long kHex = ((kjMicros & 0xFFFF) << 48) | ((kjGcSpk & 0xFFFF) << 32) | ((ioPageSpk & 0xFFFF) << 16) | (lgDropped & 0xFFFF);
+    }
+    @if (ioFrozen)
+    {
+        <div style="margin:0 28px 18px;background:rgba(60,10,90,0.34);border:2px solid #7b1fa2;border-radius:10px;padding:18px 22px;animation:recpulse 0.7s ease-in-out infinite">
+            <div style="font-size:16px;font-weight:700;color:#ce93d8;margin-bottom:6px">🟪 [DISK I/O STALL DETECTED — 디스크 쓰기 목졸림·전역 동결·수동 해제 요구]</div>
+            <div style="font-size:13px;color:#e1bee7;font-family:var(--mono)">
+                FORENSIC ERR CODE: <b>0x@(kHex.ToString("X16"))</b> &nbsp;|&nbsp; 디스크 stall @ioStalls.ToString("N0") · 로그 큐 @lgQueue.ToString("N0") · 드롭 @lgDropped.ToString("N0") · I/O 오류 @lgErrors.ToString("N0")
+            </div>
+        </div>
+    }
+    else if (holding)
+    {
+        <div style="margin:0 28px 18px;background:rgba(255,193,7,0.18);border:2px solid #ffc107;border-radius:10px;padding:16px 20px;animation:recpulse 0.8s ease-in-out infinite">
+            <div style="font-size:15px;font-weight:700;color:#ffca28">🟡 [KERNEL JITTER SPIKE DETECTED - HOLDING HOT-PATH] — @(ioPageHold ? "페이지폴트 thrashing" : "커널/GC 지터 스파이크")·무장 안전 홀드(가역·자기회복)</div>
+        </div>
+    }
+    <div class="kpi-card @(ioFrozen ? "kpi-alert" : (holding ? "kpi-amber" : "kpi-hotswap-ok"))" style="margin-bottom:22px">
+        <div class="kpi-label">📦 영지식 초고속 로깅 패브릭 & 커널 지터 센티널 (Zero-Alloc Async Logger &amp; Kernel Sentinel)</div>
+        <div style="display:flex;gap:20px;margin-top:12px;flex-wrap:wrap">
+            <div><div class="kpi-value" style="font-size:18px">@lgMbSec.ToString("F2")<span style="font-size:12px">MB/s</span></div><div class="kpi-sub">이진 로그 영속 속도(프레임 @lgFrames.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@lgQueue.ToString("N0")</div><div class="kpi-sub">I/O 백그라운드 큐 포화(드롭 @lgDropped.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@lgCompPct.ToString("F1")%</div><div class="kpi-sub">압축 후 비율(Brotli·낮을수록 효율↑)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@kjMicros.ToString("N0")<span style="font-size:12px">µs</span></div><div class="kpi-sub">OS 커널 정밀 지터(3σ 스파이크 @kjSpikes.ToString("N0"))</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@kjGcMic.ToString("N0")<span style="font-size:12px">µs</span></div><div class="kpi-sub">GC Pause 스파이크(@kjGcSpk.ToString("N0")회)</div></div>
+            <div><div class="kpi-value" style="font-size:18px">@kjNic.ToString("N0")</div><div class="kpi-sub">NIC 패킷 드롭 추정</div></div>
+            <div>
+                <div class="kpi-value" style="font-size:16px">
+                    <span class="prod-badge @(ioFrozen ? "chaos-red" : holding ? "chaos-amber" : "prod-auth")">@(ioFrozen ? "디스크 동결" : holding ? "안전 홀드" : "정상")</span>
+                </div>
+                <div class="kpi-sub">★OS/HW 방어선(페이지 터치 @ioTouchUs.ToString("N0")µs·폴트 @ioPageSpk.ToString("N0")·강등 @kjEsc.ToString("N0"))</div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:10px">
+            핫패스는 고정 32B blittable 이벤트를 언매니지드 락프리 링에 δ=0 O(1) 푸시하고 즉시 복귀 — 백그라운드 전용 I/O 스레드가 Brotli 압축(내장·의존성 0)/XOR 난독/CRC32 프레임 무결 후 .ms2log 에 비동기 영속. 링 만원(디스크 stall)이면 드롭-오래된-것 무대기 덮어쓰기로 50ms 발주 드레인에 지터 무전파.
+            ★Think Beyond I/O 역류 방화벽: 로거 큐/진행 워치독으로 디스크 쓰기 목졸림 감지 시 ForceFreeze(파국·fail-closed), 자가계측 페이지폴트 프로브(상주 페이지 QPC 터치 계측)로 스와핑 thrashing 감지 시 가역 안전 홀드. 커널 지터 센티널은 QPC 스케줄링 지터·GC pause·NIC drop 단측 3σ → 스파이크 시 무장 억제(가역), 지속 시 Downgrade.
+            ★liveArmed:false: 로거/센티널/방화벽은 IBroker·소켓 참조 0 — 관측/영속 인프라. 안전 홀드는 무장 술어를 '더 안전한 방향(false)'으로만 억제(이중키∧MasterIgnited 우회 0). 커널/GC/NIC 지터는 인프라 관측이라 트레이딩 판정 입력 무유입(결정론).
         </div>
     </div>
 

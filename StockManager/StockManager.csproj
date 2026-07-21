@@ -25,9 +25,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.4.0</Version>
-    <AssemblyVersion>5.4.0.0</AssemblyVersion>
-    <FileVersion>5.4.0.0</FileVersion>
+    <Version>5.5.0</Version>
+    <AssemblyVersion>5.5.0.0</AssemblyVersion>
+    <FileVersion>5.5.0.0</FileVersion>
+    <!-- v5.5.0 — ★영지식 초고속 로깅 패브릭 & 커널 지터 센티널(Zero-Alloc Async Compressed Logger & Kernel Jitter Sentinel): 로그 폭주 속에서도 핫패스 지터 0% 통제·커널/하드웨어 지터 정밀 포획. 6렌즈 적대검증.
+         ★정직 회계(정찰 5차원): 신규 = ZeroAllocAsyncCompressedLogger(언매니지드 락프리 링·Brotli·.ms2log)·KernelJitterSpikeSentinel(QPC 3σ 지터·GC pause·NIC drop·가역 홀드)·IoBackpressureFirewall(디스크 stall·페이지폴트 프로브)·RingTelemetry +8. 재사용 = MmfFlightRecorder.Record(δ=0 클레임)·CrashResilientDumper(전용 I/O 스레드·Encode·atomic·fail-closed)·JournalFlushPump·Crc32·ThreadStarvationSensor 단측 3σ 링·Stopwatch(QPC 래퍼)·DispatchArming.ResolvePredicate(안전홀드 인터락).
+         [과제1] ZeroAllocAsyncCompressedLogger.cs: 핫패스가 고정 32B blittable BlittableLogEvent 를 언매니지드 링(NativeMemory.AlignedAlloc)에 δ=0 O(1) 푸시(Interlocked 클레임+seqlock 무효화-쓰기-커밋)하고 즉시 복귀. 백그라운드 전용 I/O 스레드가 Brotli 압축(내장·의존성 0)/XOR 난독/CRC32 프레임 무결 후 .ms2log 비동기 append. 드롭-오래된-것 무대기 링(디스크 stall 역전파 차단). 50ms 발주 드레인 지터 무전파.
+         [과제2] KernelJitterSpikeSentinel.cs: Stopwatch(QPC) 스케줄링 지터를 앱 연산 지연과 분리해 단측 3σ 추적(전용 2ms 타이트 링), GC Pause(GC.GetTotalPauseDuration 델타)·NIC drop(IPv4 IncomingPacketsDiscarded) 분리 측정. 커널 지터 3σ/2ms 초과 시 핫패스 무장을 가역 안전 홀드(자기 만료)로 전환(무장 술어 blockWhile 억제), 지속 시 IgnitionLock.Downgrade.
+         [★Think Beyond] IoBackpressureFirewall.cs: 두 파국(디스크 flush stall·페이지폴트 thrashing)을 근본 다른 두 감지기로 분리 방어. ①디스크 stall 워치독: 로거 큐 고수위+백그라운드 진행 정체 → 쓰기 목졸림 → ForceFreeze(파국·1회 래치). ②자가계측 페이지폴트 인-시투 프로브: 상주 페이지 영역을 콜드 스레드가 QPC 브래킷 터치 → 스왑아웃 시 지연 스파이크로 thrashing 결정론 탐지(VirtualLock 비의존·측정으로 탐지). GC-clean 샘플만 판정(선점/GC 오탐 제거)·가역 홀드만(타이밍 휴리스틱으로 비가역 강등 금지).
+         [UI] RingTelemetry +8(로그 영속 MB/s·큐 포화·드롭·압축비·커널 지터µs·안전홀드·NIC drop·I/O 방어상태·Cell 896→960·101필드) + TelemetryMonitor 📦 패널(청색 정상·황색 [KERNEL JITTER SPIKE DETECTED - HOLDING HOT-PATH] 홀드·암흑자색 [DISK I/O STALL DETECTED] 동결+64bit 헥스).
+         ★liveArmed:false: 로거/센티널/방화벽 IBroker·소켓 참조 0(관측/영속 인프라). 안전 홀드는 무장 술어를 '더 안전한 방향(false)'으로만 억제(tighten-only·이중키∧MasterIgnited 우회 0·유닛 실증). 커널/GC/NIC 지터는 인프라 관측이라 트레이딩 판정 입력 무유입(결정론). δ=0(로그 푸시 핫패스 힙 0·전용 스레드 400k 측정·압축/암호/파일은 콜드 백그라운드).
+         테스트 +10(회귀 1). 적대검증 6렌즈 확정 15(중복 제거 6)교정: ★Timer.Dispose 가 진행 중 Poll 미대기 → NativeMemory.Free 경합 UAF → Timer.Dispose(WaitHandle) 핸드셰이크, ★Logger Dispose 가 Join 타임아웃(디스크 stall) 무시하고 무조건 해제 → 소비자 freed _ring 접근 UAF → Join 성공 시에만 해제(타임아웃 시 누수 허용), ★드레인 루프가 미커밋 프런티어를 건너뛰며 tail 전진 → 커밋 이벤트 유실+드롭 미계수 → 3분기(커밋/드롭/정지)+seqlock 재검증, ★32B 복사 TOCTOU torn read → seqlock 무효화-쓰기-커밋+복사후 재검증, ★페이지폴트 프로브 GC/선점 오탐 → GC 가드+가역 홀드만(비가역 Downgrade 제거), ★전역 동결이 로그 영속 전면 억제(종료 드레인 포함) → 디스크 fault 로컬 래치로 분리(동결 중 로깅 지속=포렌식). 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2105 통과. -->
     <!-- v5.4.0 — ★다중 전략 인터리빙 공존 & 실시간 바스켓 리밸런서(Multi-Strategy Interleaved Mesh): 격리된 복수 알파 두뇌를 단일 프로세스 안전 공존시키고 매수/매도를 미시 상쇄해 거래비용 극한 압축. 6렌즈 적대검증.
          ★정직 회계(정찰 5차원): 신규 = MultiStrategyInterleavedMesh(δ=0 락프리 팬아웃·정수 가중치 자본 물리 분할·무할당 자본 가드)·RealTimeBasketNetter(대향 상쇄)·WashTradeGuard(자전거래 차단)·CrossStrategyContagionFirewall(전염 방화벽)·RingTelemetry +6. 재사용 = IHotStrategy.OnQuote·OrderProposal.GenomeId(전략 라우팅 키)·OrderDispatchRing.PublishRaw·GatedOrderDispatcher(무장 게이트)·StrategyStateCarrier(per-lane 통계)·PreTradeRiskShield CAS 관용구(재구현)·LiveAccountingMesh.FloorChargeCarry(가중치 분할 사상)·IgnitionLock(전역 캐스케이드 백스톱).
          [과제1] MultiStrategyInterleavedMesh.cs: 복수 IHotStrategy 레인이 단일 OnQuote 스트림을 δ=0 락프리 팬아웃(stackalloc 인텐트·힙 0) 공유·소비. 전역 예수금을 정수 가중치 비율로 물리 분할(Repartition: floor+잔여 결정론 귀속·Σ==전역). 무할당 자본 가드(익스포저 기반: 레인 순 포지션이 서브버짓 1raw 초과 시 fail-closed 거부·타 전략 예산 잠식 불가). ProcessTick: 팬아웃→네팅→자전거래 가드→잔여만 사출(단일 소비자).

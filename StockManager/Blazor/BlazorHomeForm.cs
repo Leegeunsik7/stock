@@ -320,9 +320,15 @@ namespace StockManager.Blazor
             // v4.90.0 — 복구기 잠금 펜스: 웜 스타트 복구 진행 중(IsRecovering)이면 무장 술어를 무조건 false 로 감싼다
             //   (동결 해제 직후 잠긴 전략들의 '주문 폭주(Order Rush)' 물리 차단). warmRestart 는 아래에서 생성돼 지연 클로저로 결속.
             DeterministicWarmRestartEngine? warmRestartRef = null;
+            // v5.5.0 — 커널 지터/I/O 방어선 안전 홀드도 무장 술어에 합성(지연 ref·아래에서 생성). 홀드 활성 시 무장을 false 로 억제 —
+            //   OS 지터/디스크 stall/페이지 thrashing 시기의 오발주를 선제 차단. '더 안전한 방향'으로만 작동(tighten-only·liveArmed:false 정합).
+            KernelJitterSpikeSentinel? kernelJitterRef = null;
+            IoBackpressureFirewall?    ioFirewallRef   = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
-                blockWhile: () => warmRestartRef?.IsRecovering ?? false);
+                blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
+                                || (kernelJitterRef?.SafeHoldActive ?? false)
+                                || (ioFirewallRef?.HoldActive ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -435,6 +441,27 @@ namespace StockManager.Blazor
             starvation.Start();
             services.AddSingleton(starvation);
             FormClosed += (_, _) => ShutdownTrace.Step("starvation", () => starvation.Dispose());
+            // v5.5.0 — 영지식 초고속 로깅 패브릭 & 커널 지터 센티널 & I/O 역류 방화벽. ★liveArmed:false: 전부 관측/영속 인프라(IBroker·소켓 0).
+            //   로거: 핫패스 δ=0 언매니지드 링 push → 백그라운드 Brotli 압축/XOR/CRC → .ms2log. 디스크 write 실패 시 attestation.ForceFreeze(fail-closed).
+            //   커널 지터 센티널: QPC 스케줄링 지터·GC pause·NIC drop 단측 3σ → 가역 안전 홀드(무장 술어 억제·위 blockWhile). 지속 시 Downgrade.
+            //   ★Think Beyond I/O 역류 방화벽: 로거 큐/진행 워치독으로 디스크 stall → ForceFreeze, 자가계측 페이지폴트 프로브로 thrashing → 가역 홀드.
+            var ms2Logger = new ZeroAllocAsyncCompressedLogger(
+                onDiskFault: msg => { try { attestation.ForceFreeze(msg); } catch { } },   // 디스크 영속 실패 → 전역 동결(fail-closed). 동결 중에도 로깅은 계속(포렌식).
+                blackbox: blackbox);
+            ms2Logger.Start();
+            services.AddSingleton(ms2Logger);
+            FormClosed += (_, _) => ShutdownTrace.Step("ms2Logger", () => ms2Logger.Dispose());
+            var kernelJitter = new KernelJitterSpikeSentinel(ignition, blackbox);   // ctor 에서 20ms 폴 타이머 즉시 기동(순수 인프라)
+            kernelJitterRef = kernelJitter;   // 무장 술어 지연 ref 결속(위 armedPredicate blockWhile)
+            services.AddSingleton(kernelJitter);
+            FormClosed += (_, _) => ShutdownTrace.Step("kernelJitter", () => kernelJitter.Dispose());
+            var ioFirewall = new IoBackpressureFirewall(
+                queueDepth: () => ms2Logger.QueueDepth,
+                millisSinceDrain: () => ms2Logger.MillisSinceLastDrain,
+                attestation: attestation, blackbox: blackbox);
+            ioFirewallRef = ioFirewall;       // 무장 술어 지연 ref 결속
+            services.AddSingleton(ioFirewall);   // TelemetryMonitor 📦 로깅/커널 센티널 패널 주입 대상
+            FormClosed += (_, _) => ShutdownTrace.Step("ioFirewall", () => ioFirewall.Dispose());
             //   ④ ★Think Beyond AdaptiveOrphanReaper: 발주 후 종단 응답 무도착(자본 허공 묶임)을 실측 RTT 분포 적응형 데드라인으로 탐지→진상 조회 자본 회수→불확정 fail-closed. reconcile/reclaim 은 운영자 옵트인.
             var orphanReaper = new AdaptiveOrphanReaper(attestation, reconcile: null, reclaim: null);
             services.AddSingleton(orphanReaper);
@@ -521,7 +548,7 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => ShutdownTrace.Step("mmfFabric", () => mmfFabric.Dispose()); }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall);
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
