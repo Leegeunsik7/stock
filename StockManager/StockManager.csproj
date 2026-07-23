@@ -25,9 +25,18 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>5.5.0</Version>
-    <AssemblyVersion>5.5.0.0</AssemblyVersion>
-    <FileVersion>5.5.0.0</FileVersion>
+    <Version>7.0.0</Version>
+    <AssemblyVersion>7.0.0.0</AssemblyVersion>
+    <FileVersion>7.0.0.0</FileVersion>
+    <!-- v7.0.0 — ★결정론 타임라인 플레이백 & RIO 커널 바이패스 & CausalWeave 인과 워터마크 & Phase 7 하드웨어 프리플라이트/감사금고(Path Gamma 통합 확정): 다중 세션 WIP(v5.6.0 플레이백 → v6.0.0 RIO/CausalWeave → v6.1.0 멀티캐스트/카오스 → v7.0.0 프리플라이트/감사)를 표준 워크플로(전체 스위트 + 6렌즈 적대적 검증)로 검증·확정·병합. 재구현 없이 확정 결함만 교정.
+         [플레이백] StatePlaybackSimulator.cs(v5.6.0): .ms2log(Brotli+XOR+CRC32)/.ms2dump(XOR+SHA256+CRC) 를 격리 샌드박스에서 나노초 프레임 재현(배속 1x/10x/Max + 1틱 스텝). δ=0 재생 핫패스(사전할당 스크래치·MemoryMarshal). 디코드는 콜드 Load 상주 이관(핫패스 Brotli SafeHandle 할당 제거).
+         [RIO] RioKernelBypassMesh.cs(v6.0.0/v6.1.0): Winsock RIO(WSAIoctl(WSAID_MULTIPLE_RIO))를 delegate* unmanaged 로 직결, NIC→등록 네이티브 버퍼 무복사 수신 후 완료 QPC 봉인. RIO 미지원 시 관리형 소켓 안심 강등(동일 CausalWeaveRing 발행). IGMP 멀티캐스트 조인·NIC 고정·제로카피 L3 파싱.
+         [★Think Beyond] CausalWeave.cs(v6.0.0): RIO 링 오버런 & 플레이백 타임워프를 단일 인과 워터마크로 통합 방어(제미나이의 A/B 2모듈 분리를 초월). CausalWeaveRing(락프리 newest-wins 증명 회수)·CausalWeaveClock(인과 퓨즈 fail-closed 이중 봉인).
+         [카오스] CausalChaosInjector.cs(v6.1.0): 10M MPS L3 마이크로버스트 + 인과 위반 주입으로 CausalWeave 적대 검증.
+         [Phase 7] RioHardwareProbe.cs·CausalAuditVault.cs(v7.0.0): 실전 배선 전 하드웨어/OS 캡스 콜드 프리플라이트(RIO 지원·SO_RCVBUF·NIC·QPC)·안심 강등 권고 + append-only SHA-256 해시체인 감사 원장(변조 시 비가역 봉인).
+         [UI] RingTelemetry 122필드(Cell Size 1152=64×18·128+122×8=1104)·TelemetryMonitor 🕹️ 결정론 재생/RIO 패널 + 🛫 프리플라이트 + 🔐 감사금고(한국색상: 청색 정상·황색 폴백/경고·크림슨 비가역 경보). 수동 관측 소스(CausalWeaveClock/Ring·RioHardwareProbe·CausalAuditVault)를 BlazorHomeForm DI 배선(RIO 메쉬·플레이백은 옵트인 null 유지: 부팅 native 자동 기동 없음).
+         ★불변: liveArmed:false(전 서브시스템 IBroker·소켓·onSend·PublishRaw 참조 0·순수 인바운드 수신/오프라인 재현·유닛 실증)·δ=0(RIO 드레인·재생·주입 핫패스 힙 0)·결정론(주입 QPC·퓨즈는 기록 시퀀스 기준)·fail-closed(퓨즈 트립=ForceFreeze ∧ Downgrade·CQ 오염 정직 강등·디코드 실패 폐기).
+         [적대검증 6렌즈 find→verify] 확정 11(중복 제거) 교정: ★RIO 드레인 슬롯 재게시가 미검증 slot 으로 네이티브 OOB 쓰기+커널 OOB RIO_BUF 전달 → 경계검사 선행+len 클램프(D1), ★재게시 RIOReceive 반환 무시로 무음 데드피드 → fail-closed 강등(D2), ★CQ 오염 시 _rioActive 유지로 fail-open+폴백 차단 → 정직 강등(D5), ★Dispose 가 드레인 종료 미확인 후 네이티브 해제 UAF → Join 성공 시에만 해제(D3), ★RIODeregisterBuffer/RIOCloseCompletionQueue 미호출로 등록버퍼 페이지락 누수 → 규약 순서 해제(D4), ★폴백 ReceiveFrom(ref EndPoint) 패킷당 SocketAddress/IPEndPoint 할당 → 무할당 Span 오버로드+재사용 SocketAddress(D8), ★CausalWeaveRing _tail 비원자 생산자/소비자 lost-update 로 회수 계수 오염 → CAS-to-max 단조 전진(D6), ★인과 퓨즈가 QPC 기준이라 다중 생산자 로거의 정상 QPC 지터를 타임워프로 오검출→비가역 정지 → 퓨즈를 기록 시퀀스(Seq) 기준으로 전환(QPC 는 자문 페이싱)(D7), ★Brotli 재생 배치마다 SafeBrotliDecoderHandle 할당(δ=0 위배) → 콜드 Load 상주 디코드 이관(D9), ★Path Gamma/Phase 7 텔레메트리 미배선으로 전 패널 상시 암전 → 수동 소스 DI 배선(D10), ★감사훼손+퓨즈 동시 크림슨 배너 좌표 충돌 → 세로 스택 오프셋(D11). 회귀 테스트 +3(Seq 퓨즈·QPC 지터 오검출 없음·Brotli δ=0). 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2144 통과. -->
     <!-- v5.5.0 — ★영지식 초고속 로깅 패브릭 & 커널 지터 센티널(Zero-Alloc Async Compressed Logger & Kernel Jitter Sentinel): 로그 폭주 속에서도 핫패스 지터 0% 통제·커널/하드웨어 지터 정밀 포획. 6렌즈 적대검증.
          ★정직 회계(정찰 5차원): 신규 = ZeroAllocAsyncCompressedLogger(언매니지드 락프리 링·Brotli·.ms2log)·KernelJitterSpikeSentinel(QPC 3σ 지터·GC pause·NIC drop·가역 홀드)·IoBackpressureFirewall(디스크 stall·페이지폴트 프로브)·RingTelemetry +8. 재사용 = MmfFlightRecorder.Record(δ=0 클레임)·CrashResilientDumper(전용 I/O 스레드·Encode·atomic·fail-closed)·JournalFlushPump·Crc32·ThreadStarvationSensor 단측 3σ 링·Stopwatch(QPC 래퍼)·DispatchArming.ResolvePredicate(안전홀드 인터락).
          [과제1] ZeroAllocAsyncCompressedLogger.cs: 핫패스가 고정 32B blittable BlittableLogEvent 를 언매니지드 링(NativeMemory.AlignedAlloc)에 δ=0 O(1) 푸시(Interlocked 클레임+seqlock 무효화-쓰기-커밋)하고 즉시 복귀. 백그라운드 전용 I/O 스레드가 Brotli 압축(내장·의존성 0)/XOR 난독/CRC32 프레임 무결 후 .ms2log 비동기 append. 드롭-오래된-것 무대기 링(디스크 stall 역전파 차단). 50ms 발주 드레인 지터 무전파.

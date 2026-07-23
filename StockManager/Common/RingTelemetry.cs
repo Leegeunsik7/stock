@@ -143,6 +143,29 @@ namespace StockManager.Common
         public readonly long   KernelSafeHold;              // 커널/페이지 안전 홀드 활성(0/1)
         public readonly long   NicDropsEstimate;            // NIC 링버퍼 패킷 드롭 추정 누적
         public readonly long   IoDefenseStatus;             // OS/HW 방어선 상태(0 정상·1 페이지 홀드·2 디스크 stall 동결)
+        // v6.0.0 Path Gamma — RIO 커널 바이패스 + 결정론 플레이백 + ★CausalWeave(인과 워터마크 통합 방어).
+        public readonly long   RioBypassActive;             // 1=RIO 커널 바이패스 나노초 수신 중
+        public readonly long   RioReceiveLatencyNanos;      // 최근 RIO 수신 지연(ns·dequeue→publish)
+        public readonly long   RioFallbackActive;           // 1=RIO 미지원 → 관리형 소켓 안심 강등 수신
+        public readonly long   RioFramesReceived;           // 수신 프레임 누적(RIO+폴백)
+        public readonly long   PlaybackStateCode;           // PlaybackState 0 Idle/1 Playing/2 Paused/3 Stepping/4 Completed/5 Faulted
+        public readonly long   PlaybackPlayed;              // 재생된 이벤트 수
+        public readonly long   PlaybackTotalFrames;         // 전체 이벤트 수(진행률 분모)
+        public readonly double PlaybackFps;                 // 재생 초당 프레임(FPS)
+        public readonly long   PlaybackIntegrityRaw;        // 덤프 디코딩 무결성(0..10^8·CRC/SHA 통과 비율)
+        public readonly long   CausalWeaveStateCode;        // CausalWeaveState 0 Nominal/1 Pressure/2 Evicting/3 FuseTripped
+        public readonly long   CausalRingEvictions;         // ★오버런 증명 회수(조용한 드롭 0·newest-wins)
+        public readonly long   CausalRingSaturationPermille;// 링 포화도(‰·0..1000)
+        public readonly long   CausalFuseTripped;           // 1=타임-와프 퓨즈 트립(재생 fail-closed 정지)
+        // v7.0.0 Phase 7 — RIO 하드웨어 사전점검 프로브 + 암호학적 감사 금고.
+        public readonly long   RioProbeSupported;           // 1=RIO 지원 어댑터 감지
+        public readonly long   RioProbeAdapterCount;        // 물리 어댑터 수
+        public readonly long   RioProbeMaxRcvBufBytes;      // 최대 실효 수신 소켓버퍼(bytes)
+        public readonly long   RioProbeRecommendFallback;   // 1=안심 강등 권고(RIO 미지원)
+        public readonly long   AuditLedgerIntegrityCode;    // 0 미검증/1 INTACT/2 CORRUPTED
+        public readonly long   AuditLedgerCount;            // 감사 원장 레코드 수
+        public readonly long   AuditLedgerSealed;           // 1=트립 포렌식 봉인(비가역 차단)
+        public readonly long   AuditLedgerHeadHash;         // 헤드 해시 상위 8B(포렌식 표시)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -179,7 +202,16 @@ namespace StockManager.Common
                              long washTradeRejections = 0L, long resonanceMetric = 0L, long capitalSaturationBps = 0L,
                              long logPersistBytesPerSec = 0L, long logQueueDepth = 0L, long logDroppedTotal = 0L,
                              long logCompressionBps = 0L, long kernelJitterMicros = 0L, long kernelSafeHold = 0L,
-                             long nicDropsEstimate = 0L, long ioDefenseStatus = 0L)
+                             long nicDropsEstimate = 0L, long ioDefenseStatus = 0L,
+                             long rioBypassActive = 0L, long rioReceiveLatencyNanos = 0L, long rioFallbackActive = 0L,
+                             long rioFramesReceived = 0L, long playbackStateCode = 0L, long playbackPlayed = 0L,
+                             long playbackTotalFrames = 0L, double playbackFps = 0.0, long playbackIntegrityRaw = 0L,
+                             long causalWeaveStateCode = 0L, long causalRingEvictions = 0L,
+                             long causalRingSaturationPermille = 0L, long causalFuseTripped = 0L,
+                             long rioProbeSupported = 0L, long rioProbeAdapterCount = 0L,
+                             long rioProbeMaxRcvBufBytes = 0L, long rioProbeRecommendFallback = 0L,
+                             long auditLedgerIntegrityCode = 0L, long auditLedgerCount = 0L,
+                             long auditLedgerSealed = 0L, long auditLedgerHeadHash = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -282,6 +314,27 @@ namespace StockManager.Common
             KernelSafeHold              = kernelSafeHold;
             NicDropsEstimate            = nicDropsEstimate;
             IoDefenseStatus             = ioDefenseStatus;
+            RioBypassActive              = rioBypassActive;
+            RioReceiveLatencyNanos       = rioReceiveLatencyNanos;
+            RioFallbackActive            = rioFallbackActive;
+            RioFramesReceived            = rioFramesReceived;
+            PlaybackStateCode            = playbackStateCode;
+            PlaybackPlayed               = playbackPlayed;
+            PlaybackTotalFrames          = playbackTotalFrames;
+            PlaybackFps                  = playbackFps;
+            PlaybackIntegrityRaw         = playbackIntegrityRaw;
+            CausalWeaveStateCode         = causalWeaveStateCode;
+            CausalRingEvictions          = causalRingEvictions;
+            CausalRingSaturationPermille = causalRingSaturationPermille;
+            CausalFuseTripped            = causalFuseTripped;
+            RioProbeSupported            = rioProbeSupported;
+            RioProbeAdapterCount         = rioProbeAdapterCount;
+            RioProbeMaxRcvBufBytes       = rioProbeMaxRcvBufBytes;
+            RioProbeRecommendFallback    = rioProbeRecommendFallback;
+            AuditLedgerIntegrityCode     = auditLedgerIntegrityCode;
+            AuditLedgerCount             = auditLedgerCount;
+            AuditLedgerSealed            = auditLedgerSealed;
+            AuditLedgerHeadHash          = auditLedgerHeadHash;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -466,6 +519,39 @@ namespace StockManager.Common
         public double  CompressionPct      => LogCompressionBps / 100.0;                  // bps → %(압축 후 비율)
         public bool    KernelHolding       => KernelSafeHold != 0L;                       // 안전 홀드 → amber
         public bool    IoFrozen            => IoDefenseStatus >= 2L;                       // 디스크 stall 동결 → 자주색
+        // v6.0.0 Path Gamma — RIO/플레이백/CausalWeave UI 헬퍼.
+        public bool    RioActive               => RioBypassActive != 0L;                    // ★청색 [RIO KERNEL BYPASS ACTIVE]
+        public bool    RioFallback             => RioFallbackActive != 0L;                  // ★황색 폴백 강등
+        public double  RioReceiveLatencyMicros => RioReceiveLatencyNanos / 1000.0;
+        public PlaybackState PlaybackStage      => (PlaybackState)PlaybackStateCode;
+        public string  PlaybackStateName        => PlaybackStage switch
+        { PlaybackState.Idle => "IDLE", PlaybackState.Playing => "PLAYING", PlaybackState.Paused => "PAUSED",
+          PlaybackState.Stepping => "STEPPING", PlaybackState.Completed => "COMPLETED", PlaybackState.Faulted => "FAULTED", _ => "?" };
+        public bool    PlaybackRunning          => PlaybackStateCode is 1L or 3L;           // ★보라색 점멸 [DETERMINISTIC PLAYBACK IN PROGRESS]
+        public bool    PlaybackFaulted          => PlaybackStateCode == 5L || CausalFuseTripped != 0L;
+        public double  PlaybackProgress         => PlaybackTotalFrames > 0L ? (double)PlaybackPlayed / PlaybackTotalFrames : 0.0;
+        public double  PlaybackProgressPct      => Math.Clamp(PlaybackProgress * 100.0, 0.0, 100.0);
+        public decimal PlaybackIntegrity        => PlaybackIntegrityRaw / (decimal)QMath.Scale;   // 0..1
+        public double  PlaybackIntegrityPct     => Math.Clamp(PlaybackIntegrityRaw / (double)QMath.Scale * 100.0, 0.0, 100.0);
+        public CausalWeaveState CausalWeaveStatus => (CausalWeaveState)CausalWeaveStateCode;
+        public bool    CausalFuse               => CausalFuseTripped != 0L;                 // ★암흑자색 오버레이(타임-와프 봉인)
+        public bool    CausalEvicting           => CausalWeaveStateCode == 2L;
+        public double  CausalRingSaturationPct  => CausalRingSaturationPermille / 10.0;      // ‰→%
+        public string  CausalWeaveStateName      => CausalWeaveStatus switch
+        { CausalWeaveState.Nominal => "NOMINAL", CausalWeaveState.Pressure => "PRESSURE", CausalWeaveState.Evicting => "EVICTING", CausalWeaveState.FuseTripped => "FUSE-TRIPPED", _ => "?" };
+        /// <summary>Path Gamma 활성(RIO/폴백/플레이백/링 회수 중 하나라도) — UI '데이터 없음' 판별.</summary>
+        public bool    PathGammaActive          => RioBypassActive != 0L || RioFallbackActive != 0L
+                                                || PlaybackStateCode != 0L || CausalRingEvictions > 0L || RioFramesReceived > 0L;
+        // v7.0.0 Phase 7 — 하드웨어 프로브 + 암호학적 감사 금고 UI 헬퍼.
+        public bool    RioProbeOk               => RioProbeSupported != 0L;                  // ★청록 네온(RIO 지원)
+        public bool    RioProbeFallback         => RioProbeRecommendFallback != 0L;          // 안심 강등 권고
+        public double  RioProbeMaxRcvBufMB       => RioProbeMaxRcvBufBytes / (1024.0 * 1024.0);
+        public bool    AuditVaultWired           => AuditLedgerCount > 0L || AuditLedgerIntegrityCode != 0L || AuditLedgerSealed != 0L;
+        public bool    AuditIntact               => AuditLedgerIntegrityCode == 1L;           // ★청록 네온 [INTACT]
+        public bool    AuditCorrupted            => AuditLedgerIntegrityCode == 2L;           // ★크림슨 [CORRUPTED]
+        public bool    AuditSealed               => AuditLedgerSealed != 0L;                  // 트립 포렌식 봉인(비가역)
+        public string  AuditIntegrityName        => AuditLedgerIntegrityCode switch
+        { 1L => "INTACT", 2L => "CORRUPTED", _ => "UNVERIFIED" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -476,7 +562,8 @@ namespace StockManager.Common
         // Version(라이터 고빈도)과 Data(리더)를 서로 다른 64B 라인에 두고 앞 패딩+사이 갭으로 거짓 공유 차단.
         //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.5.0 기준 필드 101개×8=808B → Data 128..936B ≤ 960(64배수·잔여 3슬롯=24B).
         //   (v5.4.0 93필드→896 잔여 3슬롯 → v5.5.0 로깅/지터 8필드 추가로 101필드 → Size 896→960 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
-        [StructLayout(LayoutKind.Explicit, Size = 960)]
+        //   (v6.0.0 Path Gamma + v7.0.0 Phase 7: RIO/플레이백/CausalWeave/하드웨어프로브/감사금고 필드 추가로 122필드 → 128+122×8=1104 → Size 960→1152(64×18·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1152)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -578,6 +665,16 @@ namespace StockManager.Common
         private readonly ZeroAllocAsyncCompressedLogger? _logger;   // v5.5.0 — 무할당 압축 로거(옵션·기본 null)
         private readonly KernelJitterSpikeSentinel? _kernelJitter;  // v5.5.0 — 커널 지터 센티널(옵션·기본 null)
         private readonly IoBackpressureFirewall? _ioFirewall;       // v5.5.0 — I/O 역류 방화벽(옵션·기본 null)
+        private readonly StatePlaybackSimulator? _playback;         // v6.0.0 — 결정론 플레이백 시뮬레이터(옵션·기본 null)
+        private readonly RioKernelBypassMesh? _rioMesh;             // v6.0.0 — RIO 커널 바이패스 패브릭(옵션·기본 null)
+        private readonly CausalWeaveClock? _weaveClock;             // v6.0.0 — CausalWeave 인과 시계·퓨즈(옵션·기본 null)
+        private readonly CausalWeaveRing? _weaveRing;               // v6.0.0 — CausalWeave 증명-드롭 링(옵션·기본 null)
+        private readonly RioHardwareProbe? _hwProbe;                // v7.0.0 — RIO 하드웨어 사전점검(옵션·기본 null)
+        private readonly CausalAuditVault? _auditVault;             // v7.0.0 — 암호학적 감사 금고(옵션·기본 null)
+        private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
+        private bool _hwProbed;                                     // 프로브 수행 여부
+        private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
+        private readonly long _auditIntervalTicks;                  // 감사 기록 최소 간격(1s)
         private long _lastPublished;
         private long _lastBlackboxTotal;
         private long _lastLogCompBytes;   // v5.5.0 — 로그 영속 rate 델타 기준선
@@ -625,7 +722,13 @@ namespace StockManager.Common
                                       CrossStrategyContagionFirewall? firewall = null,
                                       ZeroAllocAsyncCompressedLogger? logger = null,
                                       KernelJitterSpikeSentinel? kernelJitter = null,
-                                      IoBackpressureFirewall? ioFirewall = null)
+                                      IoBackpressureFirewall? ioFirewall = null,
+                                      StatePlaybackSimulator? playback = null,
+                                      RioKernelBypassMesh? rioMesh = null,
+                                      CausalWeaveClock? weaveClock = null,
+                                      CausalWeaveRing? weaveRing = null,
+                                      RioHardwareProbe? hwProbe = null,
+                                      CausalAuditVault? auditVault = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -671,6 +774,14 @@ namespace StockManager.Common
             _logger       = logger;
             _kernelJitter = kernelJitter;
             _ioFirewall   = ioFirewall;
+            _playback     = playback;
+            _rioMesh      = rioMesh;
+            _weaveClock   = weaveClock;
+            _weaveRing    = weaveRing;
+            _hwProbe      = hwProbe;
+            _auditVault   = auditVault;
+            _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
+            if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
             _lastLogCompBytes  = _logger?.CompBytesCum ?? 0L;      // v5.5.0 — 로그 rate 기준선(첫 샘플 허위 스파이크 제거)
             _lastPublished = _ring.Published;
@@ -794,6 +905,36 @@ namespace StockManager.Common
                 }
                 if (_kernelJitter is { } kj) { kJit = kj.LastJitterMicros; nicDrop = kj.NicDropsEstimate; if (kj.SafeHoldActive) kHold = 1L; }
                 if (_ioFirewall is { } iofw) { ioStat = iofw.StatusCode; if (iofw.PageThrashHoldActive) kHold = 1L; }
+                // v6.0.0 Path Gamma — RIO 바이패스·플레이백·CausalWeave 합류(미배선이면 0). 무할당(long/double 독출).
+                long rioActive = 0L, rioLatNs = 0L, rioFb = 0L, rioFrames = 0L;
+                if (_rioMesh is { } rm)
+                { rioActive = rm.RioBypassActive ? 1L : 0L; rioLatNs = rm.ReceiveLatencyNanos; rioFb = rm.FallbackActive ? 1L : 0L; rioFrames = rm.FramesReceived; }
+                long pbState = 0L, pbPlayed = 0L, pbTotal = 0L, pbIntegrity = 0L; double pbFps = 0.0;
+                if (_playback is { } pb)
+                { pbState = (long)pb.State; pbPlayed = pb.PlayedEvents; pbTotal = pb.TotalEvents; pbFps = pb.Fps; pbIntegrity = pb.IntegrityScoreRaw; }
+                long cwState = 0L, cwEvict = 0L, cwSat = 0L, cwFuse = 0L;
+                if (_weaveClock is { } wc) { cwFuse = wc.FuseTripped ? 1L : 0L; }
+                if (_weaveRing is { } wr)  { cwEvict = wr.Evictions; cwSat = wr.SaturationPermille; cwState = (long)wr.State; }
+                if (cwFuse == 1L) cwState = (long)CausalWeaveState.FuseTripped;   // 퓨즈 트립이 링 상태를 오버라이드(최위중)
+                // v7.0.0 Phase 7 — 하드웨어 프로브(캐시된 콜드 리포트) + 암호학적 감사 금고(δ=0 기록·스로틀·트립 봉인) 합류.
+                long hwSup = 0L, hwAdp = 0L, hwBuf = 0L, hwFb = 0L;
+                if (_hwProbed)
+                { hwSup = _hwProbeReport.RioSupported ? 1L : 0L; hwAdp = _hwProbeReport.AdapterCount; hwBuf = _hwProbeReport.MaxReceiveBufferBytes; hwFb = _hwProbeReport.RecommendSafeFallback ? 1L : 0L; }
+                long auCode = 0L, auCount = 0L, auSealed = 0L, auHead = 0L;
+                if (_auditVault is { } av)
+                {
+                    if (!av.Sealed)
+                    {
+                        if (cwFuse == 1L)
+                            av.SealTrip(qpcDelta: (_weaveClock?.Watermark ?? now), seqOffset: cwEvict, bufferState: cwSat);   // ★트립 포렌식 비가역 봉인
+                        else if (cwEvict != _lastAuditEvict || (now - _lastAuditTick) >= _auditIntervalTicks)
+                        {
+                            av.TryAppend(_weaveClock?.NowTicks() ?? now, cwEvict, published);   // δ=0 append-only 기록
+                            _lastAuditEvict = cwEvict; _lastAuditTick = now;
+                        }
+                    }
+                    auCode = av.PollVerify(now); auCount = av.Count; auSealed = av.Sealed ? 1L : 0L; auHead = av.HeadHash8;
+                }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -814,7 +955,10 @@ namespace StockManager.Common
                     mlImb, mlSlices, thrCount, savedBps, toxCode,
                     stGen, stBuild, carryRtt, zombie, orphan,
                     msActive, msSealed, nettSaved, washRej, resonance, capSat,
-                    logBps, logQ, logDrop, logComp, kJit, kHold, nicDrop, ioStat));
+                    logBps, logQ, logDrop, logComp, kJit, kHold, nicDrop, ioStat,
+                    rioActive, rioLatNs, rioFb, rioFrames, pbState, pbPlayed, pbTotal, pbFps, pbIntegrity,
+                    cwState, cwEvict, cwSat, cwFuse,
+                    hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

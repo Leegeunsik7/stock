@@ -189,6 +189,166 @@
         </div>
     </div>
 
+    @* ══ v7.0.0 Phase 7: RIO 하드웨어 사전점검 매트릭스 & 암호학적 감사 금고 (Pre-Flight & Audit Vault) ══ *@
+    @{
+        bool p7RioOk    = _frame.RioProbeOk;
+        bool p7Fallback = _frame.RioProbeFallback;
+        bool p7Intact   = _frame.AuditIntact;
+        bool p7Corrupt  = _frame.AuditCorrupted;
+        bool p7Sealed   = _frame.AuditSealed;
+        long p7Head     = _frame.AuditLedgerHeadHash;
+    }
+    @* 감사 원장 무결성 훼손(CORRUPTED) → 비가역 크림슨 경보 오버레이(트립 봉인은 CausalWeave 퓨즈 오버레이가 담당) *@
+    @if (p7Corrupt)
+    {
+        <div class="causal-crimson-frame"></div>
+        <div class="causal-crimson-banner">
+            <div style="font-size:16px;font-weight:800;letter-spacing:0.5px">🟥 [AUDIT LEDGER CORRUPTED - CRYPTOGRAPHIC CHAIN BROKEN]</div>
+            <div style="font-size:12px;margin-top:3px">SHA-256 해시체인 변조 감지 · <b>비가역 포렌식 경보</b> — 원장 무결성 훼손</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">HEAD 0x@(p7Head.ToString("X16")) · 레코드 @_frame.AuditLedgerCount.ToString("N0")</div>
+        </div>
+    }
+    <div class="kpi-card @(p7Corrupt ? "kpi-alert" : (p7Fallback ? "kpi-amber" : (p7RioOk ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">🔍 RIO 하드웨어 사전 점검 매트릭스 &amp; 암호학적 감사 금고 (Pre-Flight &amp; Audit Vault)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:280px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (p7RioOk)
+                    {
+                        <span class="prod-badge neon-teal">[RIO HW SUPPORTED - PRE-FLIGHT PASS]</span>
+                    }
+                    else if (p7Fallback)
+                    {
+                        <span class="prod-badge chaos-amber">[RIO UNSUPPORTED - SAFE FALLBACK 권고]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[HW PROBE IDLE]</span>
+                    }
+                </div>
+                <div class="kpi-sub">물리 어댑터 @_frame.RioProbeAdapterCount.ToString("N0") · 최대 수신버퍼 @_frame.RioProbeMaxRcvBufMB.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) MB</div>
+            </div>
+            <div style="min-width:300px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (p7Corrupt)
+                    {
+                        <span class="prod-badge chaos-red">[AUDIT LEDGER CORRUPTED]</span>
+                    }
+                    else if (p7Intact)
+                    {
+                        <span class="prod-badge neon-teal">[AUDIT LEDGER INTACT]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[LEDGER UNVERIFIED]</span>
+                    }
+                    @if (p7Sealed)
+                    {
+                        <span class="prod-badge chaos-red" style="margin-left:6px">🔒 TRIP-SEALED (비가역)</span>
+                    }
+                </div>
+                <div class="kpi-sub">SHA-256 Append-Only 해시체인 · 레코드 @_frame.AuditLedgerCount.ToString("N0") · HEAD <b style="font-family:var(--mono)">0x@(p7Head.ToString("X16"))</b></div>
+            </div>
+            <div style="min-width:200px">
+                <div class="kpi-sub" style="margin-bottom:2px">안심 강등(Safe Fallback) 권고</div>
+                <div class="kpi-value" style="font-size:15px;color:@(p7Fallback ? "#ffb74d" : "#26ffe6")">@(p7Fallback ? "RECOMMENDED" : "불필요")</div>
+                <div class="kpi-sub">하드웨어 캡스 사전점검 기반</div>
+            </div>
+        </div>
+        @if (!p7RioOk && !p7Fallback && !_frame.AuditVaultWired)
+        {
+            <div class="kpi-sub" style="margin-top:6px">하드웨어 프로브/감사 금고 미배선 — RingTelemetryPublisher 에 hwProbe/auditVault 주입 시 실시간 합류.</div>
+        }
+    </div>
+
+    @* ══ v6.0.0 Path Gamma: 결정론 리플레이 & RIO 커널 바이패스 코어 (+ ★CausalWeave 인과 워터마크) ══ *@
+    @{
+        bool gRioOn   = _frame.RioActive;
+        bool gRioFb   = _frame.RioFallback;
+        bool gPbRun   = _frame.PlaybackRunning;
+        bool gCwFuse  = _frame.CausalFuse;
+        bool gCwEvict = _frame.CausalEvicting;
+        string gPbWidth  = _frame.PlaybackProgressPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        string gSatWidth = Math.Min(100.0, _frame.CausalRingSaturationPct).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        string gFps      = _frame.PlaybackFps.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+        // 포렌식(64bit): [RIO지연ns하위16 | 링포화‰16 | 증명회수하위16 | 재생진행%×10 16]
+        long gHex = ((_frame.RioReceiveLatencyNanos & 0xFFFF) << 48) | ((_frame.CausalRingSaturationPermille & 0xFFFF) << 32)
+                  | ((_frame.CausalRingEvictions & 0xFFFF) << 16) | ((long)(_frame.PlaybackProgressPct * 10.0) & 0xFFFF);
+    }
+    @* ★크림슨 풀-스크린 퓨즈 경보 — 화면 전체 테두리 점멸(#ff0000) + 하드웨어 오프셋 포렌식 브로드캐스트 *@
+    @if (gCwFuse)
+    {
+        @if (!p7Corrupt) { <div class="causal-crimson-frame"></div> }  @* 감사훼손 동시 트립 시 전체화면 테두리 이중 렌더 방지 *@
+        <div class="causal-crimson-banner@(p7Corrupt ? " causal-crimson-banner--stacked" : "")">
+            <div style="font-size:17px;font-weight:800;letter-spacing:0.5px">🟥 [CRITICAL CAUSAL FUSE TRIPPED - SYSTEM FROZEN]</div>
+            <div style="font-size:12px;margin-top:4px;opacity:0.95">CAUSALWEAVE 인과 위반 감지 · 재생 시퀀스 역행(재정렬/손상/변조) · 결정론 무효화 방지 fail-closed · <b>재시작 전까지 비가역(NO AUTO-HEAL)</b></div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">HW OFFSET FORENSIC: 0x@(gHex.ToString("X16")) · RIO Δ@_frame.RioReceiveLatencyNanos.ToString("N0")ns · 증명 회수 @_frame.CausalRingEvictions.ToString("N0") · 링 포화 @_frame.CausalRingSaturationPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)‰</div>
+        </div>
+    }
+    @if (gCwFuse)
+    {
+        <div style="margin:0 28px 18px;background:rgba(60,10,90,0.34);border:2px solid #7b1fa2;border-radius:10px;padding:18px 22px;animation:recpulse 0.7s ease-in-out infinite">
+            <div style="font-size:16px;font-weight:700;color:#ce93d8;margin-bottom:6px">🟪 [CAUSALWEAVE TIME-WARP FUSE TRIPPED — 재생 QPC 역행·결정론 무효화 방지 fail-closed 정지]</div>
+            <div style="font-size:13px;color:#e1bee7;font-family:var(--mono)">
+                FORENSIC ERR CODE: <b>0x@(gHex.ToString("X16"))</b> &nbsp;|&nbsp; 재생 @_frame.PlaybackStateName · 증명 회수 @_frame.CausalRingEvictions.ToString("N0") · 링 포화 @_frame.CausalRingSaturationPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)‰
+            </div>
+        </div>
+    }
+    else if (gPbRun)
+    {
+        <div style="margin:0 28px 18px;background:rgba(120,60,190,0.20);border:2px solid #9575cd;border-radius:10px;padding:16px 20px;animation:recpulse 0.85s ease-in-out infinite">
+            <div style="font-size:15px;font-weight:700;color:#b39ddb">🟣 [DETERMINISTIC PLAYBACK IN PROGRESS - ISOLATED SANDBOX] — 오프라인 나노초 재현 · 실 아웃바운드 무접촉(liveArmed:false)</div>
+            <div style="margin-top:8px">
+                <div class="kpi-sub" style="margin-bottom:4px">프레임 타임라인 @_frame.PlaybackPlayed.ToString("N0") / @_frame.PlaybackTotalFrames.ToString("N0") · @gFps FPS · 무결성 @_frame.PlaybackIntegrityPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)%</div>
+                <div style="height:12px;border-radius:6px;background:rgba(255,255,255,0.08);overflow:hidden">
+                    <div style="height:100%;width:@(gPbWidth)%;background:#9575cd;transition:width .2s"></div>
+                </div>
+            </div>
+        </div>
+    }
+    <div class="kpi-card @(gCwFuse ? "kpi-alert" : (gRioFb || gCwEvict ? "kpi-amber" : (gRioOn ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">🕹️ 결정론 리플레이 &amp; RIO 커널 바이패스 코어 (Deterministic Replay &amp; RIO Kernel Bypass)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:280px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (gRioOn)
+                    {
+                        <span class="prod-badge" style="background:rgba(66,133,244,0.22);color:#5b9bff;box-shadow:0 0 8px rgba(66,133,244,0.55)">[RIO KERNEL BYPASS ACTIVE - NANOSECOND RECEIVE]</span>
+                    }
+                    else if (gRioFb)
+                    {
+                        <span class="prod-badge chaos-amber">[RIO FALLBACK - MANAGED SOCKET PIPE]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[RIO IDLE]</span>
+                    }
+                </div>
+                <div class="kpi-sub">수신 지연 <b style="font-family:var(--mono)">@_frame.RioReceiveLatencyNanos.ToString("N0") ns</b> · 수신 프레임 @_frame.RioFramesReceived.ToString("N0")</div>
+            </div>
+            <div style="min-width:220px">
+                <div class="kpi-value" style="font-size:16px">재생 @_frame.PlaybackStateName · @gFps FPS</div>
+                <div class="kpi-sub">진행 @_frame.PlaybackProgressPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)% · 디코딩 무결성 @_frame.PlaybackIntegrityPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)%</div>
+            </div>
+            <div style="min-width:240px">
+                <div class="kpi-value" style="font-size:16px">★CausalWeave @_frame.CausalWeaveStateName</div>
+                <div class="kpi-sub">링 포화 @_frame.CausalRingSaturationPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)‰ · 증명 회수(무-silent-drop) @_frame.CausalRingEvictions.ToString("N0")</div>
+                <div style="height:8px;border-radius:5px;background:rgba(255,255,255,0.08);overflow:hidden;margin-top:4px">
+                    <div style="height:100%;width:@(gSatWidth)%;background:@(gCwEvict ? "#ff9800" : "#42a5f5");transition:width .2s"></div>
+                </div>
+            </div>
+            <div style="min-width:200px">
+                <div class="kpi-sub" style="margin-bottom:2px">마이크로-버스트 드롭 (Evictions)</div>
+                <div class="kpi-value" style="font-size:22px;font-family:var(--mono);color:@((gCwEvict || _frame.CausalRingEvictions > 0) ? "#ff5252" : "#8fa0b8")">@_frame.CausalRingEvictions.ToString("N0")</div>
+                <div class="kpi-sub">newest-wins 증명 회수 · 조용한 드롭 0(커널 크래시·유실 원천 봉쇄)</div>
+            </div>
+        </div>
+        @if (!_frame.PathGammaActive)
+        {
+            <div class="kpi-sub" style="margin-top:6px">RIO/플레이백/CausalWeave 미배선 — RingTelemetryPublisher 에 playback/rioMesh/weaveClock/weaveRing 주입 시 실시간 합류.</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">
@@ -1075,11 +1235,28 @@
     .rec-stable     { background: rgba(76,175,80,0.20);   color: #66bb6a; }
     .rec-frozen     { background: rgba(220,50,50,0.22);   color: #ff6b6b; }
     @@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    /* ★v6.1.0 CausalWeave 크림슨 풀-스크린 퓨즈 경보(화면 전체 테두리 점멸 · pointer-events:none 로 UI 비차단) */
+    .causal-crimson-frame { position: fixed; inset: 0; pointer-events: none; z-index: 99998;
+        border: 10px solid #ff0000; box-sizing: border-box; animation: crimsonpulse 0.55s ease-in-out infinite; }
+    .causal-crimson-banner { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 99999;
+        pointer-events: none; background: rgba(150,0,0,0.94); color: #fff; padding: 10px 30px;
+        border: 2px solid #ff0000; border-top: none; border-radius: 0 0 14px 14px; text-align: center;
+        box-shadow: 0 0 26px rgba(255,0,0,0.75); }
+    /* 감사훼손+퓨즈 동시 트립 시 퓨즈 배너를 아래로 내려 두 경보가 겹치지 않고 세로 스택(둘 다 판독 가능) */
+    .causal-crimson-banner--stacked { top: 120px; }
+    @@keyframes crimsonpulse {
+        0%, 100% { border-color: #ff0000; box-shadow: inset 0 0 46px 10px rgba(255,0,0,0.55), 0 0 34px 8px rgba(255,0,0,0.45); }
+        50%      { border-color: #6b0000; box-shadow: inset 0 0 14px 2px rgba(255,0,0,0.18), 0 0 8px 1px rgba(255,0,0,0.15); }
+    }
     /* v4.91.0 — 카오스몽키 레이저 배지: 활성=적/황 글로우, 비활성=회. */
     .chaos-badge { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; font-family: var(--mono); }
     .chaos-off   { background: rgba(255,255,255,0.06); color: var(--muted, #888); opacity: .5; }
     .chaos-red   { background: rgba(220,50,50,0.22);  color: #ff6b6b; box-shadow: 0 0 8px rgba(220,50,50,0.55); }
     .chaos-amber { background: rgba(255,152,0,0.22);  color: #ffb74d; box-shadow: 0 0 8px rgba(255,152,0,0.55); }
+    /* ★v7.0.0 청록 네온(하드웨어 사전점검 통과 · 감사 원장 INTACT) */
+    .neon-teal   { background: rgba(0,229,208,0.14); color: #26ffe6; border: 1px solid #00e5d0;
+        box-shadow: 0 0 10px rgba(0,229,208,0.55), inset 0 0 6px rgba(0,229,208,0.25); font-weight: 700; }
     /* v4.92.0 — 프로덕션 스왑: 실전 접속=적색 점멸(한국 관례 경보), 모의=청색 안전. 연결상태 배지. */
     .prod-badge      { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px; font-family: var(--mono); }
     .prod-idle       { background: rgba(255,255,255,0.08); color: var(--muted, #888); }

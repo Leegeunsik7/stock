@@ -548,7 +548,21 @@ namespace StockManager.Blazor
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
             if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => ShutdownTrace.Step("mmfFabric", () => mmfFabric.Dispose()); }
-            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall);
+            // v6.0.0/v7.0.0 — Path Gamma & Phase 7 텔레메트리 소스(수동·순수 인메모리 관측 인프라 — liveArmed:false·δ=0).
+            //   ★부팅 생성 안전: CausalWeaveClock/Ring 은 관리형 배킹, RioHardwareProbe 는 콜드 1회 캡스 진단(Publisher
+            //     생성자가 Probe() 1회 실행·Sample 핫패스는 캐시 결과만 읽음), CausalAuditVault 는 인메모리 원장 —
+            //     넷 다 RIO 소켓/네이티브 자원을 열지 않고 IDisposable 도 아니다. RIO 수신 메쉬(native 소켓 바인딩)와
+            //     플레이백 시뮬레이터(재생 세션 전용)는 운영자 옵트인까지 미생성(null) — 부팅 시 native 자동 기동 없음.
+            var weaveClock = new CausalWeaveClock(attestation: attestation, ignition: ignition);
+            var weaveRing  = new CausalWeaveRing(1024, 512);
+            var hwProbe    = new RioHardwareProbe();
+            var auditVault = new CausalAuditVault();
+            services.AddSingleton(weaveClock);
+            services.AddSingleton(weaveRing);
+            services.AddSingleton(hwProbe);      // TelemetryMonitor 🛫 Phase 7 하드웨어 사전점검 패널 주입 대상
+            services.AddSingleton(auditVault);   // TelemetryMonitor 🔐 감사 금고 패널 주입 대상
+            var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
+                weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
