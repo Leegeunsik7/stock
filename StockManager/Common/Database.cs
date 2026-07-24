@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS Holdings (
     Quantity REAL, AvgPrice REAL, CurrentPrice REAL,
     FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT,
     Commission REAL DEFAULT 0, Tax REAL DEFAULT 0,
+    IsDeleted INTEGER DEFAULT 0,
     UNIQUE(Symbol, BrokerAccount)
 );
 
@@ -158,6 +159,8 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             // v4.38.0: 보유 종목에 누적 수수료·세금 (수정 폼에서 보정 / 거래 합계 자동 반영)
             try { Execute("ALTER TABLE Holdings ADD COLUMN Commission REAL DEFAULT 0");        } catch { }
             try { Execute("ALTER TABLE Holdings ADD COLUMN Tax REAL DEFAULT 0");               } catch { }
+            // v7.1.0: 보유 소프트 삭제 — 삭제를 복원 가능하게(하드 DELETE 대신 IsDeleted 플래그). Quantity 재구성보다 먼저 추가해 재구성이 값을 보존하게 함.
+            try { Execute("ALTER TABLE Holdings ADD COLUMN IsDeleted INTEGER DEFAULT 0");       } catch { }
             // v4.45.1: Quantity 컬럼 INTEGER 친화도 → REAL 재구성. 일부 기존 DB에서 INTEGER 컬럼이 소수(코인 0.13)를
             //   0으로 저장(친화도 변환)하던 치명 버그 — 컬럼을 REAL로 바꿔 영구 해결(Price처럼). 이미 REAL이면 스킵.
             _MigrateQuantityColumnToReal();
@@ -177,8 +180,8 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                  new[] { "Id", "Symbol", "Type", "Quantity", "Price", "Commission", "Tax", "ExecutedAt", "BrokerAccount", "Memo" },
                  "CREATE INDEX IF NOT EXISTS IX_Tx_Symbol ON Transactions(Symbol); CREATE INDEX IF NOT EXISTS IX_Tx_Date ON Transactions(ExecutedAt);"),
                 ("Holdings",
-                 "CREATE TABLE Holdings__r (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Name TEXT, Market INTEGER, Currency INTEGER, Quantity REAL, AvgPrice REAL, CurrentPrice REAL, FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT, Commission REAL DEFAULT 0, Tax REAL DEFAULT 0, UNIQUE(Symbol, BrokerAccount))",
-                 new[] { "Id", "Symbol", "Name", "Market", "Currency", "Quantity", "AvgPrice", "CurrentPrice", "FirstBuyDate", "BrokerAccount", "Memo", "Tags", "Commission", "Tax" },
+                 "CREATE TABLE Holdings__r (Id INTEGER PRIMARY KEY AUTOINCREMENT, Symbol TEXT NOT NULL, Name TEXT, Market INTEGER, Currency INTEGER, Quantity REAL, AvgPrice REAL, CurrentPrice REAL, FirstBuyDate TEXT, BrokerAccount TEXT, Memo TEXT, Tags TEXT, Commission REAL DEFAULT 0, Tax REAL DEFAULT 0, IsDeleted INTEGER DEFAULT 0, UNIQUE(Symbol, BrokerAccount))",
+                 new[] { "Id", "Symbol", "Name", "Market", "Currency", "Quantity", "AvgPrice", "CurrentPrice", "FirstBuyDate", "BrokerAccount", "Memo", "Tags", "Commission", "Tax", "IsDeleted" },
                  ""),
             };
             foreach (var s in specs)
@@ -324,7 +327,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             Execute(@"INSERT INTO Holdings(Symbol,Name,Market,Currency,Quantity,AvgPrice,CurrentPrice,FirstBuyDate,BrokerAccount,Memo,Tags,Commission,Tax)
                       VALUES(@s,@n,@m,@c,@q,@a,@p,@d,@b,@me,@t,@cm,@tx)
                       ON CONFLICT(Symbol,BrokerAccount) DO UPDATE SET
-                      Name=@n, Market=@m, Currency=@c, Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t, Commission=@cm, Tax=@tx",
+                      Name=@n, Market=@m, Currency=@c, Quantity=@q, AvgPrice=@a, CurrentPrice=@p, Memo=@me, Tags=@t, Commission=@cm, Tax=@tx, IsDeleted=0",
                 new() {
                     ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = (int)h.Market,
                     ["@c"] = (int)h.Currency, ["@q"] = (double)h.Quantity, ["@a"] = (double)h.AvgPrice,
@@ -358,7 +361,7 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
             Execute(@"UPDATE Holdings SET
                         Symbol=@s, Name=@n, Market=@m, Currency=@c,
                         Quantity=@q, AvgPrice=@a,
-                        BrokerAccount=@b, Commission=@cm, Tax=@tx
+                        BrokerAccount=@b, Commission=@cm, Tax=@tx, IsDeleted=0
                       WHERE Id=@id",
                 new() {
                     ["@s"] = h.Symbol, ["@n"] = h.Name, ["@m"] = mkt, ["@c"] = ccy,
@@ -368,7 +371,24 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                 });
         }
 
+        /// <summary>보유 종목 소프트 삭제 — 행을 보존하고 IsDeleted=1 플래그만 세운다(복원 가능).
+        /// GetAllHoldings 등 활성 목록에선 제외되나 GetDeletedHoldings 로 조회하고 RestoreHolding 으로 복원한다.
+        /// 영구 제거는 HardDeleteHolding.</summary>
         public void DeleteHolding(string symbol, string brokerAccount = "")
+        {
+            Execute("UPDATE Holdings SET IsDeleted=1 WHERE Symbol=@s AND BrokerAccount=@b",
+                new() { ["@s"] = symbol, ["@b"] = brokerAccount });
+        }
+
+        /// <summary>소프트 삭제된 보유를 복원(IsDeleted=0) — DeleteHolding 실행취소.</summary>
+        public void RestoreHolding(string symbol, string brokerAccount = "")
+        {
+            Execute("UPDATE Holdings SET IsDeleted=0 WHERE Symbol=@s AND BrokerAccount=@b",
+                new() { ["@s"] = symbol, ["@b"] = brokerAccount });
+        }
+
+        /// <summary>보유 종목 영구 삭제 — 행 자체 제거(복원 불가). 소프트 삭제(DeleteHolding)와 구분.</summary>
+        public void HardDeleteHolding(string symbol, string brokerAccount = "")
         {
             Execute("DELETE FROM Holdings WHERE Symbol=@s AND BrokerAccount=@b",
                 new() { ["@s"] = symbol, ["@b"] = brokerAccount });
@@ -377,31 +397,39 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
         public List<Holding> GetAllHoldings()
         {
             var list = new List<Holding>();
-            var dt = Query("SELECT * FROM Holdings WHERE Quantity > 0 ORDER BY Symbol");
-            foreach (DataRow r in dt.Rows)
-            {
-                list.Add(new Holding
-                {
-                    Id = Safe.Int(r["Id"]),
-                    Symbol = Safe.Str(r["Symbol"]),
-                    Name = Safe.Str(r["Name"]),
-                    Market = (Market)Safe.Int(r["Market"]),
-                    Currency = (Currency)Safe.Int(r["Currency"]),
-                    Quantity = Safe.Dec(r["Quantity"]),   // v4.30.0 코인 소수점 — int 읽기 절삭 방지
-                    AvgPrice = Safe.Dec(r["AvgPrice"]),
-                    CurrentPrice = Safe.Dec(r["CurrentPrice"]),
-                    FirstBuyDate = Safe.DT(r["FirstBuyDate"]),
-                    BrokerAccount = Safe.Str(r["BrokerAccount"]),
-                    Memo = Safe.Str(r["Memo"]),
-                    Tags = Safe.Str(r["Tags"]).Split(',', StringSplitOptions.RemoveEmptyEntries),
-                    // 컬럼 존재 가드 — 마이그레이션 ALTER가 어떤 이유로든 실패해 컬럼이 없을 때 r["Commission"] 인덱싱이
-                    //   throw하는 것을 막는다(부재 시 0). 가산 마이그레이션 후엔 항상 존재.
-                    Commission = dt.Columns.Contains("Commission") ? Safe.Dec(r["Commission"]) : 0m,
-                    Tax        = dt.Columns.Contains("Tax")        ? Safe.Dec(r["Tax"])        : 0m
-                });
-            }
+            // IsDeleted=0(소프트 삭제 제외) + Quantity>0 — 활성 보유만. 대시보드·알림·총자산 등 전 소비자 공통.
+            var dt = Query("SELECT * FROM Holdings WHERE Quantity > 0 AND IsDeleted=0 ORDER BY Symbol");
+            foreach (DataRow r in dt.Rows) list.Add(MapHolding(r, dt));
             return list;
         }
+
+        /// <summary>소프트 삭제된 보유 목록(복원 UI용). 수량과 무관하게 IsDeleted=1 전부(최근 삭제가 위로).</summary>
+        public List<Holding> GetDeletedHoldings()
+        {
+            var list = new List<Holding>();
+            var dt = Query("SELECT * FROM Holdings WHERE IsDeleted=1 ORDER BY Id DESC");
+            foreach (DataRow r in dt.Rows) list.Add(MapHolding(r, dt));
+            return list;
+        }
+
+        // 보유 행 → Holding 매핑(활성/삭제 목록 공용). 컬럼 존재 가드로 마이그레이션 실패·구스키마에도 안전.
+        private static Holding MapHolding(DataRow r, DataTable dt) => new Holding
+        {
+            Id = Safe.Int(r["Id"]),
+            Symbol = Safe.Str(r["Symbol"]),
+            Name = Safe.Str(r["Name"]),
+            Market = (Market)Safe.Int(r["Market"]),
+            Currency = (Currency)Safe.Int(r["Currency"]),
+            Quantity = Safe.Dec(r["Quantity"]),   // v4.30.0 코인 소수점 — int 읽기 절삭 방지
+            AvgPrice = Safe.Dec(r["AvgPrice"]),
+            CurrentPrice = Safe.Dec(r["CurrentPrice"]),
+            FirstBuyDate = Safe.DT(r["FirstBuyDate"]),
+            BrokerAccount = Safe.Str(r["BrokerAccount"]),
+            Memo = Safe.Str(r["Memo"]),
+            Tags = Safe.Str(r["Tags"]).Split(',', StringSplitOptions.RemoveEmptyEntries),
+            Commission = dt.Columns.Contains("Commission") ? Safe.Dec(r["Commission"]) : 0m,
+            Tax        = dt.Columns.Contains("Tax")        ? Safe.Dec(r["Tax"])        : 0m
+        };
 
         public void AddTransaction(Transaction t)
         {

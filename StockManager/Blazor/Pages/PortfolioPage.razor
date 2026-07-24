@@ -56,6 +56,16 @@
                     <datalist id="brokerList">@foreach (var b in _brokers) { <option value="@b" /> }</datalist></div>
                 <div style="grid-column:span 2"><label class="flbl">메모</label><input class="fin" @bind="_tf.Memo" /></div>
             </div>
+            @* v7.1.0 추가매수 병합 미리보기 — 매수 종목을 이미 보유 중이면 병합 후 합계 수량·가중평균 평단을 실시간 표시. *@
+            @if (_txType == TransactionType.Buy && _tf.Qty > 0 && _tf.Price > 0 && FindHolding(_tf.Symbol) is { } _eh)
+            {
+                var _nq = _eh.Quantity + _tf.Qty;
+                var _na = _nq > 0 ? (_eh.Quantity * _eh.AvgPrice + _tf.Qty * _tf.Price) / _nq : 0m;
+                <div style="margin-top:12px;padding:9px 13px;border-radius:9px;background:color-mix(in srgb,var(--up) 12%,transparent);border:1px solid var(--up);font-size:12.5px">
+                    📊 <b>추가매수 병합 미리보기</b> — 기존 @FmtQty(_eh.Quantity) · 평단 @Formatter.Money(_eh.AvgPrice, _eh.Currency)
+                    → 매수 후 <b style="color:var(--ink)">@FmtQty(_nq) · 평단 @Formatter.Money(_na, _eh.Currency)</b> <span style="color:var(--sub)">(가중평균 자동 계산)</span>
+                </div>
+            }
             <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                 <b style="color:@(_txType==TransactionType.Buy?"var(--up)":"var(--down)")">총 금액: @TxTotal.ToString("N0")원</b>
                 <button class="addbtn" @onclick="SaveTx">✅ 저장</button>
@@ -169,6 +179,16 @@
     </div>
 }
 
+@* v7.1.0 삭제 실행취소 배너 — 소프트 삭제 직후 즉시 복원(트래시 목록으로도 언제든 복원 가능). *@
+@if (_lastDeleted is { } _ld)
+{
+    <div style="margin:0 28px 14px;padding:10px 14px;border-radius:10px;background:color-mix(in srgb,var(--warn) 16%,transparent);border:1px solid var(--warn);font-size:13px;display:flex;align-items:center;gap:10px">
+        <span>🗑 '<b>@_ld.Name</b>' (@_ld.Symbol) 삭제됨 — 되돌릴 수 있습니다.</span>
+        <button class="addbtn" style="margin-left:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);padding:3px 12px" @onclick="() => Restore(_ld)">↩️ 실행취소</button>
+        <button class="addbtn" style="background:var(--card);color:var(--sub);border:1px solid var(--line);padding:3px 10px" @onclick="() => _lastDeleted = null">✕</button>
+    </div>
+}
+
 @* 탭(보유/거래/세금/배당/상관)은 모두 현재가 기반 — AS-OF에선 숨기고 그 시점 보유표만 보인다(현재가 누수 차단). *@
 @if (AsOfCtx.IsLive)
 {
@@ -240,14 +260,44 @@ else
                 @(_sortKey == "name" ? (_sortDesc ? "역순 ᐯ" : "가나다 ᐱ") : (_sortDesc ? "높은순 ᐯ" : "낮은순 ᐱ"))
             </button>
         }
+        @* v7.1.0 삭제된 종목(소프트 삭제) 토글 — 삭제분이 있을 때만 노출. *@
+        @if (_deleted.Count > 0)
+        {
+            <button class="pill @(_showDeleted ? "r" : "b")" style="border:0;cursor:pointer;padding:5px 11px;font-size:12px;margin-left:auto" title="소프트 삭제된 종목 — 복원 가능" @onclick="() => _showDeleted = !_showDeleted">🗑 삭제된 종목 (@_deleted.Count)</button>
+        }
     </div>
+    @* v7.1.0 삭제된 종목 목록 — 복원(되살림) / 영구삭제(완전 제거). *@
+    @if (_showDeleted && _deleted.Count > 0)
+    {
+        <div style="margin:0 0 12px;background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);padding:12px">
+            <div style="font-size:12.5px;color:var(--sub);margin-bottom:8px">🗑 삭제된 종목 — <b>복원</b>으로 되살리거나 <b>영구삭제</b>로 완전히 제거합니다.</div>
+            <table class="ctbl dense">
+                <thead><tr><th>종목</th><th>시장</th><th style="text-align:right">수량</th><th style="text-align:right">평균단가</th><th style="text-align:center;width:172px">복원 / 영구삭제</th></tr></thead>
+                <tbody>
+                    @foreach (var h in _deleted)
+                    {
+                        <tr>
+                            <td><b>@h.Name</b><br/><small class="sub">@h.Symbol</small></td>
+                            <td><small class="sub">@h.Market@(h.Currency == Currency.USD ? " · USD" : "")</small></td>
+                            <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
+                            <td class="num" style="text-align:right">@Formatter.Money(h.AvgPrice, h.Currency)</td>
+                            <td style="text-align:center;white-space:nowrap">
+                                <button class="pill b" style="border:0;cursor:pointer;padding:3px 10px;font-size:11px" @onclick="() => Restore(h)">↩️ 복원</button>
+                                <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => HardDelete(h)">영구삭제</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
     <div style="overflow:auto;max-height:calc(100vh - 392px)">
     <table class="ctbl dense">
         <thead><tr>
             <th>종목</th><th>시장</th><th style="text-align:right">수량</th>
             <th style="text-align:right">평균단가</th><th style="text-align:right">현재가</th>
             <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th><th style="text-align:right">일간</th>
-            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:118px">관리</th>
+            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:185px">관리</th>
         </tr></thead>
         <tbody>
             @foreach (var h in FilteredHoldings())
@@ -274,6 +324,7 @@ else
                             <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px" title="위로" @onclick="() => MoveCustom(h, -1)">ᐱ</button>
                             <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px;margin-left:2px" title="아래로" @onclick="() => MoveCustom(h, 1)">ᐯ</button>
                         }
+                        <button class="pill" style="border:0;cursor:pointer;padding:3px 7px;font-size:11px;margin-left:3px;background:color-mix(in srgb,var(--up) 20%,transparent);color:var(--up)" title="이 종목 추가 매수(평단 자동 병합)" @onclick="() => AddBuy(h)">➕매수</button>
                         <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Edit(h)">수정</button>
                         <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Delete(h)">삭제</button>
                     </td>
@@ -414,6 +465,9 @@ else if (_tab == "corr")
 
 @code {
     private List<Holding> _holdings = new();
+    private List<Holding> _deleted = new();       // v7.1.0 소프트 삭제된 보유(복원 UI)
+    private Holding? _lastDeleted;                 // v7.1.0 방금 삭제한 보유(실행취소 배너)
+    private bool _showDeleted;                     // v7.1.0 '삭제된 종목' 목록 토글
     private bool _showForm;                       // 통합 기록 폼(매수/매도/직접보정) 단일 토글
     private bool _formEditing;                     // 폼 내 입력에 포커스 있음 — 이때만 폴링 재렌더 억제(입력 리셋 방지)
     private FormMode _mode = FormMode.Buy;         // 통합 폼 현재 모드
@@ -771,6 +825,7 @@ else if (_tab == "corr")
             if (persist)
             {
                 try { _holdings = Db.GetAllHoldings(); } catch { _holdings = new(); }
+                try { _deleted  = Db.GetDeletedHoldings(); } catch { _deleted = new(); }   // v7.1.0 복원 목록 동기화
             }
             await UpdatePricesAsync(persist);
             // ⚠️ USD 종목은 환율 환산 후 합산 (원본 Portfolio.KrwValue 룰 — 미환산 시 원화·달러가 섞임)
@@ -1056,10 +1111,65 @@ else if (_tab == "corr")
         try { await LoadAsync(); } catch { /* 시세 갱신 실패는 저장과 무관 */ }
     }
 
+    // v7.1.0 소프트 삭제 — 행을 보존(IsDeleted=1)해 실행취소/복원 가능. 영구 제거는 트래시 목록의 HardDelete.
     private async Task Delete(Holding h)
     {
         _flash = "";   // 삭제도 새 작업 → 이전 확인배너 정리
-        try { Db.DeleteHolding(h.Symbol, h.BrokerAccount); await LoadAsync(); } catch { }
+        try
+        {
+            Db.DeleteHolding(h.Symbol, h.BrokerAccount);   // 소프트(복원 가능)
+            _lastDeleted = h;                              // 실행취소 스냅샷(배너)
+            await LoadAsync();                             // 활성/삭제 목록 동기화
+        }
+        catch (Exception ex) { _flash = "삭제 실패: " + ex.Message; }
+    }
+
+    // v7.1.0 복원 — 소프트 삭제된 보유를 되살린다(실행취소 배너·트래시 목록 공용).
+    private async Task Restore(Holding h)
+    {
+        _flash = "";
+        try
+        {
+            Db.RestoreHolding(h.Symbol, h.BrokerAccount);
+            if (_lastDeleted is { } ld && ld.Symbol == h.Symbol && ld.BrokerAccount == h.BrokerAccount) _lastDeleted = null;
+            _flash = $"↩️ '{h.Name}' 복원되었습니다.";
+            await LoadAsync();
+        }
+        catch (Exception ex) { _flash = "복원 실패: " + ex.Message; }
+    }
+
+    // v7.1.0 영구 삭제(트래시 전용) — 행 자체 제거(복원 불가). 확인 후 실행.
+    private async Task HardDelete(Holding h)
+    {
+        bool ok;
+        try { ok = await JS.InvokeAsync<bool>("confirm", $"'{h.Name}'({h.Symbol})을(를) 영구 삭제할까요?\n이 작업은 되돌릴 수 없습니다."); }
+        catch { ok = true; }   // JS 미가용 환경 폴백
+        if (!ok) return;
+        try
+        {
+            Db.HardDeleteHolding(h.Symbol, h.BrokerAccount);
+            if (_lastDeleted is { } ld && ld.Symbol == h.Symbol && ld.BrokerAccount == h.BrokerAccount) _lastDeleted = null;
+            _flash = $"🗑 '{h.Name}' 영구 삭제되었습니다.";
+            await LoadAsync();
+        }
+        catch (Exception ex) { _flash = "영구 삭제 실패: " + ex.Message; }
+    }
+
+    // v7.1.0 추가매수 — 보유 행에서 그 종목으로 매수 폼을 연다(시장/통화/증권사 이월). 수량·단가만 입력하면
+    //   SaveTx→RecomputeAverage 로 평단이 가중평균 자동 병합된다(중복 행 없음·수동 평단 계산 불필요).
+    private void AddBuy(Holding h)
+    {
+        _showForm = true; _mode = FormMode.Buy; _txType = TransactionType.Buy; _editId = 0; _flash = ""; _tab = "hold";
+        _tf = new() { Symbol = h.Symbol, Name = h.Name, Market = h.Market, Currency = h.Currency,
+                      Broker = h.BrokerAccount, Picked = true, ExecutedAt = DateTime.Now };
+        _feesDirty = false; _lastBroker = (h.BrokerAccount ?? "").Trim(); _txMsg = "";
+    }
+
+    // 매수 폼 병합 미리보기용 — 활성 보유 중 같은 종목(트림·대소문자 무시). 없으면 null.
+    private Holding? FindHolding(string? symbol)
+    {
+        var s = (symbol ?? "").Trim();
+        return s.Length == 0 ? null : _holdings.FirstOrDefault(x => string.Equals(x.Symbol, s, StringComparison.OrdinalIgnoreCase));
     }
 
     public void Dispose() { AsOfCtx.OnChange -= OnAsOf; _cts?.Cancel(); _cts?.Dispose(); }

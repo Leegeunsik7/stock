@@ -25,9 +25,13 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>7.0.0</Version>
-    <AssemblyVersion>7.0.0.0</AssemblyVersion>
-    <FileVersion>7.0.0.0</FileVersion>
+    <Version>7.1.0</Version>
+    <AssemblyVersion>7.1.0.0</AssemblyVersion>
+    <FileVersion>7.1.0.0</FileVersion>
+    <!-- v7.1.0 — 포트폴리오 보유 종목: 소프트 삭제·복원 + 추가매수 원클릭 자동 병합(운영 피드백 반영).
+         [삭제 복원] 보유 삭제를 하드 DELETE 대신 IsDeleted 플래그 소프트 삭제로 전환 — 삭제 직후 '실행취소' 배너 + 상단 '🗑 삭제된 종목(N)' 토글로 언제든 복원. 영구삭제(HardDeleteHolding)는 트래시 목록에서 확인 후 별도. GetAllHoldings 는 IsDeleted=0 활성만 반환(대시보드·알림·총자산 등 전 소비자 일관 제외). SaveHolding/UpdateHoldingById 는 IsDeleted=0 으로 부활(삭제 종목 재매수·직접보정 시 자동 활성). 스키마 IsDeleted 컬럼 + 가드 ALTER + Quantity 재구성 보존.
+         [추가매수 자동 병합] 매수 기록(SaveTx→RecomputeAverage)은 기존대로 이동평균 가중 자동 병합. 편의 추가: 보유 행 '➕매수' 버튼 → 그 종목으로 매수 폼 자동 채움(시장·통화·증권사 이월) → 수량·단가만 입력하면 평단 자동 재계산(수동 평단 계산 불필요·중복 행 없음). 매수 폼에 '병합 미리보기'(기존 → 매수 후 합계 수량·가중평균 평단) 실시간 표시.
+         회귀 테스트 +3(소프트 삭제 은닉·복원, 재매수 부활+병합, 영구삭제). 빌드 0/0(메인 AnyCPU+x86 프록시), 전체 2153 통과. -->
     <!-- v7.0.0 — ★결정론 타임라인 플레이백 & RIO 커널 바이패스 & CausalWeave 인과 워터마크 & Phase 7 하드웨어 프리플라이트/감사금고(Path Gamma 통합 확정): 다중 세션 WIP(v5.6.0 플레이백 → v6.0.0 RIO/CausalWeave → v6.1.0 멀티캐스트/카오스 → v7.0.0 프리플라이트/감사)를 표준 워크플로(전체 스위트 + 6렌즈 적대적 검증)로 검증·확정·병합. 재구현 없이 확정 결함만 교정.
          [플레이백] StatePlaybackSimulator.cs(v5.6.0): .ms2log(Brotli+XOR+CRC32)/.ms2dump(XOR+SHA256+CRC) 를 격리 샌드박스에서 나노초 프레임 재현(배속 1x/10x/Max + 1틱 스텝). δ=0 재생 핫패스(사전할당 스크래치·MemoryMarshal). 디코드는 콜드 Load 상주 이관(핫패스 Brotli SafeHandle 할당 제거).
          [RIO] RioKernelBypassMesh.cs(v6.0.0/v6.1.0): Winsock RIO(WSAIoctl(WSAID_MULTIPLE_RIO))를 delegate* unmanaged 로 직결, NIC→등록 네이티브 버퍼 무복사 수신 후 완료 QPC 봉인. RIO 미지원 시 관리형 소켓 안심 강등(동일 CausalWeaveRing 발행). IGMP 멀티캐스트 조인·NIC 고정·제로카피 L3 파싱.

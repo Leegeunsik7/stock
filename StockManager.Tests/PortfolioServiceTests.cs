@@ -402,5 +402,50 @@ namespace StockManager.Tests
             Assert.Equal((10, 1000m), Read(db, "005930"));
             Assert.Equal((2, 500m), Read(db, "AAPL"));
         });
+
+        // ── v7.1.0 보유 소프트 삭제 · 복원 · 재매수 부활 · 영구 삭제 ─────────────
+        [Fact]
+        public void SoftDelete_HidesFromActive_KeepsRestorable() => WithDb(db =>
+        {
+            db.SaveHolding(new Holding { Symbol = "005930", Name = "삼성전자", Market = Market.KRX_KOSPI, Currency = Currency.KRW, Quantity = 10, AvgPrice = 70_000m, CurrentPrice = 70_000m, FirstBuyDate = _baseAt, BrokerAccount = "키움" });
+            Assert.Contains(db.GetAllHoldings(), h => h.Symbol == "005930");   // 초기 활성
+            Assert.Empty(db.GetDeletedHoldings());
+
+            db.DeleteHolding("005930", "키움");                                // 소프트 삭제
+            Assert.DoesNotContain(db.GetAllHoldings(), h => h.Symbol == "005930");   // 활성에서 제외
+            Assert.Contains(db.GetDeletedHoldings(), h => h.Symbol == "005930");     // 삭제 목록에 보존(복원 가능)
+
+            db.RestoreHolding("005930", "키움");                              // 복원
+            Assert.Contains(db.GetAllHoldings(), h => h.Symbol == "005930");   // 다시 활성
+            Assert.Empty(db.GetDeletedHoldings());
+        });
+
+        [Fact]
+        public void Rebuy_RevivesSoftDeleted_AndMergesAverage() => WithDb(db =>
+        {
+            Tx(db, "005930", TransactionType.Buy, 10, 1000, 1);
+            PortfolioService.RecomputeAverage(db, "005930");                  // 보유 생성(활성)
+            db.DeleteHolding("005930", "");                                   // 소프트 삭제
+            Assert.DoesNotContain(db.GetAllHoldings(), h => h.Symbol == "005930");
+
+            Tx(db, "005930", TransactionType.Buy, 10, 3000, 2);              // 삭제된 종목 추가 매수
+            PortfolioService.RecomputeAverage(db, "005930");                  // 부활(IsDeleted=0) + 병합
+            var hh = db.GetAllHoldings().Find(h => h.Symbol == "005930");
+            Assert.NotNull(hh);                                              // 부활
+            Assert.Equal(20m, hh!.Quantity);                                 // 10+10
+            Assert.Equal(2000m, hh.AvgPrice);                                // (10·1000+10·3000)/20 가중평균
+            Assert.Empty(db.GetDeletedHoldings());
+        });
+
+        [Fact]
+        public void HardDelete_RemovesEntirely() => WithDb(db =>
+        {
+            db.SaveHolding(new Holding { Symbol = "005930", Name = "삼성전자", Market = Market.KRX_KOSPI, Currency = Currency.KRW, Quantity = 10, AvgPrice = 1000m, CurrentPrice = 1000m, FirstBuyDate = _baseAt, BrokerAccount = "" });
+            db.DeleteHolding("005930", "");                                   // 소프트 삭제
+            Assert.Contains(db.GetDeletedHoldings(), h => h.Symbol == "005930");
+            db.HardDeleteHolding("005930", "");                              // 영구 삭제(복원 불가)
+            Assert.DoesNotContain(db.GetAllHoldings(), h => h.Symbol == "005930");
+            Assert.DoesNotContain(db.GetDeletedHoldings(), h => h.Symbol == "005930");   // 어느 목록에도 없음
+        });
     }
 }
