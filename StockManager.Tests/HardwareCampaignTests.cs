@@ -11,6 +11,9 @@ using Xunit;
 
 namespace StockManager.Tests
 {
+    // ★타이밍 민감(실-QPC 유효주파수 샘플링·δ=0 per-thread 할당 측정)·다중스레드(4스레드 코히런스 스트레스)라
+    //   직렬 컬렉션에 편입해 master 병렬 실행에서도 플래키 0% 보장(ChaosGrid/Watchdog/MmfFlightRecorder 관례 일치).
+    [Collection("ConcurrencyStress")]
     public sealed class HardwareCampaignTests
     {
         // ══ ⚡ CpuAffinityPinningGrid ═══════════════════════════════════════
