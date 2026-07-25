@@ -173,6 +173,16 @@ namespace StockManager.Common
         public readonly long   VarRidgeInjections;          // 적응형 리지 주입 누적 횟수
         public readonly long   RiskValveState;              // 0 정상/1 한도초과(신규 발주 tighten-only 조임)
         public readonly long   CovGuardState;               // 0 정상/1 정규화/2 특이점 퓨즈
+        // v7.3.0 — 하드웨어 P-Core 격리 & 서멀/주파수 & 캐시라인 코히런스.
+        public readonly long   CpuPCoreCount;               // 감지된 P-Core(고성능) 논리프로세서 수(0=미지원/미감지)
+        public readonly long   CpuPinnedThreads;            // P-Core 물리 핀 고정 스레드 수
+        public readonly long   CpuMigrationEvents;          // 핀 스레드의 P-Core 이탈(OS 강제 이주) 누적
+        public readonly long   CpuPinFailures;              // 핀 시도 실패 누적
+        public readonly long   ThermalEffectiveFreqPermille;// 유효주파수 ‰(기준선 최고 대비·1000=최고·↓=스로틀)
+        public readonly long   ThermalThrottleHolds;        // 서멀 스로틀 안전홀드 발동 누적
+        public readonly long   ThermalSafeHold;             // 1=서멀 스로틀 안전홀드 활성(신규발주 tighten-only)
+        public readonly long   CacheCrossCoreWrites;        // 캐시라인 슬롯 크로스코어 기록(라인 바운싱/코어 마이그레이션 지표)
+        public readonly long   CacheCoherenceFuse;          // 1=아레나 카나리 파열(코히런스 퓨즈 트립·안전홀드)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -220,7 +230,10 @@ namespace StockManager.Common
                              long auditLedgerIntegrityCode = 0L, long auditLedgerCount = 0L,
                              long auditLedgerSealed = 0L, long auditLedgerHeadHash = 0L,
                              long portfolioVar99Krw = 0L, long portfolioStressLossKrw = 0L, double varGershgorinBound = 0.0,
-                             long varRidgeInjections = 0L, long riskValveState = 0L, long covGuardState = 0L)
+                             long varRidgeInjections = 0L, long riskValveState = 0L, long covGuardState = 0L,
+                             long cpuPCoreCount = 0L, long cpuPinnedThreads = 0L, long cpuMigrationEvents = 0L, long cpuPinFailures = 0L,
+                             long thermalEffectiveFreqPermille = 0L, long thermalThrottleHolds = 0L, long thermalSafeHold = 0L,
+                             long cacheCrossCoreWrites = 0L, long cacheCoherenceFuse = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -350,6 +363,15 @@ namespace StockManager.Common
             VarRidgeInjections           = varRidgeInjections;
             RiskValveState               = riskValveState;
             CovGuardState                = covGuardState;
+            CpuPCoreCount                = cpuPCoreCount;
+            CpuPinnedThreads             = cpuPinnedThreads;
+            CpuMigrationEvents           = cpuMigrationEvents;
+            CpuPinFailures               = cpuPinFailures;
+            ThermalEffectiveFreqPermille = thermalEffectiveFreqPermille;
+            ThermalThrottleHolds         = thermalThrottleHolds;
+            ThermalSafeHold              = thermalSafeHold;
+            CacheCrossCoreWrites         = cacheCrossCoreWrites;
+            CacheCoherenceFuse           = cacheCoherenceFuse;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -573,6 +595,12 @@ namespace StockManager.Common
         public bool    CovRegularizing           => CovGuardState == 1L;                         // 적응형 리지 개입 중
         public bool    VarActive                 => PortfolioVar99Krw > 0L || VarRidgeInjections > 0L || RiskValveState != 0L;  // 미배선 판별(전부 0=미구동)
         public string  CovGuardStateName         => CovGuardState switch { 1L => "REGULARIZED", 2L => "SINGULAR-FUSE", _ => "NOMINAL" };
+        // v7.3.0 — 하드웨어 RIO/P-Core/서멀/코히런스 UI 헬퍼(한국색상은 razor 계층).
+        public bool    CpuPinActive              => CpuPinnedThreads > 0L && CpuPCoreCount > 0L;        // P-Core 물리 핀 활성
+        public bool    ThermalThrottling         => ThermalSafeHold != 0L;                             // ★황색 [THERMAL/FREQ THROTTLE - SAFE HOLD]
+        public bool    CacheCoherenceBreached    => CacheCoherenceFuse != 0L;                          // ★암흑자색 오버레이(캐시 코히런스 파열)
+        public bool    HwCoreIsolationActive     => CpuPinActive || CpuPCoreCount > 0L || ThermalEffectiveFreqPermille is > 0L and < 1000L || CacheCrossCoreWrites > 0L;  // 미배선 판별(전부 0/기본=미구동)
+        public string  HwPinStateName            => CpuPinActive ? "P-CORE PINNED" : (CpuPCoreCount > 0L ? "P-CORE DETECTED" : "UNPINNED");
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -585,7 +613,8 @@ namespace StockManager.Common
         //   (v5.4.0 93필드→896 잔여 3슬롯 → v5.5.0 로깅/지터 8필드 추가로 101필드 → Size 896→960 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
         //   (v6.0.0 Path Gamma + v7.0.0 Phase 7: RIO/플레이백/CausalWeave/하드웨어프로브/감사금고 필드 추가로 122필드 → 128+122×8=1104 → Size 960→1152(64×18·잔여 6슬롯=48B).)
         //   (v7.2.0 VaR: 99%VaR·StressVaR·Gershgorin하한·리지주입·밸브·공분산가드 6필드 추가로 128필드 → 128+128×8=1152 → Size 1152→1216(64×19·잔여 8슬롯=64B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1216)]
+        //   (v7.3.0 하드웨어: P-Core수·핀스레드·마이그·핀실패·유효주파수·스로틀홀드·서멀홀드·크로스코어·코히런스퓨즈 9필드 추가로 137필드 → 128+137×8=1224 → Size 1216→1280(64×20·잔여 7슬롯=56B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1280)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -694,6 +723,9 @@ namespace StockManager.Common
         private readonly RioHardwareProbe? _hwProbe;                // v7.0.0 — RIO 하드웨어 사전점검(옵션·기본 null)
         private readonly CausalAuditVault? _auditVault;             // v7.0.0 — 암호학적 감사 금고(옵션·기본 null)
         private readonly PortfolioRiskVaREngine? _varEngine;        // v7.2.0 — 실시간 VaR 엔진(옵션·기본 null·구동기가 갱신)
+        private readonly CpuAffinityPinningGrid?      _cpuGrid;      // v7.3.0 — P-Core 핀 그리드(옵션·기본 null)
+        private readonly ThermalFrequencyJitterGuard? _thermalGuard;// v7.3.0 — 서멀/주파수 스로틀 가드(옵션·기본 null)
+        private readonly CacheLineCoherenceSentinel?  _coherence;   // v7.3.0 — 캐시라인 코히런스 센티널(옵션·기본 null)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -752,7 +784,10 @@ namespace StockManager.Common
                                       CausalWeaveRing? weaveRing = null,
                                       RioHardwareProbe? hwProbe = null,
                                       CausalAuditVault? auditVault = null,
-                                      PortfolioRiskVaREngine? varEngine = null)
+                                      PortfolioRiskVaREngine? varEngine = null,
+                                      CpuAffinityPinningGrid? cpuGrid = null,
+                                      ThermalFrequencyJitterGuard? thermalGuard = null,
+                                      CacheLineCoherenceSentinel? coherence = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -805,6 +840,9 @@ namespace StockManager.Common
             _hwProbe      = hwProbe;
             _auditVault   = auditVault;
             _varEngine    = varEngine;
+            _cpuGrid      = cpuGrid;
+            _thermalGuard = thermalGuard;
+            _coherence    = coherence;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -967,6 +1005,11 @@ namespace StockManager.Common
                     vVar99 = ve.LastVar99Krw; vStress = ve.LastStressKrw; vGersh = ve.LastGershgorinBound;
                     vRidge = ve.RidgeInjections; vValve = ve.RiskValveStateCode; vGuard = ve.CovGuardStateCode;
                 }
+                // v7.3.0 — 하드웨어 P-Core/서멀/코히런스 텔레메트리 풀(δ=0 — long 카운터 독출). 미배선이면 0.
+                long hwCore = 0L, hwPinned = 0L, hwMig = 0L, hwPinFail = 0L, hwFreq = 0L, hwThrHold = 0L, hwThrSafe = 0L, hwXcore = 0L, hwCohFuse = 0L;
+                if (_cpuGrid is { } cg2) { hwCore = cg2.PCoreCount; hwPinned = cg2.PinnedThreads; hwMig = cg2.MigrationEvents; hwPinFail = cg2.PinFailures; }
+                if (_thermalGuard is { } tg) { hwFreq = tg.EffectiveFreqPermille; hwThrHold = tg.ThrottleHolds; if (tg.SafeHoldActive) hwThrSafe = 1L; }
+                if (_coherence is { } co2) { hwXcore = co2.CrossCoreWrites; if (co2.CoherenceFuseTripped) hwCohFuse = 1L; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -991,7 +1034,8 @@ namespace StockManager.Common
                     rioActive, rioLatNs, rioFb, rioFrames, pbState, pbPlayed, pbTotal, pbFps, pbIntegrity,
                     cwState, cwEvict, cwSat, cwFuse,
                     hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead,
-                    vVar99, vStress, vGersh, vRidge, vValve, vGuard));
+                    vVar99, vStress, vGersh, vRidge, vValve, vGuard,
+                    hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

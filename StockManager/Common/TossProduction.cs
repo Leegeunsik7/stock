@@ -168,7 +168,8 @@ namespace StockManager.Common
             ShadowCutoverGate? shadowGate = null,
             Func<string>? subscribeJson = null,
             long genomeId = 0,
-            int maxReconnects = 5)
+            int maxReconnects = 5,
+            CpuAffinityPinningGrid? pinGrid = null)   // v7.3.0 — 주입 시 인입 펌프 스레드 P-Core 자기 핀(라이브 경로 옵트인)
         {
             if (authClient is null) throw new ArgumentNullException(nameof(authClient));
             if (signalRing is null) throw new ArgumentNullException(nameof(signalRing));
@@ -177,7 +178,7 @@ namespace StockManager.Common
             var tokens = new TossTokenService(authClient, clock, attestation);
             var socket = new TossProductionSocket(wssUrl, tokens.CurrentAccessToken, attestation, subscribeJson);
             var transport = new TossHttpTransport(restBaseUrl, tokens.CurrentAccessToken, socket, attestation);
-            var raw = new TossLiveBroker(transport, signalRing, clock, attestation, genomeId, maxReconnects);
+            var raw = new TossLiveBroker(transport, signalRing, clock, attestation, genomeId, maxReconnects, pinGrid: pinGrid);
             IBroker broker = shadowGate is null ? raw : new ShadowClearingBroker(raw, shadowGate, attestation);
             return new TossProductionStack(broker, raw, tokens, socket);
         }

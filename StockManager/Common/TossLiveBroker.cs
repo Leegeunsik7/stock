@@ -72,6 +72,7 @@ namespace StockManager.Common
         private readonly Func<long>           _clock;         // TimestampTicks 주입(δ=0·DateTime.UtcNow 핫패스 배제)
         private readonly int                  _maxReconnects; // 재연결 한도(초과 → fail-closed)
         private readonly long                 _parseFailFreezeThreshold; // 누적 파싱 실패 임계(초과 → 동결)
+        private readonly CpuAffinityPinningGrid? _pinGrid;   // v7.3.0 — 주입 시 WS 인입 펌프 스레드를 P-Core 물리 핀(δ=0 틱 핫패스 코어 격리)
 
         // 인입 펌프 스레드
         private Thread?        _pumpThread;
@@ -94,7 +95,8 @@ namespace StockManager.Common
             OrderAttestationService? attestation = null,
             long genomeId = 0,
             int maxReconnects = 5,
-            long parseFailFreezeThreshold = 1024)
+            long parseFailFreezeThreshold = 1024,
+            CpuAffinityPinningGrid? pinGrid = null)                     // v7.3.0 — 주입 시 인입 펌프 스레드 P-Core 자기 핀(옵션·기본 미핀)
         {
             _transport               = transport ?? throw new ArgumentNullException(nameof(transport));
             _ring                    = ring       ?? throw new ArgumentNullException(nameof(ring));
@@ -103,6 +105,7 @@ namespace StockManager.Common
             _genomeId                = genomeId;
             _maxReconnects           = maxReconnects < 0 ? 0 : maxReconnects;
             _parseFailFreezeThreshold = parseFailFreezeThreshold <= 0 ? long.MaxValue : parseFailFreezeThreshold;
+            _pinGrid                 = pinGrid;
         }
 
         public string Name   => "토스증권 실거래";
@@ -203,6 +206,9 @@ namespace StockManager.Common
         // ── 펌프 루프(스레드 본체) — 연결/수신/재연결 오케스트레이션 ────────────
         private void PumpLoop()
         {
+            // ★v7.3.0 — 실시간 틱 수신 핫패스를 P-Core 에 물리 핀 고정(주입 시). OS 의 E-Core 강등/코어 이주로부터 δ=0
+            //   수신·파싱·ring publish 를 격리(핀 실패는 fail-safe·무해). liveArmed 무관 — 순수 수신 스케줄링 제어.
+            try { _pinGrid?.PinCurrentThread(); } catch { /* 핀 실패 무해 */ }
             int reconnectStreak = 0;
             while (_running)
             {

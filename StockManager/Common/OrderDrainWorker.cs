@@ -28,24 +28,58 @@ namespace StockManager.Common
         private readonly Func<bool>?                 _dualKeyIntact; // v4.87.0 이중키 무결성 런타임 검문(옵션)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
+        private readonly CpuAffinityPinningGrid?      _pinGrid;   // v7.3.0 — 주입 시 전용 P-Core 핀 드레인 스레드 모드
+        private readonly int                          _periodMs;
+        private readonly System.Threading.Thread?     _thread;
+        private readonly System.Threading.ManualResetEventSlim? _stop;
+        private int                                   _disposedLatch;
 
         public bool IsWired { get; }
 
         /// <param name="attestation">v4.87.0 — 드레인 루프 예외·이중키 무결성 붕괴 시 ForceFreeze 격발(옵션·null 시 무동작).</param>
         /// <param name="dualKeyIntact">v4.87.0 — 매 드레인 전 이중키(ValveWired ∧ LiveArmingWired) 무결성 검문(옵션).
         /// false 반환 또는 throw 시 강등이 아니라 ForceFreeze 로 파이프라인 영구 락업.</param>
+        /// <param name="pinGrid">v7.3.0 — 주입 시 드레인을 threadpool 타이머 대신 '전용 P-Core 핀 스레드'(엄격 순차·재진입
+        /// 불가·핫패스 코어 격리)로 구동. null(기본)이면 기존 타이머 유지(동작 불변). wired:false 면 어느 쪽도 미가동.</param>
         public OrderDrainWorker(GatedOrderDispatcher dispatcher, IBroker broker,
                                 bool wired, int periodMs = 50,
                                 OrderAttestationService? attestation = null,
-                                Func<bool>? dualKeyIntact = null)
+                                Func<bool>? dualKeyIntact = null,
+                                CpuAffinityPinningGrid? pinGrid = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
             _att           = attestation;
             _dualKeyIntact = dualKeyIntact;
+            _pinGrid       = pinGrid;
+            _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
             if (wired)
-                _timer = new System.Threading.Timer(_ => DrainOnce(), null, dueTime: 0, period: periodMs);
+            {
+                // ★v7.3.0: pinGrid 주입 시 전용 핀 스레드(엄격 순차 — 타이머 재진입 위험 제거·P-Core 물리 격리). 미주입이면
+                //   기존 threadpool 타이머(동작 불변). 밸브 미결선(wired:false·기본)이면 어느 경로도 미가동(드라이런 박제 유지).
+                if (pinGrid != null)
+                {
+                    _stop   = new System.Threading.ManualResetEventSlim(false);
+                    _thread = new System.Threading.Thread(PinnedDrainLoop)
+                        { IsBackground = true, Name = "OrderDrainWorker", Priority = System.Threading.ThreadPriority.AboveNormal };
+                    _thread.Start();
+                }
+                else
+                    _timer = new System.Threading.Timer(_ => DrainOnce(), null, dueTime: 0, period: periodMs);
+            }
+        }
+
+        // v7.3.0 — 전용 핀 드레인 루프: 현재 스레드를 P-Core 에 물리 핀 고정 후 엄격 순차 주기 드레인(타이머 재진입/풀 기아 배제).
+        private void PinnedDrainLoop()
+        {
+            try { _pinGrid?.PinCurrentThread(); } catch { /* 핀 실패 무해 — 드레인은 계속(fail-safe) */ }
+            var stop = _stop;
+            while (!_disposed)
+            {
+                DrainOnce();
+                if (stop == null || stop.Wait(_periodMs)) break;   // periodMs 대기 or dispose 신호 → 종료
+            }
         }
 
         /// <summary>
@@ -94,9 +128,14 @@ namespace StockManager.Common
 
         public void Dispose()
         {
-            if (_disposed) return;
+            if (System.Threading.Interlocked.Exchange(ref _disposedLatch, 1) == 1) return;   // 멱등
             _disposed = true;
             try { _timer?.Dispose(); } catch { }
+            _stop?.Set();
+            // ★핀 스레드 종료 '입증' 후에만 _stop dispose — 살아있는 Wait() 위 dispose 시 ObjectDisposedException 방지(안전 누수 허용).
+            bool exited;
+            try { exited = _thread == null || _thread.Join(2000); } catch { exited = false; }
+            if (exited) { try { _stop?.Dispose(); } catch { } }
         }
     }
 }

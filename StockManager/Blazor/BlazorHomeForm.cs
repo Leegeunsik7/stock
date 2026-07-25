@@ -327,12 +327,18 @@ namespace StockManager.Blazor
             // v7.2.0 — 포트폴리오 VaR 리스크 밸브도 무장 술어에 합성(지연 ref·아래에서 생성). VaR/스트레스 한도 초과 시 무장을
             //   false 로 억제 — 신규 발주만 tighten-only 차단('더 안전한 방향'·liveArmed:false 정합·발주 유발 경로 부재).
             PortfolioRiskVaREngine? varGuardRef = null;
+            // v7.3.0 — 서멀 스로틀 안전홀드·캐시 코히런스 파열도 무장 술어에 합성(지연 ref·아래 생성). 하드웨어 위험 구간
+            //   신규 발주 tighten-only 억제('더 안전한 방향'·liveArmed:false 정합·발주 유발 경로 부재).
+            ThermalFrequencyJitterGuard? thermalGuardRef = null;
+            CacheLineCoherenceSentinel?  coherenceRef    = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
                                 || (kernelJitterRef?.SafeHoldActive ?? false)
                                 || (ioFirewallRef?.HoldActive ?? false)
-                                || (varGuardRef?.LimitBreached ?? false));
+                                || (varGuardRef?.LimitBreached ?? false)
+                                || (thermalGuardRef?.SafeHoldActive ?? false)
+                                || (coherenceRef?.SafeHoldActive ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -593,8 +599,23 @@ namespace StockManager.Blazor
             riskUpdater.Start();
             services.AddSingleton(riskUpdater);
             FormClosed += (_, _) => ShutdownTrace.Step("riskUpdater", () => riskUpdater.Dispose());
+            // v7.3.0 — 하드웨어 P-Core 격리 그리드 + 서멀/주파수 스로틀 가드 + 캐시라인 코히런스 센티널.
+            //   ★liveArmed:false: 전부 순수 관측/스케줄링 제어(IBroker·소켓·onSend 참조 0). 안전홀드/퓨즈는 위 armedPredicate
+            //     blockWhile 로만 결선돼 tighten-only 억제(발주 유발 경로 부재). 서멀 가드는 BelowNormal 전용 스레드·δ=0 실측.
+            var cpuGrid = new CpuAffinityPinningGrid();
+            services.AddSingleton(cpuGrid);                         // TelemetryMonitor 🕹️ RIO/CPU 패널 + drainWorker 핀 대상
+            var thermalGuard = new ThermalFrequencyJitterGuard();
+            thermalGuardRef = thermalGuard;                         // 무장 술어 blockWhile 지연 ref 결속
+            thermalGuard.Start();
+            services.AddSingleton(thermalGuard);
+            FormClosed += (_, _) => ShutdownTrace.Step("thermalGuard", () => thermalGuard.Dispose());
+            var coherence = new CacheLineCoherenceSentinel(slots: 8, attestation: attestation);
+            coherenceRef = coherence;                               // 무장 술어 blockWhile 지연 ref 결속
+            services.AddSingleton(coherence);
+            FormClosed += (_, _) => ShutdownTrace.Step("coherence", () => coherence.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
-                weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine);
+                weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
+                cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -620,7 +641,8 @@ namespace StockManager.Blazor
                 wired: cfg.GetBool("Dispatch.ValveWired", false),
                 periodMs: 50,
                 attestation: attestation,
-                dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false));
+                dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false),
+                pinGrid: cpuGrid);   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

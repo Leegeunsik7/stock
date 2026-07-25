@@ -25,9 +25,17 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>7.2.0</Version>
-    <AssemblyVersion>7.2.0.0</AssemblyVersion>
-    <FileVersion>7.2.0.0</FileVersion>
+    <Version>7.3.0</Version>
+    <AssemblyVersion>7.3.0.0</AssemblyVersion>
+    <FileVersion>7.3.0.0</FileVersion>
+    <!-- v7.3.0 — 하드웨어 대진격: CPU P-Core 물리 격리 핀 + 서멀/주파수 스로틀 가드 + ★캐시라인 코히런스 센티널 + RIO/CPU 관제.
+         [Task 1] CpuAffinityPinningGrid — GetLogicalProcessorInformationEx(EfficiencyClass)로 P-Core affinity 마스크 산출, SetThreadAffinityMask 물리 핀 + 우선순위 승격(Realtime 옵트인). 전 Win32 fail-safe·비-Windows 안심 강등. CurrentCore/AttestPinnedCore δ=0 폴. LibraryImport 소스생성(SYSLIB1054 청정).
+         [Task 2] ThermalFrequencyJitterGuard — 고정 정수 워크로드를 QPC 브래킷해 '유효주파수 ‰' δ=0 실측(스로틀 시 wall-time↑→‰↓). 지속 K회 강하 → 가역 안전 홀드(주입 시계 결정론·GC 가드·버스트 최소채택 오탐 방어).
+         [★Task 3 Think Beyond] CacheLineCoherenceSentinel — 제미나이의 '패딩(A)'과 'RIO 아레나 감지(B)'를 '하드웨어 코히런스 단일 불변식'으로 통합: 64B 정렬 언매니지드 아레나에 카운터를 각자 캐시라인에 배치 → False Sharing 구조적 불가 + 코어 마이그레이션 δ=0 계수 + 슬롯 카나리 O(1) 오염 봉인(퓨즈 fail-closed).
+         [텔레메트리/UI] RingTelemetry +9필드(P-Core수·핀스레드·마이그·핀실패·유효주파수·스로틀홀드·서멀홀드·크로스코어·코히런스퓨즈, Cell Size 1216→1280=64×20)·Publisher 3모듈 δ=0 풀. TelemetryMonitor 🕹️ [RIO Kernel Bypass & Hardware CPU Core Isolation] 패널(청색 [P-CORE PINNED]/[RIO BYPASS & P-CORE PINNED - NANOSECOND READY]·황색 서멀 스로틀·암흑자색 코히런스 파열 오버레이).
+         [밸브·핀] 서멀 안전홀드·코히런스 퓨즈를 armedPredicate blockWhile 에 tightener(||) 결합(tighten-only). OrderDrainWorker: pinGrid 주입 시 threadpool 타이머 대신 전용 P-Core 핀 스레드(엄격 순차·재진입 불가). TossLiveBroker WS 인입 펌프: 주입 시 P-Core 자기 핀(δ=0 틱 핫패스 격리). 둘 다 옵트인·기본 동작 불변.
+         [적대검증] 하드웨어 3모듈 6렌즈 find→verify(9발견→2 CONFIRMED): AttestIsolated 필드크기 무시 spill 오판→캐시라인 인덱스 비교 교정, ThermalGuard Dispose 경합 크래시→종료 입증 후에만 _stop dispose+Loop 하드닝. 유닛 +9(하드웨어). 전체 2194 통과.
+         [불변] δ=0(Record/Sample/CurrentCore/AttestArena 힙 0 실증)·결정론(주입 시계·오프셋 기반)·fail-closed(카나리 파열→퓨즈·스로틀→홀드)·liveArmed:false(순수 관측/스케줄링 제어·발주 유발 경로 0·홀드 tighten-only). -->
     <!-- v7.2.0 — 무할당 실시간 포트폴리오 VaR 엔진 + Gershgorin 적응형 리지 방화벽 + 관제 UI/밸브 결속.
          [엔진] PortfolioRiskVaREngine — Parametric(σ_p=√wᵀΣw·95/99%)·Historical(경험분위수)·Monte Carlo(상관보존·결정론 SplitMix64)·Stress(지수/환율/금리 복합) VaR. PortfolioData.R(%)·MarkowitzOptimizer.Covariance(오라클)·MonteCarlo.Cholesky 재사용. 콜드 LoadReturns / 핫 ComputeVar·MonteCarloVarPct(사전할당 재사용·δ=0). 구동기 PortfolioRiskUpdater(BelowNormal 전용 스레드·fail-safe).
          [★Think Beyond] CovarianceSingularityGuard — Gershgorin 원판정리로 λ_min 하한 O(n²) 계측(고유분해 O(n³) 불필요), 하한<ε 시 λ=ε−하한 '최소' 대각 로딩으로 PD 수학적 보장(참 구조 최대 보존·기존 고정 지터 1e-12/1e-4 초월). NaN/Inf → 퓨즈 + 무상관 보수 VaR fail-closed.
