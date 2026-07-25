@@ -166,6 +166,13 @@ namespace StockManager.Common
         public readonly long   AuditLedgerCount;            // 감사 원장 레코드 수
         public readonly long   AuditLedgerSealed;           // 1=트립 포렌식 봉인(비가역 차단)
         public readonly long   AuditLedgerHeadHash;         // 헤드 해시 상위 8B(포렌식 표시)
+        // v7.2.0 — 실시간 포트폴리오 VaR & Gershgorin 특이점 방화벽.
+        public readonly long   PortfolioVar99Krw;           // 99% parametric VaR 추정 손실액(₩)
+        public readonly long   PortfolioStressLossKrw;      // 스트레스(지수/환율/금리 복합) 추정 낙폭(₩)
+        public readonly double VarGershgorinBound;          // 공분산 최소 고유값 하한(Gershgorin 원판정리)
+        public readonly long   VarRidgeInjections;          // 적응형 리지 주입 누적 횟수
+        public readonly long   RiskValveState;              // 0 정상/1 한도초과(신규 발주 tighten-only 조임)
+        public readonly long   CovGuardState;               // 0 정상/1 정규화/2 특이점 퓨즈
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -211,7 +218,9 @@ namespace StockManager.Common
                              long rioProbeSupported = 0L, long rioProbeAdapterCount = 0L,
                              long rioProbeMaxRcvBufBytes = 0L, long rioProbeRecommendFallback = 0L,
                              long auditLedgerIntegrityCode = 0L, long auditLedgerCount = 0L,
-                             long auditLedgerSealed = 0L, long auditLedgerHeadHash = 0L)
+                             long auditLedgerSealed = 0L, long auditLedgerHeadHash = 0L,
+                             long portfolioVar99Krw = 0L, long portfolioStressLossKrw = 0L, double varGershgorinBound = 0.0,
+                             long varRidgeInjections = 0L, long riskValveState = 0L, long covGuardState = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -335,6 +344,12 @@ namespace StockManager.Common
             AuditLedgerCount             = auditLedgerCount;
             AuditLedgerSealed            = auditLedgerSealed;
             AuditLedgerHeadHash          = auditLedgerHeadHash;
+            PortfolioVar99Krw            = portfolioVar99Krw;
+            PortfolioStressLossKrw       = portfolioStressLossKrw;
+            VarGershgorinBound           = varGershgorinBound;
+            VarRidgeInjections           = varRidgeInjections;
+            RiskValveState               = riskValveState;
+            CovGuardState                = covGuardState;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -552,6 +567,12 @@ namespace StockManager.Common
         public bool    AuditSealed               => AuditLedgerSealed != 0L;                  // 트립 포렌식 봉인(비가역)
         public string  AuditIntegrityName        => AuditLedgerIntegrityCode switch
         { 1L => "INTACT", 2L => "CORRUPTED", _ => "UNVERIFIED" };
+        // v7.2.0 — 실시간 포트폴리오 VaR & Gershgorin 특이점 방화벽 UI 헬퍼(한국색상은 razor 계층).
+        public bool    RiskValveThrottling       => RiskValveState != 0L;                       // ★황색 [PORTFOLIO RISK ELEVATED - THROTTLING EXPOSURES]
+        public bool    CovSingularityFuse        => CovGuardState == 2L;                         // ★암흑자색 오버레이(공분산 특이점 파열)
+        public bool    CovRegularizing           => CovGuardState == 1L;                         // 적응형 리지 개입 중
+        public bool    VarActive                 => PortfolioVar99Krw > 0L || VarRidgeInjections > 0L || RiskValveState != 0L;  // 미배선 판별(전부 0=미구동)
+        public string  CovGuardStateName         => CovGuardState switch { 1L => "REGULARIZED", 2L => "SINGULAR-FUSE", _ => "NOMINAL" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -563,7 +584,8 @@ namespace StockManager.Common
         //   ★Size 는 Data(@128) 확장에 맞춘 여유값. v5.5.0 기준 필드 101개×8=808B → Data 128..936B ≤ 960(64배수·잔여 3슬롯=24B).
         //   (v5.4.0 93필드→896 잔여 3슬롯 → v5.5.0 로깅/지터 8필드 추가로 101필드 → Size 896→960 상향. ★필드 추가 시 128+N×8 ≤ Size(64배수) 유지 필수.)
         //   (v6.0.0 Path Gamma + v7.0.0 Phase 7: RIO/플레이백/CausalWeave/하드웨어프로브/감사금고 필드 추가로 122필드 → 128+122×8=1104 → Size 960→1152(64×18·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1152)]
+        //   (v7.2.0 VaR: 99%VaR·StressVaR·Gershgorin하한·리지주입·밸브·공분산가드 6필드 추가로 128필드 → 128+128×8=1152 → Size 1152→1216(64×19·잔여 8슬롯=64B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1216)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -671,6 +693,7 @@ namespace StockManager.Common
         private readonly CausalWeaveRing? _weaveRing;               // v6.0.0 — CausalWeave 증명-드롭 링(옵션·기본 null)
         private readonly RioHardwareProbe? _hwProbe;                // v7.0.0 — RIO 하드웨어 사전점검(옵션·기본 null)
         private readonly CausalAuditVault? _auditVault;             // v7.0.0 — 암호학적 감사 금고(옵션·기본 null)
+        private readonly PortfolioRiskVaREngine? _varEngine;        // v7.2.0 — 실시간 VaR 엔진(옵션·기본 null·구동기가 갱신)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -728,7 +751,8 @@ namespace StockManager.Common
                                       CausalWeaveClock? weaveClock = null,
                                       CausalWeaveRing? weaveRing = null,
                                       RioHardwareProbe? hwProbe = null,
-                                      CausalAuditVault? auditVault = null)
+                                      CausalAuditVault? auditVault = null,
+                                      PortfolioRiskVaREngine? varEngine = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -780,6 +804,7 @@ namespace StockManager.Common
             _weaveRing    = weaveRing;
             _hwProbe      = hwProbe;
             _auditVault   = auditVault;
+            _varEngine    = varEngine;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -935,6 +960,13 @@ namespace StockManager.Common
                     }
                     auCode = av.PollVerify(now); auCount = av.Count; auSealed = av.Sealed ? 1L : 0L; auHead = av.HeadHash8;
                 }
+                // v7.2.0 — VaR 엔진 텔레메트리 캐시 풀(δ=0 — 구동기가 갱신한 최근 산출값만 읽음). 미배선이면 0.
+                long vVar99 = 0L, vStress = 0L, vRidge = 0L, vValve = 0L, vGuard = 0L; double vGersh = 0.0;
+                if (_varEngine is { } ve)
+                {
+                    vVar99 = ve.LastVar99Krw; vStress = ve.LastStressKrw; vGersh = ve.LastGershgorinBound;
+                    vRidge = ve.RidgeInjections; vValve = ve.RiskValveStateCode; vGuard = ve.CovGuardStateCode;
+                }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -958,7 +990,8 @@ namespace StockManager.Common
                     logBps, logQ, logDrop, logComp, kJit, kHold, nicDrop, ioStat,
                     rioActive, rioLatNs, rioFb, rioFrames, pbState, pbPlayed, pbTotal, pbFps, pbIntegrity,
                     cwState, cwEvict, cwSat, cwFuse,
-                    hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead));
+                    hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead,
+                    vVar99, vStress, vGersh, vRidge, vValve, vGuard));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

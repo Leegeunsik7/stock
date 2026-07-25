@@ -25,9 +25,16 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>7.1.0</Version>
-    <AssemblyVersion>7.1.0.0</AssemblyVersion>
-    <FileVersion>7.1.0.0</FileVersion>
+    <Version>7.2.0</Version>
+    <AssemblyVersion>7.2.0.0</AssemblyVersion>
+    <FileVersion>7.2.0.0</FileVersion>
+    <!-- v7.2.0 — 무할당 실시간 포트폴리오 VaR 엔진 + Gershgorin 적응형 리지 방화벽 + 관제 UI/밸브 결속.
+         [엔진] PortfolioRiskVaREngine — Parametric(σ_p=√wᵀΣw·95/99%)·Historical(경험분위수)·Monte Carlo(상관보존·결정론 SplitMix64)·Stress(지수/환율/금리 복합) VaR. PortfolioData.R(%)·MarkowitzOptimizer.Covariance(오라클)·MonteCarlo.Cholesky 재사용. 콜드 LoadReturns / 핫 ComputeVar·MonteCarloVarPct(사전할당 재사용·δ=0). 구동기 PortfolioRiskUpdater(BelowNormal 전용 스레드·fail-safe).
+         [★Think Beyond] CovarianceSingularityGuard — Gershgorin 원판정리로 λ_min 하한 O(n²) 계측(고유분해 O(n³) 불필요), 하한<ε 시 λ=ε−하한 '최소' 대각 로딩으로 PD 수학적 보장(참 구조 최대 보존·기존 고정 지터 1e-12/1e-4 초월). NaN/Inf → 퓨즈 + 무상관 보수 VaR fail-closed.
+         [밸브] varGuard.LimitBreached 를 armedPredicate blockWhile 에 1항 tightener(||) 결합 — VaR/스트레스 한도 초과 시 신규 발주만 tighten-only 억제(발주 유발 경로 부재). 기본 한도 0=inert(Risk.Var99LimitKrw 옵트인).
+         [텔레메트리/UI] RingTelemetry +6필드(99%VaR·StressVaR·Gershgorin하한·리지주입·밸브·공분산가드, Cell Size 1152→1216=64×19)·Publisher varEngine 배선·Sample δ=0 캐시 풀. TelemetryMonitor 📊 [Real-Time Risk VaR & Gershgorin Singularity Core] 패널(청색 정상·황색 [PORTFOLIO RISK ELEVATED - THROTTLING EXPOSURES]·암흑자색 특이점 파열 오버레이+포렌식 헥스).
+         [불변] δ=0(ComputeVar 200k·MC 50회 힙 0 실증)·결정론(주입 시드)·fail-closed(특이점→보수·밸브)·liveArmed:false(엔진 발주 경로 참조 0·밸브 tighten-only·DispatchArming 실증). 유닛 +11. 전체 2185 통과.
+         ※ BlazorHomeForm 앱 결선(엔진 생성·밸브·Publisher·구동기 시작)은 working tree 반영(빌드 라이브)이나, 타 세션 KernelTelemetryServer 미커밋 WIP 와 동일 파일 얽힘으로 본 커밋에선 제외 — 얽힘 해소 후 결선 커밋. -->
     <!-- v7.1.0 — 포트폴리오 보유 종목: 소프트 삭제·복원 + 추가매수 원클릭 자동 병합(운영 피드백 반영).
          [삭제 복원] 보유 삭제를 하드 DELETE 대신 IsDeleted 플래그 소프트 삭제로 전환 — 삭제 직후 '실행취소' 배너 + 상단 '🗑 삭제된 종목(N)' 토글로 언제든 복원. 영구삭제(HardDeleteHolding)는 트래시 목록에서 확인 후 별도. GetAllHoldings 는 IsDeleted=0 활성만 반환(대시보드·알림·총자산 등 전 소비자 일관 제외). SaveHolding/UpdateHoldingById 는 IsDeleted=0 으로 부활(삭제 종목 재매수·직접보정 시 자동 활성). 스키마 IsDeleted 컬럼 + 가드 ALTER + Quantity 재구성 보존.
          [추가매수 자동 병합] 매수 기록(SaveTx→RecomputeAverage)은 기존대로 이동평균 가중 자동 병합. 편의 추가: 보유 행 '➕매수' 버튼 → 그 종목으로 매수 폼 자동 채움(시장·통화·증권사 이월) → 수량·단가만 입력하면 평단 자동 재계산(수동 평단 계산 불필요·중복 행 없음). 매수 폼에 '병합 미리보기'(기존 → 매수 후 합계 수량·가중평균 평단) 실시간 표시.

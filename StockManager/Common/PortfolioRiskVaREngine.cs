@@ -105,6 +105,7 @@ namespace StockManager.Common
 
         private int  _limitBreached;   // 0/1 — 리스크 밸브(신규 발주 tighten-only)
         private long _computes;
+        private long _lastVar99Krw, _lastStressKrw;   // 텔레메트리 캐시(Publisher 가 δ=0 로 읽음)
 
         public PortfolioRiskVaREngine(CovarianceSingularityGuard? guard = null, double epsilon = 1e-9,
                                       OrderAttestationService? attestation = null)
@@ -120,6 +121,14 @@ namespace StockManager.Common
 
         /// <summary>★리스크 밸브(blockWhile 1항 tightener) — 한도 초과면 true → 신규 발주 억제(더 안전한 방향만).</summary>
         public bool LimitBreached => Volatile.Read(ref _limitBreached) == 1;
+
+        // ── 텔레메트리 접근자(Publisher.Sample 이 δ=0 로 읽는 최근 산출값) ──
+        public long   LastVar99Krw        => Interlocked.Read(ref _lastVar99Krw);
+        public long   LastStressKrw       => Interlocked.Read(ref _lastStressKrw);
+        public double LastGershgorinBound => _guard.LastGershgorinBound;
+        public long   RidgeInjections     => _guard.RidgeInjections;
+        public int    CovGuardStateCode   => (int)_guard.State;
+        public int    RiskValveStateCode  => LimitBreached ? 1 : 0;
 
         /// <summary>
         /// 콜드: 새 수익률 행렬을 로드하고 평균·공분산을 재계측한다(수익률 창 갱신 시). R 은 % 일수익률(ragged —
@@ -238,6 +247,8 @@ namespace StockManager.Common
             // ── 리스크 밸브(tighten-only): 99% VaR 또는 스트레스 낙폭이 한도 초과면 신규 발주 억제.
             bool breach = var99LimitKrw > 0 && (v99k > var99LimitKrw || stressk > var99LimitKrw || conservative);
             Volatile.Write(ref _limitBreached, breach ? 1 : 0);
+            Interlocked.Exchange(ref _lastVar99Krw, v99k);
+            Interlocked.Exchange(ref _lastStressKrw, stressk);
 
             return new VaRResult(sigmaPct, v95, v99, v95k, v99k, hv95, hv99, hv99k,
                                  stressPct, stressk, gersh, ridge, guardState, conservative, breach);

@@ -349,6 +349,64 @@
         }
     </div>
 
+    @* ══ v7.2.0: 실시간 포트폴리오 VaR & Gershgorin 특이점 코어 ══════════════════════ *@
+    @{
+        bool vFuse   = _frame.CovSingularityFuse;      // 공분산 특이점 파열(암흑자색)
+        bool vThrot  = _frame.RiskValveThrottling;     // 밸브 조임(황색)
+        bool vReg    = _frame.CovRegularizing;         // 적응형 리지 개입 중
+        bool vOn     = _frame.VarActive;               // 구동 여부
+        double vGershB = _frame.VarGershgorinBound;
+        string vGershTxt = double.IsNaN(vGershB) ? "NaN" : vGershB.ToString("G4", System.Globalization.CultureInfo.InvariantCulture);
+        long vForensic = (_frame.VarRidgeInjections << 8) | (_frame.CovGuardState & 0xF);
+    }
+    @* 공분산 특이점 파열 → 암흑자색 전체화면 오버레이(포렌식 헥스·position:fixed) *@
+    @if (vFuse)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99997;background:radial-gradient(circle,rgba(74,20,140,0.08),rgba(40,10,70,0.30));border:8px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.85s ease-in-out infinite"></div>
+        <div style="position:fixed;top:@(_frame.CausalFuse || _frame.AuditCorrupted ? "240px" : "120px");left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.94);color:#e1bee7;padding:10px 26px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 26px rgba(123,31,162,0.7)">
+            <div style="font-size:15px;font-weight:800">🟣 [COVARIANCE SINGULARITY BREAKDOWN - VaR CONSERVATIVE FAIL-CLOSED]</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">Gershgorin λ_min NaN/음정치 · 무상관 보수 모델 강등 · 리지 주입 @_frame.VarRidgeInjections.ToString("N0") · FORENSIC 0x@(vForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(vFuse ? "kpi-alert" : (vThrot || vReg ? "kpi-amber" : (vOn ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">📊 실시간 리스크 VaR &amp; Gershgorin 특이점 코어 (Real-Time Risk VaR &amp; Gershgorin Singularity Core)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:300px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (vFuse)
+                    {
+                        <span class="prod-badge" style="background:rgba(123,31,162,0.28);color:#ce93d8;box-shadow:0 0 8px rgba(123,31,162,0.6)">[COVARIANCE SINGULARITY - CONSERVATIVE FALLBACK]</span>
+                    }
+                    else if (vThrot)
+                    {
+                        <span class="prod-badge chaos-amber">[PORTFOLIO RISK ELEVATED - THROTTLING EXPOSURES]</span>
+                    }
+                    else if (vOn)
+                    {
+                        <span class="prod-badge" style="background:rgba(66,133,244,0.22);color:#5b9bff;box-shadow:0 0 8px rgba(66,133,244,0.55)">[VaR MONITOR ACTIVE - RISK VALVE ARMED]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[VaR IDLE]</span>
+                    }
+                </div>
+                <div class="kpi-sub">99% VaR <b style="font-family:var(--mono)">₩@_frame.PortfolioVar99Krw.ToString("N0")</b> · 스트레스 낙폭 <b style="font-family:var(--mono)">₩@_frame.PortfolioStressLossKrw.ToString("N0")</b></div>
+            </div>
+            <div style="min-width:240px">
+                <div class="kpi-value" style="font-size:14px">공분산 가드 <b style="color:@(vFuse ? "#ce93d8" : (vReg ? "#ffb74d" : "#5b9bff"))">@_frame.CovGuardStateName</b></div>
+                <div class="kpi-sub">Gershgorin λ_min 하한 <b style="font-family:var(--mono)">@vGershTxt</b> · 적응형 리지 주입 <b style="font-family:var(--mono)">@_frame.VarRidgeInjections.ToString("N0")</b>회</div>
+            </div>
+            <div style="min-width:200px">
+                <div class="kpi-value" style="font-size:14px">리스크 밸브 <b style="color:@(vThrot ? "#ffb74d" : "#66bb6a")">@(vThrot ? "THROTTLING" : "CLEAR")</b></div>
+                <div class="kpi-sub">한도 초과 시 신규 발주 tighten-only 억제(liveArmed:false · 발주 유발 없음)</div>
+            </div>
+        </div>
+        @if (!vOn)
+        {
+            <div class="kpi-sub" style="margin-top:6px">VaR 미구동 — PortfolioRiskUpdater 가 보유·수익률을 수집해 ComputeVar 로 갱신하면 실시간 합류(밸브 한도 Risk.Var99LimitKrw · 기본 0=inert).</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">
