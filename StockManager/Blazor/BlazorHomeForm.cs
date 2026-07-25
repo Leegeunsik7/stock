@@ -324,11 +324,15 @@ namespace StockManager.Blazor
             //   OS 지터/디스크 stall/페이지 thrashing 시기의 오발주를 선제 차단. '더 안전한 방향'으로만 작동(tighten-only·liveArmed:false 정합).
             KernelJitterSpikeSentinel? kernelJitterRef = null;
             IoBackpressureFirewall?    ioFirewallRef   = null;
+            // v7.2.0 — 포트폴리오 VaR 리스크 밸브도 무장 술어에 합성(지연 ref·아래에서 생성). VaR/스트레스 한도 초과 시 무장을
+            //   false 로 억제 — 신규 발주만 tighten-only 차단('더 안전한 방향'·liveArmed:false 정합·발주 유발 경로 부재).
+            PortfolioRiskVaREngine? varGuardRef = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
                                 || (kernelJitterRef?.SafeHoldActive ?? false)
-                                || (ioFirewallRef?.HoldActive ?? false));
+                                || (ioFirewallRef?.HoldActive ?? false)
+                                || (varGuardRef?.LimitBreached ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -561,8 +565,36 @@ namespace StockManager.Blazor
             services.AddSingleton(weaveRing);
             services.AddSingleton(hwProbe);      // TelemetryMonitor 🛫 Phase 7 하드웨어 사전점검 패널 주입 대상
             services.AddSingleton(auditVault);   // TelemetryMonitor 🔐 감사 금고 패널 주입 대상
+            // v6.3.0 — StockSuite 커널 텔레메트리 IPC 서버(음원 관제 앱 브리지의 서버측) 자동 기동.
+            //   실 커널 상태(RIO/SIMD/MMF)를 Func<KernelFlags> 로 직결하고, UI 비상 FREEZE → CausalWeaveClock.TripFuse 배선.
+            //   ★부팅 안전: NamedPipe/MMF 는 관리형 자원(native 소켓 아님). RIO 수신메쉬는 옵트인 미생성이라 rioActive=false(정직).
+            var simdInterlock = new SimdRiskInterlock(attestation);   // 커널 SIMD 리스크 인터록(비가역 Veto 게이트)
+            var kernelTelemetryServer = new StockSuiteKernelTelemetryServer(
+                () => new KernelFlags(
+                    rioActive: false,                                                             // RIO 수신메쉬 옵트인 미생성 — 부팅 비활성
+                    simdArmed: simdInterlock.IsOrderEmissionAllowed && !weaveClock.FuseTripped,   // 비-Veto ∧ 커널 미봉인 = 무장
+                    mmfIntact: auditVault.IsIntact,                                               // 감사 금고 INTACT(실)
+                    framesReceived: weaveRing.Published),                                         // CausalWeave 링 발행 누적(실)
+                onFreeze: reason => weaveClock.TripFuse(reason),   // ★UI 비상 FREEZE → 실 커널 비가역 봉인
+                heartbeatMs: 100);
+            try { kernelTelemetryServer.Start(); } catch { }
+            services.AddSingleton(kernelTelemetryServer);
+            FormClosed += (_, _) => ShutdownTrace.Step("kernelTelemetryServer", () => kernelTelemetryServer.Dispose());
+            // v7.2.0 — 실시간 포트폴리오 VaR 엔진 + Gershgorin 특이점 방화벽 + 주기 구동기(콜드 백그라운드).
+            //   ★liveArmed:false: 엔진은 순수 연산(IBroker·소켓·onSend 참조 0). 밸브(LimitBreached)는 위 armedPredicate
+            //     blockWhile 로만 결선돼 신규 발주를 tighten-only 억제(발주 유발 경로 부재). 구동기는 BelowNormal 전용
+            //     스레드(수집 I/O 지터를 50ms 드레인 핫패스와 분리·fail-safe). 밸브 한도 기본 0=inert(운영자 옵트인).
+            var covGuard  = new CovarianceSingularityGuard(attestation: attestation);
+            var varEngine = new PortfolioRiskVaREngine(covGuard);
+            varGuardRef   = varEngine;   // 무장 술어 blockWhile 지연 ref 결속(위 armedPredicate)
+            services.AddSingleton(varEngine);
+            var riskUpdater = new PortfolioRiskUpdater(varEngine, provider, db, new FxConverter(),
+                cfg.GetDouble("Risk.Var99LimitKrw", 0.0, 0.0, double.MaxValue));
+            riskUpdater.Start();
+            services.AddSingleton(riskUpdater);
+            FormClosed += (_, _) => ShutdownTrace.Step("riskUpdater", () => riskUpdater.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
-                weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault);
+                weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
