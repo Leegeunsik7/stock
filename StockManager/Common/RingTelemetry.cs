@@ -183,6 +183,16 @@ namespace StockManager.Common
         public readonly long   ThermalSafeHold;             // 1=서멀 스로틀 안전홀드 활성(신규발주 tighten-only)
         public readonly long   CacheCrossCoreWrites;        // 캐시라인 슬롯 크로스코어 기록(라인 바운싱/코어 마이그레이션 지표)
         public readonly long   CacheCoherenceFuse;          // 1=아레나 카나리 파열(코히런스 퓨즈 트립·안전홀드)
+        // v7.4.0 — Genesis Pre-Flight 인증 & 안전 패브릭(무장 임대·데드맨·fat-finger/폭주 인터록).
+        public readonly long   PreFlightScore;              // 종합 점검 총점(0~100)
+        public readonly long   PreFlightForensic;           // 실패 서브체크 비트마스크(0=전 항목 적격)
+        public readonly long   ArmingLeaseRemainingSec;     // 무장 임대 잔여(초·0=dormant/만료)
+        public readonly long   ArmingLeasePermille;         // 무장 임대 잔여 ‰(0~1000·게이지)
+        public readonly long   DeadManHeartbeatAgeMs;       // 데드맨 최근 심박 경과(ms)
+        public readonly long   DeadManTripped;              // 1=데드맨 스위치 격발(밸브 하드 차단)
+        public readonly long   FatFingerFrozen;             // 1=fat-finger/폭주 인터록 동결(사출 차단)
+        public readonly long   FatFingerVetoes;             // fat-finger 가격+폭주 veto 누적
+        public readonly long   FatFingerForensic;           // 최근 veto 포렌식(가격괴리/명목예산/버스트 비트)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -233,7 +243,11 @@ namespace StockManager.Common
                              long varRidgeInjections = 0L, long riskValveState = 0L, long covGuardState = 0L,
                              long cpuPCoreCount = 0L, long cpuPinnedThreads = 0L, long cpuMigrationEvents = 0L, long cpuPinFailures = 0L,
                              long thermalEffectiveFreqPermille = 0L, long thermalThrottleHolds = 0L, long thermalSafeHold = 0L,
-                             long cacheCrossCoreWrites = 0L, long cacheCoherenceFuse = 0L)
+                             long cacheCrossCoreWrites = 0L, long cacheCoherenceFuse = 0L,
+                             long preFlightScore = 0L, long preFlightForensic = 0L,
+                             long armingLeaseRemainingSec = 0L, long armingLeasePermille = 0L,
+                             long deadManHeartbeatAgeMs = 0L, long deadManTripped = 0L,
+                             long fatFingerFrozen = 0L, long fatFingerVetoes = 0L, long fatFingerForensic = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -372,6 +386,15 @@ namespace StockManager.Common
             ThermalSafeHold              = thermalSafeHold;
             CacheCrossCoreWrites         = cacheCrossCoreWrites;
             CacheCoherenceFuse           = cacheCoherenceFuse;
+            PreFlightScore               = preFlightScore;
+            PreFlightForensic            = preFlightForensic;
+            ArmingLeaseRemainingSec      = armingLeaseRemainingSec;
+            ArmingLeasePermille          = armingLeasePermille;
+            DeadManHeartbeatAgeMs        = deadManHeartbeatAgeMs;
+            DeadManTripped               = deadManTripped;
+            FatFingerFrozen              = fatFingerFrozen;
+            FatFingerVetoes              = fatFingerVetoes;
+            FatFingerForensic            = fatFingerForensic;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -601,6 +624,15 @@ namespace StockManager.Common
         public bool    CacheCoherenceBreached    => CacheCoherenceFuse != 0L;                          // ★암흑자색 오버레이(캐시 코히런스 파열)
         public bool    HwCoreIsolationActive     => CpuPinActive || CpuPCoreCount > 0L || ThermalEffectiveFreqPermille is > 0L and < 1000L || CacheCrossCoreWrites > 0L;  // 미배선 판별(전부 0/기본=미구동)
         public string  HwPinStateName            => CpuPinActive ? "P-CORE PINNED" : (CpuPCoreCount > 0L ? "P-CORE DETECTED" : "UNPINNED");
+        // v7.4.0 — Genesis Pre-Flight & 안전 패브릭 UI 헬퍼(한국색상은 razor 계층).
+        public bool    PreFlightCertified        => PreFlightScore >= 100L;                              // ★청/녹 [PRE-FLIGHT CERTIFIED]
+        public bool    PreFlightVeto             => PreFlightScore < 100L;                               // 1개라도 부적격 → 무장 거부
+        public bool    ArmingLeaseActive         => ArmingLeaseRemainingSec > 0L;                        // 임대 유효
+        public bool    ArmingLeaseExpiring       => ArmingLeaseActive && ArmingLeasePermille <= 200L;    // ★황색 점멸(만료 임접·잔여 ≤20%)
+        public bool    DeadManTrippedFlag        => DeadManTripped != 0L;                                // ★암흑자색(데드맨 격발)
+        public bool    FatFingerFrozenFlag       => FatFingerFrozen != 0L;                               // ★암흑자색(사출 방화벽 동결)
+        public bool    SafetyFabricActive        => PreFlightScore > 0L || ArmingLeaseActive || DeadManHeartbeatAgeMs > 0L || FatFingerVetoes > 0L;  // 미배선 판별
+        public bool    SafetyFabricBreached      => DeadManTrippedFlag || FatFingerFrozenFlag;           // 하드 차단(전체화면 오버레이)
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -614,7 +646,8 @@ namespace StockManager.Common
         //   (v6.0.0 Path Gamma + v7.0.0 Phase 7: RIO/플레이백/CausalWeave/하드웨어프로브/감사금고 필드 추가로 122필드 → 128+122×8=1104 → Size 960→1152(64×18·잔여 6슬롯=48B).)
         //   (v7.2.0 VaR: 99%VaR·StressVaR·Gershgorin하한·리지주입·밸브·공분산가드 6필드 추가로 128필드 → 128+128×8=1152 → Size 1152→1216(64×19·잔여 8슬롯=64B).)
         //   (v7.3.0 하드웨어: P-Core수·핀스레드·마이그·핀실패·유효주파수·스로틀홀드·서멀홀드·크로스코어·코히런스퓨즈 9필드 추가로 137필드 → 128+137×8=1224 → Size 1216→1280(64×20·잔여 7슬롯=56B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1280)]
+        //   (v7.4.0 Genesis: PreFlight점수·포렌식·임대잔여초·임대‰·데드맨심박·데드맨트립·fatfinger동결·veto·포렌식 9필드 추가로 146필드 → 128+146×8=1296 → Size 1280→1344(64×21·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1344)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -726,6 +759,10 @@ namespace StockManager.Common
         private readonly CpuAffinityPinningGrid?      _cpuGrid;      // v7.3.0 — P-Core 핀 그리드(옵션·기본 null)
         private readonly ThermalFrequencyJitterGuard? _thermalGuard;// v7.3.0 — 서멀/주파수 스로틀 가드(옵션·기본 null)
         private readonly CacheLineCoherenceSentinel?  _coherence;   // v7.3.0 — 캐시라인 코히런스 센티널(옵션·기본 null)
+        private readonly GenesisPreFlightCertifier?   _preFlight;   // v7.4.0 — 종합 점검 인증(옵션·기본 null·읽기 전용)
+        private readonly AtomicArmingLease?           _armingLease; // v7.4.0 — 무장 임대(옵션·읽기 전용)
+        private readonly DeadMansSwitchWatchdog?      _deadMan;     // v7.4.0 — 데드맨 왓치독(옵션·Sample 이 Beat)
+        private readonly FatFingerVelocityInterlock?  _fatFinger;   // v7.4.0 — fat-finger/폭주 인터록(옵션·읽기 전용)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -787,7 +824,11 @@ namespace StockManager.Common
                                       PortfolioRiskVaREngine? varEngine = null,
                                       CpuAffinityPinningGrid? cpuGrid = null,
                                       ThermalFrequencyJitterGuard? thermalGuard = null,
-                                      CacheLineCoherenceSentinel? coherence = null)
+                                      CacheLineCoherenceSentinel? coherence = null,
+                                      GenesisPreFlightCertifier? preFlight = null,
+                                      AtomicArmingLease? armingLease = null,
+                                      DeadMansSwitchWatchdog? deadMan = null,
+                                      FatFingerVelocityInterlock? fatFinger = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -843,6 +884,10 @@ namespace StockManager.Common
             _cpuGrid      = cpuGrid;
             _thermalGuard = thermalGuard;
             _coherence    = coherence;
+            _preFlight    = preFlight;
+            _armingLease  = armingLease;
+            _deadMan      = deadMan;
+            _fatFinger    = fatFinger;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1010,6 +1055,14 @@ namespace StockManager.Common
                 if (_cpuGrid is { } cg2) { hwCore = cg2.PCoreCount; hwPinned = cg2.PinnedThreads; hwMig = cg2.MigrationEvents; hwPinFail = cg2.PinFailures; }
                 if (_thermalGuard is { } tg) { hwFreq = tg.EffectiveFreqPermille; hwThrHold = tg.ThrottleHolds; if (tg.SafeHoldActive) hwThrSafe = 1L; }
                 if (_coherence is { } co2) { hwXcore = co2.CrossCoreWrites; if (co2.CoherenceFuseTripped) hwCohFuse = 1L; }
+                // v7.4.0 — Genesis Pre-Flight & 안전 패브릭 텔레메트리 풀(δ=0). ★Sample 이 데드맨 심박(엔진 생존)도 Beat —
+                //   이 샘플러 스레드가 행(스레드풀 기아·데드락)에 빠지면 심박이 끊겨 데드맨이 밸브를 하드 차단한다.
+                _deadMan?.Beat();
+                long pfScore = 0L, pfForensic = 0L, leaseSec = 0L, leasePermille = 0L, dmAge = 0L, dmTrip = 0L, ffFrozen = 0L, ffVetoes = 0L, ffForensic = 0L;
+                if (_preFlight is { } pf) { pfScore = pf.Score; pfForensic = pf.ForensicCode; }
+                if (_armingLease is { } al) { leaseSec = al.RemainingSeconds; leasePermille = al.RemainingPermille; }
+                if (_deadMan is { } dms) { dmAge = dms.HeartbeatAgeMs; dmTrip = dms.Tripped ? 1L : 0L; }
+                if (_fatFinger is { } ff2) { ffFrozen = ff2.Frozen ? 1L : 0L; ffVetoes = ff2.PriceVetoes + ff2.VelocityVetoes; ffForensic = ff2.LastForensic; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1035,7 +1088,8 @@ namespace StockManager.Common
                     cwState, cwEvict, cwSat, cwFuse,
                     hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead,
                     vVar99, vStress, vGersh, vRidge, vValve, vGuard,
-                    hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse));
+                    hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse,
+                    pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

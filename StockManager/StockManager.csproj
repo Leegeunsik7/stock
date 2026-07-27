@@ -25,9 +25,16 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>7.3.0</Version>
-    <AssemblyVersion>7.3.0.0</AssemblyVersion>
-    <FileVersion>7.3.0.0</FileVersion>
+    <Version>7.4.0</Version>
+    <AssemblyVersion>7.4.0.0</AssemblyVersion>
+    <FileVersion>7.4.0.0</FileVersion>
+    <!-- v7.4.0 — Genesis 실전 점화 전 정교성 점검 패브릭: 종합 Pre-Flight 인증 + 무장 임대 + 데드맨 스위치 + ★fat-finger/폭주 사출 방화벽.
+         [Task 1] GenesisPreFlightCertifier — 물리 이중키 무장 직전/지속, 4항목(브로커 소켓 RTT·rate 여유 / CPU P-Core 핀·서멀 / 계좌 증거금·VaR 밸브 / 로그 디스크·MMF 페이지폴트) δ=0 채점(0~100·서브체크 가중합). 단 1개 부적격 → fail-closed veto + 포렌식 비트마스크. 순수 함수(입력 구조체 주입 — 결정론·δ=0). GenesisPreFlightUpdater(BelowNormal 콜드 스레드)가 서브시스템 수집·Certify·인증∧무장 시 임대 갱신(디스크 DriveInfo 는 ≈5s 캐시 — 핫패스 분리).
+         [Task 2] AtomicArmingLease — 무장 성공 시 미세 임대(기본 300s). 재인증 Renew 미인입 시 Expired 자동 하향(blockWhile). δ=0·원자·주입 시계·가역. DeadMansSwitchWatchdog — 엔진/UI 심박(Beat, 샘플러가 격발)이 hangThresholdMs(기본 500ms) 끊기고 무장 상태면 격리 독립 스레드가 미체결 전량 취소 + ForceFreeze(밸브 하드 차단) 1회 원자 격발. isArmed 평가 불능 시 무장 간주(fail-closed).
+         [★Task 3 Think Beyond] FatFingerVelocityInterlock — 제미나이의 'fat-finger 가격(A)'과 'rate-limit(B)'를 단일 사출 불변식으로 초월: (1)지정가 기준가 N‰ 괴리 물리 차단(A 포함) + (2)★롤링 윈도 누적 명목/동일방향 버스트로 '개별 유효하나 집합 폭주하는 주문 스톰'(Knight Capital $440M/45분) 차단. δ=0 링·주입 시계. GatedOrderDispatcher 초크포인트(BlastRadius 다음·onSend 직전) 배선 — Admit=false → onSend 미호출·ForceFreeze.
+         [텔레메트리/UI] RingTelemetry +9필드(PreFlight 점수·포렌식·임대잔여초·임대‰·데드맨심박·데드맨트립·fatfinger동결·veto·포렌식, Cell Size 1280→1344=64×21)·Publisher 4모듈 δ=0 풀 + 샘플러가 데드맨 Beat. TelemetryMonitor 🛡️ [Genesis Pre-Flight Certification & Safety Control] 패널(청/녹 [PRE-FLIGHT CERTIFIED - LIVE ARMING LEASE ACTIVE]·황색 임대만료 점멸·암흑자색 breach 전체화면 오버레이+포렌식 헥스).
+         [적대검증] v7.4.0 4모듈 6렌즈 find→verify(6발견→3 CONFIRMED): fat-finger 시장가 미상 명목 0→fail-closed(무한 명목) 교정, 링 512 fail-open→1024+포화 fail-closed veto, updater 디스크 센티널 혼동→_diskSampled 로 5s 스로틀 준수. 유닛 +16.
+         [불변] δ=0(Certify/Renew/Beat/CheckOnce/Admit 힙 0 실증)·결정론(주입 시계)·fail-closed(veto/홀드/차단)·liveArmed:false(전 모듈 IBroker·소켓·onSend 참조 0·blockWhile tighten-only + 초크포인트 물리 차단·100점이어도 이중키 전 발주 0비트 격리 실증). -->
     <!-- v7.3.0 — 하드웨어 대진격: CPU P-Core 물리 격리 핀 + 서멀/주파수 스로틀 가드 + ★캐시라인 코히런스 센티널 + RIO/CPU 관제.
          [Task 1] CpuAffinityPinningGrid — GetLogicalProcessorInformationEx(EfficiencyClass)로 P-Core affinity 마스크 산출, SetThreadAffinityMask 물리 핀 + 우선순위 승격(Realtime 옵트인). 전 Win32 fail-safe·비-Windows 안심 강등. CurrentCore/AttestPinnedCore δ=0 폴. LibraryImport 소스생성(SYSLIB1054 청정).
          [Task 2] ThermalFrequencyJitterGuard — 고정 정수 워크로드를 QPC 브래킷해 '유효주파수 ‰' δ=0 실측(스로틀 시 wall-time↑→‰↓). 지속 K회 강하 → 가역 안전 홀드(주입 시계 결정론·GC 가드·버스트 최소채택 오탐 방어).

@@ -114,6 +114,7 @@ namespace StockManager.Common
         private readonly OrderAttestationService?    _att;    // Mission A: onSend throw → ForceFreeze(null 허용 = att 없음)
         private readonly MmfFlightRecorder?          _blackbox;   // v4.95.0 — 블랙박스 이산 사건 기록(null=미배선·완전 no-op·δ=0)
         private readonly BlastRadiusLimiter?         _blastRadius;   // v5.0.0 — 카나리 검역창 명목 상한 물리 강제(null=무제한·하위호환)
+        private readonly FatFingerVelocityInterlock? _fatFinger;    // v7.4.0 — Think Beyond: fat-finger 가격+폭주 명목속도 사출 방화벽(null=미배선·no-op)
         private long _forwarded;
         private long _gatedOut;
         private long _sendErrors;   // Mission A: downstream throw 누적(원자)
@@ -121,10 +122,12 @@ namespace StockManager.Common
         /// <param name="attestation">선택적 — null 이면 ForceFreeze 미호출(테스트 시나리오). 앱 레벨은 반드시 주입.</param>
         /// <param name="blackbox">선택적 — v4.95.0 블랙박스 기록계(null=미배선·완전 no-op). Record 는 δ=0.</param>
         /// <param name="blastRadius">선택적 — v5.0.0 블래스트 반경 제한기(null=무제한). 명목 상한 초과 시 fail-closed 동결.</param>
+        /// <param name="fatFinger">선택적 — v7.4.0 Think Beyond fat-finger/폭주 명목속도 사출 방화벽(null=미배선·no-op). Admit δ=0.</param>
         public GatedOrderDispatcher(OrderDispatchRing ring, Func<bool> isArmed,
                                     OrderAttestationService? attestation = null,
                                     MmfFlightRecorder? blackbox = null,
-                                    BlastRadiusLimiter? blastRadius = null)
+                                    BlastRadiusLimiter? blastRadius = null,
+                                    FatFingerVelocityInterlock? fatFinger = null)
         {
             if (ring is null) throw new ArgumentNullException(nameof(ring));
             _consumer = ring.CreateConsumer();
@@ -132,6 +135,7 @@ namespace StockManager.Common
             _att      = attestation;
             _blackbox = blackbox;
             _blastRadius = blastRadius;
+            _fatFinger = fatFinger;
         }
 
         /// <summary>무장 상태에서 실제 브로커로 송출된 제안 수(onSend 성공 시만 계상).</summary>
@@ -178,6 +182,15 @@ namespace StockManager.Common
                             _att?.ForceFreeze($"블래스트 반경 초과 — 명목 {notional} > 상한 {br.CeilingRaw}(카나리 검역창 물리 상한·fail-closed)");
                             break;
                         }
+                    }
+                    // ★v7.4.0 Think Beyond — fat-finger 가격 괴리 + 폭주 명목속도 사출 방화벽(BlastRadius 다음·송출 직전).
+                    //   개별 유효해도 집합적으로 폭주하는 주문 스톰(Knight Capital $440M/45분)을 δ=0 로 차단. 위반=경성 동결(fail-closed).
+                    if (_fatFinger is { } ff && !ff.Admit(in p))
+                    {
+                        Interlocked.Increment(ref _sendErrors);
+                        _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 3);
+                        _att?.ForceFreeze($"Fat-Finger/폭주 명목속도 인터록 veto — forensic 0x{ff.LastForensic:X}(가격 괴리 또는 집합 폭주·fail-closed)");
+                        break;
                     }
                     try
                     {

@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v7.3.0** (2026-07-25)  
+> 기준 버전: **v7.4.0** (2026-07-28)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -26,7 +26,8 @@
 - **무할당 실시간 포트폴리오 VaR & Gershgorin 적응형 리지 방화벽**(δ=0 Parametric/Historical/Monte Carlo/Stress VaR·공분산 특이점 Gershgorin 최소 리지 PD 수학적 보장·NaN 퓨즈 무상관 보수 강등·리스크 밸브 tighten-only blockWhile 결선)
 - **하드웨어 P-Core 물리 격리 & 서멀 스로틀 가드 & ★캐시라인 코히런스 센티널**(GetLogicalProcessorInformationEx EfficiencyClass P-Core affinity 물리 핀·QPC 유효주파수 δ=0 실측 가역 안전홀드·64B 정렬 언매니지드 아레나 캐시라인 격리+코어 마이그레이션 δ=0 계수+슬롯 카나리 O(1) 오염 퓨즈 — False Sharing 구조적 불가 통합 불변식. 드레인/틱 수신 핫패스 P-Core 옵트인 핀·서멀/코히런스 blockWhile tighten-only·TelemetryMonitor 🕹️ RIO/CPU 격리 패널 — δ=0·liveArmed:false, 6렌즈 적대검증 확정 2결함 교정)
 - **커널 텔레메트리 IPC 이중버스 서버**(음원 관제 앱 브리지 서버측 — NamedPipe 24B QPC 프레임 + MMF 단일슬롯 seqlock 미러 이중버스·비상 FREEZE→CausalWeaveClock 비가역 봉인·δ=0 송출·6렌즈 적대검증 확정 6결함 교정)
-- 2,194 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- **Genesis 실전 점화 전 정교성 점검 패브릭**(δ=0 종합 Pre-Flight 인증 4항목 채점·단1개 부적격 fail-closed veto+포렌식 · 무장 임대 300s 자동 하향 · 데드맨 스위치 500ms 행→미체결 전량취소+ForceFreeze · ★Think Beyond fat-finger 가격괴리+폭주 명목속도 사출 방화벽[Knight Capital 방어]을 GatedOrderDispatcher 초크포인트 배선 · TelemetryMonitor 🛡️ Pre-Flight 관제 패널 — δ=0·liveArmed:false, 6렌즈 적대검증 확정 3결함 교정)
+- 2,210 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)

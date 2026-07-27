@@ -331,6 +331,12 @@ namespace StockManager.Blazor
             //   신규 발주 tighten-only 억제('더 안전한 방향'·liveArmed:false 정합·발주 유발 경로 부재).
             ThermalFrequencyJitterGuard? thermalGuardRef = null;
             CacheLineCoherenceSentinel?  coherenceRef    = null;
+            // v7.4.0 — Genesis Pre-Flight 인증 veto·무장 임대 만료·데드맨 격발·fat-finger/폭주 동결도 무장 술어에 합성(지연 ref·아래 생성).
+            //   전부 tighten-only — 무장을 '거둘' 뿐 부여 불가(liveArmed:false 정합). 실전 자본 집행 직전/지속 안전 격리.
+            GenesisPreFlightCertifier?   preFlightRef   = null;
+            AtomicArmingLease?           armingLeaseRef = null;
+            DeadMansSwitchWatchdog?      deadManRef     = null;
+            FatFingerVelocityInterlock?  fatFingerRef   = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
@@ -338,11 +344,41 @@ namespace StockManager.Blazor
                                 || (ioFirewallRef?.HoldActive ?? false)
                                 || (varGuardRef?.LimitBreached ?? false)
                                 || (thermalGuardRef?.SafeHoldActive ?? false)
-                                || (coherenceRef?.SafeHoldActive ?? false));
+                                || (coherenceRef?.SafeHoldActive ?? false)
+                                || (preFlightRef?.VetoActive ?? false)
+                                || (armingLeaseRef?.Expired ?? false)
+                                || (deadManRef?.Tripped ?? false)
+                                || (fatFingerRef?.Frozen ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
-            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation, blackbox, blastRadius);
+            // v7.4.0 — Genesis 안전 패브릭: 종합 점검 인증 + 무장 임대 + 데드맨 왓치독 + ★Think Beyond fat-finger/폭주 명목속도 인터록.
+            //   ★liveArmed:false: 전부 순수 관측/veto — IBroker·소켓·onSend 참조 0. blockWhile tighten-only + fatFinger 는 디스패처
+            //     초크포인트에서 사출 물리 차단(발주 유발 경로 부재). 밸브 미배선(기본)이면 드레인 미가동이라 전 경로 dormant.
+            var preFlight   = new GenesisPreFlightCertifier();
+            preFlightRef    = preFlight;
+            var armingLease = new AtomicArmingLease(leaseSeconds: (int)cfg.GetDouble("Dispatch.ArmingLeaseSeconds", 300.0, 10.0, 3600.0));
+            armingLeaseRef  = armingLease;
+            double ffBudgetKrw = cfg.GetDouble("Risk.OrderFlowNotionalBudgetKrw", 0.0, 0.0, 1e15);
+            var fatFinger   = new FatFingerVelocityInterlock(
+                maxDeviationPermille: (long)cfg.GetDouble("Risk.FatFingerDeviationPermille", 100.0, 1.0, 1000.0),
+                windowSeconds: 1,
+                windowNotionalBudgetRaw: ffBudgetKrw > 0 ? QMoney.Of((decimal)ffBudgetKrw).Raw : 0L,
+                maxSameSideBurst: (long)cfg.GetDouble("Risk.OrderFlowMaxSameSideBurst", 0.0, 0.0, 1e9),
+                refPriceRaw: null);   // 라이브 경로가 per-symbol 기준가 프로브 주입 시 가격 축 활성(현 미배선=가격 축 dormant·속도 축은 예산 설정 시 활성)
+            fatFingerRef    = fatFinger;
+            var deadMan     = new DeadMansSwitchWatchdog(
+                isArmed: () => { try { return armingGate.IsArmed(); } catch { return false; } },
+                onDeadManTrip: () => { try { attestation.ForceFreeze("데드맨 스위치 격발 — 엔진/UI 행(≥임계) 감지·미체결 전량 취소·하드웨어 밸브 원자 차단"); } catch { } },
+                hangThresholdMs: (int)cfg.GetDouble("Dispatch.DeadManHangMs", 500.0, 100.0, 5000.0));
+            deadManRef      = deadMan;
+            deadMan.Start();
+            services.AddSingleton(preFlight);
+            services.AddSingleton(armingLease);
+            services.AddSingleton(fatFinger);
+            services.AddSingleton(deadMan);
+            FormClosed += (_, _) => ShutdownTrace.Step("deadMan", () => deadMan.Dispose());
+            var ringDispatcher = new GatedOrderDispatcher(dispatchRing, armedPredicate, attestation, blackbox, blastRadius, fatFinger);
             var ringChannel    = new RingTelemetryChannel();
             // v4.63.0 — 다중 seqlock 통합: 시나리오 변이 seqlock(ScenarioPublisher·페이지 transient) 카운터를 싱글톤
             //   브리지로 받아 중앙 샘플러가 합류. FutureSimPage 가 매 틱 Report → ringPublisher.Sample 이 Read → 채널 발행.
@@ -615,7 +651,8 @@ namespace StockManager.Blazor
             FormClosed += (_, _) => ShutdownTrace.Step("coherence", () => coherence.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
-                cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence);
+                cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
+                preFlight: preFlight, armingLease: armingLease, deadMan: deadMan, fatFinger: fatFinger);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -632,6 +669,16 @@ namespace StockManager.Blazor
             services.AddSingleton(fxBreaker);          // 텔레메트리 + 향후 QFxFeedPump 급전 대상(단일 인스턴스)
             services.AddSingleton(latencyChannel);     // LatencyMonitor.razor 주입 대상
             services.AddSingleton(latencyPublisher);
+            // v7.4.0 — Pre-Flight 재인증 콜드 구동기: 서브시스템에서 입력 수집 → Certify → 인증∧무장 시 임대 갱신(BelowNormal·fail-safe).
+            //   ★디스크(DriveInfo)는 이 콜드 스레드에서 ≈5s 캐시 샘플링 — 200ms 텔레메트리 샘플러 핫패스와 분리. liveArmed:false.
+            var preFlightUpdater = new GenesisPreFlightUpdater(preFlight, armingLease,
+                latency: latencyChannel, throttle: orderThrottle, cpuGrid: cpuGrid, thermal: thermalGuard,
+                varEngine: varEngine, ioFirewall: ioFirewallRef,
+                marginHeadroomRaw: () => riskShield.MarginBudgetRaw - riskShield.MarginReservedRaw,
+                isArmed: () => { try { return armingGate.IsArmed(); } catch { return false; } });
+            preFlightUpdater.Start();
+            services.AddSingleton(preFlightUpdater);
+            FormClosed += (_, _) => ShutdownTrace.Step("preFlightUpdater", () => preFlightUpdater.Dispose());
             // v4.70.0 — 발주 밸브 결속: Drain 루프(50ms) → IBroker.Place() 배선.
             //   Dispatch.ValveWired=true 일 때만 타이머 가동(기본 false — 드라이런 박제).
             //   LiveArmingWired 와 독립 스위치 — 둘 다 ON 이어야 실 주문 흐름(이중 키 잠금).
