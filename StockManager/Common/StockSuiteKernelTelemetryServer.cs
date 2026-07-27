@@ -158,22 +158,26 @@ namespace StockManager.Common
             KernelFlags last = default; bool have = false; long lastMs = 0;
             while (_running)
             {
-                KernelFlags cur = _state();
-                long nowMs = Environment.TickCount64;
-                if (!have || !FlagsEqual(cur, last) || (nowMs - lastMs) >= _heartbeatMs)
+                try
                 {
-                    Serialize(cur);          // δ=0(사전할당 _frame + Span)
-                    WriteMmf();              // ★MMF 이중버스 상시 미러(파이프 무관·항상 신선)
-                    // ★파이프는 best-effort 보조 푸시 — 이전 쓰기가 미완(느린 소비자)이면 이 프레임 드롭. 동기 blocking
-                    //   Write 가 브로드캐스트 스레드를 정지시켜 이후 MMF 미러까지 동결시키던 결함 교정(MMF 는 계속 갱신).
-                    var p = _pipe;
-                    if (p != null && _clientConnected == 1 && Interlocked.CompareExchange(ref _pipeBusy, 1, 0) == 0)
+                    KernelFlags cur = _state();
+                    long nowMs = Environment.TickCount64;
+                    if (!have || !FlagsEqual(cur, last) || (nowMs - lastMs) >= _heartbeatMs)
                     {
-                        Buffer.BlockCopy(_frame, 0, _pipeFrame, 0, FrameSize);   // 비동기 쓰기용 안정 스냅샷
-                        WritePipeAsync(p);   // fire-and-forget(완료 시 _pipeBusy=0) — 브로드캐스트 무블록
+                        Serialize(cur);          // δ=0(사전할당 _frame + Span)
+                        WriteMmf();              // ★MMF 이중버스 상시 미러(파이프 무관·항상 신선)
+                        // ★파이프는 best-effort 보조 푸시 — 이전 쓰기가 미완(느린 소비자)이면 이 프레임 드롭. WritePipeAsync 가
+                        //   동기/비동기 예외를 자체 흡수(disposed pipe 크래시 방지)하므로 브로드캐스트 스레드는 정지하지 않는다.
+                        var p = _pipe;
+                        if (p != null && _clientConnected == 1 && Interlocked.CompareExchange(ref _pipeBusy, 1, 0) == 0)
+                        {
+                            Buffer.BlockCopy(_frame, 0, _pipeFrame, 0, FrameSize);   // 비동기 쓰기용 안정 스냅샷
+                            WritePipeAsync(p);   // fire-and-forget(완료 시 _pipeBusy=0) — 브로드캐스트 무블록
+                        }
+                        last = cur; have = true; lastMs = nowMs;
                     }
-                    last = cur; have = true; lastMs = nowMs;
                 }
+                catch { /* ★관측 스레드 생존 최우선 — 일시 예외 흡수(다음 주기 재시도). 텔레메트리 스레드 사멸 방지. */ }
                 Thread.Sleep(20);   // 변경 폴 주기(≤20ms 반영 + heartbeat)
             }
         }
@@ -182,20 +186,29 @@ namespace StockManager.Common
         //   ContinueWith 로 이어 완료 시 _pipeBusy 를 해제한다. 절단/절체 예외는 관측·삼킴 — 브로드캐스트/MMF 무영향.
         private void WritePipeAsync(NamedPipeServerStream p)
         {
-            p.WriteAsync(_pipeFrame, 0, FrameSize).ContinueWith(t =>
+            try
             {
-                try
+                // ★p.WriteAsync 는 disposed 파이프(연결 절단·Dispose 경합)에 대해 '동기적으로' ObjectDisposedException 을
+                //   던진다 — 이 try 가 없으면 브로드캐스트 스레드에서 미포착 예외 → 프로세스 크래시(Release 타이밍 재현). 감싸서 흡수.
+                p.WriteAsync(_pipeFrame, 0, FrameSize).ContinueWith(t =>
                 {
-                    _ = t.Exception;   // 관측(unobserved 예외 이벤트 억제)
-                    if (t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion)
+                    try
                     {
-                        p.Flush();
-                        Interlocked.Increment(ref _framesSent);
+                        _ = t.Exception;   // 관측(unobserved 예외 이벤트 억제)
+                        if (t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion)
+                        {
+                            p.Flush();
+                            Interlocked.Increment(ref _framesSent);
+                        }
                     }
-                }
-                catch { /* 절단/플러시 실패 — AcceptLoop 가 재수락 */ }
-                finally { Interlocked.Exchange(ref _pipeBusy, 0); }
-            }, System.Threading.Tasks.TaskScheduler.Default);
+                    catch { /* 절단/플러시 실패 — AcceptLoop 가 재수락 */ }
+                    finally { Interlocked.Exchange(ref _pipeBusy, 0); }
+                }, System.Threading.Tasks.TaskScheduler.Default);
+            }
+            catch   // WriteAsync 동기 throw(disposed·IO) — 프레임 드롭·busy 해제(AcceptLoop 재수락). 브로드캐스트 스레드 생존.
+            {
+                Interlocked.Exchange(ref _pipeBusy, 0);
+            }
         }
 
         private static bool FlagsEqual(KernelFlags a, KernelFlags b)
