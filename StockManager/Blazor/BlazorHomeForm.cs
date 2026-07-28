@@ -649,10 +649,25 @@ namespace StockManager.Blazor
             coherenceRef = coherence;                               // 무장 술어 blockWhile 지연 ref 결속
             services.AddSingleton(coherence);
             FormClosed += (_, _) => ShutdownTrace.Step("coherence", () => coherence.Dispose());
+            // v8.0.0 — AVX-512 초저지연 미시 알파 엔진 + SIMD 정렬 벡터라이저 + SNR 노이즈 양자화기 + ★실행폭 오토튜너.
+            //   ★liveArmed:false: 전부 순수 SIMD 연산/계측 — IBroker·소켓·onSend·ring 참조 0. 알파 '수치'만 산출, 발주는 하류
+            //     무장 게이트 전담. 오토튜너는 상시 유용(웜업 keep-alive+폭 조율)이라 기동. 알파 엔진은 라이브 L2 피드 옵트인 시 활성.
+            var alphaEngine = new Avx512MicroAlphaEngine();
+            var noiseQuant  = new AlphaSignalNoiseQuantizer(snrThresholdMilli: (long)cfg.GetDouble("Alpha.SnrThresholdMilli", 500.0, 0.0, 100000.0));
+            var alignedVec  = new SimdAlignedRingVectorizer();
+            var avxTuner    = new AvxExecutionWidthAutotuner();
+            avxTuner.Start();
+            services.AddSingleton(alphaEngine);
+            services.AddSingleton(noiseQuant);
+            services.AddSingleton(alignedVec);
+            services.AddSingleton(avxTuner);
+            FormClosed += (_, _) => ShutdownTrace.Step("alignedVec", () => alignedVec.Dispose());
+            FormClosed += (_, _) => ShutdownTrace.Step("avxTuner", () => avxTuner.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
-                preFlight: preFlight, armingLease: armingLease, deadMan: deadMan, fatFinger: fatFinger);
+                preFlight: preFlight, armingLease: armingLease, deadMan: deadMan, fatFinger: fatFinger,
+                alphaEngine: alphaEngine, noiseQuant: noiseQuant, avxTuner: avxTuner, alignedVec: alignedVec);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

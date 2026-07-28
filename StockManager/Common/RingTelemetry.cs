@@ -193,6 +193,15 @@ namespace StockManager.Common
         public readonly long   FatFingerFrozen;             // 1=fat-finger/폭주 인터록 동결(사출 차단)
         public readonly long   FatFingerVetoes;             // fat-finger 가격+폭주 veto 누적
         public readonly long   FatFingerForensic;           // 최근 veto 포렌식(가격괴리/명목예산/버스트 비트)
+        // v8.0.0 — AVX-512 초저지연 미시 알파 엔진 & SIMD 노이즈/오토튜너.
+        public readonly long   AvxAccelTier;                // 활성 SIMD 가속 티어(0 스칼라/1 AVX2/2 AVX-512)
+        public readonly long   SimdAlphaLatencyNanos;       // SIMD 알파 연산 지연(선택 폭 op당 ns)
+        public readonly long   SimdAlphaMilli;              // 최근 미시 알파×1000
+        public readonly long   SnrNoiseBlocks;              // SNR 노이즈 필터 스푸핑 차단 누적
+        public readonly long   AvxWidthDowngrades;          // 웜업/다운클럭 실측 → ZMM 강등 누적
+        public readonly long   ZmmWarmKeepAlives;           // ZMM hot-ready keep-alive 누적
+        public readonly long   AvxCalibrations;             // 오토튜너 실측 조율 누적
+        public readonly long   SimdAlignedLoads;            // 64B 정렬 SIMD 로드 누적(벡터라이저)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -247,7 +256,9 @@ namespace StockManager.Common
                              long preFlightScore = 0L, long preFlightForensic = 0L,
                              long armingLeaseRemainingSec = 0L, long armingLeasePermille = 0L,
                              long deadManHeartbeatAgeMs = 0L, long deadManTripped = 0L,
-                             long fatFingerFrozen = 0L, long fatFingerVetoes = 0L, long fatFingerForensic = 0L)
+                             long fatFingerFrozen = 0L, long fatFingerVetoes = 0L, long fatFingerForensic = 0L,
+                             long avxAccelTier = 0L, long simdAlphaLatencyNanos = 0L, long simdAlphaMilli = 0L, long snrNoiseBlocks = 0L,
+                             long avxWidthDowngrades = 0L, long zmmWarmKeepAlives = 0L, long avxCalibrations = 0L, long simdAlignedLoads = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -395,6 +406,14 @@ namespace StockManager.Common
             FatFingerFrozen              = fatFingerFrozen;
             FatFingerVetoes              = fatFingerVetoes;
             FatFingerForensic            = fatFingerForensic;
+            AvxAccelTier                 = avxAccelTier;
+            SimdAlphaLatencyNanos        = simdAlphaLatencyNanos;
+            SimdAlphaMilli               = simdAlphaMilli;
+            SnrNoiseBlocks               = snrNoiseBlocks;
+            AvxWidthDowngrades           = avxWidthDowngrades;
+            ZmmWarmKeepAlives            = zmmWarmKeepAlives;
+            AvxCalibrations              = avxCalibrations;
+            SimdAlignedLoads             = simdAlignedLoads;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -633,6 +652,11 @@ namespace StockManager.Common
         public bool    FatFingerFrozenFlag       => FatFingerFrozen != 0L;                               // ★암흑자색(사출 방화벽 동결)
         public bool    SafetyFabricActive        => PreFlightScore > 0L || ArmingLeaseActive || DeadManHeartbeatAgeMs > 0L || FatFingerVetoes > 0L;  // 미배선 판별
         public bool    SafetyFabricBreached      => DeadManTrippedFlag || FatFingerFrozenFlag;           // 하드 차단(전체화면 오버레이)
+        // v8.0.0 — AVX-512 SIMD 미시 알파 UI 헬퍼(한국색상은 razor 계층).
+        public bool    Avx512Active              => AvxAccelTier >= 2L;                                  // ★청/보라 [AVX-512 ZMM ACTIVE]
+        public bool    Avx2Fallback              => AvxAccelTier == 1L;                                  // ★황색 AVX2 강등
+        public bool    SimdAlphaActive           => AvxCalibrations > 0L || SimdAlphaMilli != 0L || ZmmWarmKeepAlives > 0L;  // 미배선 판별
+        public string  AvxTierName               => AvxAccelTier switch { 2L => "AVX-512 ZMM", 1L => "AVX2 YMM", _ => "SCALAR" };
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -647,7 +671,8 @@ namespace StockManager.Common
         //   (v7.2.0 VaR: 99%VaR·StressVaR·Gershgorin하한·리지주입·밸브·공분산가드 6필드 추가로 128필드 → 128+128×8=1152 → Size 1152→1216(64×19·잔여 8슬롯=64B).)
         //   (v7.3.0 하드웨어: P-Core수·핀스레드·마이그·핀실패·유효주파수·스로틀홀드·서멀홀드·크로스코어·코히런스퓨즈 9필드 추가로 137필드 → 128+137×8=1224 → Size 1216→1280(64×20·잔여 7슬롯=56B).)
         //   (v7.4.0 Genesis: PreFlight점수·포렌식·임대잔여초·임대‰·데드맨심박·데드맨트립·fatfinger동결·veto·포렌식 9필드 추가로 146필드 → 128+146×8=1296 → Size 1280→1344(64×21·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1344)]
+        //   (v8.0.0 AVX-512: 가속티어·SIMD알파지연·알파milli·SNR차단·폭강등·ZMM keepalive·조율·정렬로드 8필드 추가로 154필드 → 128+154×8=1360 → Size 1344→1408(64×22·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1408)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -763,6 +788,10 @@ namespace StockManager.Common
         private readonly AtomicArmingLease?           _armingLease; // v7.4.0 — 무장 임대(옵션·읽기 전용)
         private readonly DeadMansSwitchWatchdog?      _deadMan;     // v7.4.0 — 데드맨 왓치독(옵션·Sample 이 Beat)
         private readonly FatFingerVelocityInterlock?  _fatFinger;   // v7.4.0 — fat-finger/폭주 인터록(옵션·읽기 전용)
+        private readonly Avx512MicroAlphaEngine?      _alphaEngine; // v8.0.0 — AVX-512 미시 알파 엔진(옵션·읽기)
+        private readonly AlphaSignalNoiseQuantizer?   _noiseQuant;  // v8.0.0 — SNR 노이즈 양자화기(옵션·읽기)
+        private readonly AvxExecutionWidthAutotuner?  _avxTuner;    // v8.0.0 — 실행폭 오토튜너(옵션·읽기)
+        private readonly SimdAlignedRingVectorizer?   _alignedVec;  // v8.0.0 — 64B 정렬 벡터라이저(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -828,7 +857,11 @@ namespace StockManager.Common
                                       GenesisPreFlightCertifier? preFlight = null,
                                       AtomicArmingLease? armingLease = null,
                                       DeadMansSwitchWatchdog? deadMan = null,
-                                      FatFingerVelocityInterlock? fatFinger = null)
+                                      FatFingerVelocityInterlock? fatFinger = null,
+                                      Avx512MicroAlphaEngine? alphaEngine = null,
+                                      AlphaSignalNoiseQuantizer? noiseQuant = null,
+                                      AvxExecutionWidthAutotuner? avxTuner = null,
+                                      SimdAlignedRingVectorizer? alignedVec = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -888,6 +921,10 @@ namespace StockManager.Common
             _armingLease  = armingLease;
             _deadMan      = deadMan;
             _fatFinger    = fatFinger;
+            _alphaEngine  = alphaEngine;
+            _noiseQuant   = noiseQuant;
+            _avxTuner     = avxTuner;
+            _alignedVec   = alignedVec;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1063,6 +1100,12 @@ namespace StockManager.Common
                 if (_armingLease is { } al) { leaseSec = al.RemainingSeconds; leasePermille = al.RemainingPermille; }
                 if (_deadMan is { } dms) { dmAge = dms.HeartbeatAgeMs; dmTrip = dms.Tripped ? 1L : 0L; }
                 if (_fatFinger is { } ff2) { ffFrozen = ff2.Frozen ? 1L : 0L; ffVetoes = ff2.PriceVetoes + ff2.VelocityVetoes; ffForensic = ff2.LastForensic; }
+                // v8.0.0 — AVX-512 미시 알파 & SIMD 오토튜너 텔레메트리 풀(δ=0).
+                long avxTier = 0L, simdLatNs = 0L, simdAlpha = 0L, snrBlocks = 0L, avxDown = 0L, zmmWarm = 0L, avxCalib = 0L, alignedLd = 0L;
+                if (_avxTuner is { } at) { avxTier = (long)at.SelectedWidth; simdLatNs = at.SelectedOpLatencyNanos; avxDown = at.WidthDowngrades; zmmWarm = at.WarmKeepAlives; avxCalib = at.Calibrations; }
+                if (_alphaEngine is { } ae) { simdAlpha = ae.LastAlphaMilli; if (avxCalib == 0L) avxTier = (long)ae.LastTier; }
+                if (_noiseQuant is { } nq) snrBlocks = nq.NoiseBlocks;
+                if (_alignedVec is { } av2) alignedLd = av2.AlignedLoads;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1089,7 +1132,8 @@ namespace StockManager.Common
                     hwSup, hwAdp, hwBuf, hwFb, auCode, auCount, auSealed, auHead,
                     vVar99, vStress, vGersh, vRidge, vValve, vGuard,
                     hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse,
-                    pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic));
+                    pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic,
+                    avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

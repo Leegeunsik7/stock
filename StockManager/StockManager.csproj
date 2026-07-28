@@ -25,9 +25,15 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>7.4.0</Version>
-    <AssemblyVersion>7.4.0.0</AssemblyVersion>
-    <FileVersion>7.4.0.0</FileVersion>
+    <Version>8.0.0</Version>
+    <AssemblyVersion>8.0.0.0</AssemblyVersion>
+    <FileVersion>8.0.0.0</FileVersion>
+    <!-- v8.0.0 — AVX-512 초저지연 미시 알파 엔진: ZMM 병렬 점적 + 64B 정렬 SIMD 벡터라이저 + SNR 노이즈 양자화기 + ★실행폭 오토튜너.
+         [Task 1] Avx512MicroAlphaEngine — L2 10호가 피처(호가별/총심도 잔량 불균형·정규화 스프레드·마이크로프라이스 틸트·근접 모멘텀) 16×float 추출 → 가중치와 512-bit ZMM 점적(FMA). 티어드 무손실 강등: Avx512F.FusedMultiplyAdd 직접 바인딩(16 lane) → Fma.MultiplyAdd(8 lane×2) → MathF.FusedMultiplyAdd 스칼라. 외부 Python/C++/GPU IPC 0(L1/L2 인캐시). δ=0(stackalloc 피처·스택 Vector). fail-closed(NaN/스팬부족 → 0).
+         [Task 2] SimdAlignedRingVectorizer — 64B 정렬 NativeMemory 틱 링 + Avx512F.LoadAlignedVector512(64B 정렬 로드 직접 바인딩) 정렬 창 점적 → 가중 모멘텀(비정렬 페널티 박멸). AlphaSignalNoiseQuantizer — 최근 N틱 SNR(=|mean|/std) SIMD 병렬 산출, 임계 미만(허수 호가 스푸핑 노이즈 지배) → 알파 0 양자화(정규화 신호만 통과). 둘 다 δ=0.
+         [★Task 3 Think Beyond] AvxExecutionWidthAutotuner — 제미나이의 'ZMM 웜업 keep-alive(A)'와 '다운클럭 거버너(B)'를 '하나의 경험적 지연-피드백 불변식'으로 통합: 각 폭(ZMM/YMM/스칼라) 고정 워크로드 지연을 QPC 실측(min-of-bursts)해 최속 폭 선택. 웜업↑ → ZMM 지연↑ → YMM 선택(A: 계측이 곧 keep-alive). 다운클럭 → ZMM>YMM → YMM 전환(B). 가정 아닌 실측으로 나노초 최적 폭 수렴. δ=0 핫패스 SelectedWidth 읽기.
+         [텔레메트리/UI] RingTelemetry +8필드(가속티어·SIMD알파지연ns·알파milli·SNR차단·폭강등·ZMM keepalive·조율·정렬로드, Cell Size 1344→1408=64×22)·Publisher 4모듈 δ=0 풀. TelemetryMonitor ⚡ [AVX-512 Ultra-Low Latency SIMD Micro-Alpha] 패널(청/보라 [AVX-512 ZMM ACTIVE - 50ns ULTRA ALPHA]·황색 AVX2 무손실 강등·암흑자색 클럭강하 비상 오버레이+포렌식).
+         [불변] δ=0(Dot/ComputeMicroAlpha/WeightedMomentum/Quantize/Push 힙 0 실증)·결정론(순수·티어 tight 허용오차 등가)·fail-closed(NaN/미지원 → 스칼라·0)·liveArmed:false(전 모듈 IBroker·소켓·onSend·ring 참조 0 — 알파 '수치'만 산출·발주는 하류 무장 게이트 전담·강알파여도 이중키 전 발주 0비트 실증). ★호스트 AVX2(AVX-512 미지원) → AVX-512 경로는 IsSupported 가드·capable 실리콘 한정, AVX2 티어 등가 검증. -->
     <!-- v7.4.0 — Genesis 실전 점화 전 정교성 점검 패브릭: 종합 Pre-Flight 인증 + 무장 임대 + 데드맨 스위치 + ★fat-finger/폭주 사출 방화벽.
          [Task 1] GenesisPreFlightCertifier — 물리 이중키 무장 직전/지속, 4항목(브로커 소켓 RTT·rate 여유 / CPU P-Core 핀·서멀 / 계좌 증거금·VaR 밸브 / 로그 디스크·MMF 페이지폴트) δ=0 채점(0~100·서브체크 가중합). 단 1개 부적격 → fail-closed veto + 포렌식 비트마스크. 순수 함수(입력 구조체 주입 — 결정론·δ=0). GenesisPreFlightUpdater(BelowNormal 콜드 스레드)가 서브시스템 수집·Certify·인증∧무장 시 임대 갱신(디스크 DriveInfo 는 ≈5s 캐시 — 핫패스 분리).
          [Task 2] AtomicArmingLease — 무장 성공 시 미세 임대(기본 300s). 재인증 Renew 미인입 시 Expired 자동 하향(blockWhile). δ=0·원자·주입 시계·가역. DeadMansSwitchWatchdog — 엔진/UI 심박(Beat, 샘플러가 격발)이 hangThresholdMs(기본 500ms) 끊기고 무장 상태면 격리 독립 스레드가 미체결 전량 취소 + ForceFreeze(밸브 하드 차단) 1회 원자 격발. isArmed 평가 불능 시 무장 간주(fail-closed).

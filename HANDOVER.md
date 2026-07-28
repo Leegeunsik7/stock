@@ -1,6 +1,6 @@
 # MS2E StockSuite — 정밀 인수인계 문서
 
-> 기준 버전: **v7.4.0** (2026-07-28)  
+> 기준 버전: **v8.0.0** (2026-07-28)  
 > 대상: 신규 개발자 또는 지휘관(gslee@angtec.com)이 컨텍스트 없이 재진입할 때  
 > 소스가 권위. 이 문서는 네비게이션 보조다.
 
@@ -27,7 +27,8 @@
 - **하드웨어 P-Core 물리 격리 & 서멀 스로틀 가드 & ★캐시라인 코히런스 센티널**(GetLogicalProcessorInformationEx EfficiencyClass P-Core affinity 물리 핀·QPC 유효주파수 δ=0 실측 가역 안전홀드·64B 정렬 언매니지드 아레나 캐시라인 격리+코어 마이그레이션 δ=0 계수+슬롯 카나리 O(1) 오염 퓨즈 — False Sharing 구조적 불가 통합 불변식. 드레인/틱 수신 핫패스 P-Core 옵트인 핀·서멀/코히런스 blockWhile tighten-only·TelemetryMonitor 🕹️ RIO/CPU 격리 패널 — δ=0·liveArmed:false, 6렌즈 적대검증 확정 2결함 교정)
 - **커널 텔레메트리 IPC 이중버스 서버**(음원 관제 앱 브리지 서버측 — NamedPipe 24B QPC 프레임 + MMF 단일슬롯 seqlock 미러 이중버스·비상 FREEZE→CausalWeaveClock 비가역 봉인·δ=0 송출·6렌즈 적대검증 확정 6결함 교정)
 - **Genesis 실전 점화 전 정교성 점검 패브릭**(δ=0 종합 Pre-Flight 인증 4항목 채점·단1개 부적격 fail-closed veto+포렌식 · 무장 임대 300s 자동 하향 · 데드맨 스위치 500ms 행→미체결 전량취소+ForceFreeze · ★Think Beyond fat-finger 가격괴리+폭주 명목속도 사출 방화벽[Knight Capital 방어]을 GatedOrderDispatcher 초크포인트 배선 · TelemetryMonitor 🛡️ Pre-Flight 관제 패널 — δ=0·liveArmed:false, 6렌즈 적대검증 확정 3결함 교정)
-- 2,210 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
+- **AVX-512 초저지연 미시 알파 엔진**(L2 10호가 피처 16×float → 512-bit ZMM 병렬 점적[FMA] 알파·외부 Python/C++/GPU IPC 0·L1/L2 인캐시 δ=0 · 티어드 무손실 강등[Avx512F.FusedMultiplyAdd→Fma.MultiplyAdd→스칼라] · 64B 정렬 SIMD 벡터라이저[정렬 로드 페널티 박멸] · SIMD SNR 노이즈 양자화기[허수 호가 스푸핑 소거] · ★Think Beyond 실행폭 오토튜너[ZMM 웜업+다운클럭을 단일 지연-피드백으로 통합] · TelemetryMonitor ⚡ AVX-512 패널 — δ=0·liveArmed:false[알파 수치만 산출·발주는 무장 게이트 전담], 6렌즈 적대검증 확정 0결함)
+- 2,220 테스트 클린런, 전역 플래키 0%, 빌드 경고 0
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)
