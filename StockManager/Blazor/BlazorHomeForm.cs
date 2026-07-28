@@ -337,6 +337,8 @@ namespace StockManager.Blazor
             AtomicArmingLease?           armingLeaseRef = null;
             DeadMansSwitchWatchdog?      deadManRef     = null;
             FatFingerVelocityInterlock?  fatFingerRef   = null;
+            // v8.1.0 — Native API 후킹 변조도 무장 술어에 합성(지연 ref·아래 생성). 진입점 인라인 후킹 탐지 시 무장 tighten-only 하향.
+            AntiHookingCodeIntegrityGuard? antiHookRef  = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
@@ -348,7 +350,8 @@ namespace StockManager.Blazor
                                 || (preFlightRef?.VetoActive ?? false)
                                 || (armingLeaseRef?.Expired ?? false)
                                 || (deadManRef?.Tripped ?? false)
-                                || (fatFingerRef?.Frozen ?? false));
+                                || (fatFingerRef?.Frozen ?? false)
+                                || (antiHookRef?.SafeHoldActive ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -663,11 +666,32 @@ namespace StockManager.Blazor
             services.AddSingleton(avxTuner);
             FormClosed += (_, _) => ShutdownTrace.Step("alignedVec", () => alignedVec.Dispose());
             FormClosed += (_, _) => ShutdownTrace.Step("avxTuner", () => avxTuner.Dispose());
+            // v8.1.0 — 안티-RAM 퀀텀 금고 + 허니키 디코이 + anti-hook 가드 + 검증 제로라이저 + RCU Config 포트(Phase 83).
+            //   ★liveArmed:false: 전부 순수 방어/관측 — IBroker·소켓·onSend 참조 0. onBreach 는 ForceFreeze(세 벽 차단)+FailFast(자가 소멸).
+            //     기본 dormant(Security.QuantumVaultArmed 옵트인 — dev 디버깅·오탐 자멸 방지). anti-hook 는 blockWhile tighten-only.
+            var secureZeroizer = new VerifiedSecureZeroizer();
+            var honeyMesh = new HoneyKeyDecoyMesh(decoyCount: 8);
+            var antiHook  = new AntiHookingCodeIntegrityGuard();
+            antiHookRef   = antiHook;   // 무장 술어 blockWhile 지연 ref 결속
+            var rcuConfigPort = new AtomicConfigSnapshotPort<RuntimeConfigSnapshot>(RuntimeConfigSnapshot.Capture(new EngineConfigAdapter(cfg)));   // Phase 83 RCU(포트 경유)
+            services.AddSingleton(rcuConfigPort);
+            var quantumVault = new QuantumVaultSentinel(
+                onBreach: reason => { try { attestation.ForceFreeze("퀀텀 금고 브리치 — " + reason); } catch { } Environment.FailFast("퀀텀 금고 자가 소멸 — " + reason); },
+                zeroizer: secureZeroizer,
+                extraDetector: () => !honeyMesh.CheckIntegrity() || !antiHook.CheckIntegrity());
+            if (cfg.GetBool("Security.QuantumVaultArmed", false)) quantumVault.Start();   // ★옵트인 — 기본 dormant(오탐 자멸 방지)
+            services.AddSingleton(secureZeroizer);
+            services.AddSingleton(honeyMesh);
+            services.AddSingleton(antiHook);
+            services.AddSingleton(quantumVault);
+            FormClosed += (_, _) => ShutdownTrace.Step("quantumVault", () => quantumVault.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
                 preFlight: preFlight, armingLease: armingLease, deadMan: deadMan, fatFinger: fatFinger,
-                alphaEngine: alphaEngine, noiseQuant: noiseQuant, avxTuner: avxTuner, alignedVec: alignedVec);
+                alphaEngine: alphaEngine, noiseQuant: noiseQuant, avxTuner: avxTuner, alignedVec: alignedVec,
+                vault: quantumVault, honeyMesh: honeyMesh, antiHook: antiHook, zeroizer: secureZeroizer,
+                rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 138L);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

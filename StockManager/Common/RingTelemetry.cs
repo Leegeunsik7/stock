@@ -202,6 +202,15 @@ namespace StockManager.Common
         public readonly long   ZmmWarmKeepAlives;           // ZMM hot-ready keep-alive 누적
         public readonly long   AvxCalibrations;             // 오토튜너 실측 조율 누적
         public readonly long   SimdAlignedLoads;            // 64B 정렬 SIMD 로드 누적(벡터라이저)
+        // v8.1.0 — 안티-RAM 퀀텀 금고 & Phase 83 인프라 해방.
+        public readonly long   QuantumVaultArmed;           // 1=퀀텀 금고 감시 활성
+        public readonly long   QuantumVaultBreached;        // 1=비인가 접근 탐지·자가 소멸 격발
+        public readonly long   HoneyDecoyTripped;           // 1=허니키 디코이 트랩 접촉(변조/유출)
+        public readonly long   AntiHookState;               // 0 clean/1 후킹 변조/2 미지원
+        public readonly long   InfraCouplingCount;          // infra-scan 현재 결합도(코어 직결 인프라 참조)
+        public readonly long   RcuConfigVersion;            // RCU Config 스냅샷 세대
+        public readonly long   SecureZeroVerifyFailures;    // 시큐어 제로화 판독 검증 실패(0=정상)
+        public readonly long   VaultZeroizedBuffers;        // 브리치 시 원자 제로화된 시크릿 버퍼 수
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -258,7 +267,9 @@ namespace StockManager.Common
                              long deadManHeartbeatAgeMs = 0L, long deadManTripped = 0L,
                              long fatFingerFrozen = 0L, long fatFingerVetoes = 0L, long fatFingerForensic = 0L,
                              long avxAccelTier = 0L, long simdAlphaLatencyNanos = 0L, long simdAlphaMilli = 0L, long snrNoiseBlocks = 0L,
-                             long avxWidthDowngrades = 0L, long zmmWarmKeepAlives = 0L, long avxCalibrations = 0L, long simdAlignedLoads = 0L)
+                             long avxWidthDowngrades = 0L, long zmmWarmKeepAlives = 0L, long avxCalibrations = 0L, long simdAlignedLoads = 0L,
+                             long quantumVaultArmed = 0L, long quantumVaultBreached = 0L, long honeyDecoyTripped = 0L, long antiHookState = 0L,
+                             long infraCouplingCount = 0L, long rcuConfigVersion = 0L, long secureZeroVerifyFailures = 0L, long vaultZeroizedBuffers = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -414,6 +425,14 @@ namespace StockManager.Common
             ZmmWarmKeepAlives            = zmmWarmKeepAlives;
             AvxCalibrations              = avxCalibrations;
             SimdAlignedLoads             = simdAlignedLoads;
+            QuantumVaultArmed            = quantumVaultArmed;
+            QuantumVaultBreached         = quantumVaultBreached;
+            HoneyDecoyTripped            = honeyDecoyTripped;
+            AntiHookState                = antiHookState;
+            InfraCouplingCount           = infraCouplingCount;
+            RcuConfigVersion             = rcuConfigVersion;
+            SecureZeroVerifyFailures     = secureZeroVerifyFailures;
+            VaultZeroizedBuffers         = vaultZeroizedBuffers;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -657,6 +676,12 @@ namespace StockManager.Common
         public bool    Avx2Fallback              => AvxAccelTier == 1L;                                  // ★황색 AVX2 강등
         public bool    SimdAlphaActive           => AvxCalibrations > 0L || SimdAlphaMilli != 0L || ZmmWarmKeepAlives > 0L;  // 미배선 판별
         public string  AvxTierName               => AvxAccelTier switch { 2L => "AVX-512 ZMM", 1L => "AVX2 YMM", _ => "SCALAR" };
+        // v8.1.0 — 퀀텀 금고 & 인프라 해방 UI 헬퍼(한국색상은 razor 계층).
+        public bool    QuantumVaultActive        => QuantumVaultArmed != 0L;                                // 감시 활성
+        public bool    VaultBreach               => QuantumVaultBreached != 0L || HoneyDecoyTripped != 0L;  // ★암흑자색(비인가 접근/디코이 접촉)
+        public bool    AntiHookTampered          => AntiHookState == 1L;                                    // ★황색(후킹 변조)
+        public bool    InfraCouplingClean        => InfraCouplingCount > 0L && InfraCouplingCount < 100L;   // 결합도 < 100(청정 목표)
+        public bool    QuantumVaultActiveClean   => QuantumVaultActive && AntiHookState != 1L && QuantumVaultBreached == 0L;  // 금고 감시 정상
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -672,7 +697,8 @@ namespace StockManager.Common
         //   (v7.3.0 하드웨어: P-Core수·핀스레드·마이그·핀실패·유효주파수·스로틀홀드·서멀홀드·크로스코어·코히런스퓨즈 9필드 추가로 137필드 → 128+137×8=1224 → Size 1216→1280(64×20·잔여 7슬롯=56B).)
         //   (v7.4.0 Genesis: PreFlight점수·포렌식·임대잔여초·임대‰·데드맨심박·데드맨트립·fatfinger동결·veto·포렌식 9필드 추가로 146필드 → 128+146×8=1296 → Size 1280→1344(64×21·잔여 6슬롯=48B).)
         //   (v8.0.0 AVX-512: 가속티어·SIMD알파지연·알파milli·SNR차단·폭강등·ZMM keepalive·조율·정렬로드 8필드 추가로 154필드 → 128+154×8=1360 → Size 1344→1408(64×22·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1408)]
+        //   (v8.1.0 퀀텀금고: 금고활성·브리치·디코이·후킹상태·결합도·RCU세대·제로검증실패·제로버퍼 8필드 추가로 162필드 → 128+162×8=1424 → Size 1408→1472(64×23·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1472)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -792,6 +818,12 @@ namespace StockManager.Common
         private readonly AlphaSignalNoiseQuantizer?   _noiseQuant;  // v8.0.0 — SNR 노이즈 양자화기(옵션·읽기)
         private readonly AvxExecutionWidthAutotuner?  _avxTuner;    // v8.0.0 — 실행폭 오토튜너(옵션·읽기)
         private readonly SimdAlignedRingVectorizer?   _alignedVec;  // v8.0.0 — 64B 정렬 벡터라이저(옵션·읽기)
+        private readonly QuantumVaultSentinel?        _vault;       // v8.1.0 — 퀀텀 금고 센티널(옵션·읽기)
+        private readonly HoneyKeyDecoyMesh?           _honeyMesh;   // v8.1.0 — 허니키 디코이(옵션·읽기)
+        private readonly AntiHookingCodeIntegrityGuard? _antiHook;  // v8.1.0 — anti-hook 가드(옵션·읽기)
+        private readonly VerifiedSecureZeroizer?      _zeroizer;    // v8.1.0 — 검증 제로라이저(옵션·읽기)
+        private readonly Func<long>?                  _rcuVersion;  // v8.1.0 — RCU Config 스냅샷 세대(옵션)
+        private readonly long                         _infraCoupling; // v8.1.0 — infra-scan 결합도(부팅 시점 값)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -861,7 +893,13 @@ namespace StockManager.Common
                                       Avx512MicroAlphaEngine? alphaEngine = null,
                                       AlphaSignalNoiseQuantizer? noiseQuant = null,
                                       AvxExecutionWidthAutotuner? avxTuner = null,
-                                      SimdAlignedRingVectorizer? alignedVec = null)
+                                      SimdAlignedRingVectorizer? alignedVec = null,
+                                      QuantumVaultSentinel? vault = null,
+                                      HoneyKeyDecoyMesh? honeyMesh = null,
+                                      AntiHookingCodeIntegrityGuard? antiHook = null,
+                                      VerifiedSecureZeroizer? zeroizer = null,
+                                      Func<long>? rcuConfigVersion = null,
+                                      long infraCouplingCount = 0L)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -925,6 +963,12 @@ namespace StockManager.Common
             _noiseQuant   = noiseQuant;
             _avxTuner     = avxTuner;
             _alignedVec   = alignedVec;
+            _vault        = vault;
+            _honeyMesh    = honeyMesh;
+            _antiHook     = antiHook;
+            _zeroizer     = zeroizer;
+            _rcuVersion   = rcuConfigVersion;
+            _infraCoupling = infraCouplingCount;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1106,6 +1150,13 @@ namespace StockManager.Common
                 if (_alphaEngine is { } ae) { simdAlpha = ae.LastAlphaMilli; if (avxCalib == 0L) avxTier = (long)ae.LastTier; }
                 if (_noiseQuant is { } nq) snrBlocks = nq.NoiseBlocks;
                 if (_alignedVec is { } av2) alignedLd = av2.AlignedLoads;
+                // v8.1.0 — 퀀텀 금고 & 인프라 해방 텔레메트리 풀(δ=0).
+                long qvArmed = 0L, qvBreach = 0L, honeyTrip = 0L, hookState = 0L, rcuVer = 0L, zeroFail = 0L, zeroBufs = 0L;
+                if (_vault is { } qv) { qvArmed = qv.IsArmed ? 1L : 0L; qvBreach = qv.IsBreached ? 1L : 0L; zeroBufs = qv.ZeroizedBuffers; }
+                if (_honeyMesh is { } hm) honeyTrip = hm.IsTripped ? 1L : 0L;
+                if (_antiHook is { } ah) hookState = ah.HookStateCode;
+                if (_zeroizer is { } zr) zeroFail = zr.VerificationFailures;
+                if (_rcuVersion is { } rv) { try { rcuVer = rv(); } catch { } }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1133,7 +1184,8 @@ namespace StockManager.Common
                     vVar99, vStress, vGersh, vRidge, vValve, vGuard,
                     hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse,
                     pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic,
-                    avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd));
+                    avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd,
+                    qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

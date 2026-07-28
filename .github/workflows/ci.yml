@@ -24,6 +24,15 @@ jobs:
       - name: Build (Release, single-node)
         run: dotnet build StockManager.sln -c Release -m:1 --no-restore
 
+      # v8.1.0 — WebOnly 빌드(네이티브 보안층 #if !WEBONLY 제외): Default 와 함께 0 Warning/0 Error 사수.
+      - name: Build (WebOnly, 네이티브 디커플링)
+        run: dotnet build StockManager/StockManager.csproj -c Release -p:WebOnly=true --no-restore
+
+      # v8.1.0 Phase 83 — 인프라 결합도 래칫: 코어의 콘크리트 인프라 직결 결합이 baseline 초과 시 실패(비회귀 강제).
+      - name: Infra coupling ratchet (Phase 83)
+        shell: pwsh
+        run: ./infra-scan.ps1
+
       - name: Test (전체 단위 테스트)
         run: dotnet test StockManager.Tests/StockManager.Tests.csproj -c Release --no-build
 

@@ -25,9 +25,23 @@
     -->
     <PlatformTarget>AnyCPU</PlatformTarget>
 
-    <Version>8.0.0</Version>
-    <AssemblyVersion>8.0.0.0</AssemblyVersion>
-    <FileVersion>8.0.0.0</FileVersion>
+    <!-- v8.1.0 — WebOnly 빌드(-p:WebOnly=true): Windows 네이티브 보안층(anti-debug/anti-hook kernel32/ntdll P/Invoke)을
+         WEBONLY 심볼로 컴파일 제외해 '플랫폼 네이티브 의존 없는' 빌드를 컴파일 청정(0/0)하게 산출한다. QuantumVaultSentinel/
+         AntiHookingCodeIntegrityGuard 는 WEBONLY 시 관리형 fallback(Debugger.IsAttached·no-op)만. KIWOOM_COM(opt-in 추가)과
+         반대 극성(opt-out 제외). 인프라 해방(플랫폼 네이티브 디커플링) 테마 정합. Default 빌드는 WEBONLY 미정의(네이티브 포함). -->
+    <DefineConstants Condition="'$(WebOnly)'=='true'">$(DefineConstants);WEBONLY</DefineConstants>
+
+    <Version>8.1.0</Version>
+    <AssemblyVersion>8.1.0.0</AssemblyVersion>
+    <FileVersion>8.1.0.0</FileVersion>
+    <!-- v8.1.0 — 안티-RAM 퀀텀 금고 + Phase 83 인프라 해방 Slice 2 + WebOnly 이중 빌드.
+         [Task 1] QuantumVaultSentinel — 디버거 댓치(IsDebuggerPresent/CheckRemoteDebuggerPresent + Debugger.IsAttached)·디코이 변조·후킹 탐지 시 등록 시크릿 검증 제로화(VerifiedSecureZeroizer) + onBreach(ForceFreeze→볼트 Seal→Environment.FailFast 자가 소멸) 원자 1회. 탐지술어/onBreach 주입식(테스트=페이크·프로세스 미살). 네이티브 P/Invoke 는 #if !WEBONLY + OperatingSystem.IsWindows 가드. 기본 dormant(Security.QuantumVaultArmed 옵트인·오탐 자멸 방지). HoneyKeyDecoyMesh(허니토큰+카나리 변조/유출 탐지·관리형)·AntiHookingCodeIntegrityGuard(kernel32/ntdll 진입점 0xE9/0xEB JMP 후킹 탐지→SafeHoldActive blockWhile tighten-only·주입 판독기).
+         [★Task 3 Think Beyond] VerifiedSecureZeroizer — 제미나이 A(anti-elision) 초월: 와이프를 '신뢰' 않고 '증명'. CryptographicOperations.ZeroMemory(계약 제거불가·이식적·WebOnly 안전) + 전 바이트 판독(residue OR) 검증 — 최적화/변조 우회 시 잔류 포착→재와이프+계수. 판독 의존성이 곧 JIT 제거 방지 펜스. 순수 관리형.
+         [Task 2 Phase 83] ISystemConfigPort/IFileSystemPort 포트 + Engine/InMemory 어댑터 + AtomicConfigSnapshotPort<T>(RCU — 핫패스 Volatile.Read δ=0·Interlocked.Exchange 원자 교체). infra-scan.ps1(코어 Config/FileSystem 직결 결합도 측정+래칫) + infra-baseline.txt(실측 138 — ★선행 '109' 미존재·실측 확립). ★RuntimeConfig Func 파사드/Func<long> 시계 주입의 명시적 포트 승격.
+         [텔레메트리/UI] RingTelemetry +8필드(금고활성·브리치·디코이·후킹상태·결합도·RCU세대·제로검증실패·제로버퍼, Cell Size 1408→1472=64×23)·Publisher 6주입. TelemetryMonitor 🔒 [Quantum Vault & Phase 83 Infra Liberation] 패널(청/녹 [QUANTUM VAULT ACTIVE]·황색 후킹·암흑자색 메모리 브리치 자가소멸 오버레이+포렌식).
+         [★이중 빌드] WebOnly 심볼(-p:WebOnly=true) 신설 — 네이티브 보안층 #if !WEBONLY 제외. Default Release ∧ WebOnly 모두 0W/0E 실증. CI 에 WebOnly 빌드 + infra-scan 래칫 게이트 추가.
+         [불변] δ=0(Zeroize/CheckOnce[clean]/CheckIntegrity/RCU Current 힙 0 실증)·결정론(주입 술어·고정 시드·RNG 0)·fail-closed(제로화/봉인)·fail-safe(탐지 예외→오탐 자멸 방지)·liveArmed:false(전 모듈 IBroker·소켓·onSend·ring 참조 0·onBreach tighten-only[Freeze/FailFast]·브리치/후킹 시에도 이중키 전 발주 0비트 실증). 유닛 +12. 회귀 0.
+         ※ WebOnly·infra-scan/Phase-83-Slice-1 은 선행 커밋이 없어 본 버전에서 신규 구축(허구 '109' baseline 대신 실측 138 확립·정직). -->
     <!-- v8.0.0 — AVX-512 초저지연 미시 알파 엔진: ZMM 병렬 점적 + 64B 정렬 SIMD 벡터라이저 + SNR 노이즈 양자화기 + ★실행폭 오토튜너.
          [Task 1] Avx512MicroAlphaEngine — L2 10호가 피처(호가별/총심도 잔량 불균형·정규화 스프레드·마이크로프라이스 틸트·근접 모멘텀) 16×float 추출 → 가중치와 512-bit ZMM 점적(FMA). 티어드 무손실 강등: Avx512F.FusedMultiplyAdd 직접 바인딩(16 lane) → Fma.MultiplyAdd(8 lane×2) → MathF.FusedMultiplyAdd 스칼라. 외부 Python/C++/GPU IPC 0(L1/L2 인캐시). δ=0(stackalloc 피처·스택 Vector). fail-closed(NaN/스팬부족 → 0).
          [Task 2] SimdAlignedRingVectorizer — 64B 정렬 NativeMemory 틱 링 + Avx512F.LoadAlignedVector512(64B 정렬 로드 직접 바인딩) 정렬 창 점적 → 가중 모멘텀(비정렬 페널티 박멸). AlphaSignalNoiseQuantizer — 최근 N틱 SNR(=|mean|/std) SIMD 병렬 산출, 임계 미만(허수 호가 스푸핑 노이즈 지배) → 알파 0 양자화(정규화 신호만 통과). 둘 다 δ=0.
