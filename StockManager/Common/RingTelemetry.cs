@@ -220,6 +220,15 @@ namespace StockManager.Common
         public readonly long   QueueFillImminencePermille;  // 내 지정가 큐 체결 임접률(‰)
         public readonly long   SorSpoofBlocks;              // 스푸핑 레이어 라우팅 차단 누적
         public readonly long   LiquidityAuthenticityPermille; // 유동성 진위 ‰(1000=진짜·0=가짜 스푸핑)
+        // v9.1.0 — 극단적 카오스 결함 주입 샌드박스.
+        public readonly long   ChaosSanitizerState;         // 0 standby / 1 injecting
+        public readonly long   ChaosFaultMask;              // 현재 주입 결함 비트(1 소켓/2 메모리/4 서멀/8 torn)
+        public readonly long   ChaosInjections;             // 카오스 결함 주입 누적
+        public readonly long   ChaosLivelockEscapes;        // ★Think-Beyond 락프리 스핀 상한 라이브락 탈출 누적
+        public readonly long   ChaosTornStateBlocks;        // ★Think-Beyond torn-state seqlock fail-closed 차단 누적
+        public readonly long   ChaosRecoveryState;          // 0 ready / 1 cooldown / 2 frozen(복구 스로틀러)
+        public readonly long   ChaosReplaySeed;             // 결정론 재현 시드(하위 32비트·리플레이 재현용)
+        public readonly long   ChaosSafeHoldActive;         // 1=카오스가 무장 하향 중(sanitizer∨recovery∨guard)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -280,7 +289,9 @@ namespace StockManager.Common
                              long quantumVaultArmed = 0L, long quantumVaultBreached = 0L, long honeyDecoyTripped = 0L, long antiHookState = 0L,
                              long infraCouplingCount = 0L, long rcuConfigVersion = 0L, long secureZeroVerifyFailures = 0L, long vaultZeroizedBuffers = 0L,
                              long sorRoutingActive = 0L, long sorRoutes = 0L, long sorLastRoutingCode = 0L, long icebergHiddenQtyRaw = 0L,
-                             long icebergsDetected = 0L, long queueFillImminencePermille = 0L, long sorSpoofBlocks = 0L, long liquidityAuthenticityPermille = 0L)
+                             long icebergsDetected = 0L, long queueFillImminencePermille = 0L, long sorSpoofBlocks = 0L, long liquidityAuthenticityPermille = 0L,
+                             long chaosSanitizerState = 0L, long chaosFaultMask = 0L, long chaosInjections = 0L, long chaosLivelockEscapes = 0L,
+                             long chaosTornStateBlocks = 0L, long chaosRecoveryState = 0L, long chaosReplaySeed = 0L, long chaosSafeHoldActive = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -452,6 +463,14 @@ namespace StockManager.Common
             QueueFillImminencePermille   = queueFillImminencePermille;
             SorSpoofBlocks               = sorSpoofBlocks;
             LiquidityAuthenticityPermille = liquidityAuthenticityPermille;
+            ChaosSanitizerState          = chaosSanitizerState;
+            ChaosFaultMask               = chaosFaultMask;
+            ChaosInjections              = chaosInjections;
+            ChaosLivelockEscapes         = chaosLivelockEscapes;
+            ChaosTornStateBlocks         = chaosTornStateBlocks;
+            ChaosRecoveryState           = chaosRecoveryState;
+            ChaosReplaySeed              = chaosReplaySeed;
+            ChaosSafeHoldActive          = chaosSafeHoldActive;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -708,6 +727,12 @@ namespace StockManager.Common
         public bool    SorMarketAggressive       => (SorLastRoutingCode & (1L << 2)) != 0L;       // R_MARKET_AGGRESSIVE
         public bool    SorIcebergAbsorb          => (SorLastRoutingCode & (1L << 4)) != 0L;       // R_ICEBERG_ABSORB
         public bool    QuantumVaultActiveClean   => QuantumVaultActive && AntiHookState != 1L && QuantumVaultBreached == 0L;  // 금고 감시 정상
+        // v9.1.0 — 극단적 카오스 결함 주입 샌드박스 UI 헬퍼.
+        public bool    ChaosInjecting            => ChaosFaultMask != 0L;                                     // ★황/적 점멸(결함 주입 중)
+        public bool    ChaosRecovering           => ChaosRecoveryState == 1L;                                 // 쿨다운·단계 재인증
+        public bool    ChaosAnomaly              => ChaosLivelockEscapes > 0L || ChaosTornStateBlocks > 0L;   // ★암흑자색(라이브락/torn fail-closed)
+        public bool    ChaosMonitorActive        => ChaosFaultMask == 0L && ChaosSafeHoldActive == 0L && !ChaosAnomaly;  // 청/녹 STANDBY
+        public bool    ChaosSafeHolding          => ChaosSafeHoldActive != 0L;                                // 카오스가 무장 하향 중
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -725,7 +750,8 @@ namespace StockManager.Common
         //   (v8.0.0 AVX-512: 가속티어·SIMD알파지연·알파milli·SNR차단·폭강등·ZMM keepalive·조율·정렬로드 8필드 추가로 154필드 → 128+154×8=1360 → Size 1344→1408(64×22·잔여 6슬롯=48B).)
         //   (v8.1.0 퀀텀금고: 금고활성·브리치·디코이·후킹상태·결합도·RCU세대·제로검증실패·제로버퍼 8필드 추가로 162필드 → 128+162×8=1424 → Size 1408→1472(64×23·잔여 6슬롯=48B).)
         //   (v9.0.0 SOR/빙산: 라우팅활성·라우팅수·라우팅코드·빙산숨은물량·빙산포획·큐임접률·스푸핑차단·유동성진위 8필드 추가로 170필드 → 128+170×8=1488 → Size 1472→1536(64×24·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1536)]
+        //   (v9.1.0 카오스 샌드박스: 샌드박스상태·결함마스크·주입수·라이브락탈출·torn차단·복구상태·재현시드·SafeHold 8필드 추가로 178필드 → 128+178×8=1552 → Size 1536→1600(64×25·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1600)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -855,6 +881,10 @@ namespace StockManager.Common
         private readonly IcebergHunterSentinel?       _iceberg2;    // v9.0.0 — 빙산 헌터(옵션·읽기)
         private readonly LiquidityAuthenticityVerifier? _authVerify; // v9.0.0 — 유동성 진위(옵션·읽기)
         private readonly QueuePositionEstimator?      _queueEst;    // v9.0.0 — 큐 위치(옵션·읽기)
+        private readonly ChaosEngineSanitizer?        _chaos;       // v9.1.0 — 카오스 결함 주입(옵션·읽기)
+        private readonly ChaosRecoveryRateLimiter?    _chaosRecov;  // v9.1.0 — 복구 스로틀러(옵션·읽기)
+        private readonly ChaosResilientProgressGuard? _chaosGuard;  // v9.1.0 — 카오스 진행 보장 가드(옵션·읽기)
+        private readonly DeterministicChaosReplayer?  _chaosReplay; // v9.1.0 — 결정론 재현기(옵션·읽기·시드)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -934,7 +964,11 @@ namespace StockManager.Common
                                       SmartOrderRouterEngine? sor = null,
                                       IcebergHunterSentinel? icebergHunter = null,
                                       LiquidityAuthenticityVerifier? authVerify = null,
-                                      QueuePositionEstimator? queueEst = null)
+                                      QueuePositionEstimator? queueEst = null,
+                                      ChaosEngineSanitizer? chaos = null,
+                                      ChaosRecoveryRateLimiter? chaosRecovery = null,
+                                      ChaosResilientProgressGuard? chaosGuard = null,
+                                      DeterministicChaosReplayer? chaosReplayer = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1008,6 +1042,10 @@ namespace StockManager.Common
             _iceberg2     = icebergHunter;
             _authVerify   = authVerify;
             _queueEst     = queueEst;
+            _chaos        = chaos;
+            _chaosRecov   = chaosRecovery;
+            _chaosGuard   = chaosGuard;
+            _chaosReplay  = chaosReplayer;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1202,6 +1240,12 @@ namespace StockManager.Common
                 if (_iceberg2 is { } ib3) { icebergHidden = ib3.EstimatedHiddenTotalRaw; icebergsDet = ib3.IcebergsDetected; }
                 if (_queueEst is { } qe) queueImm = qe.FillImminencePermille;
                 if (_authVerify is { } avv) liqAuth = Math.Min(avv.BidAuthenticityPermille, avv.AskAuthenticityPermille);
+                // v9.1.0 — 극단적 카오스 결함 주입 샌드박스 텔레메트리 풀(δ=0).
+                long chaosState = 0L, chaosMask = 0L, chaosInj = 0L, chaosLive = 0L, chaosTorn = 0L, chaosRecov = 0L, chaosSeed = 0L, chaosHold = 0L;
+                if (_chaos is { } cx) { chaosState = cx.StateCode; chaosMask = cx.FaultMask; chaosInj = cx.Injections; if (cx.SafeHoldActive) chaosHold = 1L; }
+                if (_chaosGuard is { } cg3) { chaosLive = cg3.LivelockEscapes; chaosTorn = cg3.TornStateBlocks; if (cg3.SafeHoldActive) chaosHold = 1L; }
+                if (_chaosRecov is { } cr) { chaosRecov = cr.State; if (cr.RecoveryBlocking) chaosHold = 1L; }
+                if (_chaosReplay is { } crp) chaosSeed = (long)(crp.Seed & 0xFFFFFFFFUL);
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1231,7 +1275,8 @@ namespace StockManager.Common
                     pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic,
                     avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd,
                     qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs,
-                    sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth));
+                    sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth,
+                    chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

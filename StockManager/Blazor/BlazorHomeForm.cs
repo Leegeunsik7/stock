@@ -339,6 +339,12 @@ namespace StockManager.Blazor
             FatFingerVelocityInterlock?  fatFingerRef   = null;
             // v8.1.0 — Native API 후킹 변조도 무장 술어에 합성(지연 ref·아래 생성). 진입점 인라인 후킹 탐지 시 무장 tighten-only 하향.
             AntiHookingCodeIntegrityGuard? antiHookRef  = null;
+            // v9.1.0 — 극단적 카오스 결함 주입도 무장 술어에 합성(지연 ref·아래 생성). 결함 주입(SafeHold)·복구 미완(RecoveryBlocking)·
+            //   락프리 라이브락/torn 감지(SafeHold) 어느 하나라도 활성이면 무장을 false 로 억제. 전부 tighten-only — 극단 재난 주입
+            //   하에서도 무장을 '거둘' 뿐 부여 불가(liveArmed:false 정합·발주 유발 0·단 1비트 오발주 누수 물리 봉쇄).
+            ChaosEngineSanitizer?        chaosRef      = null;
+            ChaosRecoveryRateLimiter?    chaosRecovRef = null;
+            ChaosResilientProgressGuard? chaosGuardRef = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
@@ -351,7 +357,10 @@ namespace StockManager.Blazor
                                 || (armingLeaseRef?.Expired ?? false)
                                 || (deadManRef?.Tripped ?? false)
                                 || (fatFingerRef?.Frozen ?? false)
-                                || (antiHookRef?.SafeHoldActive ?? false));
+                                || (antiHookRef?.SafeHoldActive ?? false)
+                                || (chaosRef?.SafeHoldActive ?? false)
+                                || (chaosRecovRef?.RecoveryBlocking ?? false)
+                                || (chaosGuardRef?.SafeHoldActive ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -696,6 +705,21 @@ namespace StockManager.Blazor
             services.AddSingleton(icebergHunter);
             services.AddSingleton(queuePosEst);
             services.AddSingleton(smartRouter);
+            // v9.1.0 — 극단적 카오스 결함 주입 샌드박스: 결함 주입 엔진 + 결정론 재현기 + 단계별 복구 스로틀러 + ★Think Beyond 진행 보장 가드.
+            //   ★liveArmed:false: 전부 순수 결정/관측 산출 — IBroker·소켓·onSend·ring 참조 0. SafeHold/RecoveryBlocking/가드는 무장 술어에
+            //     tighten-only 합성(위에서 결속), 파멸 결함은 attestation.ForceFreeze 원자 격발. 실 주입은 샌드박스 인터셉터/테스트 소비(현 dormant).
+            var chaosSanitizer = new ChaosEngineSanitizer(
+                onForceFreeze: () => { try { attestation.ForceFreeze("카오스 샌드박스 파멸 결함 — 무장 하드 동결(극단 재난 fail-closed 실증)"); } catch { } });
+            var chaosReplayer  = new DeterministicChaosReplayer();
+            var chaosRecovery  = new ChaosRecoveryRateLimiter();
+            var chaosGuard     = new ChaosResilientProgressGuard();
+            chaosRef      = chaosSanitizer;   // 무장 술어 blockWhile 결속(tighten-only)
+            chaosRecovRef = chaosRecovery;
+            chaosGuardRef = chaosGuard;
+            services.AddSingleton(chaosSanitizer);
+            services.AddSingleton(chaosReplayer);
+            services.AddSingleton(chaosRecovery);
+            services.AddSingleton(chaosGuard);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -703,7 +727,8 @@ namespace StockManager.Blazor
                 alphaEngine: alphaEngine, noiseQuant: noiseQuant, avxTuner: avxTuner, alignedVec: alignedVec,
                 vault: quantumVault, honeyMesh: honeyMesh, antiHook: antiHook, zeroizer: secureZeroizer,
                 rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 117L,
-                sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst);
+                sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst,
+                chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

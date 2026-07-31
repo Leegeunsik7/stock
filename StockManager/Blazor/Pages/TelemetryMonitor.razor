@@ -734,6 +734,67 @@
         }
     </div>
 
+    @* ══ v9.1.0: 극단적 카오스 결함 주입 샌드박스 관제 ══════════════════════════ *@
+    @{
+        bool chaosAnomaly   = _frame.ChaosAnomaly;        // 라이브락/torn fail-closed(암흑자색)
+        bool chaosInjecting = _frame.ChaosInjecting;      // 결함 주입 중(황/적 점멸)
+        bool chaosStandby   = _frame.ChaosMonitorActive;  // 청/녹 STANDBY
+        bool chaosHold      = _frame.ChaosSafeHolding;    // 무장 하향 중
+        long chaosForensic  = (_frame.ChaosLivelockEscapes << 16) | (_frame.ChaosTornStateBlocks << 8) | (_frame.ChaosFaultMask & 0xFF);
+        long cRecov         = _frame.ChaosRecoveryState;
+        string cRecovLabel  = cRecov switch { 2 => "FROZEN", 1 => "COOLDOWN", _ => "READY" };
+        long cfm            = _frame.ChaosFaultMask;
+        string cFaultLabel  = cfm == 0L ? "없음"
+            : (((cfm & 1L) != 0L ? "소켓 " : "") + ((cfm & 2L) != 0L ? "메모리 " : "") + ((cfm & 4L) != 0L ? "서멀 " : "") + ((cfm & 8L) != 0L ? "torn" : "")).Trim();
+    }
+    @* 락프리 라이브락/torn-state fail-closed 격발 → 암흑자색 전체화면 오버레이 + 포렌식 헥스(정적 투사) *@
+    @if (chaosAnomaly)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99992;background:radial-gradient(circle,rgba(74,20,140,0.10),rgba(40,10,70,0.34));border:9px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.7s ease-in-out infinite"></div>
+        <div style="position:fixed;top:260px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.96);color:#e1bee7;padding:12px 30px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 30px rgba(123,31,162,0.8)">
+            <div style="font-size:16px;font-weight:800">🟣 [CHAOS LOCK-FREE INTEGRITY BREACH - LIVELOCK/TORN-STATE · FAIL-CLOSED]</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">라이브락 탈출 @_frame.ChaosLivelockEscapes · torn 차단 @_frame.ChaosTornStateBlocks · FORENSIC 0x@(chaosForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(chaosAnomaly ? "kpi-alert" : ((chaosInjecting || chaosHold) ? "kpi-amber" : (chaosStandby ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">🧪 Extreme Chaos Fault Injection Sandbox (극단적 카오스 결함 주입 · fail-closed 실증)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:360px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (chaosAnomaly)
+                    {
+                        <span class="prod-badge" style="background:rgba(123,31,162,0.28);color:#ce93d8;box-shadow:0 0 8px rgba(123,31,162,0.6)">[LOCK-FREE BREACH - FAIL-CLOSED]</span>
+                    }
+                    else if (chaosInjecting)
+                    {
+                        <span class="prod-badge chaos-red" style="animation:recpulse 0.6s ease-in-out infinite">[CHAOS FAULT INJECTION IN PROGRESS]</span>
+                    }
+                    else if (chaosHold)
+                    {
+                        <span class="prod-badge chaos-amber">[CHAOS SAFE-HOLD - ARM DOWNGRADE]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge" style="background:rgba(38,166,91,0.24);color:#4caf82;box-shadow:0 0 10px rgba(38,166,91,0.6)">[CHAOS MONITOR ACTIVE - STANDBY]</span>
+                    }
+                </div>
+                <div class="kpi-sub">주입 <b style="font-family:var(--mono)">@_frame.ChaosInjections.ToString("N0")</b> · 결함 <b style="color:@(chaosInjecting ? "#ff5252" : "#66bb6a")">@cFaultLabel</b> · 무장 <b style="color:@(chaosHold ? "#ffb74d" : "#66bb6a")">@(chaosHold ? "HELD" : "CLEAR")</b></div>
+            </div>
+            <div style="min-width:230px">
+                <div class="kpi-value" style="font-size:14px">라이브락 탈출 <b style="font-family:var(--mono);color:@(_frame.ChaosLivelockEscapes > 0 ? "#ce93d8" : "#66bb6a")">@_frame.ChaosLivelockEscapes.ToString("N0")</b></div>
+                <div class="kpi-sub">torn-state 차단 <b style="font-family:var(--mono);color:@(_frame.ChaosTornStateBlocks > 0 ? "#ce93d8" : "#66bb6a")">@_frame.ChaosTornStateBlocks.ToString("N0")</b> · ★bounded-progress 가드</div>
+            </div>
+            <div style="min-width:210px">
+                <div class="kpi-value" style="font-size:14px">복구 <b style="color:@(cRecov == 0L ? "#66bb6a" : "#ffb74d")">@cRecovLabel</b></div>
+                <div class="kpi-sub">단계별 재인증(Herd 방지) · 재현 시드 <b style="font-family:var(--mono)">0x@(_frame.ChaosReplaySeed.ToString("X"))</b></div>
+            </div>
+        </div>
+        @if (chaosStandby)
+        {
+            <div class="kpi-sub" style="margin-top:6px">카오스 샌드박스 STANDBY — 소켓 지터/패킷드롭·메모리 압박·서멀 드롭·seqlock torn 결함을 δ=0 주입해 fail-closed 불변식을 실증. 결함 주입 시 무장 SafeHold(가역)·파멸 강도 시 ForceFreeze(하드)·락프리 라이브락/torn 은 ★bounded-progress 가드가 O(1) fail-closed 무효화. ★전 경로 liveArmed:false — 결함 주입/해제가 이중키 전 발주 0비트.</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">

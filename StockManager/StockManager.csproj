@@ -31,11 +31,18 @@
          반대 극성(opt-out 제외). 인프라 해방(플랫폼 네이티브 디커플링) 테마 정합. Default 빌드는 WEBONLY 미정의(네이티브 포함). -->
     <DefineConstants Condition="'$(WebOnly)'=='true'">$(DefineConstants);WEBONLY</DefineConstants>
 
-    <Version>9.0.0</Version>
-    <AssemblyVersion>9.0.0.0</AssemblyVersion>
-    <FileVersion>9.0.0.0</FileVersion>
-    <!-- v9.0.0 — 초저지연 스마트 오더 라우터 & 빙산호가 포획 엔진 + Phase 84 인프라 해방 Slice 3.
-         [Task 1] SmartOrderRouterEngine — v8.0.0 SIMD 알파(부호·강도) + L2 스프레드/깊이 → δ=0 순수 라우팅 계획(방향·시장가공격/지정가수동·빙산흡수·슬라이스폭·슬라이스수). 라우팅 코드 비트(R_NO_ALPHA/R_SPOOF_BLOCKED/R_MARKET_AGGRESSIVE/R_LIMIT_PASSIVE/R_ICEBERG_ABSORB). onSend·IBroker·소켓·ring 참조 0 — '계획'만 산출.
+    <Version>9.1.0</Version>
+    <AssemblyVersion>9.1.0.0</AssemblyVersion>
+    <FileVersion>9.1.0.0</FileVersion>
+    <!-- v9.1.0 — 극단적 카오스 결함 주입 샌드박스(ChaosEngineSanitizer & Fault Injection Framework).
+         극단적 재난 하에서도 터미널의 fail-closed 안전 불변식이 100% 사수됨을 실증하는 카오스 공학 프레임워크.
+         [Task 1] ChaosEngineSanitizer — δ=0 결함 주입 엔진. 결함 비트마스크(소켓 지터/패킷드롭·메모리 압박·서멀 드롭·seqlock torn read). 주입 즉시 SafeHoldActive(가역·tighten-only) 로 무장 하향, 파멸 강도(≥950‰) 결함은 주입식 onForceFreeze 로 원자 하드 동결. IBroker·소켓·onSend·ring 참조 0 — '결함 결정'만 산출(발주 유발 0). 결정론 시드 스트림(Interlocked 전진 SplitMix64)으로 패킷 드롭/지터 결정.
+         [Gemini 보강1] DeterministicChaosReplayer — 검증된 무할당 DeterministicPrng(SplitMix64) 재사용(6번째 중복 금지). 시드 하나로 시간축 결함 순서·강도·조합을 100% 결정론 재현. Reset(seed)→Next() 동일 시드=동일 시퀀스. 시각 무관·순수 시드 유도. δ=0.
+         [Gemini 보강2] ChaosRecoveryRateLimiter — 카오스 해제 후 Thundering Herd(2차 충격) 방지. Frozen→Cooldown→Ready FSM. 단계별 재인증(AttemptReauth)이 (쿨다운/단계수) 이상 시간 간격 후에만 통과 — 너무 이른 재인증(Herd 쇄도) 거부(Reject). RecoveryBlocking tighten-only. δ=0.
+         [★Task 3 Think Beyond] ChaosResilientProgressGuard — 제미나이 A(스핀 경계 센티널)/B(이중버퍼 체크포인트)를 '단일 불변식(bounded progress)'으로 통합·초월: "락프리 상태 전이는 카오스 하에서도 유한 스텝 내 원자적 완료 OR fail-closed 무효화 — 부분·무한 금지." ①ChaosSpinFence(값타입·δ=0) 모든 락프리 재시도에 하드 상한(초과=O(1) 탈출·라이브락 격리) ②원자 이중버퍼 에폭 체크포인트(쓰기는 비활성 그림자 슬롯·Interlocked.Exchange 인덱스 스왑만 발행 → 부분 쓰기 구조적 불가시=torn '탐지' 아닌 '불가능'化) ③★독자 seqlock 재시도조차 같은 스핀 펜스로 상한 — bounded-progress 펜스가 라이브락과 torn-read 를 한 메커니즘으로 동시 봉쇄(A/B 를 각각이 아니라 하나로).
+         [텔레메트리/UI] RingTelemetry +8필드(샌드박스상태·결함마스크·주입수·라이브락탈출·torn차단·복구상태·재현시드·SafeHold, Cell Size 1536→1600=64×25=178필드)·Publisher 4주입(chaos/chaosRecovery/chaosGuard/chaosReplayer). BlazorHomeForm 무장 술어 blockWhile 에 chaos.SafeHoldActive∨recovery.RecoveryBlocking∨guard.SafeHoldActive 3종 tighten-only 합성. TelemetryMonitor 🧪 [Extreme Chaos Fault Injection Sandbox] 패널(청/녹 [CHAOS MONITOR ACTIVE - STANDBY]·적색 점멸 주입 중·황색 SafeHold·암흑자색 락프리 브리치 오버레이+포렌식).
+         [불변] δ=0(Inject/질의/Next/TryCommit/TryRead/펜스 핫패스 힙 0 실증)·결정론(시드 SplitMix64·벽시계 무참조·tickFrequency 미지정 시 고정 1e7)·fail-closed(패킷 드롭=미발송·파멸=ForceFreeze·라이브락/torn=O(1) 무효화)·liveArmed:false(극단 결함 주입/파멸 동결 하에서도 무장 술어 tighten→미무장 dispatcher→forwarded 0 실증). 유닛 +14. 회귀 0.
+         [적대검증] 6렌즈(find→반증-verify) 2라운드 확정 3(FP 8) 교정 — 전부 ChaosRecoveryRateLimiter(유일 다중 라이터 모듈): ①AttemptReauth TOCTOU(게이트 판정↔증가 비원자 → herd N개가 한 인터벌에 N단계 조기 재무장 fail-open) → passed 에서 원자 CAS 전진(패자 거부·재평가) ②BeginRecovery publish-before-init(S_COOLDOWN 발행 후 start 기록 → herd 가 stale 0 baseline 으로 쿨다운 우회) → 데이터 먼저 기록 후 상태 release 발행 ③최종단계 CAS↔state 전이 비원자 창(Completions 중복·StagesPassed 오버슛·안전성은 유지) → 오버슛 가드 + COOLDOWN→READY 단발 완료 CAS. 전 교정 δ=0(Interlocked/Volatile)·결정론 유지. herd 동시성 회귀 테스트 추가. 나머지 3모듈(Sanitizer/Replayer/Guard·단일 라이터·순수)은 결함 0.
          [Task 2] IcebergHunterSentinel — O(1) 링 스캔으로 마이크로 체결→리로드 서명(bid/ask 각 IcebergReloadSignatureDetector) 포착 → 숨은 빙산 물량 추정(cumTraded−displayed). 확정 임계 초과 시 IcebergsDetected++.
          [Gemini 보강1] IcebergReloadSignatureDetector — 나노초 dip→refill 지터(주입 ticks): displayed 감소 후 reloadThresholdTicks 내 preDip의 refillFraction 이상 재적재 → Reloads++, ConfirmationPermille(obs<4=0).
          [Gemini 보강2] QueuePositionEstimator — 가격-시간 우선 FIFO 큐 위치: Place/OnTrade(ahead 소각)/OnCancelAhead → FillImminencePermille(0~1000, 1000=차기 체결). δ=0.
