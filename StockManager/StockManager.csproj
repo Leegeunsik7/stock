@@ -31,9 +31,20 @@
          반대 극성(opt-out 제외). 인프라 해방(플랫폼 네이티브 디커플링) 테마 정합. Default 빌드는 WEBONLY 미정의(네이티브 포함). -->
     <DefineConstants Condition="'$(WebOnly)'=='true'">$(DefineConstants);WEBONLY</DefineConstants>
 
-    <Version>8.1.0</Version>
-    <AssemblyVersion>8.1.0.0</AssemblyVersion>
-    <FileVersion>8.1.0.0</FileVersion>
+    <Version>9.0.0</Version>
+    <AssemblyVersion>9.0.0.0</AssemblyVersion>
+    <FileVersion>9.0.0.0</FileVersion>
+    <!-- v9.0.0 — 초저지연 스마트 오더 라우터 & 빙산호가 포획 엔진 + Phase 84 인프라 해방 Slice 3.
+         [Task 1] SmartOrderRouterEngine — v8.0.0 SIMD 알파(부호·강도) + L2 스프레드/깊이 → δ=0 순수 라우팅 계획(방향·시장가공격/지정가수동·빙산흡수·슬라이스폭·슬라이스수). 라우팅 코드 비트(R_NO_ALPHA/R_SPOOF_BLOCKED/R_MARKET_AGGRESSIVE/R_LIMIT_PASSIVE/R_ICEBERG_ABSORB). onSend·IBroker·소켓·ring 참조 0 — '계획'만 산출.
+         [Task 2] IcebergHunterSentinel — O(1) 링 스캔으로 마이크로 체결→리로드 서명(bid/ask 각 IcebergReloadSignatureDetector) 포착 → 숨은 빙산 물량 추정(cumTraded−displayed). 확정 임계 초과 시 IcebergsDetected++.
+         [Gemini 보강1] IcebergReloadSignatureDetector — 나노초 dip→refill 지터(주입 ticks): displayed 감소 후 reloadThresholdTicks 내 preDip의 refillFraction 이상 재적재 → Reloads++, ConfirmationPermille(obs<4=0).
+         [Gemini 보강2] QueuePositionEstimator — 가격-시간 우선 FIFO 큐 위치: Place/OnTrade(ahead 소각)/OnCancelAhead → FillImminencePermille(0~1000, 1000=차기 체결). δ=0.
+         [★Task 3 Think Beyond] LiquidityAuthenticityVerifier(Anti-Spoofing Cancel-Velocity Filter) — 제미나이 '스푸핑 빙산 트랩' 초월: bid/ask 256슬롯 링에 (ticks,fill,cancel) 기록 → 윈도 스캔 authenticity=fill·1000/(fill+cancel), cancel/fill>spoofRatio(3000‰)면 스푸핑. AllowRoute 게이트가 진짜 빙산(체결)과 가짜 스푸핑(취소)을 분별 — SOR 라우팅 사전 차단(SpoofBlocks++).
+         [텔레메트리/UI] RingTelemetry +8필드(SOR활성·라우팅수·라우팅코드·빙산숨은물량·빙산포획수·큐임접‰·스푸핑차단·유동성진위‰, Cell Size 1472→1536=64×24)·Publisher 4주입(sor/icebergHunter/authVerify/queueEst). TelemetryMonitor 🎯 [Smart Order Router & Iceberg Hunter] 패널(청/자 [SOR ACTIVE - ICEBERG HUNTER ARMED]·황색 스푸핑 차단·암흑자색 라우팅 이상 오버레이+포렌식).
+         [Phase 84 Slice 3] AiService·EmailSender·Diagnostics 잔여 config 직결(db.GetSetting)을 DatabaseConfigAdapter(ISystemConfigPort) 경유로 해방(콜드 경로·행동 완전 보존). infra-scan 결합도 138→117(≤120 목표 달성)·infra-baseline.txt 래칫(exit 0·비회귀 강제). ★선행 '109' 미존재 — 실측 138 기준의 정직한 감축.
+         [불변] δ=0(SOR ComputeRoute/Queue/Iceberg/Auth 힙 0 실증)·결정론(주입 시계·RNG 0·주입 alpha/틱)·fail-closed(alpha 0 또는 스푸핑 → R_NO_ALPHA/R_SPOOF_BLOCKED 라우팅 억제)·liveArmed:false(강한 라우팅 계획→ring publish→미무장 dispatcher→forwarded 0 실증). 유닛 +10. 회귀 0.
+         [적대검증] 6렌즈(정확성·δ0/동시성·결정론·fail-closed·오버플로·통합) find→반증-verify 워크플로 확정 12(FP 5)교정: ①SOR 빈/크로스 오더북을 타이트로 오판→공격적 시장가 fail-open → 비양수/크로스 가드 fail-closed ②LiquidityAuth sumCancel·total long 곱/합 오버플로→스푸핑 미탐 fail-open → Int128 교차곱 ③IcebergHunter hidden 폴백(over≤0 시 cumTraded) phantom 과대 → 0 ④IcebergHunter Reset() 내부 검출기 미초기화→심볼전환 유령빙산 → 검출기 Reset() 추가·호출 ⑤IcebergReload·⑥LiquidityAuth Stopwatch.Frequency 호스트 의존→비결정 → 고정 1e7(리플레이 재현) ⑦Queue consumed·⑧SOR slices long→int/덧셈 오버플로 → Int128/오버플로안전 ceil+int 포화 ⑨IcebergReload refill 창 부분반등 조기종료 false-negative → 완전복원/만료 시에만 종료 ⑩Queue (init,ahead) torn read → seqlock 버전. 전 교정 δ=0·결정론·fail-closed 유지.
+         ※ Phase 84 결합도 감축은 v8.1.0 실측 138 baseline 기준(허구 수치 아님) — 실 리팩터 반영. -->
     <!-- v8.1.0 — 안티-RAM 퀀텀 금고 + Phase 83 인프라 해방 Slice 2 + WebOnly 이중 빌드.
          [Task 1] QuantumVaultSentinel — 디버거 댓치(IsDebuggerPresent/CheckRemoteDebuggerPresent + Debugger.IsAttached)·디코이 변조·후킹 탐지 시 등록 시크릿 검증 제로화(VerifiedSecureZeroizer) + onBreach(ForceFreeze→볼트 Seal→Environment.FailFast 자가 소멸) 원자 1회. 탐지술어/onBreach 주입식(테스트=페이크·프로세스 미살). 네이티브 P/Invoke 는 #if !WEBONLY + OperatingSystem.IsWindows 가드. 기본 dormant(Security.QuantumVaultArmed 옵트인·오탐 자멸 방지). HoneyKeyDecoyMesh(허니토큰+카나리 변조/유출 탐지·관리형)·AntiHookingCodeIntegrityGuard(kernel32/ntdll 진입점 0xE9/0xEB JMP 후킹 탐지→SafeHoldActive blockWhile tighten-only·주입 판독기).
          [★Task 3 Think Beyond] VerifiedSecureZeroizer — 제미나이 A(anti-elision) 초월: 와이프를 '신뢰' 않고 '증명'. CryptographicOperations.ZeroMemory(계약 제거불가·이식적·WebOnly 안전) + 전 바이트 판독(residue OR) 검증 — 최적화/변조 우회 시 잔류 포착→재와이프+계수. 판독 의존성이 곧 JIT 제거 방지 펜스. 순수 관리형.

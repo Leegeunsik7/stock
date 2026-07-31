@@ -17,25 +17,26 @@ namespace StockManager.Common
     {
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(60) };
         private readonly LocalDatabase _db;
-        public AiService(LocalDatabase db) { _db = db; }
+        private readonly ISystemConfigPort _cfg;   // Phase 84 — config 는 포트 경유(콘크리트 인프라 직결 해방)
+        public AiService(LocalDatabase db) { _db = db; _cfg = new DatabaseConfigAdapter(db); }
 
         // 어느 백엔드든 사용 가능하면 LLM 기능 활성(페이지 호환 위해 HasKey 이름 유지)
         public bool HasKey => HasLlm;
         public bool HasLlm => GeminiKeyPresent || OllamaEnabled;
         private bool GeminiKeyPresent => !string.IsNullOrWhiteSpace(_db.GetSecret("Gemini.ApiKey"));
-        private bool OllamaEnabled => _db.GetSetting("Ollama.Enabled") == "true";
+        private bool OllamaEnabled => _cfg.GetString("Ollama.Enabled", "") == "true";
 
         /// <summary>현재 활성 백엔드 라벨("Gemini" | "로컬(Ollama)" | "미설정").</summary>
-        public string ActiveLlm => LlmRouter.Resolve(_db.GetSetting("Llm.Provider"), GeminiKeyPresent, OllamaEnabled) switch
+        public string ActiveLlm => LlmRouter.Resolve(_cfg.GetString("Llm.Provider", ""), GeminiKeyPresent, OllamaEnabled) switch
         {
             "gemini" => "Gemini",
             "ollama" => $"로컬(Ollama:{OllamaModel})",
             _ => "미설정"
         };
 
-        private string OllamaUrl => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Url")) ? OllamaProvider.DefaultUrl : _db.GetSetting("Ollama.Url")!;
-        private string OllamaModel => string.IsNullOrWhiteSpace(_db.GetSetting("Ollama.Model")) ? OllamaProvider.DefaultModel : _db.GetSetting("Ollama.Model")!;
-        private int OllamaTimeoutSec => int.TryParse(_db.GetSetting("Ollama.TimeoutSec"), out var t) && t > 0 ? t : OllamaProvider.DefaultTimeoutSec;
+        private string OllamaUrl => string.IsNullOrWhiteSpace(_cfg.GetString("Ollama.Url", "")) ? OllamaProvider.DefaultUrl : _cfg.GetString("Ollama.Url", "");
+        private string OllamaModel => string.IsNullOrWhiteSpace(_cfg.GetString("Ollama.Model", "")) ? OllamaProvider.DefaultModel : _cfg.GetString("Ollama.Model", "");
+        private int OllamaTimeoutSec => int.TryParse(_cfg.GetString("Ollama.TimeoutSec", ""), out var t) && t > 0 ? t : OllamaProvider.DefaultTimeoutSec;
 
         // ===== 단일 종목 분석 (기존) =====
         public Task<string> AnalyzeAsync(string symbol, string market, string model = "gemini-2.0-flash")
@@ -126,7 +127,7 @@ namespace StockManager.Common
         // ===== 공용 완성 호출 (grounded prompt → text) — 라우터가 백엔드 선택 =====
         public async Task<string> CompleteAsync(string prompt, string model = "gemini-2.0-flash")
         {
-            var route = LlmRouter.Resolve(_db.GetSetting("Llm.Provider"), GeminiKeyPresent, OllamaEnabled);
+            var route = LlmRouter.Resolve(_cfg.GetString("Llm.Provider", ""), GeminiKeyPresent, OllamaEnabled);
             if (route == "none")
                 return "⚠️ LLM이 설정되지 않았습니다.\nGemini 키를 입력하거나(설정 마법사/거래 설정), 설정에서 로컬 LLM(Ollama)을 켜세요.";
             if (route == "ollama")

@@ -65,6 +65,19 @@ namespace StockManager.Common
         }
     }
 
+    /// <summary>Config 포트의 Database 직결 어댑터(Phase 84) — LocalDatabase.GetSetting 원시 위임(env-var precedence 없이
+    /// 정확 동작 보존). 코어 클래스가 db.GetSetting 직결 대신 이 포트로 config 를 읽어 인프라 결합을 해방한다.</summary>
+    public sealed class DatabaseConfigAdapter : ISystemConfigPort
+    {
+        private readonly LocalDatabase _db;
+        public DatabaseConfigAdapter(LocalDatabase db) => _db = db ?? throw new ArgumentNullException(nameof(db));
+        public string GetString(string key, string def) => _db.GetSetting(key) ?? def;
+        public bool GetBool(string key, bool def)
+        { var v = _db.GetSetting(key); return v is null ? def : (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)); }
+        public double GetDouble(string key, double def, double min, double max)
+        { var v = _db.GetSetting(key); return v != null && double.TryParse(v, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d) ? Math.Clamp(d, min, max) : def; }
+    }
+
     // ── InMemory 어댑터(테스트가 배선 — 결정론·인프라 무접촉) ──────────────────
     /// <summary>Config 포트의 InMemory 어댑터(테스트·결정론). 딕셔너리 주입.</summary>
     public sealed class InMemoryConfigAdapter : ISystemConfigPort

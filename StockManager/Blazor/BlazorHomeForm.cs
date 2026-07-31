@@ -685,13 +685,25 @@ namespace StockManager.Blazor
             services.AddSingleton(antiHook);
             services.AddSingleton(quantumVault);
             FormClosed += (_, _) => ShutdownTrace.Step("quantumVault", () => quantumVault.Dispose());
+            // v9.0.0 — 스마트 오더 라우터 & 빙산호가 포획: SOR + 빙산 헌터 + 유동성 진위 인증(Think Beyond) + 큐 위치 추정.
+            //   ★liveArmed:false: 라우팅 '경로/수치'만 산출 — IBroker·소켓·onSend·ring 참조 0. 실 발주는 하류 무장 게이트 전담.
+            //     라이브 L2 오더북 피드 옵트인 시 활성(현 dormant·NanoPipeline 미부팅 관례 정합·순수 상태 객체라 Dispose 불요).
+            var liqAuthVerifier = new LiquidityAuthenticityVerifier();
+            var icebergHunter = new IcebergHunterSentinel();
+            var queuePosEst = new QueuePositionEstimator();
+            var smartRouter = new SmartOrderRouterEngine(iceberg: icebergHunter, auth: liqAuthVerifier);
+            services.AddSingleton(liqAuthVerifier);
+            services.AddSingleton(icebergHunter);
+            services.AddSingleton(queuePosEst);
+            services.AddSingleton(smartRouter);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
                 preFlight: preFlight, armingLease: armingLease, deadMan: deadMan, fatFinger: fatFinger,
                 alphaEngine: alphaEngine, noiseQuant: noiseQuant, avxTuner: avxTuner, alignedVec: alignedVec,
                 vault: quantumVault, honeyMesh: honeyMesh, antiHook: antiHook, zeroizer: secureZeroizer,
-                rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 138L);
+                rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 117L,
+                sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

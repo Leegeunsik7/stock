@@ -39,10 +39,11 @@ namespace StockManager.Common
                     engineLastRun == default ? "미가동" : engineLastRun.ToString("HH:mm:ss"))
             };
 
+            var cfg = new DatabaseConfigAdapter(db);   // Phase 84 — config 포트 경유(직결 해방·콜드 진단 경로)
             void Hook(string area, string enKey, string lastKey, double withinHrs)
             {
-                bool en = db.GetSetting(enKey) == "true";
-                var last = db.GetSetting(lastKey);
+                bool en = cfg.GetString(enKey, "") == "true";
+                var last = cfg.GetString(lastKey, "");
                 rows.Add(new(area, en ? Freshness(last, withinHrs, now) : "⚪ 꺼짐", en ? TimeAgo(last, now) : "비활성"));
             }
             Hook("아침 브리핑", "Brief.Enabled", "Brief.LastSent", 26);
@@ -51,10 +52,10 @@ namespace StockManager.Common
             Hook("드리프트 트리거", "Drift.Enabled", "Drift.LastRun", 26);
             Hook("야간 리포트", "Nightly.Enabled", "Nightly.LastSent", 26);
 
-            bool copEn = db.GetSetting("Copilot.Enabled") == "true";
+            bool copEn = cfg.GetString("Copilot.Enabled", "") == "true";
             rows.Add(new("코파일럿", copEn ? "✅ 가동" : "⚪ 꺼짐", $"정책 {CopilotStore.Load(db).Count}개"));
 
-            rows.Add(new("DB 유지보수(주1회)", Freshness(db.GetSetting("Maint.LastRun"), 24 * 8, now), TimeAgo(db.GetSetting("Maint.LastRun"), now)));
+            rows.Add(new("DB 유지보수(주1회)", Freshness(cfg.GetString("Maint.LastRun", ""), 24 * 8, now), TimeAgo(cfg.GetString("Maint.LastRun", ""), now)));
             rows.Add(new("DB 크기", "—", $"{DbMaintenance.SizeKb(db):N0} KB"));
             rows.Add(new("LLM 백엔드", "—", new AiService(db).ActiveLlm));
 

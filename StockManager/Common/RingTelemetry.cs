@@ -211,6 +211,15 @@ namespace StockManager.Common
         public readonly long   RcuConfigVersion;            // RCU Config 스냅샷 세대
         public readonly long   SecureZeroVerifyFailures;    // 시큐어 제로화 판독 검증 실패(0=정상)
         public readonly long   VaultZeroizedBuffers;        // 브리치 시 원자 제로화된 시크릿 버퍼 수
+        // v9.0.0 — 스마트 오더 라우터 & 빙산호가 포획.
+        public readonly long   SorRoutingActive;            // 1=SOR 라우팅 계획 산출 중
+        public readonly long   SorRoutes;                   // 실행 가능 라우팅 산출 누적
+        public readonly long   SorLastRoutingCode;          // 최근 라우팅 코드(공격/수동/빙산흡수/스푸핑차단 비트)
+        public readonly long   IcebergHiddenQtyRaw;         // 포획된 빙산 숨은 물량 추정(raw 10^8)
+        public readonly long   IcebergsDetected;            // 빙산 포획 누적
+        public readonly long   QueueFillImminencePermille;  // 내 지정가 큐 체결 임접률(‰)
+        public readonly long   SorSpoofBlocks;              // 스푸핑 레이어 라우팅 차단 누적
+        public readonly long   LiquidityAuthenticityPermille; // 유동성 진위 ‰(1000=진짜·0=가짜 스푸핑)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -269,7 +278,9 @@ namespace StockManager.Common
                              long avxAccelTier = 0L, long simdAlphaLatencyNanos = 0L, long simdAlphaMilli = 0L, long snrNoiseBlocks = 0L,
                              long avxWidthDowngrades = 0L, long zmmWarmKeepAlives = 0L, long avxCalibrations = 0L, long simdAlignedLoads = 0L,
                              long quantumVaultArmed = 0L, long quantumVaultBreached = 0L, long honeyDecoyTripped = 0L, long antiHookState = 0L,
-                             long infraCouplingCount = 0L, long rcuConfigVersion = 0L, long secureZeroVerifyFailures = 0L, long vaultZeroizedBuffers = 0L)
+                             long infraCouplingCount = 0L, long rcuConfigVersion = 0L, long secureZeroVerifyFailures = 0L, long vaultZeroizedBuffers = 0L,
+                             long sorRoutingActive = 0L, long sorRoutes = 0L, long sorLastRoutingCode = 0L, long icebergHiddenQtyRaw = 0L,
+                             long icebergsDetected = 0L, long queueFillImminencePermille = 0L, long sorSpoofBlocks = 0L, long liquidityAuthenticityPermille = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -433,6 +444,14 @@ namespace StockManager.Common
             RcuConfigVersion             = rcuConfigVersion;
             SecureZeroVerifyFailures     = secureZeroVerifyFailures;
             VaultZeroizedBuffers         = vaultZeroizedBuffers;
+            SorRoutingActive             = sorRoutingActive;
+            SorRoutes                    = sorRoutes;
+            SorLastRoutingCode           = sorLastRoutingCode;
+            IcebergHiddenQtyRaw          = icebergHiddenQtyRaw;
+            IcebergsDetected             = icebergsDetected;
+            QueueFillImminencePermille   = queueFillImminencePermille;
+            SorSpoofBlocks               = sorSpoofBlocks;
+            LiquidityAuthenticityPermille = liquidityAuthenticityPermille;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -680,7 +699,14 @@ namespace StockManager.Common
         public bool    QuantumVaultActive        => QuantumVaultArmed != 0L;                                // 감시 활성
         public bool    VaultBreach               => QuantumVaultBreached != 0L || HoneyDecoyTripped != 0L;  // ★암흑자색(비인가 접근/디코이 접촉)
         public bool    AntiHookTampered          => AntiHookState == 1L;                                    // ★황색(후킹 변조)
-        public bool    InfraCouplingClean        => InfraCouplingCount > 0L && InfraCouplingCount < 100L;   // 결합도 < 100(청정 목표)
+        public bool    InfraCouplingClean        => InfraCouplingCount > 0L && InfraCouplingCount <= 120L;  // 결합도 ≤ 120(Phase 84 목표 달성)
+        // v9.0.0 — SOR & 빙산호가 UI 헬퍼.
+        public bool    SorActive                 => SorRoutingActive != 0L || SorRoutes > 0L || IcebergsDetected > 0L;
+        public bool    IcebergHunterActive       => IcebergsDetected > 0L || IcebergHiddenQtyRaw > 0L;
+        public bool    SorSpoofing               => SorSpoofBlocks > 0L;                          // ★황색(스푸핑 차단)
+        public bool    SorRoutingAnomaly         => SorSpoofBlocks >= 5L;                          // ★암흑자색(지속 스푸핑/슬리피지 비상)
+        public bool    SorMarketAggressive       => (SorLastRoutingCode & (1L << 2)) != 0L;       // R_MARKET_AGGRESSIVE
+        public bool    SorIcebergAbsorb          => (SorLastRoutingCode & (1L << 4)) != 0L;       // R_ICEBERG_ABSORB
         public bool    QuantumVaultActiveClean   => QuantumVaultActive && AntiHookState != 1L && QuantumVaultBreached == 0L;  // 금고 감시 정상
     }
 
@@ -698,7 +724,8 @@ namespace StockManager.Common
         //   (v7.4.0 Genesis: PreFlight점수·포렌식·임대잔여초·임대‰·데드맨심박·데드맨트립·fatfinger동결·veto·포렌식 9필드 추가로 146필드 → 128+146×8=1296 → Size 1280→1344(64×21·잔여 6슬롯=48B).)
         //   (v8.0.0 AVX-512: 가속티어·SIMD알파지연·알파milli·SNR차단·폭강등·ZMM keepalive·조율·정렬로드 8필드 추가로 154필드 → 128+154×8=1360 → Size 1344→1408(64×22·잔여 6슬롯=48B).)
         //   (v8.1.0 퀀텀금고: 금고활성·브리치·디코이·후킹상태·결합도·RCU세대·제로검증실패·제로버퍼 8필드 추가로 162필드 → 128+162×8=1424 → Size 1408→1472(64×23·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1472)]
+        //   (v9.0.0 SOR/빙산: 라우팅활성·라우팅수·라우팅코드·빙산숨은물량·빙산포획·큐임접률·스푸핑차단·유동성진위 8필드 추가로 170필드 → 128+170×8=1488 → Size 1472→1536(64×24·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1536)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -824,6 +851,10 @@ namespace StockManager.Common
         private readonly VerifiedSecureZeroizer?      _zeroizer;    // v8.1.0 — 검증 제로라이저(옵션·읽기)
         private readonly Func<long>?                  _rcuVersion;  // v8.1.0 — RCU Config 스냅샷 세대(옵션)
         private readonly long                         _infraCoupling; // v8.1.0 — infra-scan 결합도(부팅 시점 값)
+        private readonly SmartOrderRouterEngine?      _sor;         // v9.0.0 — SOR(옵션·읽기)
+        private readonly IcebergHunterSentinel?       _iceberg2;    // v9.0.0 — 빙산 헌터(옵션·읽기)
+        private readonly LiquidityAuthenticityVerifier? _authVerify; // v9.0.0 — 유동성 진위(옵션·읽기)
+        private readonly QueuePositionEstimator?      _queueEst;    // v9.0.0 — 큐 위치(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -899,7 +930,11 @@ namespace StockManager.Common
                                       AntiHookingCodeIntegrityGuard? antiHook = null,
                                       VerifiedSecureZeroizer? zeroizer = null,
                                       Func<long>? rcuConfigVersion = null,
-                                      long infraCouplingCount = 0L)
+                                      long infraCouplingCount = 0L,
+                                      SmartOrderRouterEngine? sor = null,
+                                      IcebergHunterSentinel? icebergHunter = null,
+                                      LiquidityAuthenticityVerifier? authVerify = null,
+                                      QueuePositionEstimator? queueEst = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -969,6 +1004,10 @@ namespace StockManager.Common
             _zeroizer     = zeroizer;
             _rcuVersion   = rcuConfigVersion;
             _infraCoupling = infraCouplingCount;
+            _sor          = sor;
+            _iceberg2     = icebergHunter;
+            _authVerify   = authVerify;
+            _queueEst     = queueEst;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1157,6 +1196,12 @@ namespace StockManager.Common
                 if (_antiHook is { } ah) hookState = ah.HookStateCode;
                 if (_zeroizer is { } zr) zeroFail = zr.VerificationFailures;
                 if (_rcuVersion is { } rv) { try { rcuVer = rv(); } catch { } }
+                // v9.0.0 — SOR & 빙산호가 텔레메트리 풀(δ=0).
+                long sorActive = 0L, sorRoutes = 0L, sorCode = 0L, icebergHidden = 0L, icebergsDet = 0L, queueImm = 0L, sorSpoof = 0L, liqAuth = 1000L;
+                if (_sor is { } sre) { sorRoutes = sre.Routes; sorCode = sre.LastRoutingCode; sorSpoof = sre.SpoofBlocks; sorActive = sre.Routes > 0 ? 1L : 0L; }
+                if (_iceberg2 is { } ib3) { icebergHidden = ib3.EstimatedHiddenTotalRaw; icebergsDet = ib3.IcebergsDetected; }
+                if (_queueEst is { } qe) queueImm = qe.FillImminencePermille;
+                if (_authVerify is { } avv) liqAuth = Math.Min(avv.BidAuthenticityPermille, avv.AskAuthenticityPermille);
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1185,7 +1230,8 @@ namespace StockManager.Common
                     hwCore, hwPinned, hwMig, hwPinFail, hwFreq, hwThrHold, hwThrSafe, hwXcore, hwCohFuse,
                     pfScore, pfForensic, leaseSec, leasePermille, dmAge, dmTrip, ffFrozen, ffVetoes, ffForensic,
                     avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd,
-                    qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs));
+                    qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs,
+                    sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

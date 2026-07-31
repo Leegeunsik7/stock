@@ -14,23 +14,27 @@ namespace StockManager.Common
 {
     public static class EmailSender
     {
-        public static bool Configured(LocalDatabase db) =>
-            !string.IsNullOrWhiteSpace(db.GetSetting("Email.Smtp")) &&
-            !string.IsNullOrWhiteSpace(db.GetSetting("Email.To"));
+        public static bool Configured(LocalDatabase db)
+        {
+            var cfg = new DatabaseConfigAdapter(db);   // Phase 84 — config 포트 경유(직결 해방·콜드 경로)
+            return !string.IsNullOrWhiteSpace(cfg.GetString("Email.Smtp", "")) &&
+                   !string.IsNullOrWhiteSpace(cfg.GetString("Email.To", ""));
+        }
 
         public static async Task<bool> SendAsync(LocalDatabase db, string subject, string body,
             byte[]? pdf = null, string pdfName = "report.pdf")
         {
             try
             {
-                var host = db.GetSetting("Email.Smtp");
-                var to = db.GetSetting("Email.To");
+                var cfg = new DatabaseConfigAdapter(db);   // Phase 84 — config 포트 경유(직결 해방·콜드 경로)
+                var host = cfg.GetString("Email.Smtp", "");
+                var to = cfg.GetString("Email.To", "");
                 if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(to)) return false;
-                int port = int.TryParse(db.GetSetting("Email.Port"), out var p) && p > 0 ? p : 587;
-                var user = db.GetSetting("Email.User");
+                int port = int.TryParse(cfg.GetString("Email.Port", ""), out var p) && p > 0 ? p : 587;
+                var user = cfg.GetString("Email.User", "");
                 var pass = db.GetSecret("Email.Pass");
-                var from = string.IsNullOrWhiteSpace(db.GetSetting("Email.From"))
-                    ? (string.IsNullOrWhiteSpace(user) ? to! : user!) : db.GetSetting("Email.From")!;
+                var from = string.IsNullOrWhiteSpace(cfg.GetString("Email.From", ""))
+                    ? (string.IsNullOrWhiteSpace(user) ? to! : user!) : cfg.GetString("Email.From", "");
 
                 using var msg = new MailMessage(from, to!) { Subject = subject, Body = body };
                 if (pdf is { Length: > 0 })
