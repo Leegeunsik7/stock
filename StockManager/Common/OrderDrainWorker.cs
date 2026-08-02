@@ -30,6 +30,9 @@ namespace StockManager.Common
         private readonly SealedSend?                 _placeSealed;  // v10.0.0 ★δ=0: PlaceSealed 델리게이트 1회 캐시(사출당 변환 할당 제거)
         private readonly MockExecutionOrderBookMirror? _mockMirror; // v10.1.0 드라이런 가상 체결 미러(옵션)
         private readonly ScopeSealedTransitionBarrier? _scopeBarrier; // v10.1.0 스코프-봉인 전환 장벽(옵션·라우팅 권위)
+        private readonly LatencySlaGatekeeper? _slaGate;           // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(옵션·δ=0 Record)
+        private readonly SlaJitterRegressionGuard? _jitterGuard;   // v10.1.0 Final — ★Think-Beyond 측정-무결성(디스케줄 배제·옵션)
+        private static readonly long SlaTickFreq = System.Diagnostics.Stopwatch.Frequency;   // 틱→ns 변환(호스트 QPC 주파수·1회 캐시)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
         private readonly CpuAffinityPinningGrid?      _pinGrid;   // v7.3.0 — 주입 시 전용 P-Core 핀 드레인 스레드 모드
@@ -52,7 +55,9 @@ namespace StockManager.Common
                                 CpuAffinityPinningGrid? pinGrid = null,
                                 GenesisLiveIgnitionGateway? gateway = null,
                                 MockExecutionOrderBookMirror? mockMirror = null,
-                                ScopeSealedTransitionBarrier? scopeBarrier = null)
+                                ScopeSealedTransitionBarrier? scopeBarrier = null,
+                                LatencySlaGatekeeper? slaGate = null,
+                                SlaJitterRegressionGuard? jitterGuard = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
@@ -62,6 +67,8 @@ namespace StockManager.Common
             _placeSealed   = gateway != null ? PlaceSealed : null;   // ★δ=0: 델리게이트 1회 생성(핫패스 변환 할당 제거)
             _mockMirror    = mockMirror;    // v10.1.0 — 드라이런 스코프 시 실 브로커 대신 가상 미러로 봉인 루프백
             _scopeBarrier  = scopeBarrier;  // v10.1.0 — 드라이런/실전 라우팅 권위(전환 쿨다운·에폭 펜스)
+            _slaGate       = slaGate;       // v10.1.0 Final — 드레인 사이클 지연 SLA 계측(주입 시)
+            _jitterGuard   = jitterGuard;   // v10.1.0 Final — ★디스케줄 아티팩트 배제(퓨즈 오트립 방지)
             _pinGrid       = pinGrid;
             _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
@@ -109,7 +116,21 @@ namespace StockManager.Common
                 if (!intact) { Freeze("이중키(ValveWired ∧ LiveArmingWired) 무결성 붕괴 — 영구 락업"); return; }
             }
             // ★드레인 루프 예외 = 강등 아님. 즉시 ForceFreeze 단일 소스로 파이프라인 영구 락업(모호한 지속 금지).
-            try   { _dispatcher.Drain(Dispatch); }
+            try
+            {
+                if (_slaGate is { } sla)
+                {
+                    // ★나노 SLA 계측: 드레인 사이클 지연(δ=0). per-op QPC 계측은 sub-100ns op 을 왜곡(관측자 효과)하므로 사이클
+                    //   경계에서 측정. 지터 가드 admit(디스케줄/역행시계 아티팩트 배제) 표본만 히스토그램 계상 → SLA 퓨즈 오트립 방지.
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    _dispatcher.Drain(Dispatch);
+                    long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    long nanos = SlaTickFreq > 0L ? (long)((System.Int128)dt * 1_000_000_000L / SlaTickFreq) : 0L;
+                    if (_jitterGuard is { } jg) { if (jg.Admit(nanos)) sla.Record(nanos); }
+                    else sla.Record(nanos);
+                }
+                else _dispatcher.Drain(Dispatch);
+            }
             catch (Exception ex) { Freeze("드레인 루프 예외 — 영구 락업: " + ex.Message); }
         }
 

@@ -352,6 +352,8 @@ namespace StockManager.Blazor
             //   봉인 없이 또는 드라이런↔실전 전환 찰나엔 실전 무장 불가(tighten-only·liveArmed:false — 전 시스템 인증 전 실 사출 0).
             LiveFlightCertificationSealer? certSealerRef = null;
             ScopeSealedTransitionBarrier?  scopeBarrierRef = null;
+            LatencySlaGatekeeper?          slaGateRef = null;       // v10.1.0 Final — SLA P99.99 이탈 시 무장 tighten
+            SlaJitterRegressionGuard?      jitterGuardRef = null;   // v10.1.0 Final — 측정 지터 회귀 시 무장 tighten
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
@@ -371,7 +373,9 @@ namespace StockManager.Blazor
                                 || (chaosGuardRef?.SafeHoldActive ?? false)
                                 || (keyPulseRef?.SafeHoldActive ?? false)
                                 || (certSealerRef?.CertificationBlocking ?? false)
-                                || (scopeBarrierRef?.TransitionBlocking ?? false));
+                                || (scopeBarrierRef?.TransitionBlocking ?? false)
+                                || (slaGateRef?.IsBreached ?? false)               // v10.1.0 Final — 나노 SLA P99.99 이탈 → 무장 tighten
+                                || (jitterGuardRef?.RegressionTripped ?? false));  // v10.1.0 Final — 측정 신뢰불가 회귀 → 무장 tighten
             // ★v10.1.0 디스패처 무장 술어 = 드라이런 스코프(가상 미러 급전·barrier RouteNow 가 broker 를 물리 차단) ∨ 실전 무장.
             //   드라이런 'armed' 는 오직 미러로만 도달 — 실 브로커 소켓 0비트(liveArmed:false 불변·barrier=DryRun→미러, =Live→게이트웨이).
             Func<bool> armedPredicate = () => { try { return (scopeBarrierRef?.DryRunActive ?? false) || liveArmed(); } catch { return false; } };
@@ -763,11 +767,25 @@ namespace StockManager.Blazor
             scopeBarrier.SetInitialMode(cfg.GetBool("Dispatch.ValveWired", false)
                 ? ScopeSealedTransitionBarrier.MODE_LIVE : ScopeSealedTransitionBarrier.MODE_DRYRUN);
             var certSealer   = new LiveFlightCertificationSealer(audit: ignAudit);
+            // v10.1.0 Final Packaging — 나노 SLA 게이트키퍼 + ★Think-Beyond 지터 회귀 가드 + 릴리스 SHA-256 봉인기.
+            //   ★liveArmed:false: 전부 순수 계측/판정/해시 — IBroker·소켓·onSend 참조 0. SLA 퓨즈 ForceFreeze 는 옵트인(Sla.FuseArmed·
+            //     기본 미무장 → 이탈은 blockWhile tighten-only). 기대 봉인(Release.ExpectedMasterSeal) 미주입 = 미검증(마스터 인증 불가·fail-closed).
+            var jitterGuard  = new SlaJitterRegressionGuard();
+            var slaGate      = new LatencySlaGatekeeper(
+                slaP9999Nanos: cfg.GetInt("Sla.P9999BudgetNanos", 500_000, 1000, 100_000_000),   // 드레인 사이클 P99.99 예산(기본 500µs)
+                attestation:   cfg.GetBool("Sla.FuseArmed", false) ? attestation : null);          // ★ForceFreeze 옵트인(기본 tighten-only)
+            var releaseAttestor = new ReleaseArtifactSha256Attestor(
+                expectedSealHex: cfg.GetString("Release.ExpectedMasterSeal", ""), audit: ignAudit);
             certSealerRef    = certSealer;     // 무장 술어 blockWhile 결속(유효 봉인 없으면 tighten)
             scopeBarrierRef  = scopeBarrier;   // 무장 술어(드라이런 급전 + 전환 쿨다운 tighten)
+            slaGateRef       = slaGate;        // 무장 술어 blockWhile(SLA P99.99 이탈 tighten)
+            jitterGuardRef   = jitterGuard;    // 무장 술어 blockWhile(측정 지터 회귀 tighten)
             services.AddSingleton(mockMirror);
             services.AddSingleton(scopeBarrier);
             services.AddSingleton(certSealer);
+            services.AddSingleton(slaGate);
+            services.AddSingleton(jitterGuard);
+            services.AddSingleton(releaseAttestor);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -778,7 +796,8 @@ namespace StockManager.Blazor
                 sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst,
                 chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer,
                 ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit,
-                mockMirror: mockMirror, certSealer: certSealer, scopeBarrier: scopeBarrier);
+                mockMirror: mockMirror, certSealer: certSealer, scopeBarrier: scopeBarrier,
+                slaGate: slaGate, jitterGuard: jitterGuard, releaseAttestor: releaseAttestor);   // v10.1.0 Final — 나노 SLA·지터·릴리스 봉인 텔레메트리
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -817,7 +836,8 @@ namespace StockManager.Blazor
                 dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런은 무결성 통과(오동결 방지)
                 pinGrid: cpuGrid,   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
                 gateway: ignGateway,   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
-                mockMirror: mockMirror, scopeBarrier: scopeBarrier);   // v10.1.0 — 드라이런 스코프면 실 브로커 대신 가상 미러로 봉인 루프백
+                mockMirror: mockMirror, scopeBarrier: scopeBarrier,   // v10.1.0 — 드라이런 스코프면 실 브로커 대신 가상 미러로 봉인 루프백
+                slaGate: slaGate, jitterGuard: jitterGuard);   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

@@ -247,6 +247,15 @@ namespace StockManager.Common
         public readonly long   CertSealValid;               // 1=유효 봉인(100/100·무장 허용)
         public readonly long   CertSeal;                    // 인증 봉인 하위 32비트(포렌식)
         public readonly long   ScopeTransitionBounces;      // ★Think-Beyond 스코프 전환 Bounce+스테일 거부 누적
+        // v10.1.0 Final Packaging — Nano SLA & Release Attestation.
+        public readonly long   SlaP9999Nanos;              // 나노 SLA P99.99 지연(ns·지터 필터 후)
+        public readonly long   SlaGateVeto;                // 1=SLA 게이트키퍼 트립(P99.99 이탈·발주 차단)
+        public readonly long   SlaJitterRejects;           // ★Think-Beyond 디스케줄 아티팩트 배제 누적
+        public readonly long   JitterRatePermille;         // 측정 지터(배제)율(‰)
+        public readonly long   JitterRegressionTripped;    // ★Think-Beyond 1=측정 환경 신뢰불가 회귀 래치
+        public readonly long   ReleaseSealValid;           // 1=릴리스 아티팩트 SHA-256 봉인 검증 성공
+        public readonly long   ReleaseSealHex;             // 릴리스 봉인 하위 32비트(포렌식 헥스)
+        public readonly long   MasterReleaseCertified;     // 1=SLA통과∧봉인유효∧지터정상(마스터 릴리스 인증)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -313,7 +322,9 @@ namespace StockManager.Common
                              long ignitionDualKeyWired = 0L, long ignitionState = 0L, long ignitionVetoes = 0L, long ignitionLastVetoCode = 0L,
                              long ignitionAuditRecords = 0L, long hardwareKeyPulseAlive = 0L, long ignitionDoubleDispatchBlocks = 0L, long ignitionSealedEmissions = 0L,
                              long dryRunActive = 0L, long mockVirtualFills = 0L, long mockLastSlippageBps = 0L, long mockLastFillRttNanos = 0L,
-                             long certScore = 0L, long certSealValid = 0L, long certSeal = 0L, long scopeTransitionBounces = 0L)
+                             long certScore = 0L, long certSealValid = 0L, long certSeal = 0L, long scopeTransitionBounces = 0L,
+                             long slaP9999Nanos = 0L, long slaGateVeto = 0L, long slaJitterRejects = 0L, long jitterRatePermille = 0L,
+                             long jitterRegressionTripped = 0L, long releaseSealValid = 0L, long releaseSealHex = 0L, long masterReleaseCertified = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -509,6 +520,14 @@ namespace StockManager.Common
             CertSealValid                = certSealValid;
             CertSeal                     = certSeal;
             ScopeTransitionBounces       = scopeTransitionBounces;
+            SlaP9999Nanos                = slaP9999Nanos;
+            SlaGateVeto                  = slaGateVeto;
+            SlaJitterRejects             = slaJitterRejects;
+            JitterRatePermille           = jitterRatePermille;
+            JitterRegressionTripped      = jitterRegressionTripped;
+            ReleaseSealValid             = releaseSealValid;
+            ReleaseSealHex               = releaseSealHex;
+            MasterReleaseCertified       = masterReleaseCertified;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -783,6 +802,12 @@ namespace StockManager.Common
         public bool    CertificationFailed       => CertSealValid == 0L && CertScore > 0L && CertScore < 100L; // ★암흑자색(인증 실패)
         public bool    ScopeContamination        => ScopeTransitionBounces > 0L;                             // ★암흑자색(스코프 오염 시도)
         public bool    MockMirrorActive          => MockVirtualFills > 0L;                                   // 가상 미러 가동
+        // v10.1.0 Final Packaging — Nano SLA & Release Packaging UI 헬퍼.
+        public bool    NanoSlaCertified          => MasterReleaseCertified != 0L;                              // 청/녹 [MASTER RELEASED - NANO SLA CERTIFIED]
+        public bool    SlaViolation              => SlaGateVeto != 0L;                                         // ★암흑자색(SLA P99.99 이탈)
+        public bool    JitterApproach            => JitterRegressionTripped == 0L && JitterRatePermille >= 50L; // 황색(지터 임접·회귀 전)
+        public bool    JitterRegression          => JitterRegressionTripped != 0L;                             // ★암흑자색(측정 신뢰불가 회귀)
+        public bool    ReleaseUncertified        => MasterReleaseCertified == 0L && SlaGateVeto == 0L && JitterRegressionTripped == 0L; // 황색(미인증·정상)
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -803,7 +828,8 @@ namespace StockManager.Common
         //   (v9.1.0 카오스 샌드박스: 샌드박스상태·결함마스크·주입수·라이브락탈출·torn차단·복구상태·재현시드·SafeHold 8필드 추가로 178필드 → 128+178×8=1552 → Size 1536→1600(64×25·잔여 6슬롯=48B).)
         //   (v10.0.0 Genesis 점화: 이중키결속·점화상태·veto수·veto코드·감사기록·키펄스·이중사출봉쇄·봉인사출 8필드 추가로 186필드 → 128+186×8=1616 → Size 1600→1664(64×26·잔여 6슬롯=48B).)
         //   (v10.1.0 드라이런/인증: 드라이런활성·가상체결·슬리피지·RTT·인증점수·봉인유효·봉인·스코프Bounce 8필드 추가로 194필드 → 128+194×8=1680 → Size 1664→1728(64×27·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1728)]
+        //   (v10.1.0 Final Packaging: SLA P99.99·SLA veto·지터배제·지터율·지터회귀·릴리스봉인유효·릴리스봉인헥스·마스터인증 8필드 추가로 202필드 → 128+202×8=1744 → Size 1728→1792(64×28·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1792)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -944,6 +970,9 @@ namespace StockManager.Common
         private readonly MockExecutionOrderBookMirror? _mockMirror; // v10.1.0 — 가상 체결 미러(옵션·읽기)
         private readonly LiveFlightCertificationSealer? _certSealer; // v10.1.0 — 전방위 인증 봉인기(옵션·읽기·Sample 이 Certify)
         private readonly ScopeSealedTransitionBarrier? _scopeBar;   // v10.1.0 — 스코프 전환 장벽(옵션·읽기)
+        private readonly LatencySlaGatekeeper? _slaGate;             // v10.1.0 Final — 나노 SLA 게이트키퍼(옵션·읽기·Sample 이 EvaluateSla)
+        private readonly SlaJitterRegressionGuard? _jitterGuard;     // v10.1.0 Final — ★Think-Beyond 측정-무결성 게이트(옵션·읽기)
+        private readonly ReleaseArtifactSha256Attestor? _releaseAttestor; // v10.1.0 Final — 릴리스 아티팩트 봉인기(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1034,7 +1063,10 @@ namespace StockManager.Common
                                       SealedEmissionInterlock? sealedEmission = null,
                                       MockExecutionOrderBookMirror? mockMirror = null,
                                       LiveFlightCertificationSealer? certSealer = null,
-                                      ScopeSealedTransitionBarrier? scopeBarrier = null)
+                                      ScopeSealedTransitionBarrier? scopeBarrier = null,
+                                      LatencySlaGatekeeper? slaGate = null,
+                                      SlaJitterRegressionGuard? jitterGuard = null,
+                                      ReleaseArtifactSha256Attestor? releaseAttestor = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1119,6 +1151,9 @@ namespace StockManager.Common
             _mockMirror   = mockMirror;
             _certSealer   = certSealer;
             _scopeBar     = scopeBarrier;
+            _slaGate      = slaGate;
+            _jitterGuard  = jitterGuard;
+            _releaseAttestor = releaseAttestor;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1330,6 +1365,13 @@ namespace StockManager.Common
                 if (_certSealer is { } cs) { _channel.TryRead(out var lastF); cs.Certify(in lastF); certScore = cs.Score; if (cs.SealValid) certValid = 1L; certSeal = cs.Seal & 0xFFFFFFFFL; }   // ★직전 프레임(N-1) 채점 — 결과는 프레임 N 에 발행
                 if (_mockMirror is { } mm) { mockFills = mm.VirtualFills; mockSlip = mm.LastSlippageBps; mockRtt = mm.LastFillRttNanos; }
                 if (_scopeBar is { } sb) { if (sb.DryRunActive) dryRun = 1L; scopeBounce = sb.ScopeBounces + sb.StaleRejects; }
+                // v10.1.0 Final Packaging — 나노 SLA 평가 + 지터 회귀 + 릴리스 봉인 + 마스터 인증(fail-closed).
+                long slaP9999 = 0L, slaVeto = 0L, slaMeasured = 0L, jitterRej = 0L, jitterRate = 0L, jitterRegr = 0L, relSealValid = 0L, relSealHex = 0L, masterCert = 0L;
+                if (_slaGate is { } slaG) { bool okSla = slaG.EvaluateSla(); slaP9999 = slaG.LastP9999Nanos; if (!okSla) slaVeto = 1L; if (slaG.Count > 0L) slaMeasured = 1L; }   // ★샘플러(단일 평가자)가 EvaluateSla — 발주 핫패스는 Record 만(δ=0)
+                if (_jitterGuard is { } jitG) { jitterRej = jitG.JitterRejects; jitterRate = jitG.JitterRatePermille; if (jitG.RegressionTripped) jitterRegr = 1L; }
+                if (_releaseAttestor is { } relA) { if (relA.SealValid) relSealValid = 1L; relSealHex = relA.SealHex64 & 0xFFFFFFFFL; }
+                // ★마스터 인증(fail-closed): 실 SLA 측정(≥1표본) ∧ P99.99 미이탈 ∧ 봉인 검증 성공 ∧ 지터 회귀 없음 — 넷 모두. 모듈 미배선/미측정 시 0.
+                if (relSealValid == 1L && slaMeasured == 1L && slaVeto == 0L && jitterRegr == 0L) masterCert = 1L;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1362,7 +1404,8 @@ namespace StockManager.Common
                     sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth,
                     chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold,
                     ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed,
-                    dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce));
+                    dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce,
+                    slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

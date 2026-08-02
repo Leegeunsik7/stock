@@ -31,6 +31,8 @@ namespace StockManager.Common
         Freeze           = 8,   // 비상 동결
         Certification    = 9,   // 전방위 인증 봉인(v10.1.0)
         DryRun           = 10,  // 드라이런 가상 체결(v10.1.0)
+        ReleaseAttestation = 11, // 릴리스 아티팩트 SHA-256 포렌식 봉인(v10.1.0 Final Packaging)
+        SlaBreach        = 12,  // 나노 SLA P99.99 이탈 트립(v10.1.0 Final Packaging)
     }
 
     /// <summary>점화 감사 레코드(64B blittable·δ=0). µs 타임스탬프 + 포렌식 해시.</summary>

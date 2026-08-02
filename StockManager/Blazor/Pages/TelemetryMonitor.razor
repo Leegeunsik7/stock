@@ -913,6 +913,66 @@
         }
     </div>
 
+    @* ══ v10.1.0 Final: Release Packaging & Nano SLA 관제 ══════════════════════ *@
+    @{
+        bool slaViol    = _frame.SlaViolation;         // SLA P99.99 이탈(암흑자색)
+        bool jitterRegr = _frame.JitterRegression;     // 측정 신뢰불가 회귀=변조 등가(암흑자색)
+        bool masterCert = _frame.NanoSlaCertified;     // 마스터 릴리스 인증(청/녹)
+        bool jitterAppr = _frame.JitterApproach;       // 지터 임접(황색)
+        bool relUncert  = _frame.ReleaseUncertified;   // 미인증·정상(황색)
+        bool slaAlarm   = slaViol || jitterRegr;
+        long slaForensic = (_frame.ReleaseSealHex << 8) | (_frame.SlaGateVeto << 1) | _frame.JitterRegressionTripped;
+        double p9999Us  = _frame.SlaP9999Nanos / 1000.0;
+        double jitPct   = _frame.JitterRatePermille / 10.0;
+    }
+    @* SLA P99.99 이탈 또는 측정 지터 회귀(바이너리 변조 등가) → 암흑자색 전체화면 오버레이 + 포렌식 헥스(정적 투사) *@
+    @if (slaAlarm)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99989;background:radial-gradient(circle,rgba(74,20,140,0.10),rgba(40,10,70,0.34));border:9px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.7s ease-in-out infinite"></div>
+        <div style="position:fixed;top:440px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.96);color:#e1bee7;padding:12px 30px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 30px rgba(123,31,162,0.8)">
+            <div style="font-size:16px;font-weight:800">🟣 @(slaViol ? "[NANO SLA P99.99 BREACH - ARM SEALED]" : "[MEASUREMENT JITTER REGRESSION - CERT REVOKED]")</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">P99.99 @(p9999Us.ToString("F1"))µs · 지터율 @(jitPct.ToString("F1"))% · SEAL 0x@(_frame.ReleaseSealHex.ToString("X")) · FORENSIC 0x@(slaForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(slaAlarm ? "kpi-alert" : (masterCert ? "kpi-hotswap-ok" : ((jitterAppr || relUncert) ? "kpi-amber" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">📦 Final Release Packaging &amp; Nano SLA (P99.99 지터 필터 · SHA-256 릴리스 봉인)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:390px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (slaAlarm)
+                    {
+                        <span class="prod-badge" style="background:rgba(123,31,162,0.28);color:#ce93d8;box-shadow:0 0 8px rgba(123,31,162,0.6)">@(slaViol ? "[SLA BREACH - ARM SEALED]" : "[JITTER REGRESSION - CERT REVOKED]")</span>
+                    }
+                    else if (masterCert)
+                    {
+                        <span class="prod-badge" style="background:rgba(38,166,154,0.26);color:#4db6ac;box-shadow:0 0 12px rgba(38,166,154,0.7)">[v10.1.0 MASTER RELEASED - NANO SLA CERTIFIED]</span>
+                    }
+                    else if (jitterAppr)
+                    {
+                        <span class="prod-badge chaos-amber">[SLA JITTER APPROACHING - MONITORING]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge chaos-amber">[RELEASE UNCERTIFIED - AWAITING SIGNED MANIFEST]</span>
+                    }
+                </div>
+                <div class="kpi-sub">P99.99 <b style="font-family:var(--mono);color:@(slaViol ? "#ce93d8" : "#66bb6a")">@(p9999Us.ToString("F1"))µs</b> · SLA <b style="color:@(slaViol ? "#ce93d8" : "#66bb6a")">@(slaViol ? "VETO" : "PASS")</b> · 봉인 <b style="color:@(_frame.ReleaseSealValid != 0L ? "#66bb6a" : "#ffb74d")">@(_frame.ReleaseSealValid != 0L ? "VALID" : "─")</b> 0x@(_frame.ReleaseSealHex.ToString("X"))</div>
+            </div>
+            <div style="min-width:230px">
+                <div class="kpi-value" style="font-size:14px">지터 배제 <b style="font-family:var(--mono)">@_frame.SlaJitterRejects.ToString("N0")</b></div>
+                <div class="kpi-sub">지터율 <b style="font-family:var(--mono)">@(jitPct.ToString("F1"))</b>% · 회귀 <b style="color:@(jitterRegr ? "#ce93d8" : "#66bb6a")">@(jitterRegr ? "TRIPPED" : "CLEAN")</b> · ★디스케줄 아티팩트 배제(퓨즈 오트립 방지)</div>
+            </div>
+            <div style="min-width:210px">
+                <div class="kpi-value" style="font-size:14px">마스터 인증 <b style="color:@(masterCert ? "#4db6ac" : "#ffb74d")">@(masterCert ? "CERTIFIED" : "─")</b></div>
+                <div class="kpi-sub">SLA통과 ∧ SHA-256 봉인유효 ∧ 지터정상 — ★liveArmed:false(물리 이중 키 전 실물 0)</div>
+            </div>
+        </div>
+        @if (relUncert && !slaAlarm)
+        {
+            <div class="kpi-sub" style="margin-top:6px">Release uncertified — 서명 매니페스트(Release.ExpectedMasterSeal) 미주입(fail-closed·정상). 드레인 사이클 지연을 ★Think-Beyond 지터 가드로 필터(디스케줄/역행시계 아티팩트 배제 → SLA 퓨즈 오트립 방지) 후 P99.99 히스토그램에 계상. 패키징 시 ReleasePackager 가 CausalAuditVault 제네시스와 결합한 masterSeal 을 생성하고, 실행 바이너리 SHA-256 을 그 봉인과 대조해 무결성 검증(변조/누락 감지). ★전 경로 liveArmed:false — SLA 100점·봉인 유효여도 물리 이중 키(ValveWired ∧ LiveArmingWired) 전 실 브로커 소켓 0비트.</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">
