@@ -465,8 +465,14 @@ namespace StockManager.Common
 
         private void Freeze(string reason)
         {
-            Volatile.Write(ref _stateCode, (int)AccountingState.Frozen);
+            // ★publish-after-effect(관측 순서 역전 봉쇄): 동결 효과(ForceFreeze=att.Mode release-write)를 '먼저' 발행하고,
+            //   관측 플래그(_stateCode)를 '마지막'에 원자 게시(Active→Frozen CAS·멱등). IsFrozen 은 (_stateCode==Frozen ∨
+            //   att.Mode==EmergencyFreeze) 2-소스 OR 이므로 IsFrozen==true 관측 시 att.Mode==EmergencyFreeze 를 release/acquire
+            //   로 반드시 동반(선행 레이스 봉쇄). ★모든 호출자가 실행 — 동결을 결정한 스레드(회계 DrainLoop 포함)의 자기 관측
+            //   (직후 IsFrozen·break)을 타 스레드 발행에 위임하지 않는다(단발 청구가 유발하던 회계 무결성 fail-open 창 제거).
+            //   ForceFreeze 는 멱등(att.Mode 이미 Frozen 이면 유지) — 동시 호출은 감사 중복만·효과 동일. 예외 시에도 상태 래치 유지.
             try { _att?.ForceFreeze("LiveAccountingMesh: " + reason); } catch { /* 동결 실패해도 상태 래치 유지 */ }
+            Interlocked.CompareExchange(ref _stateCode, (int)AccountingState.Frozen, (int)AccountingState.Active);
         }
 
         public void Dispose()

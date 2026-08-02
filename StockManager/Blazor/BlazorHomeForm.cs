@@ -345,6 +345,9 @@ namespace StockManager.Blazor
             ChaosEngineSanitizer?        chaosRef      = null;
             ChaosRecoveryRateLimiter?    chaosRecovRef = null;
             ChaosResilientProgressGuard? chaosGuardRef = null;
+            // v10.0.0 — 하드웨어 키 펄스 단선/미수신도 무장 술어에 합성(지연 ref·아래 생성). 물리 무장 키가 살아있지 않으면
+            //   무장 불가(tighten-only·liveArmed:false — 물리 키 없이는 실 사출 0). LiveArmingWired 결속 시에만 평가.
+            HardwareKeyPulseHeartbeatSentinel? keyPulseRef = null;
             Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
@@ -360,7 +363,8 @@ namespace StockManager.Blazor
                                 || (antiHookRef?.SafeHoldActive ?? false)
                                 || (chaosRef?.SafeHoldActive ?? false)
                                 || (chaosRecovRef?.RecoveryBlocking ?? false)
-                                || (chaosGuardRef?.SafeHoldActive ?? false));
+                                || (chaosGuardRef?.SafeHoldActive ?? false)
+                                || (keyPulseRef?.SafeHoldActive ?? false));
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -720,6 +724,27 @@ namespace StockManager.Blazor
             services.AddSingleton(chaosReplayer);
             services.AddSingleton(chaosRecovery);
             services.AddSingleton(chaosGuard);
+            // v10.0.0 — Genesis Live Ignition Gateway: 봉인 사출 인터락 + 포렌식 감사 + 하드웨어 키 펄스 심박 + 실전 점화 게이트웨이.
+            //   ★liveArmed:false: 이중 물리 키(ValveWired ∧ LiveArmingWired)는 운영자 하드웨어 — 소프트웨어는 산출/봉인/감사만.
+            //     valve/arming 미결속(기본)이면 강한 사출 시도도 실물 0비트. 키 펄스 단선 시 무장 하향(gateway 최종 빗장 + 하드 래치).
+            var sealedEmit = new SealedEmissionInterlock();
+            var ignAudit   = new IgnitionAuditTrailRecorder();
+            var keyPulse   = new HardwareKeyPulseHeartbeatSentinel(
+                onKeyLost: () => { try { ignition.Lock("하드웨어 키 펄스 지속 단선 — 무장 하드 차단(접점 불량)"); } catch { } },
+                startTimer: true);
+            keyPulseRef    = keyPulse;   // 무장 술어 blockWhile 결속(펄스 단선/미수신 → tighten-only)
+            var ignGateway = new GenesisLiveIgnitionGateway(
+                valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
+                liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false),
+                defensesPass:    armedPredicate,
+                keyPulseAlive:   () => keyPulse.KeyAlive,
+                sealedEmission:  sealedEmit,
+                audit:           ignAudit);
+            services.AddSingleton(sealedEmit);
+            services.AddSingleton(ignAudit);
+            services.AddSingleton(keyPulse);
+            services.AddSingleton(ignGateway);
+            FormClosed += (_, _) => ShutdownTrace.Step("keyPulse", () => keyPulse.Dispose());
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -728,7 +753,8 @@ namespace StockManager.Blazor
                 vault: quantumVault, honeyMesh: honeyMesh, antiHook: antiHook, zeroizer: secureZeroizer,
                 rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 117L,
                 sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst,
-                chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer);
+                chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer,
+                ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -765,7 +791,8 @@ namespace StockManager.Blazor
                 periodMs: 50,
                 attestation: attestation,
                 dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false),
-                pinGrid: cpuGrid);   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
+                pinGrid: cpuGrid,   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
+                gateway: ignGateway);   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

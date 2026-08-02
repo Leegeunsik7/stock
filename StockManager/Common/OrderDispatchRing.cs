@@ -150,7 +150,17 @@ namespace StockManager.Common
         /// <summary>가용 제안을 모두 처리. 무장 시 onSend 호출(+Forwarded), 미무장 시 차단(+GatedOut). 처리 건수 반환.
         /// ★fail-closed 벽: onSend throw 시 SendErrors++·ForceFreeze(즉시 비상 동결)·루프 break(추가 처리 차단).
         /// 단일 소비자 전용(이 디스패처를 동시 Drain 하지 말 것 — 내부 RingConsumer 커서는 비원자).</summary>
+        /// <summary>기존 Action 계약(하위호환) — onSend 정상 복귀 = 실 송출로 계상(Forwarded++). 내부는 Func 코어로 위임.</summary>
         public int Drain(Action<OrderProposal> onSend)
+        {
+            if (onSend is null) throw new ArgumentNullException(nameof(onSend));
+            return Drain((OrderProposal p) => { onSend(p); return true; });
+        }
+
+        /// <summary>★v10.0.0 — onSend 반환으로 실 송출(true=Forwarded)과 하류 veto/봉쇄(false=GatedOut·미송출)를 구별.
+        /// 게이트웨이 최종 빗장 veto(이중키/방어선/펄스 실패)는 예외가 아니라 false 로 알려 Forwarded 오계수를 봉쇄한다
+        /// (veto 는 SendError/ForceFreeze 아님 — fail-safe). throw 는 여전히 Mission-A 벽(ForceFreeze).</summary>
+        public int Drain(Func<OrderProposal, bool> onSend)
         {
             if (onSend is null) throw new ArgumentNullException(nameof(onSend));
             // 이미 비상 동결 상태면 즉시 0 반환 — ForceFreeze 재호출 불요·루프 폭주 차단.
@@ -192,12 +202,8 @@ namespace StockManager.Common
                         _att?.ForceFreeze($"Fat-Finger/폭주 명목속도 인터록 veto — forensic 0x{ff.LastForensic:X}(가격 괴리 또는 집합 폭주·fail-closed)");
                         break;
                     }
-                    try
-                    {
-                        onSend(p);
-                        Interlocked.Increment(ref _forwarded);   // 성공 시만 계상
-                        _blackbox?.Record(FlightEventKind.OrderForwarded, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
-                    }
+                    bool sent;
+                    try { sent = onSend(p); }
                     catch (Exception ex)
                     {
                         // ★Mission A — downstream throw(브로커 단절·네트워크 오류) fail-closed 벽.
@@ -206,6 +212,17 @@ namespace StockManager.Common
                         _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
                         _att?.ForceFreeze("GatedOrderDispatcher downstream throw: " + ex.Message);
                         break;   // 추가 제안 처리 차단 — 동결 후 루프 폭주 방지
+                    }
+                    if (sent)
+                    {
+                        Interlocked.Increment(ref _forwarded);   // ★실 송출 성공 시만 계상
+                        _blackbox?.Record(FlightEventKind.OrderForwarded, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
+                    }
+                    else
+                    {
+                        // ★하류 veto(게이트웨이 이중키/방어선/펄스 실패 또는 봉인 이중사출 봉쇄) = 미송출. SendError/ForceFreeze 아님(fail-safe).
+                        Interlocked.Increment(ref _gatedOut);
+                        _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
                     }
                 }
                 else

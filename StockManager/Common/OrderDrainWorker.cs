@@ -26,6 +26,8 @@ namespace StockManager.Common
         private readonly IBroker                     _broker;
         private readonly OrderAttestationService?    _att;          // v4.87.0 fail-closed 단일 소스
         private readonly Func<bool>?                 _dualKeyIntact; // v4.87.0 이중키 무결성 런타임 검문(옵션)
+        private readonly GenesisLiveIgnitionGateway? _gateway;      // v10.0.0 실물 사출 최종 빗장(옵션·null=기존 직접 경로)
+        private readonly SealedSend?                 _placeSealed;  // v10.0.0 ★δ=0: PlaceSealed 델리게이트 1회 캐시(사출당 변환 할당 제거)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
         private readonly CpuAffinityPinningGrid?      _pinGrid;   // v7.3.0 — 주입 시 전용 P-Core 핀 드레인 스레드 모드
@@ -45,12 +47,15 @@ namespace StockManager.Common
                                 bool wired, int periodMs = 50,
                                 OrderAttestationService? attestation = null,
                                 Func<bool>? dualKeyIntact = null,
-                                CpuAffinityPinningGrid? pinGrid = null)
+                                CpuAffinityPinningGrid? pinGrid = null,
+                                GenesisLiveIgnitionGateway? gateway = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
             _att           = attestation;
             _dualKeyIntact = dualKeyIntact;
+            _gateway       = gateway;   // v10.0.0 — 주입 시 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유
+            _placeSealed   = gateway != null ? PlaceSealed : null;   // ★δ=0: 델리게이트 1회 생성(핫패스 변환 할당 제거)
             _pinGrid       = pinGrid;
             _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
@@ -107,16 +112,40 @@ namespace StockManager.Common
             try { _att?.ForceFreeze("OrderDrainWorker " + reason); } catch { /* 동결 실패해도 진행 오염 금지 */ }
         }
 
-        private void Dispatch(OrderProposal p)
+        // 반환: true=실 송출(Forwarded), false=하류 veto(미송출·GatedOut). throw=Mission-A 벽(ForceFreeze).
+        private bool Dispatch(OrderProposal p)
         {
-            // KSE 6자리 범위를 이탈한 코드는 조용히 건너뜀(ForceFreeze 불필요 — 상류 버그).
-            if (p.SymbolCode < 1 || p.SymbolCode > 999_999) return;
+            // KSE 6자리 범위를 이탈한 코드는 조용히 건너뜀(상류 버그) — 기존 계상 보존(true).
+            if (p.SymbolCode < 1 || p.SymbolCode > 999_999) return true;
+
+            // ★v10.0.0 최종 빗장: 게이트웨이 주입 시 실물 사출을 이중키∧방어선∧펄스 재검 + 단발 개통 + 봉인 사출
+            //   (exactly-once·torn 방어) 경유. veto 시 false(미사출·fail-safe·Dispatcher 는 GatedOut). 미주입(기본)이면 직접 경로(동작 불변·true).
+            if (_gateway is { } gw)
+                return gw.Emit(p.OrderId, p.SymbolCode, p.SideByte, p.KindByte, p.PriceRaw, p.QtyRaw, _placeSealed!);
 
             var symbol     = p.SymbolCode.ToString("D6");
             var side       = p.Side == OrderSide.Buy ? PaperSide.Buy : PaperSide.Sell;
             var kind       = p.KindByte == 0 ? PaperKind.Market : PaperKind.Limit;
             var qty        = p.Qty.ToDecimal();
             var limitPrice = p.Price.ToDecimal();
+
+            var (ok, msg) = _broker.Place(
+                PaperAsset.Stock, symbol, symbol,
+                side, kind, qty, limitPrice, limitPrice);
+
+            if (!ok)
+                throw new InvalidOperationException($"Broker.Place 거부: {msg}");
+            return true;
+        }
+
+        // ★v10.0.0 봉인 사출: 게이트웨이가 봉인한 불변 토큰만 소켓으로. 거부 시 throw → 상류 Mission-A 벽(ForceFreeze).
+        private void PlaceSealed(in SealedOrderToken t)
+        {
+            var symbol     = t.SymbolCode.ToString("D6");
+            var side       = t.SideByte == 0 ? PaperSide.Buy : PaperSide.Sell;
+            var kind       = t.KindByte == 0 ? PaperKind.Market : PaperKind.Limit;
+            var qty        = new QQty(t.QtyRaw).ToDecimal();
+            var limitPrice = new QPrice(t.PriceRaw).ToDecimal();
 
             var (ok, msg) = _broker.Place(
                 PaperAsset.Stock, symbol, symbol,

@@ -31,10 +31,21 @@
          반대 극성(opt-out 제외). 인프라 해방(플랫폼 네이티브 디커플링) 테마 정합. Default 빌드는 WEBONLY 미정의(네이티브 포함). -->
     <DefineConstants Condition="'$(WebOnly)'=='true'">$(DefineConstants);WEBONLY</DefineConstants>
 
-    <Version>9.1.0</Version>
-    <AssemblyVersion>9.1.0.0</AssemblyVersion>
-    <FileVersion>9.1.0.0</FileVersion>
-    <!-- v9.1.0 — 극단적 카오스 결함 주입 샌드박스(ChaosEngineSanitizer & Fault Injection Framework).
+    <Version>10.0.0</Version>
+    <AssemblyVersion>10.0.0.0</AssemblyVersion>
+    <FileVersion>10.0.0.0</FileVersion>
+    <!-- v10.0.0 — Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
+         선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.
+         [Task 0 선행 정돈] LiveAccountingMesh.Freeze — IsFrozen vs ForceFreeze 순서 레이스 핀포인트 교정. 단발 청구(_freezeClaim CAS 0→1·최초 1스레드만 효과 발행) + publish-after-effect(ForceFreeze[att.Mode release]를 먼저·_stateCode 관측 플래그를 마지막에 게시) → IsFrozen==true 관측 시 att.Mode==EmergencyFreeze 를 release/acquire 로 반드시 동반(고부하 16스레드 herd 100% 결정론). _att.Mode 분기 유지(외부 ForceFreeze 반영).
+         [Task 1] GenesisLiveIgnitionGateway — 하드웨어 밸브 키(ValveWired) ∧ 마스터 물리 무장 키(LiveArmingWired) 이중 논리곱 ∧ 전 방어선(blockWhile: PreFlight/Lease/DeadMan/FatFinger/Chaos…) ∧ 하드웨어 키 펄스 생존을 δ=0 엄격 산출. 전부 PASS 시에만 실물 사출 경로(onSend)를 1회성(Single-Shot) 원자 CAS 개통. 매 사출 재검(fail-closed)·실 사출은 SealedEmissionInterlock 필수 경유. veto 포렌식 코드(밸브/무장/방어선/펄스). OrderDrainWorker 최종 빗장 배선(additive·미주입 시 동작 불변).
+         [Gemini 보강1] IgnitionAuditTrailRecorder — MmfFlightRecorder δ=0 멀티라이터 tri-state 링 미러(원자 인덱스 청구+랩 가드+_inFlight 드레인). 무장 변경/점화 시도/사출/펄스 단선을 64B 레코드에 µs 타임스탬프(Int128 변환) + FNV-1a-64 포렌식 해시로 각인. SnapshotRecent(최신순 wrap-torn 격리)·VerifyIntegrity(변조 탐지)·Seal.
+         [Gemini 보강2] HardwareKeyPulseHeartbeatSentinel — DeadMan 주입-시계 심박 미러. 50ms 물리 펄스 스캔·타임아웃 내 무펄스=단선. 2티어: 가역(펄스 복원 시 KeyAlive 자동 재개) + 하드 래치(sustainThreshold 지속 단선 → 1회성 CAS + onKeyLost=IgnitionLock.Lock). ★dormant(미수신)와 loss(살아있다 단선) 분별 — dormant는 SafeHold(tighten)만.
+         [★Task 3 Think Beyond] SealedEmissionInterlock — 제미나이 A(티켓 락)/B(커밋-동결 토큰)를 '단일 봉인'으로 통합·초월: 실물 사출을 소켓 접촉 이전에 봉인 = ①주문별 exactly-once 원자 CAS 래치(double-dispatch 0%) + ②불변 페이로드 토큰 동결(조립 중 중단이 반쪽 노출 못함) + ③FNV-1a-64 무결성 seal(torn 탐지). onSend 는 불변 토큰만 in-ref 수령. 두 스레드가 같은 주문을 봉인 불가·봉인 후 반쪽 사출 불가.
+         [텔레메트리/UI] RingTelemetry +8필드(이중키결속·점화상태·veto수·veto코드·감사기록·키펄스·이중사출봉쇄·봉인사출, Cell Size 1600→1664=64×26=186필드)·Publisher 4주입(ignitionGateway/ignitionAudit/keyPulse/sealedEmission). BlazorHomeForm 무장 술어 blockWhile 에 keyPulse.SafeHoldActive tighten-only 합성(물리 키 없이 무장 불가). TelemetryMonitor 🚀 [Genesis Live Ignition Gateway] 패널(청/녹 [GENESIS IGNITION ACTIVE - PHYSICAL DUAL-KEY WIRED]·황색 키 펄스 단선·암흑자색 [IGNITION VETO] 오버레이+포렌식).
+         [불변] δ=0(Emit/질의/Record/TrySealAndEmit/Pulse 핫패스 힙 0 실증)·결정론(주입 시계·FNV 순수·Int128 µs)·fail-closed(어느 키/방어선/펄스 실패→veto·미사출)·liveArmed:false(★이중 물리 키 미결속[기본]이면 강한 사출 시도도 브로커 소켓으로 1비트 실물 누수 0 — gateway 최종 빗장 + 봉인 인터락 물리 봉쇄·디스패처 드레인 경로 forwarded 0 실증). 유닛 +11. 회귀 0.
+         [적대검증] 6렌즈(find→반증-verify) 2라운드 확정 7(FP 5·★liveArmed:false 실물 누수 0 확증) 교정. 라운드1(배선): ①OrderDrainWorker.Dispatch PlaceSealed 인스턴스 메서드그룹→SealedSend 변환이 사출당 64B 힙 할당(C# 11+ 캐싱 static 한정) → 생성자 _placeSealed 델리게이트 1회 캐시(δ=0 복원) ②게이트웨이 veto(미사출)를 Forwarded(실 송출)로 오계수 → OrderDispatchRing.Drain Func&lt;OrderProposal,bool&gt; overload 신설(true=송출·false=하류 veto→GatedOut·Action wrapper 하위호환) ③VerifyIntegrity 동시 Record 하 torn 슬롯 오판 → 사후 MemoryBarrier+live 재검 미러링. 라운드2(수정후 재검·전 렌즈 완주): ④★HardwareKeyPulse freq 폴백을 고정 1e7 로 단정(자체시계는 Stopwatch.GetTimestamp=호스트 QPC)→비-1e7 QPC 호스트서 죽은 키 미탐 fail-open → Stopwatch.Frequency 매칭(high) ⑤IgnitionAudit 동일 µs 왜곡 → Stopwatch.Frequency ⑥★내 Task 0 단발 _freezeClaim 청구가 회계 DrainLoop 의 자기 관측(직후 break)을 타 스레드 발행에 위임 회귀 → 단발 제거·모든 호출자 ForceFreeze(먼저)+CAS _stateCode(나중)·자기 break 보장 ⑦실전 사출 경로(Dispatch→PlaceSealed→broker) end-to-end 미검증 → recording 브로커 테스트 추가. ★핵심 교훈: freq 폴백은 tick 소스와 매칭(자체시계=Stopwatch.Frequency·주입틱전용=고정1e7). 전 교정 δ=0·liveArmed:false 유지.
+         ── (이하 v9.1.0) ──
+         극단적 재난 하에서도 터미널의 fail-closed 안전 불변식이 100% 사수됨을 실증하는 카오스 공학 프레임워크.
          극단적 재난 하에서도 터미널의 fail-closed 안전 불변식이 100% 사수됨을 실증하는 카오스 공학 프레임워크.
          [Task 1] ChaosEngineSanitizer — δ=0 결함 주입 엔진. 결함 비트마스크(소켓 지터/패킷드롭·메모리 압박·서멀 드롭·seqlock torn read). 주입 즉시 SafeHoldActive(가역·tighten-only) 로 무장 하향, 파멸 강도(≥950‰) 결함은 주입식 onForceFreeze 로 원자 하드 동결. IBroker·소켓·onSend·ring 참조 0 — '결함 결정'만 산출(발주 유발 0). 결정론 시드 스트림(Interlocked 전진 SplitMix64)으로 패킷 드롭/지터 결정.
          [Gemini 보강1] DeterministicChaosReplayer — 검증된 무할당 DeterministicPrng(SplitMix64) 재사용(6번째 중복 금지). 시드 하나로 시간축 결함 순서·강도·조합을 100% 결정론 재현. Reset(seed)→Next() 동일 시드=동일 시퀀스. 시각 무관·순수 시드 유도. δ=0.

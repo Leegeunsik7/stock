@@ -229,6 +229,15 @@ namespace StockManager.Common
         public readonly long   ChaosRecoveryState;          // 0 ready / 1 cooldown / 2 frozen(복구 스로틀러)
         public readonly long   ChaosReplaySeed;             // 결정론 재현 시드(하위 32비트·리플레이 재현용)
         public readonly long   ChaosSafeHoldActive;         // 1=카오스가 무장 하향 중(sanitizer∨recovery∨guard)
+        // v10.0.0 — Genesis Live Ignition Gateway(실자본 사출 최종 빗장).
+        public readonly long   IgnitionDualKeyWired;        // 1=이중 물리 키(ValveWired ∧ LiveArmingWired) 결속
+        public readonly long   IgnitionState;               // 0 dormant / 1 armed-open / 2 vetoed
+        public readonly long   IgnitionVetoes;              // 점화 거부 누적(방어선/키 실패)
+        public readonly long   IgnitionLastVetoCode;        // 최근 veto 포렌식 비트(밸브/무장/방어선/펄스)
+        public readonly long   IgnitionAuditRecords;        // 포렌식 감사 기록 누적(µs+해시)
+        public readonly long   HardwareKeyPulseAlive;       // 1=물리 키 펄스 생존(50ms 심박)
+        public readonly long   IgnitionDoubleDispatchBlocks; // ★Think-Beyond 이중 사출 봉쇄 누적
+        public readonly long   IgnitionSealedEmissions;     // 봉인 실물 사출 누적
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -291,7 +300,9 @@ namespace StockManager.Common
                              long sorRoutingActive = 0L, long sorRoutes = 0L, long sorLastRoutingCode = 0L, long icebergHiddenQtyRaw = 0L,
                              long icebergsDetected = 0L, long queueFillImminencePermille = 0L, long sorSpoofBlocks = 0L, long liquidityAuthenticityPermille = 0L,
                              long chaosSanitizerState = 0L, long chaosFaultMask = 0L, long chaosInjections = 0L, long chaosLivelockEscapes = 0L,
-                             long chaosTornStateBlocks = 0L, long chaosRecoveryState = 0L, long chaosReplaySeed = 0L, long chaosSafeHoldActive = 0L)
+                             long chaosTornStateBlocks = 0L, long chaosRecoveryState = 0L, long chaosReplaySeed = 0L, long chaosSafeHoldActive = 0L,
+                             long ignitionDualKeyWired = 0L, long ignitionState = 0L, long ignitionVetoes = 0L, long ignitionLastVetoCode = 0L,
+                             long ignitionAuditRecords = 0L, long hardwareKeyPulseAlive = 0L, long ignitionDoubleDispatchBlocks = 0L, long ignitionSealedEmissions = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -471,6 +482,14 @@ namespace StockManager.Common
             ChaosRecoveryState           = chaosRecoveryState;
             ChaosReplaySeed              = chaosReplaySeed;
             ChaosSafeHoldActive          = chaosSafeHoldActive;
+            IgnitionDualKeyWired         = ignitionDualKeyWired;
+            IgnitionState                = ignitionState;
+            IgnitionVetoes               = ignitionVetoes;
+            IgnitionLastVetoCode         = ignitionLastVetoCode;
+            IgnitionAuditRecords         = ignitionAuditRecords;
+            HardwareKeyPulseAlive        = hardwareKeyPulseAlive;
+            IgnitionDoubleDispatchBlocks = ignitionDoubleDispatchBlocks;
+            IgnitionSealedEmissions      = ignitionSealedEmissions;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -733,6 +752,12 @@ namespace StockManager.Common
         public bool    ChaosAnomaly              => ChaosLivelockEscapes > 0L || ChaosTornStateBlocks > 0L;   // ★암흑자색(라이브락/torn fail-closed)
         public bool    ChaosMonitorActive        => ChaosFaultMask == 0L && ChaosSafeHoldActive == 0L && !ChaosAnomaly;  // 청/녹 STANDBY
         public bool    ChaosSafeHolding          => ChaosSafeHoldActive != 0L;                                // 카오스가 무장 하향 중
+        // v10.0.0 — Genesis Live Ignition Gateway UI 헬퍼.
+        public bool    IgnitionActiveOpen        => IgnitionState == 1L && IgnitionDualKeyWired != 0L;        // 청/녹 [GENESIS IGNITION ACTIVE]
+        public bool    IgnitionVetoed            => IgnitionState == 2L || IgnitionLastVetoCode != 0L;        // ★암흑자색(veto)
+        public bool    HardwareKeyDisconnected   => (IgnitionLastVetoCode & (1L << 3)) != 0L;                 // 펄스 단선(황색)
+        public bool    IgnitionDualKeyArmed      => IgnitionDualKeyWired != 0L && HardwareKeyPulseAlive != 0L; // 이중키+펄스 완전 결속
+        public bool    IgnitionDormant           => IgnitionState == 0L && IgnitionVetoes == 0L;              // 미점화(기본)
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -751,7 +776,8 @@ namespace StockManager.Common
         //   (v8.1.0 퀀텀금고: 금고활성·브리치·디코이·후킹상태·결합도·RCU세대·제로검증실패·제로버퍼 8필드 추가로 162필드 → 128+162×8=1424 → Size 1408→1472(64×23·잔여 6슬롯=48B).)
         //   (v9.0.0 SOR/빙산: 라우팅활성·라우팅수·라우팅코드·빙산숨은물량·빙산포획·큐임접률·스푸핑차단·유동성진위 8필드 추가로 170필드 → 128+170×8=1488 → Size 1472→1536(64×24·잔여 6슬롯=48B).)
         //   (v9.1.0 카오스 샌드박스: 샌드박스상태·결함마스크·주입수·라이브락탈출·torn차단·복구상태·재현시드·SafeHold 8필드 추가로 178필드 → 128+178×8=1552 → Size 1536→1600(64×25·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1600)]
+        //   (v10.0.0 Genesis 점화: 이중키결속·점화상태·veto수·veto코드·감사기록·키펄스·이중사출봉쇄·봉인사출 8필드 추가로 186필드 → 128+186×8=1616 → Size 1600→1664(64×26·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1664)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -885,6 +911,10 @@ namespace StockManager.Common
         private readonly ChaosRecoveryRateLimiter?    _chaosRecov;  // v9.1.0 — 복구 스로틀러(옵션·읽기)
         private readonly ChaosResilientProgressGuard? _chaosGuard;  // v9.1.0 — 카오스 진행 보장 가드(옵션·읽기)
         private readonly DeterministicChaosReplayer?  _chaosReplay; // v9.1.0 — 결정론 재현기(옵션·읽기·시드)
+        private readonly GenesisLiveIgnitionGateway?  _ignGateway;  // v10.0.0 — 점화 게이트웨이(옵션·읽기)
+        private readonly IgnitionAuditTrailRecorder?  _ignAudit;    // v10.0.0 — 포렌식 감사 기록기(옵션·읽기)
+        private readonly HardwareKeyPulseHeartbeatSentinel? _keyPulse; // v10.0.0 — 하드웨어 키 펄스(옵션·읽기)
+        private readonly SealedEmissionInterlock?     _sealedEmit;  // v10.0.0 — 봉인 사출 인터락(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -968,7 +998,11 @@ namespace StockManager.Common
                                       ChaosEngineSanitizer? chaos = null,
                                       ChaosRecoveryRateLimiter? chaosRecovery = null,
                                       ChaosResilientProgressGuard? chaosGuard = null,
-                                      DeterministicChaosReplayer? chaosReplayer = null)
+                                      DeterministicChaosReplayer? chaosReplayer = null,
+                                      GenesisLiveIgnitionGateway? ignitionGateway = null,
+                                      IgnitionAuditTrailRecorder? ignitionAudit = null,
+                                      HardwareKeyPulseHeartbeatSentinel? keyPulse = null,
+                                      SealedEmissionInterlock? sealedEmission = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1046,6 +1080,10 @@ namespace StockManager.Common
             _chaosRecov   = chaosRecovery;
             _chaosGuard   = chaosGuard;
             _chaosReplay  = chaosReplayer;
+            _ignGateway   = ignitionGateway;
+            _ignAudit     = ignitionAudit;
+            _keyPulse     = keyPulse;
+            _sealedEmit   = sealedEmission;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1246,6 +1284,12 @@ namespace StockManager.Common
                 if (_chaosGuard is { } cg3) { chaosLive = cg3.LivelockEscapes; chaosTorn = cg3.TornStateBlocks; if (cg3.SafeHoldActive) chaosHold = 1L; }
                 if (_chaosRecov is { } cr) { chaosRecov = cr.State; if (cr.RecoveryBlocking) chaosHold = 1L; }
                 if (_chaosReplay is { } crp) chaosSeed = (long)(crp.Seed & 0xFFFFFFFFUL);
+                // v10.0.0 — Genesis Live Ignition Gateway 텔레메트리 풀(δ=0).
+                long ignDualKey = 0L, ignState = 0L, ignVetoes = 0L, ignVetoCode = 0L, ignAudit = 0L, keyAlive = 0L, ignDoubleBlk = 0L, ignSealed = 0L;
+                if (_ignGateway is { } iglw) { if (iglw.DualKeyWired) ignDualKey = 1L; ignState = iglw.StateCode; ignVetoes = iglw.Vetoes; ignVetoCode = iglw.LastVetoCode; }
+                if (_ignAudit is { } ia) ignAudit = ia.TotalRecorded;
+                if (_keyPulse is { } kp && kp.KeyAlive) keyAlive = 1L;
+                if (_sealedEmit is { } se2) { ignDoubleBlk = se2.DoubleDispatchBlocks; ignSealed = se2.SealedEmissions; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1276,7 +1320,8 @@ namespace StockManager.Common
                     avxTier, simdLatNs, simdAlpha, snrBlocks, avxDown, zmmWarm, avxCalib, alignedLd,
                     qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs,
                     sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth,
-                    chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold));
+                    chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold,
+                    ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
