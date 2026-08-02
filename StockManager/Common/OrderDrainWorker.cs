@@ -28,6 +28,8 @@ namespace StockManager.Common
         private readonly Func<bool>?                 _dualKeyIntact; // v4.87.0 이중키 무결성 런타임 검문(옵션)
         private readonly GenesisLiveIgnitionGateway? _gateway;      // v10.0.0 실물 사출 최종 빗장(옵션·null=기존 직접 경로)
         private readonly SealedSend?                 _placeSealed;  // v10.0.0 ★δ=0: PlaceSealed 델리게이트 1회 캐시(사출당 변환 할당 제거)
+        private readonly MockExecutionOrderBookMirror? _mockMirror; // v10.1.0 드라이런 가상 체결 미러(옵션)
+        private readonly ScopeSealedTransitionBarrier? _scopeBarrier; // v10.1.0 스코프-봉인 전환 장벽(옵션·라우팅 권위)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
         private readonly CpuAffinityPinningGrid?      _pinGrid;   // v7.3.0 — 주입 시 전용 P-Core 핀 드레인 스레드 모드
@@ -48,7 +50,9 @@ namespace StockManager.Common
                                 OrderAttestationService? attestation = null,
                                 Func<bool>? dualKeyIntact = null,
                                 CpuAffinityPinningGrid? pinGrid = null,
-                                GenesisLiveIgnitionGateway? gateway = null)
+                                GenesisLiveIgnitionGateway? gateway = null,
+                                MockExecutionOrderBookMirror? mockMirror = null,
+                                ScopeSealedTransitionBarrier? scopeBarrier = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
@@ -56,6 +60,8 @@ namespace StockManager.Common
             _dualKeyIntact = dualKeyIntact;
             _gateway       = gateway;   // v10.0.0 — 주입 시 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유
             _placeSealed   = gateway != null ? PlaceSealed : null;   // ★δ=0: 델리게이트 1회 생성(핫패스 변환 할당 제거)
+            _mockMirror    = mockMirror;    // v10.1.0 — 드라이런 스코프 시 실 브로커 대신 가상 미러로 봉인 루프백
+            _scopeBarrier  = scopeBarrier;  // v10.1.0 — 드라이런/실전 라우팅 권위(전환 쿨다운·에폭 펜스)
             _pinGrid       = pinGrid;
             _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
@@ -117,6 +123,17 @@ namespace StockManager.Common
         {
             // KSE 6자리 범위를 이탈한 코드는 조용히 건너뜀(상류 버그) — 기존 계상 보존(true).
             if (p.SymbolCode < 1 || p.SymbolCode > 999_999) return true;
+
+            // ★v10.1.0 스코프 라우팅: barrier 가 드라이런/실전을 원자 결정. 드라이런 스코프면 실 브로커 대신 가상 미러로
+            //   봉인 루프백(broker 참조 0). 전환 쿨다운 중이면 Bounce(미사출·유령 폭주 차단). 실전 스코프면 아래 게이트웨이 경로.
+            if (_scopeBarrier is { } barrier)
+            {
+                var route = barrier.RouteNow();
+                if (route == ScopeSealedTransitionBarrier.Route.Bounce) return false;   // 전환 쿨다운 — 미사출(GatedOut)
+                if (route == ScopeSealedTransitionBarrier.Route.DryRunMirror)
+                    return _mockMirror?.SealAndVirtualFill(p.OrderId, p.SymbolCode, p.SideByte, p.KindByte, p.PriceRaw, p.QtyRaw) ?? false;
+                // route == LiveBroker → 아래 실전 경로(게이트웨이·물리 키)
+            }
 
             // ★v10.0.0 최종 빗장: 게이트웨이 주입 시 실물 사출을 이중키∧방어선∧펄스 재검 + 단발 개통 + 봉인 사출
             //   (exactly-once·torn 방어) 경유. veto 시 false(미사출·fail-safe·Dispatcher 는 GatedOut). 미주입(기본)이면 직접 경로(동작 불변·true).

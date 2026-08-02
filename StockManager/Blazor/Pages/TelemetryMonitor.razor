@@ -854,6 +854,65 @@
         }
     </div>
 
+    @* ══ v10.1.0: Live Flight Certification & Mock Dry-Run 관제 ══════════════════════ *@
+    @{
+        bool certFailed  = _frame.CertificationFailed;    // 인증 실패(암흑자색)
+        bool scopeContam = _frame.ScopeContamination;     // 스코프 오염 시도(암흑자색)
+        bool dryRunCert  = _frame.DryRunCertified;        // 드라이런+유효봉인(청/보라)
+        bool dryRunUncert = _frame.DryRunUncertified;     // 드라이런·인증 미완(황색)
+        bool lfAlarm     = certFailed || scopeContam;
+        long certForensic = (_frame.ScopeTransitionBounces << 16) | (_frame.CertScore & 0xFF);
+        double slipBps   = _frame.MockLastSlippageBps;
+        double rttUs     = _frame.MockLastFillRttNanos / 1000.0;
+    }
+    @* 인증 실패 또는 드라이런-실전 스코프 오염 시도 → 암흑자색 전체화면 오버레이 + 포렌식 헥스(정적 투사) *@
+    @if (lfAlarm)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99990;background:radial-gradient(circle,rgba(74,20,140,0.10),rgba(40,10,70,0.34));border:9px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.7s ease-in-out infinite"></div>
+        <div style="position:fixed;top:380px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.96);color:#e1bee7;padding:12px 30px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 30px rgba(123,31,162,0.8)">
+            <div style="font-size:16px;font-weight:800">🟣 @(scopeContam ? "[MOCK↔LIVE SCOPE CONTAMINATION - ORDER BOUNCED]" : "[LIVE FLIGHT CERTIFICATION FAILED - ARM SEALED]")</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">인증 점수 @_frame.CertScore/100 · 스코프 Bounce @_frame.ScopeTransitionBounces · FORENSIC 0x@(certForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(lfAlarm ? "kpi-alert" : (dryRunUncert ? "kpi-amber" : (dryRunCert ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">🛩️ Live Flight Certification &amp; Mock Dry-Run ($0 가상 검증 · 전방위 인증 봉인)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:380px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (lfAlarm)
+                    {
+                        <span class="prod-badge" style="background:rgba(123,31,162,0.28);color:#ce93d8;box-shadow:0 0 8px rgba(123,31,162,0.6)">@(scopeContam ? "[SCOPE CONTAMINATION - BOUNCED]" : "[CERTIFICATION FAILED - ARM SEALED]")</span>
+                    }
+                    else if (dryRunCert)
+                    {
+                        <span class="prod-badge" style="background:rgba(120,80,220,0.26);color:#b39ddb;box-shadow:0 0 10px rgba(120,80,220,0.6)">[DRY-RUN CERTIFIED - MOCK MIRROR ACTIVE]</span>
+                    }
+                    else if (dryRunUncert)
+                    {
+                        <span class="prod-badge chaos-amber">[DRY-RUN IN PROGRESS - CERTIFYING]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[FLIGHT CERT STANDBY - LIVE SCOPE]</span>
+                    }
+                </div>
+                <div class="kpi-sub">스코프 <b style="color:@(_frame.DryRunActive != 0L ? "#b39ddb" : "#66bb6a")">@(_frame.DryRunActive != 0L ? "DRY-RUN" : "LIVE")</b> · 인증 <b style="font-family:var(--mono);color:@(_frame.CertSealValid != 0L ? "#66bb6a" : "#ffb74d")">@_frame.CertScore/100</b> · 봉인 <b style="color:@(_frame.CertSealValid != 0L ? "#66bb6a" : "#ffb74d")">@(_frame.CertSealValid != 0L ? "VALID" : "─")</b> 0x@(_frame.CertSeal.ToString("X"))</div>
+            </div>
+            <div style="min-width:230px">
+                <div class="kpi-value" style="font-size:14px">가상 체결 <b style="font-family:var(--mono)">@_frame.MockVirtualFills.ToString("N0")</b></div>
+                <div class="kpi-sub">슬리피지 <b style="font-family:var(--mono)">@(slipBps.ToString("F1"))</b>bps · RTT <b style="font-family:var(--mono)">@(rttUs.ToString("F0"))</b>µs · IBroker 참조 0</div>
+            </div>
+            <div style="min-width:210px">
+                <div class="kpi-value" style="font-size:14px">스코프 전환 Bounce <b style="font-family:var(--mono);color:@(_frame.ScopeTransitionBounces > 0 ? "#ce93d8" : "#66bb6a")">@_frame.ScopeTransitionBounces.ToString("N0")</b></div>
+                <div class="kpi-sub">★에폭 펜스 + 100ms 쿨다운 + 가상 잔량 퍼지(오염/유령 폭주 차단)</div>
+            </div>
+        </div>
+        @if (_frame.DryRunActive == 0L && !lfAlarm)
+        {
+            <div class="kpi-sub" style="margin-top:6px">Live scope — 드라이런 $0 가상 검증: 실전과 '동일한' SealedEmissionInterlock 봉인 경로(exactly-once + 페이로드 동결 + FNV seal) 통과 후 소켓 전송 직전 미러로 원자 루프백(IBroker·소켓 참조 0). 무장 직전 전역 ~48개 불변식 총괄 채점 → 100/100 시에만 키드-FNV 봉인·무장 허용. ★Think Beyond 스코프-에폭 펜스: 드라이런↔실전 전환 찰나 에폭 전진(스코프 식별)+가상 잔량 O(1) 퍼지(오염 차단)+100ms 쿨다운(유령 폭주 차단). ★전 경로 liveArmed:false — 드라이런 100% 가상 체결이어도 물리 이중 키 전 실물 0비트.</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">

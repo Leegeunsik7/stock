@@ -348,7 +348,12 @@ namespace StockManager.Blazor
             // v10.0.0 — 하드웨어 키 펄스 단선/미수신도 무장 술어에 합성(지연 ref·아래 생성). 물리 무장 키가 살아있지 않으면
             //   무장 불가(tighten-only·liveArmed:false — 물리 키 없이는 실 사출 0). LiveArmingWired 결속 시에만 평가.
             HardwareKeyPulseHeartbeatSentinel? keyPulseRef = null;
-            Func<bool> armedPredicate = DispatchArming.ResolvePredicate(
+            // v10.1.0 — 전방위 인증 봉인 미완(100/100 아님)·스코프 전환 쿨다운도 무장 술어에 합성(지연 ref·아래 생성). 유효 인증
+            //   봉인 없이 또는 드라이런↔실전 전환 찰나엔 실전 무장 불가(tighten-only·liveArmed:false — 전 시스템 인증 전 실 사출 0).
+            LiveFlightCertificationSealer? certSealerRef = null;
+            ScopeSealedTransitionBarrier?  scopeBarrierRef = null;
+            // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
+            Func<bool> liveArmed = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
                 blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
                                 || (kernelJitterRef?.SafeHoldActive ?? false)
@@ -364,7 +369,12 @@ namespace StockManager.Blazor
                                 || (chaosRef?.SafeHoldActive ?? false)
                                 || (chaosRecovRef?.RecoveryBlocking ?? false)
                                 || (chaosGuardRef?.SafeHoldActive ?? false)
-                                || (keyPulseRef?.SafeHoldActive ?? false));
+                                || (keyPulseRef?.SafeHoldActive ?? false)
+                                || (certSealerRef?.CertificationBlocking ?? false)
+                                || (scopeBarrierRef?.TransitionBlocking ?? false));
+            // ★v10.1.0 디스패처 무장 술어 = 드라이런 스코프(가상 미러 급전·barrier RouteNow 가 broker 를 물리 차단) ∨ 실전 무장.
+            //   드라이런 'armed' 는 오직 미러로만 도달 — 실 브로커 소켓 0비트(liveArmed:false 불변·barrier=DryRun→미러, =Live→게이트웨이).
+            Func<bool> armedPredicate = () => { try { return (scopeBarrierRef?.DryRunActive ?? false) || liveArmed(); } catch { return false; } };
             // v5.0.0 — 블래스트 반경 제한기: 카나리 검역창 동안 명목 상한을 송출 초크포인트(디스패처)에서 물리 강제(기본 무제한).
             var blastRadius = new BlastRadiusLimiter();
             services.AddSingleton(blastRadius);
@@ -736,7 +746,7 @@ namespace StockManager.Blazor
             var ignGateway = new GenesisLiveIgnitionGateway(
                 valveWired:      () => cfg.GetBool("Dispatch.ValveWired", false),
                 liveArmingWired: () => cfg.GetBool("Dispatch.LiveArmingWired", false),
-                defensesPass:    armedPredicate,
+                defensesPass:    liveArmed,   // v10.1.0 — 게이트웨이는 실전 전용(드라이런 급전 술어 아님)
                 keyPulseAlive:   () => keyPulse.KeyAlive,
                 sealedEmission:  sealedEmit,
                 audit:           ignAudit);
@@ -745,6 +755,19 @@ namespace StockManager.Blazor
             services.AddSingleton(keyPulse);
             services.AddSingleton(ignGateway);
             FormClosed += (_, _) => ShutdownTrace.Step("keyPulse", () => keyPulse.Dispose());
+            // v10.1.0 — Live Flight Certification & Mock Dry-Run: 가상 체결 미러 + 전방위 인증 봉인기 + ★Think Beyond 스코프-봉인 전환 장벽.
+            //   ★liveArmed:false: 미러는 IBroker·소켓 참조 0 — 드라이런은 오직 미러로만 체결(실물 0). barrier 가 드라이런/실전 라우팅 권위이며
+            //     전환 찰나 가상 잔량 O(1) 퍼지 + 100ms 쿨다운(오염·유령 폭주 봉쇄). 인증 봉인 미완 시 실전 무장 차단(blockWhile).
+            var mockMirror   = new MockExecutionOrderBookMirror();
+            var scopeBarrier = new ScopeSealedTransitionBarrier(onPurge: () => mockMirror.Reset());   // 전환 시 가상 잔량 제로화
+            scopeBarrier.SetInitialMode(cfg.GetBool("Dispatch.ValveWired", false)
+                ? ScopeSealedTransitionBarrier.MODE_LIVE : ScopeSealedTransitionBarrier.MODE_DRYRUN);
+            var certSealer   = new LiveFlightCertificationSealer(audit: ignAudit);
+            certSealerRef    = certSealer;     // 무장 술어 blockWhile 결속(유효 봉인 없으면 tighten)
+            scopeBarrierRef  = scopeBarrier;   // 무장 술어(드라이런 급전 + 전환 쿨다운 tighten)
+            services.AddSingleton(mockMirror);
+            services.AddSingleton(scopeBarrier);
+            services.AddSingleton(certSealer);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -754,7 +777,8 @@ namespace StockManager.Blazor
                 rcuConfigVersion: () => rcuConfigPort.Version, infraCouplingCount: 117L,
                 sor: smartRouter, icebergHunter: icebergHunter, authVerify: liqAuthVerifier, queueEst: queuePosEst,
                 chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer,
-                ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit);
+                ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit,
+                mockMirror: mockMirror, certSealer: certSealer, scopeBarrier: scopeBarrier);
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -787,12 +811,13 @@ namespace StockManager.Blazor
             // v4.87.0 — fail-closed 강화: 드레인 루프 예외 or 이중키 무결성(런타임 ValveWired) 붕괴 → 강등이 아니라
             //   ForceFreeze 단일 소스로 영구 락업. dualKeyIntact 는 매 틱 ValveWired 설정이 유지되는지 검문.
             var drainWorker = new OrderDrainWorker(ringDispatcher, broker,
-                wired: cfg.GetBool("Dispatch.ValveWired", false),
+                wired: cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런도 드레인 가동(미러 급전)
                 periodMs: 50,
                 attestation: attestation,
-                dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false),
+                dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런은 무결성 통과(오동결 방지)
                 pinGrid: cpuGrid,   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
-                gateway: ignGateway);   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
+                gateway: ignGateway,   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
+                mockMirror: mockMirror, scopeBarrier: scopeBarrier);   // v10.1.0 — 드라이런 스코프면 실 브로커 대신 가상 미러로 봉인 루프백
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

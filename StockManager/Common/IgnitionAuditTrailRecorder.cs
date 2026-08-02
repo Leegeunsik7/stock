@@ -29,6 +29,8 @@ namespace StockManager.Common
         KeyPulseLost     = 6,   // 하드웨어 키 펄스 단선
         KeyPulseRestored = 7,   // 하드웨어 키 펄스 복원
         Freeze           = 8,   // 비상 동결
+        Certification    = 9,   // 전방위 인증 봉인(v10.1.0)
+        DryRun           = 10,  // 드라이런 가상 체결(v10.1.0)
     }
 
     /// <summary>점화 감사 레코드(64B blittable·δ=0). µs 타임스탬프 + 포렌식 해시.</summary>

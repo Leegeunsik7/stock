@@ -238,6 +238,15 @@ namespace StockManager.Common
         public readonly long   HardwareKeyPulseAlive;       // 1=물리 키 펄스 생존(50ms 심박)
         public readonly long   IgnitionDoubleDispatchBlocks; // ★Think-Beyond 이중 사출 봉쇄 누적
         public readonly long   IgnitionSealedEmissions;     // 봉인 실물 사출 누적
+        // v10.1.0 — Live Flight Certification & Mock Dry-Run Fabric.
+        public readonly long   DryRunActive;                // 1=드라이런 스코프(가상 미러 라우팅)
+        public readonly long   MockVirtualFills;            // 가상 체결 누적
+        public readonly long   MockLastSlippageBps;         // 최근 가상 슬리피지(bps)
+        public readonly long   MockLastFillRttNanos;        // 최근 가상 체결 RTT(ns)
+        public readonly long   CertScore;                   // 전방위 인증 점수(0~100)
+        public readonly long   CertSealValid;               // 1=유효 봉인(100/100·무장 허용)
+        public readonly long   CertSeal;                    // 인증 봉인 하위 32비트(포렌식)
+        public readonly long   ScopeTransitionBounces;      // ★Think-Beyond 스코프 전환 Bounce+스테일 거부 누적
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -302,7 +311,9 @@ namespace StockManager.Common
                              long chaosSanitizerState = 0L, long chaosFaultMask = 0L, long chaosInjections = 0L, long chaosLivelockEscapes = 0L,
                              long chaosTornStateBlocks = 0L, long chaosRecoveryState = 0L, long chaosReplaySeed = 0L, long chaosSafeHoldActive = 0L,
                              long ignitionDualKeyWired = 0L, long ignitionState = 0L, long ignitionVetoes = 0L, long ignitionLastVetoCode = 0L,
-                             long ignitionAuditRecords = 0L, long hardwareKeyPulseAlive = 0L, long ignitionDoubleDispatchBlocks = 0L, long ignitionSealedEmissions = 0L)
+                             long ignitionAuditRecords = 0L, long hardwareKeyPulseAlive = 0L, long ignitionDoubleDispatchBlocks = 0L, long ignitionSealedEmissions = 0L,
+                             long dryRunActive = 0L, long mockVirtualFills = 0L, long mockLastSlippageBps = 0L, long mockLastFillRttNanos = 0L,
+                             long certScore = 0L, long certSealValid = 0L, long certSeal = 0L, long scopeTransitionBounces = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -490,6 +501,14 @@ namespace StockManager.Common
             HardwareKeyPulseAlive        = hardwareKeyPulseAlive;
             IgnitionDoubleDispatchBlocks = ignitionDoubleDispatchBlocks;
             IgnitionSealedEmissions      = ignitionSealedEmissions;
+            DryRunActive                 = dryRunActive;
+            MockVirtualFills             = mockVirtualFills;
+            MockLastSlippageBps          = mockLastSlippageBps;
+            MockLastFillRttNanos         = mockLastFillRttNanos;
+            CertScore                    = certScore;
+            CertSealValid                = certSealValid;
+            CertSeal                     = certSeal;
+            ScopeTransitionBounces       = scopeTransitionBounces;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -758,6 +777,12 @@ namespace StockManager.Common
         public bool    HardwareKeyDisconnected   => (IgnitionLastVetoCode & (1L << 3)) != 0L;                 // 펄스 단선(황색)
         public bool    IgnitionDualKeyArmed      => IgnitionDualKeyWired != 0L && HardwareKeyPulseAlive != 0L; // 이중키+펄스 완전 결속
         public bool    IgnitionDormant           => IgnitionState == 0L && IgnitionVetoes == 0L;              // 미점화(기본)
+        // v10.1.0 — Live Flight Certification & Mock Dry-Run UI 헬퍼.
+        public bool    DryRunCertified           => DryRunActive != 0L && CertSealValid != 0L;               // 청/보라 [DRY-RUN CERTIFIED]
+        public bool    DryRunUncertified         => DryRunActive != 0L && CertSealValid == 0L;               // 황색(드라이런·인증 미완)
+        public bool    CertificationFailed       => CertSealValid == 0L && CertScore > 0L && CertScore < 100L; // ★암흑자색(인증 실패)
+        public bool    ScopeContamination        => ScopeTransitionBounces > 0L;                             // ★암흑자색(스코프 오염 시도)
+        public bool    MockMirrorActive          => MockVirtualFills > 0L;                                   // 가상 미러 가동
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -777,7 +802,8 @@ namespace StockManager.Common
         //   (v9.0.0 SOR/빙산: 라우팅활성·라우팅수·라우팅코드·빙산숨은물량·빙산포획·큐임접률·스푸핑차단·유동성진위 8필드 추가로 170필드 → 128+170×8=1488 → Size 1472→1536(64×24·잔여 6슬롯=48B).)
         //   (v9.1.0 카오스 샌드박스: 샌드박스상태·결함마스크·주입수·라이브락탈출·torn차단·복구상태·재현시드·SafeHold 8필드 추가로 178필드 → 128+178×8=1552 → Size 1536→1600(64×25·잔여 6슬롯=48B).)
         //   (v10.0.0 Genesis 점화: 이중키결속·점화상태·veto수·veto코드·감사기록·키펄스·이중사출봉쇄·봉인사출 8필드 추가로 186필드 → 128+186×8=1616 → Size 1600→1664(64×26·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1664)]
+        //   (v10.1.0 드라이런/인증: 드라이런활성·가상체결·슬리피지·RTT·인증점수·봉인유효·봉인·스코프Bounce 8필드 추가로 194필드 → 128+194×8=1680 → Size 1664→1728(64×27·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1728)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -915,6 +941,9 @@ namespace StockManager.Common
         private readonly IgnitionAuditTrailRecorder?  _ignAudit;    // v10.0.0 — 포렌식 감사 기록기(옵션·읽기)
         private readonly HardwareKeyPulseHeartbeatSentinel? _keyPulse; // v10.0.0 — 하드웨어 키 펄스(옵션·읽기)
         private readonly SealedEmissionInterlock?     _sealedEmit;  // v10.0.0 — 봉인 사출 인터락(옵션·읽기)
+        private readonly MockExecutionOrderBookMirror? _mockMirror; // v10.1.0 — 가상 체결 미러(옵션·읽기)
+        private readonly LiveFlightCertificationSealer? _certSealer; // v10.1.0 — 전방위 인증 봉인기(옵션·읽기·Sample 이 Certify)
+        private readonly ScopeSealedTransitionBarrier? _scopeBar;   // v10.1.0 — 스코프 전환 장벽(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1002,7 +1031,10 @@ namespace StockManager.Common
                                       GenesisLiveIgnitionGateway? ignitionGateway = null,
                                       IgnitionAuditTrailRecorder? ignitionAudit = null,
                                       HardwareKeyPulseHeartbeatSentinel? keyPulse = null,
-                                      SealedEmissionInterlock? sealedEmission = null)
+                                      SealedEmissionInterlock? sealedEmission = null,
+                                      MockExecutionOrderBookMirror? mockMirror = null,
+                                      LiveFlightCertificationSealer? certSealer = null,
+                                      ScopeSealedTransitionBarrier? scopeBarrier = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1084,6 +1116,9 @@ namespace StockManager.Common
             _ignAudit     = ignitionAudit;
             _keyPulse     = keyPulse;
             _sealedEmit   = sealedEmission;
+            _mockMirror   = mockMirror;
+            _certSealer   = certSealer;
+            _scopeBar     = scopeBarrier;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1290,6 +1325,11 @@ namespace StockManager.Common
                 if (_ignAudit is { } ia) ignAudit = ia.TotalRecorded;
                 if (_keyPulse is { } kp && kp.KeyAlive) keyAlive = 1L;
                 if (_sealedEmit is { } se2) { ignDoubleBlk = se2.DoubleDispatchBlocks; ignSealed = se2.SealedEmissions; }
+                // v10.1.0 — Live Flight Certification & Mock Dry-Run 텔레메트리 풀(δ=0). ★Sample 이 인증 재채점(전역 불변식 총괄).
+                long dryRun = 0L, mockFills = 0L, mockSlip = 0L, mockRtt = 0L, certScore = 0L, certValid = 0L, certSeal = 0L, scopeBounce = 0L;
+                if (_certSealer is { } cs) { _channel.TryRead(out var lastF); cs.Certify(in lastF); certScore = cs.Score; if (cs.SealValid) certValid = 1L; certSeal = cs.Seal & 0xFFFFFFFFL; }   // ★직전 프레임(N-1) 채점 — 결과는 프레임 N 에 발행
+                if (_mockMirror is { } mm) { mockFills = mm.VirtualFills; mockSlip = mm.LastSlippageBps; mockRtt = mm.LastFillRttNanos; }
+                if (_scopeBar is { } sb) { if (sb.DryRunActive) dryRun = 1L; scopeBounce = sb.ScopeBounces + sb.StaleRejects; }
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1321,7 +1361,8 @@ namespace StockManager.Common
                     qvArmed, qvBreach, honeyTrip, hookState, _infraCoupling, rcuVer, zeroFail, zeroBufs,
                     sorActive, sorRoutes, sorCode, icebergHidden, icebergsDet, queueImm, sorSpoof, liqAuth,
                     chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold,
-                    ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed));
+                    ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed,
+                    dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce));
                 _lastPublished = published;
                 _lastTicks     = now;
             }
