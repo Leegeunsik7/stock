@@ -3,6 +3,9 @@ using System.Windows.Forms;
 using Microsoft.AspNetCore.Components.WebView.WindowsForms;
 using Microsoft.Extensions.DependencyInjection;
 using StockManager.Common;
+using MS2E.UI.Portable.Bus;
+using MS2E.UI.Portable.Ports;
+using MS2E.UI.Portable.Security;
 
 namespace StockManager.Blazor
 {
@@ -814,6 +817,32 @@ namespace StockManager.Blazor
             services.AddSingleton(canaryGovernor);
             services.AddSingleton(driftSentinel);
             services.AddSingleton(panicSwitch);
+            // v10.1.0 Phase 93-B — Admin UI(MS2E.UI.Portable) Ports & Adapters 배선.
+            //   ★liveArmed:false: Admin 명령은 금고/캐시/시크릿 관제 — IBroker·소켓 참조 0. ★Think-Beyond 권한 봉인 가드가
+            //     세션 봉인으로 rogue Port 호출을 차단하고 ForceFreeze 시 revoke(봉인 무효 + 시크릿 퍼지). 어댑터가 seal 검증.
+            var adminSecretAdapter = new AdminSecretPortAdapter((long _, Span<char> dest) =>
+            {
+                ReadOnlySpan<char> demo = "sk-ADMIN-0000-DEMO-KEY-ab";   // 데모(실 배선은 DPAPI 금고 decrypt→span). 프레젠터가 마스킹+0x00.
+                int nn = Math.Min(demo.Length, dest.Length);
+                demo.Slice(0, nn).CopyTo(dest);
+                return nn;
+            });
+            var adminPresenter = new SecureAdminViewPresenter(adminSecretAdapter);
+            var adminSeal      = new AdminAuthoritySealGuard(onRevoke: () => adminPresenter.PurgeNow());   // ★revoke → 시크릿 퍼지(freeze-safe)
+            // ★세션 권한 키: 하드코딩 리터럴 금지 — 런타임 암호 RNG 로 예측 불가 비밀 생성(소스/바이너리 미노출). 0 회피(|1·미개시 방지).
+            System.Span<byte> adminKeyBytes = stackalloc byte[8];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(adminKeyBytes);
+            adminSeal.BeginSession(System.BitConverter.ToUInt64(adminKeyBytes) | 1UL);
+            attestation.RegisterFreezeObserver(_ => adminSeal.Revoke());   // ★능동 freeze→revoke(봉인 무효 + 시크릿 즉시 퍼지·command-time lazy 아님)
+            var adminCommandAdapter = new AdminCommandPortAdapter(adminSeal, attestation, ignAudit);
+            var adminAuditAdapter   = new AdminAuditLogPortAdapter(ignAudit);
+            var adminDispatcher     = new AdminCommandPortDispatcher(adminCommandAdapter, adminSeal, nowMicros: () => System.Diagnostics.Stopwatch.GetTimestamp());
+            services.AddSingleton(adminSeal);
+            services.AddSingleton(adminPresenter);
+            services.AddSingleton(adminDispatcher);
+            services.AddSingleton<IAdminCommandPort>(adminCommandAdapter);
+            services.AddSingleton<IMailAuditLogPort>(adminAuditAdapter);
+            services.AddSingleton<IAdminSecretPort>(adminSecretAdapter);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,

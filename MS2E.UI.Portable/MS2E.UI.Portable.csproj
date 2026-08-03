@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <!-- ============================================================================
+       MS2E.UI.Portable — v10.1.0 Phase 93-B: 순수 UI 계층(Ports & Adapters 디커플링)
+         최고 권한 Admin UI 를 엔진(StockManager)에서 물리 격리한 순수 프로젝트. ★엔진 타입 참조 0 —
+         Port 인터페이스 + 순수(불변) DTO 로만 결속한다. 어댑터(Port 구현)는 StockManager 측에 둔다.
+         δ=0 커맨드 버스(AdminCommandPortDispatcher)·시크릿 마스킹(SecureAdminViewPresenter)·★Think-Beyond
+         권한 봉인 가드(AdminAuthoritySealGuard)를 포함. net8.0(비-windows)라 이식성 유지·WinForms 무의존.
+       ============================================================================ -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MS2E.UI.Portable</RootNamespace>
+    <AssemblyName>MS2E.UI.Portable</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="8.0.10" />
+  </ItemGroup>
+
+  <!-- ★internal 봉인 발급(AdminAuthoritySealGuard.IssueSeal)을 테스트가 검증하도록 노출(어댑터 StockManager 는 public VerifySeal 만 사용). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="StockManager.Tests" />
+  </ItemGroup>
+
+</Project>

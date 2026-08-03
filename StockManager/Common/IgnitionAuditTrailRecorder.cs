@@ -37,6 +37,7 @@ namespace StockManager.Common
         HostDrift        = 14,  // 호스트 환경 드리프트 포획 → 안전 강등(v10.1.0 Ops)
         CanaryDowngrade  = 15,  // 카나리 슬리피지 임계 초과 → 드라이런 강등(v10.1.0 Ops)
         PanicAbort       = 16,  // 운용자 비상 탈출(패닉 스위치) 격발(v10.1.0 Ops)
+        AdminCommand     = 17,  // Admin 권한 명령 실행(v10.1.0 Phase 93-B)
     }
 
     /// <summary>점화 감사 레코드(64B blittable·δ=0). µs 타임스탬프 + 포렌식 해시.</summary>

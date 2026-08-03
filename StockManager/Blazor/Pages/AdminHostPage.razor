@@ -1,0 +1,9 @@
+@* ============================================================================
+   AdminHostPage.razor — v10.1.0 Phase 93-B: Admin 호스트 페이지 (StockManager 측 얇은 라우팅 셸)
+     최고 권한 Admin UI 는 순수 MS2E.UI.Portable 로 물리 격리됐다. 이 호스트는 라우트(@page)만 제공하고 순수 컴포넌트
+     <Admin/> 를 직접 임베드한다 — 엔진 결합(Port 어댑터·DI)은 BlazorHomeForm 이 제공, 컴포넌트는 Port/DTO 만 안다.
+   ============================================================================ *@
+@page "/admin"
+@using MS2E.UI.Portable.Pages
+
+<Admin />

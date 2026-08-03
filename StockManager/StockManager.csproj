@@ -56,6 +56,13 @@
          [★Think Beyond] HostEnvironmentDriftSentinel — 제미나이 '즉시 강등' 초월: ★서명 시점 호스트 타이밍(NtQueryTimerResolution) baseline 봉인 → 그로부터의 divergence 를 '연속 확인(히스테리시스)'해야 강등(단발 blip 무시·호스트-불가지 판정). + OperatorDuressPanicSwitch(O(1) ForceFreeze+훅+비가역). 둘 다 blockWhile.
          [텔레메트리/UI] RingTelemetry +8필드(서명·서명실패마스크·카나리집행율·강등·타이머해상도·드리프트·패닉·스테이징준비, Cell 1792→1856=64×29=210). 📜 패널(청/녹 [HOST TUNED - CANARY STAGING READY]·황색점멸 카나리집행·암흑자색 드리프트/패닉/강등+포렌식).
          [적대검증 3라운드·수렴] 6렌즈 9 CONFIRMED(5 distinct fail-open) 교정: ★시장가(PriceRaw=0→명목0) 캡 완전 우회·Int128→long 절단 랩 우회 → 명목 fail-closed(시장가/오버플로→long.MaxValue 거부); RecordSlippage 미배선(강등 dead) → 드라이런 미러 피드; 강등 TOCTOU; 서명 vacuous PASS → 금고 양성. ★재검증이 제 롤백 교정의 음수-cum·seal 교정의 zero-notional/텔레메트리 왜곡까지 확증 → cum 정확성 지키고 bounded under-cap 누수(캡 검문 통과분·캡 breach 아님) 정직 수용. 유닛 +10. 삼중 0W/0E·전체 2297 통과·회귀 0.
+         ── v10.1.0 Phase 93-B: Admin.razor 물리 이주 & Pure DTO Arc Slice 2 (Ports & Adapters UI 격리) ──
+         [정직 정찰] 명령 전제(Mail.razor 이주 완포·MS2E.UI.Portable·Port 인터페이스 기존)가 실제 저장소와 배치 — Admin/Mail.razor·Portable 프로젝트·Port 전무(모놀리식 단일 프로젝트) 실증 후 지휘관 결정으로 greenfield 신규 구축(날조 이주 대신).
+         [이주] 신규 순수 UI 프로젝트 MS2E.UI.Portable(net8.0·엔진 무참조·RCL): Admin.razor + Port(IAdminCommandPort/IMailAuditLogPort/IAdminSecretPort) + 순수 불변 DTO + 가변 뷰모델(낙관적 mutation·Mail 교훈 명명 분리). 어댑터(StockManager/Common/AdminPortAdapters.cs)가 엔진(감사 링/금고/시크릿) 바인딩. 얇은 호스트 AdminHostPage.razor(@page "/admin"→&lt;Admin/&gt;).
+         [Gemini] AdminCommandPortDispatcher(δ=0 커맨드 버스: 불변 Intent 포맷+봉인 발급+Port 전송·미인가 미전송) + SecureAdminViewPresenter(시크릿 char 버퍼 경유 마스킹 렌더 후 CryptographicOperations.ZeroMemory 로 0x00 자가 소멸·plain string 미생성).
+         [★Think Beyond] AdminAuthoritySealGuard — 제미나이 A(핸드셰이크)/B(freeze-purge)를 '권한 봉인' 단일 불변식으로 통합 초월: 세션 비밀 키로 dispatcher 가 intent별 keyed-FNV 봉인 발급→어댑터 VerifySeal(세션키 미지 rogue 위조 불가) + ForceFreeze 시 능동 Revoke(RegisterFreezeObserver 배선·세션키 0x00 영점→전 봉인 무효+시크릿 퍼지). 인가 토큰=비상 킬스위치 통합.
+         [불변] δ=0(IssueSeal/VerifySeal/Dispatch/RenderMasked 힙 0·record struct 값타입 실증)·결정론(keyed-FNV·주입 시계)·fail-closed(봉인 불일치/revoke/freeze→거부)·liveArmed:false(★Admin 명령=금고/캐시/시크릿 관제·IBroker·소켓·실 발주 유발 0 — 어댑터는 flag 토글+감사 각인뿐·실 금고는 config 별도 게이팅과 무결합). 삼중 빌드 0W/0E(신규 RCL 포함 WebOnly/PrimesBench 무영향).
+         [적대검증 3렌즈·수렴] 6건 실 보안 결함 교정: ★F1(CRIT) 공용 IssueSeal=무인증 발급 오라클(가드 DI 싱글턴)→internal 격리(dispatcher 전용·InternalsVisibleTo 테스트); F2(HIGH) BeginSession(0)이 소스 공개 상수 키로 강등(known-key fail-open)→0 키 미개시 fail-closed; F3(MED) 하드코딩 세션 키→런타임 RNG; 마스킹 단문(≤3자) 전량 평문→전량 마스킹; freeze revoke command-time lazy→RegisterFreezeObserver 능동; stackalloc 상한. 유닛 +9. 삼중 0W/0E·전체 2306 통과·회귀 0(vault 백그라운드 스레드 플래키 격리·무관 확인).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.
@@ -1021,6 +1028,12 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <!-- v3.1: Blazor Hybrid 대시보드 (WebView2 런타임 필요) -->
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="8.0.10" />
+  </ItemGroup>
+
+  <!-- v10.1.0 Phase 93-B — 순수 UI 계층(MS2E.UI.Portable·Ports & Adapters) 참조: Admin UI 를 엔진에서 물리 격리.
+       Portable 은 net8.0(비-windows·엔진 무참조)이고 본 프로젝트(net8.0-windows)가 Port 어댑터를 제공한다. -->
+  <ItemGroup>
+    <ProjectReference Include="..\MS2E.UI.Portable\MS2E.UI.Portable.csproj" />
   </ItemGroup>
 
   <!-- 디자인 프로토타입/스캐폴드(.html/.txt/.md)는 컴파일 대상에서 제외 -->

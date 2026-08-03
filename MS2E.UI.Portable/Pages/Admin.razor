@@ -1,0 +1,96 @@
+@* ============================================================================
+   Admin.razor — v10.1.0 Phase 93-B: 순수 Admin UI 컴포넌트 (MS2E.UI.Portable)
+     최고 권한 Admin 관제. ★엔진 타입 참조 0 — Port 인터페이스(IAdminCommandPort/IMailAuditLogPort/IAdminSecretPort) +
+     순수 DTO + δ=0 커맨드 버스 + ★Think-Beyond 권한 봉인 가드로만 결속. 어댑터는 StockManager 측(DI 주입).
+     가변 뷰모델(AdminViewModel)로 낙관적 in-place mutation, Port 전송은 불변 Intent DTO 스냅샷(Mail.razor 교훈).
+   ============================================================================ *@
+@using MS2E.UI.Portable.Bus
+@using MS2E.UI.Portable.Dto
+@using MS2E.UI.Portable.Ports
+@using MS2E.UI.Portable.Security
+@inject AdminCommandPortDispatcher Dispatcher
+@inject AdminAuthoritySealGuard Seal
+@inject SecureAdminViewPresenter Presenter
+@inject IMailAuditLogPort AuditPort
+
+<div class="admin-panel" style="padding:14px;border:1px solid #444;border-radius:10px">
+    <div style="font-weight:800;font-size:15px;margin-bottom:8px">🛡️ Admin 관제 (Portable · Ports &amp; Adapters)</div>
+
+    @if (Seal.Revoked || _vm.Frozen)
+    {
+        @* ★freeze-safe: 권한 봉인 revoke(ForceFreeze/브리치) → 안전 관제 모드·시크릿 퍼지 *@
+        <div style="padding:12px;background:rgba(74,20,140,0.28);border:2px solid #ce93d8;border-radius:8px;color:#e1bee7;font-weight:700">
+            🟣 [ADMIN AUTHORITY REVOKED — SAFE MODE] 비상 동결 — 권한 봉인 무효화·시크릿 소멸(freeze-safe purge). 재개시 전 전 명령 차단.
+        </div>
+    }
+    else
+    {
+        <div style="font-size:12px;color:#9e9e9e">권한 봉인 <b style="color:@(Seal.Authorized ? "#66bb6a" : "#ffb74d")">@(Seal.Authorized ? "AUTHORIZED" : "—")</b> · 발급 @Seal.Issued · 검증거부 @Seal.VerifyFailures</div>
+        <div style="margin:8px 0;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" disabled="@(!Seal.Authorized)" @onclick="ArmVault">퀀텀 금고 무장</button>
+            <button class="btn" disabled="@(!Seal.Authorized)" @onclick="DisarmVault">금고 해제</button>
+            <button class="btn" disabled="@(!Seal.Authorized)" @onclick="InvalidateAi">AI 캐시 무효화</button>
+        </div>
+        <div style="font-size:12px">낙관적 금고 <b style="color:@(_vm.VaultArmedOptimistic ? "#ef5350" : "#66bb6a")">@(_vm.VaultArmedOptimistic ? "ARMED" : "—")</b> · 최근 결과코드 @_vm.LastResultCode · 대기 @_vm.PendingCommands</div>
+        <div style="font-size:12px;margin-top:4px">시크릿(마스킹) <code style="font-family:monospace">@_maskedSecret</code> · plain string 힙 미잔류(char 버퍼 즉시 0x00)</div>
+        <div style="font-size:12px;margin-top:4px">감사 로그 최근 <b>@_auditCount</b> 건 (SQLite/HMAC 어댑터 · 순수 DTO 투영)</div>
+    }
+</div>
+
+@code {
+    private readonly AdminViewModel _vm = new();
+    private string _maskedSecret = "";
+    private int _auditCount;
+
+    protected override void OnInitialized()
+    {
+        RefreshSecret();
+        RefreshAudit();
+    }
+
+    // ★낙관적 in-place mutation(가변 뷰모델) → 불변 Intent 스냅샷 전송 → Port 거부 시 롤백.
+    private void ArmVault()
+    {
+        _vm.VaultArmedOptimistic = true;
+        _vm.PendingCommands++;
+        AdminCommandResult r = Dispatcher.Dispatch(AdminCommandKind.QuantumVaultArm);
+        _vm.PendingCommands--;
+        _vm.LastResultCode = r.Code;
+        if (!r.Ok) _vm.VaultArmedOptimistic = false;   // 낙관적 롤백(Port 확정 실패)
+        RefreshAudit();
+    }
+
+    private void DisarmVault()
+    {
+        _vm.VaultArmedOptimistic = false;
+        _vm.PendingCommands++;
+        AdminCommandResult r = Dispatcher.Dispatch(AdminCommandKind.QuantumVaultDisarm);
+        _vm.PendingCommands--;
+        _vm.LastResultCode = r.Code;
+        if (!r.Ok) _vm.VaultArmedOptimistic = true;
+        RefreshAudit();
+    }
+
+    private void InvalidateAi()
+    {
+        _vm.PendingCommands++;
+        AdminCommandResult r = Dispatcher.Dispatch(AdminCommandKind.AiCacheInvalidate);
+        _vm.PendingCommands--;
+        _vm.LastResultCode = r.Code;
+        RefreshAudit();
+    }
+
+    private void RefreshSecret()
+    {
+        Span<char> buf = stackalloc char[64];
+        int n = Presenter.RenderMasked(1L, buf);   // ★마스킹 버퍼 경유·렌더 후 0x00
+        _maskedSecret = n > 0 ? new string(buf[..n]) : "—";   // 마스킹 표시만 string(full plain 아님)
+        _vm.MaskedSecretLen = n;
+    }
+
+    private void RefreshAudit()
+    {
+        Span<AdminAuditEntryDto> dest = stackalloc AdminAuditEntryDto[16];
+        _auditCount = AuditPort.Recent(dest);
+    }
+}
