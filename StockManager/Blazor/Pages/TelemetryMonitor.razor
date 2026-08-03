@@ -973,6 +973,66 @@
         }
     </div>
 
+    @* ══ v10.1.0 Ops: Operational Runbook & Host Tuning 관제 ══════════════════════ *@
+    @{
+        bool hostDrift    = _frame.HostDrift;              // 호스트 환경 드리프트(암흑자색)
+        bool opPanic      = _frame.OperatorPanic;          // 패닉 격발(암흑자색)
+        bool canaryDowngr = _frame.CanaryDowngraded != 0L; // 카나리 강등(암흑자색)
+        bool opsAlarm     = _frame.OpsAlarm;               // 드리프트 ∨ 패닉 ∨ 카나리 강등
+        bool stagingReady = _frame.CanaryStaging;          // 서명+튜닝+무이상(청/녹)
+        bool canaryExec   = _frame.CanaryExecuting;        // 카나리 소액 집행 중(황색 점멸)
+        long opsForensic  = (_frame.SignoffFailMask << 8) | (_frame.PanicTripped << 2) | (_frame.HostDriftTripped << 1) | _frame.CanaryDowngraded;
+        double timerUs    = _frame.HostTimerResMicros;
+        double canaryPct  = _frame.CanaryCapUtilPermille / 10.0;
+    }
+    @* 호스트 드리프트/패닉 격발/카나리 강등 → 암흑자색 전체화면 오버레이 + 포렌식 헥스(정적 투사) *@
+    @if (opsAlarm)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99988;background:radial-gradient(circle,rgba(74,20,140,0.10),rgba(40,10,70,0.34));border:9px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.7s ease-in-out infinite"></div>
+        <div style="position:fixed;top:500px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.96);color:#e1bee7;padding:12px 30px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 30px rgba(123,31,162,0.8)">
+            <div style="font-size:16px;font-weight:800">🟣 @(opPanic ? "[OPERATOR PANIC ABORT - PIPELINE FROZEN]" : (hostDrift ? "[LIVE HOST DRIFT - ARM DOWNGRADED]" : "[CANARY SLIPPAGE - DRY-RUN DOWNGRADE]"))</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">타이머 @(timerUs.ToString("F2"))µs · 카나리 @(canaryPct.ToString("F1"))% · FORENSIC 0x@(opsForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(opsAlarm ? "kpi-alert" : (stagingReady ? "kpi-hotswap-ok" : (canaryExec ? "kpi-amber" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">📜 Operational Runbook &amp; Host Tuning (사전 점화 서명 · 호스트 튜닝 · 카나리 소액 집행)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:380px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (opsAlarm)
+                    {
+                        <span class="prod-badge" style="background:rgba(123,31,162,0.28);color:#ce93d8;box-shadow:0 0 8px rgba(123,31,162,0.6)">@(opPanic ? "[PANIC ABORT - FROZEN]" : (hostDrift ? "[HOST DRIFT - DOWNGRADED]" : "[CANARY SLIPPAGE - DRY-RUN]"))</span>
+                    }
+                    else if (stagingReady)
+                    {
+                        <span class="prod-badge" style="background:rgba(38,166,154,0.26);color:#4db6ac;box-shadow:0 0 12px rgba(38,166,154,0.7)">[HOST TUNED - CANARY STAGING READY]</span>
+                    }
+                    else if (canaryExec)
+                    {
+                        <span class="prod-badge chaos-amber" style="animation:recpulse 1.1s ease-in-out infinite">[CANARY EXECUTING - MICRO CAPITAL ≤0.1%]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[SIGNOFF PENDING - AWAITING HOST TUNE]</span>
+                    }
+                </div>
+                <div class="kpi-sub">서명 <b style="color:@(_frame.SignoffPassed != 0L ? "#66bb6a" : "#ffb74d")">@(_frame.SignoffPassed != 0L ? "PASS" : "─")</b> · 타이머 <b style="font-family:var(--mono);color:@(_frame.HostTimerResNanos > 0L && _frame.HostTimerResNanos <= 1_000_000L ? "#66bb6a" : "#ffb74d")">@(timerUs.ToString("F2"))µs</b> · 드리프트 <b style="color:@(hostDrift ? "#ce93d8" : "#66bb6a")">@(hostDrift ? "TRIPPED" : "CLEAN")</b></div>
+            </div>
+            <div style="min-width:230px">
+                <div class="kpi-value" style="font-size:14px">카나리 캡 집행 <b style="font-family:var(--mono)">@(canaryPct.ToString("F1"))</b>%</div>
+                <div class="kpi-sub">자본 ≤0.1% · 강등 <b style="color:@(canaryDowngr ? "#ce93d8" : "#66bb6a")">@(canaryDowngr ? "DRY-RUN" : "─")</b> · ★슬리피지 초과 시 O(1) 물러섬</div>
+            </div>
+            <div style="min-width:210px">
+                <div class="kpi-value" style="font-size:14px">패닉 스위치 <b style="color:@(opPanic ? "#ce93d8" : "#66bb6a")">@(opPanic ? "TRIPPED" : "ARMED")</b></div>
+                <div class="kpi-sub">비상 탈출 → ForceFreeze+Cancel-All+zeroize · ★liveArmed:false(물리 이중 키 전 실물 0)</div>
+            </div>
+        </div>
+        @if (!stagingReady && !opsAlarm)
+        {
+            <div class="kpi-sub" style="margin-top:6px">운용 매뉴얼 3단계(Pre-Flight 서명 → 드라이런 → 물리 이중 키). 사전 점화 서명 8항목(OS 타이머 해상도·P-Core 핀·MMF 감사·퀀텀 금고·Pre-Flight·워치독·결합도·가동) 전 PASS 시에만 STAGING READY(서명 시점 ★Think-Beyond 드리프트 센티널이 호스트 타이밍 봉인 → 연속 이탈 시 안전 강등). 최초 실전 사출은 카나리 캡(자본 ≤0.1%) 내로만·실측 슬리피지 초과 시 즉시 드라이런 강등. ★전 게이트 tighten-only·liveArmed:false — 물리 이중 키(ValveWired ∧ LiveArmingWired) 전 실 브로커 소켓 0비트.</div>
+        }
+    </div>
+
     @* ══ 자율 알파 공장 카운터 + 자기 제어 밸브(v4.85.0) ══════════════════════════ *@
     <div class="kpi-card @(_frame.AlphaFactoryAmber ? "kpi-amber" : "")" style="margin-bottom:22px">
         <div class="kpi-label">

@@ -354,6 +354,10 @@ namespace StockManager.Blazor
             ScopeSealedTransitionBarrier?  scopeBarrierRef = null;
             LatencySlaGatekeeper?          slaGateRef = null;       // v10.1.0 Final — SLA P99.99 이탈 시 무장 tighten
             SlaJitterRegressionGuard?      jitterGuardRef = null;   // v10.1.0 Final — 측정 지터 회귀 시 무장 tighten
+            IgnitionSignoffValidator?      signoffRef = null;       // v10.1.0 Ops — 사전 점화 서명 미달 시 무장 하드 차단
+            HostEnvironmentDriftSentinel?  driftRef = null;         // v10.1.0 Ops — ★호스트 환경 드리프트 시 무장 하향
+            MicroCapitalCanaryGovernor?    canaryRef = null;        // v10.1.0 Ops — 카나리 슬리피지 강등 시 무장 tighten
+            OperatorDuressPanicSwitch?     panicRef = null;         // v10.1.0 Ops — 패닉 격발 시 무장 tighten
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
@@ -375,7 +379,11 @@ namespace StockManager.Blazor
                                 || (certSealerRef?.CertificationBlocking ?? false)
                                 || (scopeBarrierRef?.TransitionBlocking ?? false)
                                 || (slaGateRef?.IsBreached ?? false)               // v10.1.0 Final — 나노 SLA P99.99 이탈 → 무장 tighten
-                                || (jitterGuardRef?.RegressionTripped ?? false));  // v10.1.0 Final — 측정 신뢰불가 회귀 → 무장 tighten
+                                || (jitterGuardRef?.RegressionTripped ?? false)    // v10.1.0 Final — 측정 신뢰불가 회귀 → 무장 tighten
+                                || (signoffRef?.SignoffBlocking ?? false)          // v10.1.0 Ops — 사전 점화 서명 미달/리스 만료 → 무장 하드 차단
+                                || (driftRef?.DriftBlocking ?? false)              // v10.1.0 Ops — ★호스트 환경 드리프트 → 무장 하향
+                                || (canaryRef?.CanaryBlocking ?? false)            // v10.1.0 Ops — 카나리 슬리피지 강등 → 무장 tighten
+                                || (panicRef?.PanicBlocking ?? false));            // v10.1.0 Ops — 운용자 패닉 격발 → 무장 tighten
             // ★v10.1.0 디스패처 무장 술어 = 드라이런 스코프(가상 미러 급전·barrier RouteNow 가 broker 를 물리 차단) ∨ 실전 무장.
             //   드라이런 'armed' 는 오직 미러로만 도달 — 실 브로커 소켓 0비트(liveArmed:false 불변·barrier=DryRun→미러, =Live→게이트웨이).
             Func<bool> armedPredicate = () => { try { return (scopeBarrierRef?.DryRunActive ?? false) || liveArmed(); } catch { return false; } };
@@ -776,16 +784,36 @@ namespace StockManager.Blazor
                 attestation:   cfg.GetBool("Sla.FuseArmed", false) ? attestation : null);          // ★ForceFreeze 옵트인(기본 tighten-only)
             var releaseAttestor = new ReleaseArtifactSha256Attestor(
                 expectedSealHex: cfg.GetString("Release.ExpectedMasterSeal", ""), audit: ignAudit);
+            // v10.1.0 Ops — 사전 점화 서명 + 카나리 거버너 + ★Think-Beyond 드리프트 센티널 + 패닉 스위치.
+            //   ★liveArmed:false: 전부 순수 채점/판정 — IBroker·소켓·onSend 참조 0. 전 blockWhile tighten-only(무장 부여 불가).
+            //     서명 미달/드리프트/카나리 강등/패닉 → 무장 하향. 카나리 캡은 LiveBroker 경로에서만·강등 시 드라이런으로 물러섬.
+            var signoffValidator = new IgnitionSignoffValidator(audit: ignAudit);
+            var driftSentinel    = new HostEnvironmentDriftSentinel(audit: ignAudit);
+            var panicSwitch      = new OperatorDuressPanicSwitch(attestation: attestation, audit: ignAudit);
+            var canaryGovernor   = new MicroCapitalCanaryGovernor(
+                capitalKrwRaw: (long)cfg.GetInt("Canary.CapitalKrw", 10_000_000, 0, 2_000_000_000) * 100_000_000L,   // KRW → QFixed raw
+                capBps: cfg.GetInt("Canary.CapBps", 10, 1, 10_000),                              // 기본 0.1%
+                slippageThresholdBps: cfg.GetInt("Canary.SlippageThresholdBps", 50, 1, 100_000),
+                onDowngrade: () => { try { scopeBarrier.Transition(ScopeSealedTransitionBarrier.MODE_DRYRUN); } catch { } },   // ★슬리피지 초과 → O(1) 드라이런 강등(안전 방향)
+                audit: ignAudit);
             certSealerRef    = certSealer;     // 무장 술어 blockWhile 결속(유효 봉인 없으면 tighten)
             scopeBarrierRef  = scopeBarrier;   // 무장 술어(드라이런 급전 + 전환 쿨다운 tighten)
             slaGateRef       = slaGate;        // 무장 술어 blockWhile(SLA P99.99 이탈 tighten)
             jitterGuardRef   = jitterGuard;    // 무장 술어 blockWhile(측정 지터 회귀 tighten)
+            signoffRef       = signoffValidator;   // 무장 blockWhile(서명 미달/리스 만료 tighten)
+            driftRef         = driftSentinel;      // 무장 blockWhile(호스트 드리프트 tighten)
+            canaryRef        = canaryGovernor;     // 무장 blockWhile(카나리 강등 tighten)
+            panicRef         = panicSwitch;        // 무장 blockWhile(패닉 격발 tighten)
             services.AddSingleton(mockMirror);
             services.AddSingleton(scopeBarrier);
             services.AddSingleton(certSealer);
             services.AddSingleton(slaGate);
             services.AddSingleton(jitterGuard);
             services.AddSingleton(releaseAttestor);
+            services.AddSingleton(signoffValidator);
+            services.AddSingleton(canaryGovernor);
+            services.AddSingleton(driftSentinel);
+            services.AddSingleton(panicSwitch);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -797,7 +825,8 @@ namespace StockManager.Blazor
                 chaos: chaosSanitizer, chaosRecovery: chaosRecovery, chaosGuard: chaosGuard, chaosReplayer: chaosReplayer,
                 ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit,
                 mockMirror: mockMirror, certSealer: certSealer, scopeBarrier: scopeBarrier,
-                slaGate: slaGate, jitterGuard: jitterGuard, releaseAttestor: releaseAttestor);   // v10.1.0 Final — 나노 SLA·지터·릴리스 봉인 텔레메트리
+                slaGate: slaGate, jitterGuard: jitterGuard, releaseAttestor: releaseAttestor,   // v10.1.0 Final — 나노 SLA·지터·릴리스 봉인 텔레메트리
+                signoffValidator: signoffValidator, canaryGovernor: canaryGovernor, driftSentinel: driftSentinel, panicSwitch: panicSwitch);   // v10.1.0 Ops — 서명·카나리·드리프트·패닉 텔레메트리
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);
@@ -837,7 +866,8 @@ namespace StockManager.Blazor
                 pinGrid: cpuGrid,   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
                 gateway: ignGateway,   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
                 mockMirror: mockMirror, scopeBarrier: scopeBarrier,   // v10.1.0 — 드라이런 스코프면 실 브로커 대신 가상 미러로 봉인 루프백
-                slaGate: slaGate, jitterGuard: jitterGuard);   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
+                slaGate: slaGate, jitterGuard: jitterGuard,   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
+                canaryGov: canaryGovernor);   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

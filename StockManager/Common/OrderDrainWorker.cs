@@ -32,6 +32,7 @@ namespace StockManager.Common
         private readonly ScopeSealedTransitionBarrier? _scopeBarrier; // v10.1.0 스코프-봉인 전환 장벽(옵션·라우팅 권위)
         private readonly LatencySlaGatekeeper? _slaGate;           // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(옵션·δ=0 Record)
         private readonly SlaJitterRegressionGuard? _jitterGuard;   // v10.1.0 Final — ★Think-Beyond 측정-무결성(디스케줄 배제·옵션)
+        private readonly MicroCapitalCanaryGovernor? _canaryGov;   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%·LiveBroker 경로 전용·옵션)
         private static readonly long SlaTickFreq = System.Diagnostics.Stopwatch.Frequency;   // 틱→ns 변환(호스트 QPC 주파수·1회 캐시)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
@@ -57,7 +58,8 @@ namespace StockManager.Common
                                 MockExecutionOrderBookMirror? mockMirror = null,
                                 ScopeSealedTransitionBarrier? scopeBarrier = null,
                                 LatencySlaGatekeeper? slaGate = null,
-                                SlaJitterRegressionGuard? jitterGuard = null)
+                                SlaJitterRegressionGuard? jitterGuard = null,
+                                MicroCapitalCanaryGovernor? canaryGov = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
@@ -69,6 +71,7 @@ namespace StockManager.Common
             _scopeBarrier  = scopeBarrier;  // v10.1.0 — 드라이런/실전 라우팅 권위(전환 쿨다운·에폭 펜스)
             _slaGate       = slaGate;       // v10.1.0 Final — 드레인 사이클 지연 SLA 계측(주입 시)
             _jitterGuard   = jitterGuard;   // v10.1.0 Final — ★디스케줄 아티팩트 배제(퓨즈 오트립 방지)
+            _canaryGov     = canaryGov;     // v10.1.0 Ops — 실전 사출 직전 카나리 캡 검문(LiveBroker/직접 실전 경로 전용)
             _pinGrid       = pinGrid;
             _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
@@ -154,6 +157,19 @@ namespace StockManager.Common
                 if (route == ScopeSealedTransitionBarrier.Route.DryRunMirror)
                     return _mockMirror?.SealAndVirtualFill(p.OrderId, p.SymbolCode, p.SideByte, p.KindByte, p.PriceRaw, p.QtyRaw) ?? false;
                 // route == LiveBroker → 아래 실전 경로(게이트웨이·물리 키)
+            }
+
+            // ★v10.1.0 Ops 카나리 캡: 실전 사출 직전, 최초 실 노출을 자본 ≤0.1% 로 물리 제한. 캡 초과 or 슬리피지 강등 → 미사출(GatedOut).
+            //   드라이런 경로는 위에서 이미 미러로 반환 — 카나리는 LiveBroker/직접 실전 경로에만 적용(liveArmed:false 정합).
+            if (_canaryGov is { } canary)
+            {
+                // ★fail-closed 명목: 시장가(PriceRaw≤0·명목 미상)·비정상 수량·Int128→long 오버플로 → long.MaxValue(캡 초과 거부).
+                //   bare (long) 절단은 2^64 배수 근방 명목이 소액 양수로 랩→캡 우회(fail-open)·시장가는 명목 0→무한 우회였음. 지정가만 정확 계산·나머지 거부.
+                System.Int128 notional128 = (p.PriceRaw <= 0L || p.QtyRaw <= 0L)
+                    ? System.Int128.MaxValue
+                    : (System.Int128)p.PriceRaw * p.QtyRaw / 100_000_000L;
+                long notionalRaw = notional128 > long.MaxValue ? long.MaxValue : (long)notional128;   // 클램프(절단 랩 봉쇄)
+                if (!canary.TryAdmitOrder(notionalRaw)) return false;   // 캡 초과/강등/미상 명목 → veto(GatedOut·fail-closed)
             }
 
             // ★v10.0.0 최종 빗장: 게이트웨이 주입 시 실물 사출을 이중키∧방어선∧펄스 재검 + 단발 개통 + 봉인 사출

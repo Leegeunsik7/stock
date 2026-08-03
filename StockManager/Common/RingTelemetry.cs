@@ -256,6 +256,15 @@ namespace StockManager.Common
         public readonly long   ReleaseSealValid;           // 1=릴리스 아티팩트 SHA-256 봉인 검증 성공
         public readonly long   ReleaseSealHex;             // 릴리스 봉인 하위 32비트(포렌식 헥스)
         public readonly long   MasterReleaseCertified;     // 1=SLA통과∧봉인유효∧지터정상(마스터 릴리스 인증)
+        // v10.1.0 Ops — Operational Runbook & Host Tuning & Canary.
+        public readonly long   SignoffPassed;              // 1=사전 점화 서명 전 항목 PASS(신선)
+        public readonly long   SignoffFailMask;            // 서명 실패 항목 비트마스크(포렌식)
+        public readonly long   CanaryCapUtilPermille;      // 카나리 캡 집행율(‰)
+        public readonly long   CanaryDowngraded;           // 1=슬리피지 임계 초과 → 드라이런 강등
+        public readonly long   HostTimerResNanos;          // OS 타이머 해상도(ns·튜닝 목표 ≤0.5ms)
+        public readonly long   HostDriftTripped;           // ★Think-Beyond 1=호스트 환경 드리프트 확정(안전 강등)
+        public readonly long   PanicTripped;               // 1=운용자 비상 탈출(패닉 스위치) 격발
+        public readonly long   CanaryStagingReady;         // 1=서명∧호스트튜닝∧무드리프트∧무강등∧무패닉(카나리 준비)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -324,7 +333,9 @@ namespace StockManager.Common
                              long dryRunActive = 0L, long mockVirtualFills = 0L, long mockLastSlippageBps = 0L, long mockLastFillRttNanos = 0L,
                              long certScore = 0L, long certSealValid = 0L, long certSeal = 0L, long scopeTransitionBounces = 0L,
                              long slaP9999Nanos = 0L, long slaGateVeto = 0L, long slaJitterRejects = 0L, long jitterRatePermille = 0L,
-                             long jitterRegressionTripped = 0L, long releaseSealValid = 0L, long releaseSealHex = 0L, long masterReleaseCertified = 0L)
+                             long jitterRegressionTripped = 0L, long releaseSealValid = 0L, long releaseSealHex = 0L, long masterReleaseCertified = 0L,
+                             long signoffPassed = 0L, long signoffFailMask = 0L, long canaryCapUtilPermille = 0L, long canaryDowngraded = 0L,
+                             long hostTimerResNanos = 0L, long hostDriftTripped = 0L, long panicTripped = 0L, long canaryStagingReady = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -528,6 +539,14 @@ namespace StockManager.Common
             ReleaseSealValid             = releaseSealValid;
             ReleaseSealHex               = releaseSealHex;
             MasterReleaseCertified       = masterReleaseCertified;
+            SignoffPassed                = signoffPassed;
+            SignoffFailMask              = signoffFailMask;
+            CanaryCapUtilPermille        = canaryCapUtilPermille;
+            CanaryDowngraded             = canaryDowngraded;
+            HostTimerResNanos            = hostTimerResNanos;
+            HostDriftTripped             = hostDriftTripped;
+            PanicTripped                 = panicTripped;
+            CanaryStagingReady           = canaryStagingReady;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -808,6 +827,13 @@ namespace StockManager.Common
         public bool    JitterApproach            => JitterRegressionTripped == 0L && JitterRatePermille >= 50L; // 황색(지터 임접·회귀 전)
         public bool    JitterRegression          => JitterRegressionTripped != 0L;                             // ★암흑자색(측정 신뢰불가 회귀)
         public bool    ReleaseUncertified        => MasterReleaseCertified == 0L && SlaGateVeto == 0L && JitterRegressionTripped == 0L; // 황색(미인증·정상)
+        // v10.1.0 Ops — Operational Runbook & Host Tuning & Canary UI 헬퍼.
+        public bool    CanaryStaging             => CanaryStagingReady != 0L;                                  // 청/녹 [HOST TUNED - CANARY STAGING READY]
+        public bool    CanaryExecuting           => CanaryDowngraded == 0L && CanaryCapUtilPermille > 0L;      // 황색 점멸(카나리 소액 집행 중)
+        public bool    HostDrift                 => HostDriftTripped != 0L;                                    // ★암흑자색(호스트 환경 드리프트)
+        public bool    OperatorPanic             => PanicTripped != 0L;                                        // ★암흑자색(패닉 스위치 격발)
+        public bool    OpsAlarm                  => HostDriftTripped != 0L || PanicTripped != 0L || CanaryDowngraded != 0L; // 운용 비상(암흑자색)
+        public double  HostTimerResMicros        => HostTimerResNanos / 1000.0;                                // 타이머 해상도(µs 표시)
     }
 
     /// <summary>단일 라이터 seqlock 채널 — 캐시라인 격리. Publish(샘플러 단일 라이터)/TryRead(UI 락-프리·무할당).</summary>
@@ -829,7 +855,8 @@ namespace StockManager.Common
         //   (v10.0.0 Genesis 점화: 이중키결속·점화상태·veto수·veto코드·감사기록·키펄스·이중사출봉쇄·봉인사출 8필드 추가로 186필드 → 128+186×8=1616 → Size 1600→1664(64×26·잔여 6슬롯=48B).)
         //   (v10.1.0 드라이런/인증: 드라이런활성·가상체결·슬리피지·RTT·인증점수·봉인유효·봉인·스코프Bounce 8필드 추가로 194필드 → 128+194×8=1680 → Size 1664→1728(64×27·잔여 6슬롯=48B).)
         //   (v10.1.0 Final Packaging: SLA P99.99·SLA veto·지터배제·지터율·지터회귀·릴리스봉인유효·릴리스봉인헥스·마스터인증 8필드 추가로 202필드 → 128+202×8=1744 → Size 1728→1792(64×28·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1792)]
+        //   (v10.1.0 Ops: 서명PASS·서명실패마스크·카나리집행율·카나리강등·타이머해상도·드리프트·패닉·카나리준비 8필드 추가로 210필드 → 128+210×8=1808 → Size 1792→1856(64×29·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1856)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -973,6 +1000,10 @@ namespace StockManager.Common
         private readonly LatencySlaGatekeeper? _slaGate;             // v10.1.0 Final — 나노 SLA 게이트키퍼(옵션·읽기·Sample 이 EvaluateSla)
         private readonly SlaJitterRegressionGuard? _jitterGuard;     // v10.1.0 Final — ★Think-Beyond 측정-무결성 게이트(옵션·읽기)
         private readonly ReleaseArtifactSha256Attestor? _releaseAttestor; // v10.1.0 Final — 릴리스 아티팩트 봉인기(옵션·읽기)
+        private readonly IgnitionSignoffValidator? _signoffValidator; // v10.1.0 Ops — 사전 점화 서명(옵션·읽기·Sample 이 Certify)
+        private readonly MicroCapitalCanaryGovernor? _canaryGov;      // v10.1.0 Ops — 카나리 소액 집행 거버너(옵션·읽기)
+        private readonly HostEnvironmentDriftSentinel? _driftSentinel; // v10.1.0 Ops — ★Think-Beyond 드리프트 센티널(옵션·읽기·Probe)
+        private readonly OperatorDuressPanicSwitch? _panicSwitch;     // v10.1.0 Ops — 운용자 비상 탈출 패닉 스위치(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1066,7 +1097,11 @@ namespace StockManager.Common
                                       ScopeSealedTransitionBarrier? scopeBarrier = null,
                                       LatencySlaGatekeeper? slaGate = null,
                                       SlaJitterRegressionGuard? jitterGuard = null,
-                                      ReleaseArtifactSha256Attestor? releaseAttestor = null)
+                                      ReleaseArtifactSha256Attestor? releaseAttestor = null,
+                                      IgnitionSignoffValidator? signoffValidator = null,
+                                      MicroCapitalCanaryGovernor? canaryGovernor = null,
+                                      HostEnvironmentDriftSentinel? driftSentinel = null,
+                                      OperatorDuressPanicSwitch? panicSwitch = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1154,6 +1189,10 @@ namespace StockManager.Common
             _slaGate      = slaGate;
             _jitterGuard  = jitterGuard;
             _releaseAttestor = releaseAttestor;
+            _signoffValidator = signoffValidator;
+            _canaryGov    = canaryGovernor;
+            _driftSentinel = driftSentinel;
+            _panicSwitch  = panicSwitch;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1372,6 +1411,20 @@ namespace StockManager.Common
                 if (_releaseAttestor is { } relA) { if (relA.SealValid) relSealValid = 1L; relSealHex = relA.SealHex64 & 0xFFFFFFFFL; }
                 // ★마스터 인증(fail-closed): 실 SLA 측정(≥1표본) ∧ P99.99 미이탈 ∧ 봉인 검증 성공 ∧ 지터 회귀 없음 — 넷 모두. 모듈 미배선/미측정 시 0.
                 if (relSealValid == 1L && slaMeasured == 1L && slaVeto == 0L && jitterRegr == 0L) masterCert = 1L;
+                // v10.1.0 Ops — 호스트 타이머 프로브 + 드리프트 센티널 + 사전점화 서명 + 카나리 + 패닉(fail-closed).
+                long hostTimerRes = HostEnvironmentDriftSentinel.CurrentTimerResolutionNanos();
+                long signoffPass = 0L, signoffFail = 0L, canaryUtil = 0L, canaryDown = 0L, driftTrip = 0L, panicTrip = 0L, stagingReady = 0L;
+                if (_signoffValidator is { } sofV) { _channel.TryRead(out var lastFS); sofV.Certify(in lastFS); if (sofV.SignoffPassed) signoffPass = 1L; signoffFail = sofV.FailMask; }   // ★직전 프레임(N-1) 채점
+                if (_driftSentinel is { } drfS) { if (signoffPass == 1L && !drfS.Sealed) drfS.SealBaseline(hostTimerRes, jitterRate); drfS.Probe(hostTimerRes, jitterRate); if (drfS.DriftTripped) driftTrip = 1L; }   // ★서명 시점 봉인 + 연속 확인 강등
+                // ★카나리 슬리피지 피드(강등 경로 발화): 드라이런 리허설은 미러 슬리피지를 RecordSlippage 에 공급 — 실전은 실 체결 소스가 동일 진입점(RecordSlippage).
+                if (_canaryGov is { } canG)
+                {
+                    if (_mockMirror is { } mmSlip && (_scopeBar?.DryRunActive ?? false) && mmSlip.LastSlippageBps > 0L) canG.RecordSlippage(mmSlip.LastSlippageBps);
+                    canaryUtil = canG.CapUtilizationPermille;
+                    if (canG.Downgraded) canaryDown = 1L;
+                }
+                if (_panicSwitch is { } pncS) { if (pncS.Tripped) panicTrip = 1L; }
+                if (signoffPass == 1L && driftTrip == 0L && canaryDown == 0L && panicTrip == 0L) stagingReady = 1L;   // ★[HOST TUNED - CANARY STAGING READY]
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1405,7 +1458,8 @@ namespace StockManager.Common
                     chaosState, chaosMask, chaosInj, chaosLive, chaosTorn, chaosRecov, chaosSeed, chaosHold,
                     ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed,
                     dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce,
-                    slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert));
+                    slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert,
+                    signoffPass, signoffFail, canaryUtil, canaryDown, hostTimerRes, driftTrip, panicTrip, stagingReady));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

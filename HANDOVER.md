@@ -33,7 +33,7 @@
 - **극단적 카오스 결함 주입 샌드박스**(δ=0 결함 주입 엔진[소켓 지터/패킷드롭·메모리 압박·서멀 드롭·seqlock torn 비트마스크]·주입 시 무장 SafeHold[가역]·파멸 강도 ForceFreeze[하드] · SplitMix64 시드 100% 결정론 재현기 · 단계별 재인증 복구 스로틀러[Thundering Herd 거부] · ★Think Beyond bounded-progress 진행 보장 가드[스핀 경계 라이브락 O(1) 탈출 + 원자 이중버퍼 torn '불가능'化를 단일 불변식으로 통합] · 무장 술어 blockWhile 3종 tighten-only 합성 · TelemetryMonitor 🧪 패널 — δ=0·liveArmed:false[극단 결함/파멸 동결 하에서도 미무장 dispatcher→forwarded 0 실증], 6렌즈 적대검증)
 - **Genesis Live Ignition Gateway**(실자본 사출 파이프라인 최종 빗장 — 하드웨어 밸브 키 ∧ 마스터 물리 무장 키 이중 논리곱 ∧ 전 방어선 ∧ 키 펄스 생존 δ=0 산출·전부 PASS 시에만 onSend 1회성 원자 개통 · δ=0 MMF tri-state 링 포렌식 감사[µs+FNV 해시·무결성 검증] · 50ms 하드웨어 키 펄스 심박[단선 가역/지속 하드 래치·dormant 분별] · ★Think Beyond 봉인 사출 인터락[주문별 exactly-once CAS 래치 + 불변 페이로드 동결 + FNV seal 을 단일 봉인으로 → 이중 사출·torn payload 0%] · LiveAccountingMesh Freeze 레이스 핀포인트 교정[publish-after-effect·herd 100% 결정론] · TelemetryMonitor 🚀 패널 — δ=0·liveArmed:false[이중 물리 키 미결속 시 강한 사출도 실물 0비트], 6렌즈 적대검증)
 - **Live Flight Certification & Mock Dry-Run Fabric**(실자본 집행 직전 $0원 100% 가상 검증 + 전역 암호 봉인 — δ=0 가상 체결 미러[실전과 동일 SealedEmissionInterlock 봉인 경로 통과 후 소켓 직전 미러 루프백·adverse 슬리피지/부분/RTT·IBroker 참조 0] · 무장 직전 전역 ~48 불변식 총괄 채점[0~100]·100점 시에만 키드-FNV 봉인·무장 차단 · ★Think Beyond 스코프-에폭 펜스[드라이런↔실전 전환 시 에폭 전진(스코프 식별)+가상 잔량 O(1) 퍼지(오염 차단)+100ms 쿨다운(유령 폭주 차단)] · TelemetryMonitor 🛩️ 패널 — δ=0·liveArmed:false[드라이런 100% 가상 체결이어도 물리 이중 키 전 실 브로커 0비트], 6렌즈 적대검증)
-- 2,287 테스트 클린런, 전역 플래키 0%, 빌드 경고 0(Default+WebOnly+PrimesBench 삼중)
+- 2,297 테스트 클린런, 전역 플래키 0%, 빌드 경고 0(Default+WebOnly+PrimesBench 삼중)
 
 ```powershell
 # 빌드 (앱 종료 필수 — exe가 바이너리 잠금)

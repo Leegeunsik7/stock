@@ -33,6 +33,10 @@ namespace StockManager.Common
         DryRun           = 10,  // 드라이런 가상 체결(v10.1.0)
         ReleaseAttestation = 11, // 릴리스 아티팩트 SHA-256 포렌식 봉인(v10.1.0 Final Packaging)
         SlaBreach        = 12,  // 나노 SLA P99.99 이탈 트립(v10.1.0 Final Packaging)
+        Signoff          = 13,  // 사전 점화 서명(호스트/OS/금고 채점·v10.1.0 Ops)
+        HostDrift        = 14,  // 호스트 환경 드리프트 포획 → 안전 강등(v10.1.0 Ops)
+        CanaryDowngrade  = 15,  // 카나리 슬리피지 임계 초과 → 드라이런 강등(v10.1.0 Ops)
+        PanicAbort       = 16,  // 운용자 비상 탈출(패닉 스위치) 격발(v10.1.0 Ops)
     }
 
     /// <summary>점화 감사 레코드(64B blittable·δ=0). µs 타임스탬프 + 포렌식 해시.</summary>

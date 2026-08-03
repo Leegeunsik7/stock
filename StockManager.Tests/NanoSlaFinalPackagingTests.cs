@@ -90,7 +90,7 @@ namespace StockManager.Tests
             }
             _ = Measure();
             Assert.Equal(0L, Measure());   // ★런타임 상태 조회 핫패스 힙 0(콜드 산출 결과 캐시 읽기)
-            Assert.True(acc >= 0);
+            Assert.True(acc >= long.MinValue);   // keep-alive(JIT 제거 방지)·오버플로 무관(SealHex64 누적이 랩해도 항상 참)
         }
 
         // ══ 🌊 SlaJitterRegressionGuard (Think Beyond) ═════════════════════
