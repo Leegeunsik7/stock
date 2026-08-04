@@ -122,7 +122,7 @@
             new Item("📜", "알림 이력", "/alertcenter/history", NavLinkMatch.All),
             new Item("🚨", "부정거래 경고", "/fraud-alerts", NavLinkMatch.All),
         }),
-        new("tools", "🧰", "도구", "TOOLS", new[] { "/command", "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading" }, new[]
+        new("tools", "🧰", "도구", "TOOLS", new[] { "/command", "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading", "/tools" }, new[]
         {
             new Item("🗺️", "관제 탑", "/command", NavLinkMatch.Prefix),
             new Item("🧑‍✈️", "코파일럿", "/copilot", NavLinkMatch.Prefix),
@@ -138,6 +138,7 @@
             new Item("🎯", "실거래 계기판", "/trading/live", NavLinkMatch.Prefix),
             new Item("📊", "실행 품질", "/trading/quality", NavLinkMatch.Prefix),
             new Item("🧭", "온보딩 마법사", "/setup/wizard", NavLinkMatch.All),
+            new Item("📦", "배포 패키지 만들기", "/tools/distribute", NavLinkMatch.All),
             new Item("⚙️", "거래 설정", "/settings", NavLinkMatch.Prefix),
         }),
     };

@@ -12,6 +12,8 @@
 [Rr]elease/
 publish/
 installer/Output/
+dist/
+installer/MicrosoftEdgeWebview2Setup.exe
 *.dll
 *.pdb
 

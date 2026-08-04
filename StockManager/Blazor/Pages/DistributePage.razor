@@ -1,0 +1,154 @@
+@* ============================================================================
+   DistributePage.razor — v10.1.0 Phase 94-A: 원클릭 배포 패키지 만들기 (사이드 메뉴 도구)
+     자체 포함(.NET 런타임 내장) 설치관리자를 원클릭 생성. 받는 사람은 사전 설치 없이 Win 10/11 설치·제거 가능,
+     소스코드 미포함. 개발 환경(build-installer.ps1 + SDK) 감지 시에만 빌드 가능(배포본에선 개발 전용 안내).
+   ============================================================================ *@
+@page "/tools/distribute"
+@using StockManager.Common
+@using System.Threading
+@implements IDisposable
+
+<div class="dist-wrap">
+    <h2>📦 배포 패키지 만들기</h2>
+    <p class="sub">자체 포함(.NET 런타임 내장) 설치관리자를 <b>원클릭</b>으로 생성합니다. 받는 사람은 사전 설치 없이 Windows 10/11에서 <b>설치·실행·제거</b>할 수 있고, <b>소스코드는 포함되지 않습니다</b>(컴파일 바이너리만).</p>
+
+    @if (_prereqs is null)
+    {
+        <div class="notice">환경 확인 중…</div>
+    }
+    else if (!_prereqs.IsDevEnvironment)
+    {
+        <div class="notice dev-only">
+            🔒 이 도구는 <b>개발 환경 전용</b>입니다. 배포된 앱에는 빌드 스크립트·소스·SDK가 없어 실행되지 않습니다.<br />
+            배포 설치관리자는 개발 PC의 소스 폴더에서 이 도구(또는 <code>build-installer.ps1</code>)로 생성하세요.
+        </div>
+    }
+    else
+    {
+        <div class="prereq">
+            <span class="pr @(_prereqs.DotnetSdk ? "ok" : "bad")">.NET SDK @(_prereqs.DotnetSdk ? "✓" : "✗ 미설치")</span>
+            <span class="pr @(_prereqs.InnoSetup ? "ok" : "bad")">
+                Inno Setup @(_prereqs.InnoSetup ? "✓" : "✗ 미설치")
+                @if (!_prereqs.InnoSetup)
+                {
+                    <a href="https://jrsoftware.org/isdl.php" target="_blank" rel="noopener">설치 →</a>
+                }
+            </span>
+        </div>
+        @if (!_prereqs.InnoSetup)
+        {
+            <div class="notice warn">⚠ 설치관리자 컴파일에는 <b>Inno Setup 6</b>(무료)이 필요합니다. 위 링크에서 설치 후 이 페이지를 새로고침하세요.</div>
+        }
+
+        <div class="ctrls">
+            <label>버전 <input @bind="_version" disabled="@_running" class="ver" /></label>
+            <button class="go" @onclick="StartBuild" disabled="@(_running || !_prereqs.DotnetSdk || !_prereqs.InnoSetup)">
+                @(_running ? "⏳ 빌드 중…" : "🚀 설치관리자 빌드")
+            </button>
+            @if (_running)
+            {
+                <button class="cancel" @onclick="CancelBuild">취소</button>
+            }
+            @if (!_running && _lastExit == 0 && _prereqs.DistDir is not null)
+            {
+                <button class="folder" @onclick="OpenDist">📂 dist 폴더 열기</button>
+            }
+        </div>
+
+        @if (_result is not null)
+        {
+            <div class="result @(_lastExit == 0 ? "ok" : "bad")">@_result</div>
+        }
+
+        @if (_log.Count > 0)
+        {
+            <div class="log">
+                @foreach (var line in _log)
+                {
+                    <div class="ln">@line</div>
+                }
+            </div>
+        }
+        <div class="hint">빌드는 자체 포함 퍼블리시 + 컴파일로 <b>수 분</b> 소요됩니다. 산출물: <code>dist\MS2E.StockSuite-Setup-v버전.exe</code> (약 150~200MB).</div>
+    }
+</div>
+
+@code {
+    private InstallerBuildService? _svc;
+    private InstallerBuildService.Prereqs? _prereqs;
+    private string _version = "10.1.0";
+    private bool _running;
+    private int _lastExit = -999;
+    private string? _result;
+    private readonly List<string> _log = new();
+    private CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        _svc = new InstallerBuildService();
+        _prereqs = _svc.Detect();
+        try { var v = SystemVersionProvider.Version; if (!string.IsNullOrWhiteSpace(v)) _version = v; } catch { }
+    }
+
+    private async Task StartBuild()
+    {
+        if (_running || _svc is null || _prereqs?.RepoRoot is null) return;
+        _running = true; _log.Clear(); _result = null; _lastExit = -999;
+        _cts = new CancellationTokenSource();
+        _log.Add($"== 빌드 시작 (v{_version}) — 퍼블리시 후 Inno Setup 컴파일 ==");
+        StateHasChanged();
+
+        int exit;
+        try { exit = await _svc.RunBuildAsync(_prereqs.RepoRoot, _version, AppendLine, _cts.Token); }
+        catch (Exception ex) { AppendLine($"[오류] {ex.Message}"); exit = -1; }
+
+        _lastExit = exit;
+        _running = false;
+        _result = exit == 0
+            ? "✅ 완료 — dist 폴더에 설치관리자(setup.exe)가 생성되었습니다. 이 파일을 받는 사람에게 전달하세요."
+            : $"❌ 실패(코드 {exit}) — 위 로그를 확인하세요(Inno Setup 미설치·인터넷 차단 등).";
+        _prereqs = _svc.Detect();   // dist 폴더 생성 반영
+        StateHasChanged();
+    }
+
+    private void AppendLine(string line) => InvokeAsync(() =>
+    {
+        _log.Add(line);
+        if (_log.Count > 600) _log.RemoveRange(0, _log.Count - 600);   // 로그 상한(메모리 보호)
+        StateHasChanged();
+    });
+
+    private void CancelBuild() => _cts?.Cancel();
+
+    private void OpenDist() { if (_prereqs?.DistDir is not null) _svc?.OpenFolder(_prereqs.DistDir); }
+
+    public void Dispose() { try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+}
+
+<style>
+    .dist-wrap{padding:22px 26px;max-width:960px}
+    .dist-wrap h2{margin:0 0 6px;font-size:20px}
+    .dist-wrap .sub{color:#8b97ad;font-size:13px;line-height:1.6;margin:0 0 16px}
+    .notice{padding:12px 14px;border-radius:9px;font-size:13px;line-height:1.6;margin:10px 0}
+    .notice.dev-only{background:rgba(80,100,140,.15);border:1px solid #3a4a63;color:#a9b7cf}
+    .notice.warn{background:rgba(210,150,40,.14);border:1px solid #7a5a20;color:#e3b968}
+    .prereq{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+    .pr{padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600}
+    .pr.ok{background:rgba(70,160,90,.16);border:1px solid #2f6b41;color:#79c88f}
+    .pr.bad{background:rgba(200,70,70,.14);border:1px solid #7a2f2f;color:#e08a8a}
+    .pr a{margin-left:8px;color:#6db3ff}
+    .ctrls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}
+    .ctrls label{font-size:13px;color:#9fb0c9}
+    .ver{background:#0f1626;border:1px solid #2a3550;color:#dfe7f5;border-radius:6px;padding:5px 8px;font-family:monospace}
+    .go{background:linear-gradient(180deg,#2d6be0,#1f52bb);color:#fff;border:0;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:700;cursor:pointer}
+    .go:disabled{opacity:.5;cursor:not-allowed}
+    .cancel{background:#5a2530;color:#f0b8c0;border:1px solid #7a3040;border-radius:8px;padding:9px 14px;cursor:pointer}
+    .folder{background:#1e2b44;color:#bcd0ee;border:1px solid #33456a;border-radius:8px;padding:9px 14px;cursor:pointer}
+    .result{padding:11px 14px;border-radius:8px;font-size:13.5px;font-weight:600;margin:10px 0}
+    .result.ok{background:rgba(70,160,90,.16);border:1px solid #2f6b41;color:#8fdca4}
+    .result.bad{background:rgba(200,70,70,.14);border:1px solid #7a2f2f;color:#e79a9a}
+    .log{background:#080d18;border:1px solid #1e2740;border-radius:9px;padding:12px 14px;margin:10px 0;max-height:340px;overflow:auto;font-family:Consolas,monospace;font-size:12px;line-height:1.55;color:#b9c6df}
+    .log .ln{white-space:pre-wrap;word-break:break-all}
+    .hint{color:#7b8aa4;font-size:12px;margin-top:8px}
+    .hint code,.notice code{background:#0f1626;padding:1px 6px;border-radius:4px;font-family:monospace;color:#cdd9ef}
+</style>
