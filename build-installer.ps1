@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # build-installer.ps1 — v10.1.0 Phase 94-A: 원클릭 배포 설치관리자 빌드
 #
 #   1) 자체 포함 퍼블리시 — 메인(win-x64) + KiwoomProxy(win-x86·별도 하위폴더). .NET 8 런타임 내장 →
@@ -76,6 +76,7 @@ if (-not (Test-Path $wv2)) {
 Write-Step "3/4" "Inno Setup(iscc.exe) 탐지..."
 if (-not $IsccPath) {
     $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",   # winget 사용자 스코프 설치(기본)
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 5\ISCC.exe",

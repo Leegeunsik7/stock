@@ -42,6 +42,11 @@ PrivilegesRequired=lowest
 WizardStyle=modern
 DisableProgramGroupPage=yes
 ShowLanguageDialog=auto
+; ★연속 업그레이드: 실행 중인 이전 버전이 파일을 잠그고 있으면 감지·자동 종료 후 교체('사용 중' 오류 방지).
+;   앱에 단일 인스턴스 뮤텍스가 없어 파일-사용중 감지에 의존한다(교체 대상 exe/dll 이 열려 있으면 종료 유도).
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll
+RestartApplications=no
 
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"

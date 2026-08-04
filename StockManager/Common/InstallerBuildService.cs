@@ -131,10 +131,12 @@ namespace StockManager.Common
 
         private static string? DetectIscc()
         {
-            string pf   = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string pf    = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string pf86  = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             foreach (var c in new[]
             {
+                Path.Combine(local, "Programs", "Inno Setup 6", "ISCC.exe"),   // winget 사용자 스코프 설치(기본)
                 Path.Combine(pf86, "Inno Setup 6", "ISCC.exe"),
                 Path.Combine(pf,   "Inno Setup 6", "ISCC.exe"),
                 Path.Combine(pf86, "Inno Setup 5", "ISCC.exe"),
