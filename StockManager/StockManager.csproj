@@ -66,7 +66,7 @@
          ── v10.1.0 Phase 94-A: 원클릭 배포 설치관리자 (자체 포함 + Inno Setup + 사이드 메뉴 도구) ──
          [배포] 지휘관 요구(타인 배포·소스 비공개·Win 설치/삭제·Win10/11)에 자체 포함(self-contained·.NET 8 런타임 내장)+Inno Setup+컴파일 바이너리만(.cs 미포함) 결정. build-installer.ps1(퍼블리시 메인 win-x64 + 프록시 win-x86 별도폴더 → .pdb/.cs/.xml 제거 → WebView2 부트스트랩 동봉 → iscc 컴파일 → dist\setup.exe) + installer\MS2E.StockSuite.iss(사용자단위 lowest·UAC 없음·MinVersion 10.0.17763[Win10 1809~Win11]·WebView2 미설치 자동설치·기존 v3.4.1 AppId 재사용해 업그레이드 연속성).
          [사이드메뉴] 🧰 도구 그룹에 📦 배포 패키지 만들기(/tools/distribute) — InstallerBuildService(개발환경/SDK/Inno Setup 감지·자식 프로세스 실행·UTF-8 출력 스트림·버전 새니타이즈 명령주입 차단) + DistributePage(프리렉 상태·실시간 로그·폴더 열기·엔드유저 환경은 '개발 전용' 안내). 구 StockManager.iss(v3.4.1)는 폐기 표기(보존).
-         [검증] 자체 포함 퍼블리시 스모크(194MB·소스/pdb 미유출)·삼중 0W/0E·전체 2306 통과·회귀 0. ★liveArmed 계층 미접촉(빌드 도우미·실 발주 무관).
+         [검증] 자체 포함 퍼블리시 스모크(194MB·소스/pdb 미유출)·삼중 0W/0E·전체 2306 통과·회귀 0. ★실기 end-to-end: Inno Setup 6.7.3(winget) 설치 후 파이프라인 완주 → dist\MS2E.StockSuite-Setup-v10.1.0.exe(103MB·lzma2·WebView2 임베드) 생성 검증. 실기서 3 결함 교정: iscc 사용자스코프(%LOCALAPPDATA%) 탐지 누락·.ps1 UTF-8 BOM 부재(PS5.1 CP949 오독→파싱실패)·연속 업그레이드 CloseApplications+기존 AppId 재사용(제자리 업그레이드). ★liveArmed 계층 미접촉(빌드 도우미·실 발주 무관).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.
