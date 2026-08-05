@@ -13,7 +13,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>StockManager</RootNamespace>
     <AssemblyName>MS2E.StockSuite</AssemblyName>
-    <ApplicationIcon></ApplicationIcon>
+    <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!--
       ⚠️ AnyCPU 고정(★아키텍처 결정 v4.82.0): 메인 터미널은 64비트 유지한다.

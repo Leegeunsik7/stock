@@ -29,6 +29,8 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayName={#AppName} v{#AppVersion}
 UninstallDisplayIcon={app}\{#AppExeName}
+; ★설치관리자(setup.exe) 자체 아이콘도 주식 아이콘으로.
+SetupIconFile=..\StockManager\app.ico
 OutputDir=..\dist
 OutputBaseFilename=MS2E.StockSuite-Setup-v{#AppVersion}
 Compression=lzma2/max

@@ -52,8 +52,24 @@ if (-not $SkipPublish) {
 
     # ★소스 보호: 디버그 심볼/원본/문서 잔재 제거(컴파일 바이너리만 배포).
     Get-ChildItem $stage -Include *.pdb, *.cs, *.xml -Recurse -File -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
+
+    # ★★데이터 유출 방지 가드(fail-closed): 스테이지에 사용자 DB/시크릿/자격증명이 섞이면 빌드 중단.
+    #   앱 데이터는 %LOCALAPPDATA%\StockManager\portfolio.db(런타임 생성)라 정상 빌드엔 없어야 한다. 만약 감지되면
+    #   배포본에 개발자 데이터가 실릴 위험이므로 즉시 실패시킨다(라이브러리 .dll 은 제외).
+    $leaks = Get-ChildItem $stage -Recurse -File -EA SilentlyContinue | Where-Object {
+        $_.Extension -ne '.dll' -and (
+            ($_.Extension -in '.db', '.db3', '.sqlite', '.sqlite3', '.pfx', '.token', '.pem') -or
+            ($_.BaseName -match '(?i)(portfolio|secret|credential|apikey|password)')
+        )
+    }
+    if ($leaks) {
+        $leaks | ForEach-Object { Write-Warning "  ★데이터 유출 위험 파일: $($_.FullName)" }
+        throw "스테이지에 사용자 데이터/시크릿이 감지되어 빌드를 중단합니다(배포본 데이터 유출 방지)."
+    }
+
     $stageFiles = (Get-ChildItem $stage -Recurse -File).Count
     Write-Host "  스테이징: $stage ($stageFiles 파일)" -ForegroundColor Gray
+    Write-Host "  ✓ 데이터 유출 가드 통과 — 사용자 DB/시크릿 미포함(배포본 청정)." -ForegroundColor Green
 } else {
     Write-Step "1/4" "퍼블리시 건너뜀(-SkipPublish)"
 }
