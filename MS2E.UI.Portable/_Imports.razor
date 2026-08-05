@@ -1,0 +1,16 @@
+@* MS2E.UI.Portable 공통 razor using — 이관된 순수 UI 컴포넌트가 Blazor 기본 타입(ComponentBase·EventCallback·
+   Parameter 등)과 Portable 하위 네임스페이스를 참조하도록 한다. ★엔진(StockManager) 네임스페이스는 절대 포함 금지
+   (0 Engine Ref 불변 — UiAssemblyPuritySentinel 테스트가 강제). *@
+@using System
+@using System.Collections.Generic
+@using System.Linq
+@using System.Threading.Tasks
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using MS2E.UI.Portable
+@using MS2E.UI.Portable.Components
+@using MS2E.UI.Portable.Dto
+@using MS2E.UI.Portable.Ports
+@using MS2E.UI.Portable.Bus
+@using MS2E.UI.Portable.Security
+@using MS2E.UI.Portable.Infrastructure

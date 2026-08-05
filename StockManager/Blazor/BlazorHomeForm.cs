@@ -6,6 +6,7 @@ using StockManager.Common;
 using MS2E.UI.Portable.Bus;
 using MS2E.UI.Portable.Ports;
 using MS2E.UI.Portable.Security;
+using MS2E.UI.Portable.Infrastructure;
 
 namespace StockManager.Blazor
 {
@@ -843,6 +844,19 @@ namespace StockManager.Blazor
             services.AddSingleton<IAdminCommandPort>(adminCommandAdapter);
             services.AddSingleton<IMailAuditLogPort>(adminAuditAdapter);
             services.AddSingleton<IAdminSecretPort>(adminSecretAdapter);
+            // v10.1.0 Phase 94-A — UI 디커플링 인프라(MS2E.UI.Portable) 배선. ★liveArmed:false: 순수 UI 서비스 —
+            //   레지스트리 조회·렌더 스로틀·경계 이벤트 전달뿐(IBroker·소켓·실 발주 유발 0).
+            var uiPortRegistry   = new UniversalUiPortRegistry();
+            var uiRenderGovernor = new StateAwareRenderGovernor();
+            var uiEventBroker    = new UiEventBoundaryBroker(256);
+            uiPortRegistry.Register<IAdminCommandPort>(adminCommandAdapter);   // 이관된 Admin Port 어댑터 등록
+            uiPortRegistry.Register<IMailAuditLogPort>(adminAuditAdapter);
+            uiPortRegistry.Register<IAdminSecretPort>(adminSecretAdapter);
+            uiPortRegistry.Seal();                                             // 봉인 → 락프리 δ=0 읽기
+            attestation.RegisterFreezeObserver(_ => uiRenderGovernor.SetFrozen(true));   // ★ForceFreeze → 렌더 하드 스로틀(DOM 스래싱 차단)
+            services.AddSingleton(uiPortRegistry);
+            services.AddSingleton(uiRenderGovernor);
+            services.AddSingleton(uiEventBroker);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,

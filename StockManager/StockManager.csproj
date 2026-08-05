@@ -67,6 +67,14 @@
          [배포] 지휘관 요구(타인 배포·소스 비공개·Win 설치/삭제·Win10/11)에 자체 포함(self-contained·.NET 8 런타임 내장)+Inno Setup+컴파일 바이너리만(.cs 미포함) 결정. build-installer.ps1(퍼블리시 메인 win-x64 + 프록시 win-x86 별도폴더 → .pdb/.cs/.xml 제거 → WebView2 부트스트랩 동봉 → iscc 컴파일 → dist\setup.exe) + installer\MS2E.StockSuite.iss(사용자단위 lowest·UAC 없음·MinVersion 10.0.17763[Win10 1809~Win11]·WebView2 미설치 자동설치·기존 v3.4.1 AppId 재사용해 업그레이드 연속성).
          [사이드메뉴] 🧰 도구 그룹에 📦 배포 패키지 만들기(/tools/distribute) — InstallerBuildService(개발환경/SDK/Inno Setup 감지·자식 프로세스 실행·UTF-8 출력 스트림·버전 새니타이즈 명령주입 차단) + DistributePage(프리렉 상태·실시간 로그·폴더 열기·엔드유저 환경은 '개발 전용' 안내). 구 StockManager.iss(v3.4.1)는 폐기 표기(보존).
          [검증] 자체 포함 퍼블리시 스모크(194MB·소스/pdb 미유출)·삼중 0W/0E·전체 2306 통과·회귀 0. ★실기 end-to-end: Inno Setup 6.7.3(winget) 설치 후 파이프라인 완주 → dist\MS2E.StockSuite-Setup-v10.1.0.exe(103MB·lzma2·WebView2 임베드) 생성 검증. 실기서 3 결함 교정: iscc 사용자스코프(%LOCALAPPDATA%) 탐지 누락·.ps1 UTF-8 BOM 부재(PS5.1 CP949 오독→파싱실패)·연속 업그레이드 CloseApplications+기존 AppId 재사용(제자리 업그레이드). ★liveArmed 계층 미접촉(빌드 도우미·실 발주 무관).
+         ── v10.1.0 Phase 94-A Total UI Liberation Arc — Slice 1 (디커플링 인프라 + 순수 leaf 이주) ──
+         [정직 정찰] "89개 razor 전량 이주 + 0 Engine Ref"는 다중 세션 아크(LocalDatabase 직결 50 + ~40종 콘크리트 서비스). Mail.razor 여전히 부재. 단일 세션 강행은 UI/2306 테스트/삼중 빌드 파괴 위험 → 이번 세션은 디커플링 인프라 + 안전 leaf 이주 + 나머지 정직 보고로 확정.
+         [Gemini] UniversalUiPortRegistry(δ=0 O(1) 타입키 UI Port 레지스트리·Seal 후 락프리 읽기·미등록 fail-closed) + StateAwareRenderGovernor(고부하/ForceFreeze 시 δ=0 재렌더 코얼레싱·Normal 무제한/Frozen 250ms 하드 스로틀·attestation freeze 옵저버 인터락).
+         [★Think Beyond] UiEventBoundaryBroker — 제미나이 A(무할당 멀티플렉서)/B(경계 센티널)를 'δ=0 struct 링 + poll 모델' 하나로 통합 초월: Core 발행만·UI Drain(poll) → 델리게이트 할당 0(할당 유출 봉쇄) + Core 가 UI 델리게이트 미보유(이벤트 핸들러 누수 구조적 불가). ★적대검증 HIGH 교정: publish-before-populate + 비원자 struct 내부 Seq 스탬프 → in-flight torn 오판(이중계수·phantom) → 페이로드 먼저·Seq release 발행/acquire+seqlock 재검·정지형 연속 배수로 재설계.
+         [이주] HubTabs.razor(순수 프레젠테이션 leaf) → MS2E.UI.Portable/Components(git move) + Portable _Imports.razor 신설·메인 _Imports using 1줄로 7개 허브 무편집 해소. Admin 에 이은 2번째 실 이주(leaf 패턴 실증).
+         [순수성 강제] UiAssemblyPurity 테스트 — MS2E.UI.Portable 이 엔진(MS2E.StockSuite/StockManager*) 참조 0 실증(0 Engine Ref 아크 불변식 CI 강제).
+         [불변] δ=0(Get/ShouldRender/Publish/Drain 핫패스 힙 0)·결정론·fail-closed·liveArmed:false(순수 UI 서비스 — IBroker·소켓·실 발주 유발 0). 유닛 +9. 삼중 0W/0E·전체 2315 통과·회귀 0.
+         [잔여 아크] 87개 컴포넌트(LocalDatabase 50 raw SQL + ~40종 서비스 Port화)는 후속 세션 증분 이주 — 라우팅 페이지는 Router.AdditionalAssemblies 배선 필요(전 페이지 블라스트 반경 관리).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.
