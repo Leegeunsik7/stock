@@ -885,6 +885,19 @@ namespace StockManager.Blazor
             services.AddSingleton(fallbackSentinel);
             services.AddSingleton(timeFence);
             services.AddSingleton(kisAdapter);
+            // v11.0.0 Genesis Fleet Production — 실물 주문 집행 파이프라인. ★liveArmed:false: UniversalOrderExecutionAdapter 는
+            //   모든 발주를 GenesisLiveIgnitionGateway.Emit(이중 물리 키 ValveWired∧LiveArmingWired 인터락) 경유 — 미결속[기본]
+            //   이면 Emit 이 veto 하여 brokerSend(실 HTTP 발주) 델리게이트를 절대 호출 안 함(단 1비트 실물 누수 0). 실 배선 시
+            //   brokerSend 에 증권사 HTTP 발주를 주입(게이트 하류에서만 실행).
+            var execLedger    = new InFlightOrderReconciliationLedger();
+            var execZeroGuard = new ExecutionTokenZeroizationGuard();
+            var execBridge    = new LiveExecutionTelemetryBridge(execLedger);   // ★체결 통보 → 원장 정산 결선(브릭 방지)
+            var execAdapter   = new UniversalOrderExecutionAdapter(BrokerId.Toss, ignGateway, execLedger, brokerSend: null);
+            services.AddSingleton(execLedger);
+            services.AddSingleton(execZeroGuard);
+            services.AddSingleton(execBridge);
+            services.AddSingleton(execAdapter);
+            services.AddSingleton<IOrderExecutionPort>(execAdapter);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -899,7 +912,8 @@ namespace StockManager.Blazor
                 slaGate: slaGate, jitterGuard: jitterGuard, releaseAttestor: releaseAttestor,   // v10.1.0 Final — 나노 SLA·지터·릴리스 봉인 텔레메트리
                 signoffValidator: signoffValidator, canaryGovernor: canaryGovernor, driftSentinel: driftSentinel, panicSwitch: panicSwitch,   // v10.1.0 Ops — 서명·카나리·드리프트·패닉 텔레메트리
                 tossAdapter: tossPortfolioAdapter, tossGateway: tossGateway,   // v10.2.0 Toss — 조회 전용 포트폴리오/시세 텔레메트리
-                brokerMesh: brokerMesh, fallbackSentinel: fallbackSentinel, timeFence: timeFence);   // v10.2.0 Universal — 다중 증권사 메쉬 텔레메트리
+                brokerMesh: brokerMesh, fallbackSentinel: fallbackSentinel, timeFence: timeFence,   // v10.2.0 Universal — 다중 증권사 메쉬 텔레메트리
+                execAdapter: execAdapter, execZeroGuard: execZeroGuard, execBridge: execBridge);   // v11.0.0 Genesis Fleet — 실물 발주 텔레메트리
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

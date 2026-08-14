@@ -279,6 +279,11 @@ namespace StockManager.Common
         public readonly long   CrossBrokerFallbacks;       // 교차-폴백 스위칭 발생 횟수
         public readonly long   UniversalWsRttMicros;       // 활성 브로커 범용 WS RTT(µs)
         public readonly long   MeshTornDrifts;             // ★증권사 간 타임스탬프 찢어짐(torn drift) 탐지 횟수
+        // v11.0.0 Genesis Fleet Production — 실물 발주 게이트웨이.
+        public readonly long   LiveDispatchArmed;          // 1=실물 발주 락 해제(liveArmed ∧ 실주문 어댑터 결속)
+        public readonly long   OrderApiTimeouts;           // 증권사 API 발주 타임아웃 횟수
+        public readonly long   LiveFillSlippageBps;        // 실체결 슬리피지(bps)
+        public readonly long   ExecSecretHeapTainted;      // ★1=발주 시크릿 힙 오염(소멸 실패·암흑자색)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -351,7 +356,8 @@ namespace StockManager.Common
                              long signoffPassed = 0L, long signoffFailMask = 0L, long canaryCapUtilPermille = 0L, long canaryDowngraded = 0L,
                              long hostTimerResNanos = 0L, long hostDriftTripped = 0L, long panicTripped = 0L, long canaryStagingReady = 0L,
                              long tossConnected = 0L, long tossTotalEval = 0L, long tossTotalPnl = 0L, long tossWsRtt = 0L, long tossTokenFresh = 0L, long tossSeqRecov = 0L, long tossSeqProv = 0L, long tossVetoes = 0L,
-                             long activeBrokerId = 0L, long crossBrokerFallbacks = 0L, long universalWsRtt = 0L, long meshTornDrifts = 0L)
+                             long activeBrokerId = 0L, long crossBrokerFallbacks = 0L, long universalWsRtt = 0L, long meshTornDrifts = 0L,
+                             long liveDispatchArmed = 0L, long orderApiTimeouts = 0L, long liveFillSlippage = 0L, long execSecretTainted = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -575,6 +581,10 @@ namespace StockManager.Common
             CrossBrokerFallbacks         = crossBrokerFallbacks;
             UniversalWsRttMicros         = universalWsRtt;
             MeshTornDrifts               = meshTornDrifts;
+            LiveDispatchArmed            = liveDispatchArmed;
+            OrderApiTimeouts             = orderApiTimeouts;
+            LiveFillSlippageBps          = liveFillSlippage;
+            ExecSecretHeapTainted        = execSecretTainted;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -871,6 +881,9 @@ namespace StockManager.Common
         public bool    UniversalFallbackActive   => CrossBrokerFallbacks > 0L;                    // 황색(교차-폴백 스위칭)
         public bool    UniversalTornAlarm        => MeshTornDrifts > 0L || TossOrderVetoes > 0L;  // ★암흑자색(타임스탬프 찢어짐/비인가 발주)
         public string  ActiveBrokerName          => ActiveBrokerId switch { 1L => "TOSS", 2L => "KIS", 3L => "LS", _ => "—" };
+        // v11.0.0 Genesis Fleet Production — 관제 배지.
+        public bool    GenesisFleetLive          => LiveDispatchArmed != 0L;                     // 청/적점멸 [GENESIS FLEET LIVE - REAL-CAPITAL DISPATCH ARMED]
+        public bool    ExecSafeHoldAlarm         => OrderApiTimeouts > 0L || ExecSecretHeapTainted != 0L;  // ★암흑자색(API 타임아웃/시크릿 소멸실패 → Safe-Hold)
         public double  HostTimerResMicros        => HostTimerResNanos / 1000.0;                                // 타이머 해상도(µs 표시)
     }
 
@@ -896,7 +909,8 @@ namespace StockManager.Common
         //   (v10.1.0 Ops: 서명PASS·서명실패마스크·카나리집행율·카나리강등·타이머해상도·드리프트·패닉·카나리준비 8필드 추가로 210필드 → 128+210×8=1808 → Size 1792→1856(64×29·잔여 6슬롯=48B).)
         //   (v10.2.0 Toss: 연결·총평가·총손익·WS RTT·토큰신선도·SeqHole복구·시퀀스잠정·발주veto 8필드 추가로 218필드 → 128+218×8=1872 → Size 1856→1920(64×30·잔여 6슬롯=48B).)
         //   (v10.2.0 Universal Mesh: 활성브로커·교차폴백·범용RTT·torn drift 4필드 추가로 222필드 → 128+222×8=1904 → 기존 Size 1920 여유 슬롯 사용(64×30 유지·잔여 2슬롯=16B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1920)]
+        //   (v11.0.0 Genesis Fleet: 발주락해제·API타임아웃·실체결슬리피지·시크릿힙오염 4필드 추가로 226필드 → 128+226×8=1936 → Size 1920→1984(64×31·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1984)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -1050,6 +1064,9 @@ namespace StockManager.Common
         private readonly UniversalBrokerGatewayMesh? _brokerMesh;    // v10.2.0 Universal — 다중 증권사 메쉬(옵션·읽기)
         private readonly CrossBrokerFallbackSentinel? _fallbackSentinel; // v10.2.0 Universal — 교차-폴백 라우터(옵션·읽기)
         private readonly CrossBrokerMonotonicTimeFence? _timeFence;  // v10.2.0 Universal — ★Think-Beyond 단조 타임펜스(옵션·읽기)
+        private readonly UniversalOrderExecutionAdapter? _execAdapter;   // v11.0.0 Genesis Fleet — 실물 주문 어댑터(옵션·읽기)
+        private readonly ExecutionTokenZeroizationGuard? _execZeroGuard; // v11.0.0 Genesis Fleet — 발주 시크릿 제로화 가드(옵션·읽기)
+        private readonly LiveExecutionTelemetryBridge? _execBridge;      // v11.0.0 Genesis Fleet — 실체결 텔레메트리 브리지(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1153,7 +1170,10 @@ namespace StockManager.Common
                                       TossTokenService? tossToken = null,
                                       UniversalBrokerGatewayMesh? brokerMesh = null,
                                       CrossBrokerFallbackSentinel? fallbackSentinel = null,
-                                      CrossBrokerMonotonicTimeFence? timeFence = null)
+                                      CrossBrokerMonotonicTimeFence? timeFence = null,
+                                      UniversalOrderExecutionAdapter? execAdapter = null,
+                                      ExecutionTokenZeroizationGuard? execZeroGuard = null,
+                                      LiveExecutionTelemetryBridge? execBridge = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1251,6 +1271,9 @@ namespace StockManager.Common
             _brokerMesh   = brokerMesh;
             _fallbackSentinel = fallbackSentinel;
             _timeFence    = timeFence;
+            _execAdapter  = execAdapter;
+            _execZeroGuard = execZeroGuard;
+            _execBridge   = execBridge;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1503,6 +1526,11 @@ namespace StockManager.Common
                 if (_fallbackSentinel is { } fbS) { activeBrokerId = (long)fbS.ActivePrimary; crossFallbacks = fbS.Fallbacks; }
                 if (_timeFence is { } tfF) meshTorn = tfF.TornDrifts;
                 if (_tossGateway is { } uGw) univRtt = uGw.LastRttMicros;   // 활성 브로커 범용 RTT(현 배선=Toss 게이트웨이)
+                // v11.0.0 Genesis Fleet Production — 실물 발주 텔레메트리(읽기).
+                long liveDispatchArmed = 0L, orderApiTimeouts = 0L, liveFillSlippage = 0L, execSecretTainted = 0L;
+                if (_ignGateway is { } ignGw && ignGw.DualKeyWired && _execAdapter is not null) liveDispatchArmed = 1L;   // ★실물 발주 락 해제(이중 물리 키 ∧ 어댑터 결속)
+                if (_execBridge is { } exBr) { orderApiTimeouts = exBr.Timeouts; liveFillSlippage = exBr.LastSlippageBps; }
+                if (_execZeroGuard is { } exZg && exZg.HeapContaminated) execSecretTainted = 1L;   // ★발주 시크릿 힙 오염
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1539,7 +1567,8 @@ namespace StockManager.Common
                     slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert,
                     signoffPass, signoffFail, canaryUtil, canaryDown, hostTimerRes, driftTrip, panicTrip, stagingReady,
                     tossConn, tossEval, tossPnl, tossRtt, tossTokFresh, tossRecov, tossProv, tossVeto,
-                    activeBrokerId, crossFallbacks, univRtt, meshTorn));
+                    activeBrokerId, crossFallbacks, univRtt, meshTorn,
+                    liveDispatchArmed, orderApiTimeouts, liveFillSlippage, execSecretTainted));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

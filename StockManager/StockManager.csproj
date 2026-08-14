@@ -91,6 +91,15 @@
          [텔레메트리/UI] RingTelemetry +4(활성 Primary·교차폴백·범용RTT·torn drift, 기존 1920 여유 슬롯·222필드·64×30 유지). 🌐 [Universal Broker Open API Control Panel](청/녹 [MESH ACTIVE - READ-ONLY SYNC]·황 폴백스위칭·암흑자색 torn/비인가발주 오버레이+포렌식).
          [적대검증 수렴] 4렌즈 5 발견 교정: ★Fence _lastUnified 비원자 RMW(다중 생산자서 역행/중복 emit·단조 봉인 붕괴) → CAS 루프 원자화; Sentinel health↔CAS TOCTOU + 복구 에지 미포착(죽은 primary 고착) → ReconcileActive(활성 불건강 시 재조정·CAS 후 재검·복구 포착); _brokerLastExchange 평문 경합 → Interlocked.Exchange; SyncAll 예외 전파 → 브로커별 격리 try/catch. 유닛 +10(멀티스레드 동시 단조 봉인 실증 포함). 삼중 0W/0E·전체 2334 통과·회귀 0.
          [불변] δ=0(매핑/Fence/폴백/seqlock 읽기 핫패스 힙 0 실증)·결정론·fail-closed·liveArmed:false(★증권사 무관 조회 전용 — IBroker·소켓 송신·onSend·실 발주 유발 0·RejectOrderAttempt 하드 veto).
+         ── v11.0.0 Genesis Fleet Production Gate (실전 점화 및 배포 게이트웨이) ──
+         [실물 개통] 조회 전용 메쉬(v10.2.0)에 실자본 발주 파이프라인 개통 — UniversalOrderExecutionAdapter(IOrderExecutionPort·증권사별)가 모든 발주를 GenesisLiveIgnitionGateway.Emit(v10.0.0 이중 물리 키 ValveWired∧LiveArmingWired ∧ 방어선 ∧ 키펄스 인터락) 경유·δ=0 캐시 델리게이트. ★veto 시 onSend 절대 미호출.
+         [★liveArmed:false 100% veto 실증] 이중 물리 키 미결속(기본) → 1000 발주 시도 → brokerSend(실 HTTP) 0회 호출·전량 veto·dispatched 0(테스트 실증). API 키 등록·코드 결속돼도 물리 이중 키 무장 전 실물 0비트.
+         [자격증명] BrokerCredentialVaultManager.razor(/admin/credentials) — 증권사별 키/시크릿/계좌 입력 → SecurityAssetVault.Store(DPAPI CurrentUser at-rest) 즉시 암호화·입력 소거·평문 파일 미기록.
+         [Zero-Leak] ExecutionTokenZeroizationGuard(발주 토큰 Span&lt;char&gt; 주입·전송 후 CryptographicOperations.ZeroMemory 0x00·힙 오염 탐지) + LiveExecutionTelemetryBridge(δ=0 체결 통보 파싱·Int128 슬리피지·RTT·원장 정산 결선).
+         [★Think Beyond] InFlightOrderReconciliationLedger — 제미나이 A(ClOrdID 중복제거)/B(백프레셔 드레인)를 '정산 확증 전 신규 발주 차단' 단일 불변식으로 통합 초월: 종목별 pending + 전역 유니크 clOrdId, 단선 시 잔여 phantom(불확정) 래치 → reconcile 전까지 그 종목 신규 발주 fail-closed 거부. 타임아웃 중복 발주 + 유령 미체결 동시 봉쇄.
+         [텔레메트리/UI] RingTelemetry +4(발주락해제·API타임아웃·실체결슬리피지·시크릿힙오염, Cell 1920→1984=64×31=226필드). 🏆 [Genesis Fleet Production Control Panel](청/적점멸 [GENESIS FLEET LIVE - REAL-CAPITAL DISPATCH ARMED]·암흑자색 타임아웃/시크릿소멸실패 Safe-Hold 오버레이+포렌식).
+         [적대검증 수렴] 안전 렌즈 — ★핵심 불변식(veto 우회·실물 누수) 0건 수렴(인터락 견고·δ=0 청정) 확인 + 원장 생애주기 5 결함 교정: clOrdId 어댑터별 지역단조→다중어댑터 슬롯 오매칭(중복발주) → 원장 전역 유니크 발급; SendOrder 예외 시 pending 브릭+clOrd 소실 → try/catch+phantom 래치(복구 가능); 슬리피지 Int64 오버플로 fail-open → Int128; HeapContaminated &gt;1 단일누수 미탐지 → &gt;0; 브리지↔원장 reconcile 미결선 → clOrdId 파싱·정산 결선. 유닛 +10(★liveArmed 100% veto·다중어댑터 오매칭 봉쇄 실증). 삼중 0W/0E·전체 2344 통과·회귀 0.
+         [불변] δ=0(SendOrder/ledger/zeroize/파싱 핫패스 힙 0 실증)·결정론·fail-closed·★liveArmed:false(이중 물리 키 무장 전 실물 발주 100% veto·단 1비트 누수 0·brokerSend 게이트 하류 전용).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.

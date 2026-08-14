@@ -349,6 +349,52 @@
         }
     </div>
 
+    @* ══ v11.0.0: Genesis Fleet Production 관제 ══════════════════════ *@
+    @{
+        bool fleetLive    = _frame.GenesisFleetLive;
+        bool execAlarm    = _frame.ExecSafeHoldAlarm;
+        long execForensic = (_frame.OrderApiTimeouts << 8) | (_frame.ExecSecretHeapTainted & 0xF);
+    }
+    @if (execAlarm)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99994;background:radial-gradient(circle,rgba(74,20,140,0.08),rgba(40,10,70,0.30));border:8px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.85s ease-in-out infinite"></div>
+        <div style="position:fixed;top:120px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.94);color:#e1bee7;padding:10px 26px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 26px rgba(123,31,162,0.7)">
+            <div style="font-size:15px;font-weight:800">🟣 [ORDER API TIMEOUT / SECRET WIPE FAILURE - SAFE-HOLD LATCHED]</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">API 타임아웃 @_frame.OrderApiTimeouts.ToString("N0") · 시크릿 힙오염 @(_frame.ExecSecretHeapTainted != 0 ? "YES" : "no") · FORENSIC 0x@(execForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(execAlarm ? "kpi-alert" : (fleetLive ? "kpi-hotswap-ok" : ""))" style="margin-bottom:22px">
+        <div class="kpi-label">🏆 Genesis Fleet Production 관제 (Genesis Fleet Production Control Panel)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:340px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (execAlarm)
+                    {
+                        <span class="prod-badge" style="background:rgba(74,20,140,0.30);color:#ce93d8;box-shadow:0 0 10px rgba(123,31,162,0.65)">[SAFE-HOLD LATCHED]</span>
+                    }
+                    else if (fleetLive)
+                    {
+                        <span class="prod-badge" style="background:rgba(200,40,40,0.28);color:#ff8a8a;box-shadow:0 0 10px rgba(220,50,50,0.7);animation:recpulse 1s ease-in-out infinite">[GENESIS FLEET LIVE - REAL-CAPITAL DISPATCH ARMED]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge" style="background:rgba(66,133,244,0.20);color:#5b9bff">[FLEET SAFE - liveArmed:false · 실물 발주 100% VETO]</span>
+                    }
+                </div>
+                <div class="kpi-sub">물리 이중 키 <b style="color:@(fleetLive ? "#ff8a8a" : "#66bb6a")">@(fleetLive ? "ARMED (실물 개통)" : "미결속 (Veto)")</b> · 발주는 GenesisLiveIgnitionGateway.Emit 경유(이중키∧방어선∧키펄스)</div>
+            </div>
+            <div style="min-width:220px">
+                <div class="kpi-value" style="font-size:14px">실체결 슬리피지 <b style="font-family:var(--mono)">@_frame.LiveFillSlippageBps.ToString("N0")bps</b></div>
+                <div class="kpi-sub">API 타임아웃 <b style="font-family:var(--mono)">@_frame.OrderApiTimeouts.ToString("N0")</b>회</div>
+            </div>
+            <div style="min-width:250px">
+                <div class="kpi-value" style="font-size:14px">발주 시크릿 <b style="color:@(_frame.ExecSecretHeapTainted != 0 ? "#ce93d8" : "#66bb6a")">@(_frame.ExecSecretHeapTainted != 0 ? "힙 오염!" : "청정 (0x00 소멸)")</b></div>
+                <div class="kpi-sub">Span&lt;char&gt; 주입 · 전송 후 즉시 ZeroMemory · 중복발주/유령 미체결 ledger 격리</div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:6px">★liveArmed:false — API 키가 등록돼도 물리 이중 키(ValveWired ∧ LiveArmingWired) 완전 무장 전에는 실물 발주 <b>100% Veto</b>(단 1비트 실물 누수 0). 자격증명 관리: <code>/admin/credentials</code></div>
+    </div>
+
     @* ══ v10.2.0: Universal Broker Open API 통합 관제 ══════════════════════ *@
     @{
         bool uniActive   = _frame.UniversalMeshActive;
