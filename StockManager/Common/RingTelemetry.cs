@@ -274,6 +274,11 @@ namespace StockManager.Common
         public readonly long   TossSeqHolesRecovered;      // ★Sequence Hole 확증 복구 횟수
         public readonly long   TossSeqProvisional;         // 1=시퀀스 잠정(hole 미복구·fail-closed)
         public readonly long   TossOrderVetoes;            // ★비인가 발주/변조 시도 하드 거부 카운트(암흑자색)
+        // v10.2.0 Universal Broker Mesh — 다중 증권사 통합(1920 셀 여유 슬롯·추가 확장 없음).
+        public readonly long   ActiveBrokerId;             // 현재 활성 Primary 증권사(BrokerId)
+        public readonly long   CrossBrokerFallbacks;       // 교차-폴백 스위칭 발생 횟수
+        public readonly long   UniversalWsRttMicros;       // 활성 브로커 범용 WS RTT(µs)
+        public readonly long   MeshTornDrifts;             // ★증권사 간 타임스탬프 찢어짐(torn drift) 탐지 횟수
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -345,7 +350,8 @@ namespace StockManager.Common
                              long jitterRegressionTripped = 0L, long releaseSealValid = 0L, long releaseSealHex = 0L, long masterReleaseCertified = 0L,
                              long signoffPassed = 0L, long signoffFailMask = 0L, long canaryCapUtilPermille = 0L, long canaryDowngraded = 0L,
                              long hostTimerResNanos = 0L, long hostDriftTripped = 0L, long panicTripped = 0L, long canaryStagingReady = 0L,
-                             long tossConnected = 0L, long tossTotalEval = 0L, long tossTotalPnl = 0L, long tossWsRtt = 0L, long tossTokenFresh = 0L, long tossSeqRecov = 0L, long tossSeqProv = 0L, long tossVetoes = 0L)
+                             long tossConnected = 0L, long tossTotalEval = 0L, long tossTotalPnl = 0L, long tossWsRtt = 0L, long tossTokenFresh = 0L, long tossSeqRecov = 0L, long tossSeqProv = 0L, long tossVetoes = 0L,
+                             long activeBrokerId = 0L, long crossBrokerFallbacks = 0L, long universalWsRtt = 0L, long meshTornDrifts = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -565,6 +571,10 @@ namespace StockManager.Common
             TossSeqHolesRecovered        = tossSeqRecov;
             TossSeqProvisional           = tossSeqProv;
             TossOrderVetoes              = tossVetoes;
+            ActiveBrokerId               = activeBrokerId;
+            CrossBrokerFallbacks         = crossBrokerFallbacks;
+            UniversalWsRttMicros         = universalWsRtt;
+            MeshTornDrifts               = meshTornDrifts;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -856,6 +866,11 @@ namespace StockManager.Common
         public bool    TossTokenRefreshing       => TossConnected != 0L && TossTokenFreshSec == 0L; // 황색(토큰 갱신/만료)
         public bool    TossUnauthorized          => TossOrderVetoes > 0L;                        // ★암흑자색(비인가 발주 시도 감지)
         public bool    TossSeqProvisionalState   => TossSeqProvisional != 0L;                    // 시퀀스 잠정(hole 미복구)
+        // v10.2.0 Universal Broker Mesh — 관제 배지.
+        public bool    UniversalMeshActive       => ActiveBrokerId != 0L && TossConnected != 0L;  // 청/녹 [UNIVERSAL MESH ACTIVE - READ-ONLY SYNC]
+        public bool    UniversalFallbackActive   => CrossBrokerFallbacks > 0L;                    // 황색(교차-폴백 스위칭)
+        public bool    UniversalTornAlarm        => MeshTornDrifts > 0L || TossOrderVetoes > 0L;  // ★암흑자색(타임스탬프 찢어짐/비인가 발주)
+        public string  ActiveBrokerName          => ActiveBrokerId switch { 1L => "TOSS", 2L => "KIS", 3L => "LS", _ => "—" };
         public double  HostTimerResMicros        => HostTimerResNanos / 1000.0;                                // 타이머 해상도(µs 표시)
     }
 
@@ -880,6 +895,7 @@ namespace StockManager.Common
         //   (v10.1.0 Final Packaging: SLA P99.99·SLA veto·지터배제·지터율·지터회귀·릴리스봉인유효·릴리스봉인헥스·마스터인증 8필드 추가로 202필드 → 128+202×8=1744 → Size 1728→1792(64×28·잔여 6슬롯=48B).)
         //   (v10.1.0 Ops: 서명PASS·서명실패마스크·카나리집행율·카나리강등·타이머해상도·드리프트·패닉·카나리준비 8필드 추가로 210필드 → 128+210×8=1808 → Size 1792→1856(64×29·잔여 6슬롯=48B).)
         //   (v10.2.0 Toss: 연결·총평가·총손익·WS RTT·토큰신선도·SeqHole복구·시퀀스잠정·발주veto 8필드 추가로 218필드 → 128+218×8=1872 → Size 1856→1920(64×30·잔여 6슬롯=48B).)
+        //   (v10.2.0 Universal Mesh: 활성브로커·교차폴백·범용RTT·torn drift 4필드 추가로 222필드 → 128+222×8=1904 → 기존 Size 1920 여유 슬롯 사용(64×30 유지·잔여 2슬롯=16B).)
         [StructLayout(LayoutKind.Explicit, Size = 1920)]
         private struct Cell
         {
@@ -1031,6 +1047,9 @@ namespace StockManager.Common
         private readonly TossPortfolioSyncAdapter? _tossAdapter;      // v10.2.0 Toss — 포트폴리오 동기화 어댑터(옵션·읽기)
         private readonly TossWebSocketMarketDataGateway? _tossGateway; // v10.2.0 Toss — WS 시세 게이트웨이(옵션·읽기)
         private readonly TossTokenService? _tossToken;               // v10.2.0 Toss — 토큰 서비스(옵션·신선도 지표)
+        private readonly UniversalBrokerGatewayMesh? _brokerMesh;    // v10.2.0 Universal — 다중 증권사 메쉬(옵션·읽기)
+        private readonly CrossBrokerFallbackSentinel? _fallbackSentinel; // v10.2.0 Universal — 교차-폴백 라우터(옵션·읽기)
+        private readonly CrossBrokerMonotonicTimeFence? _timeFence;  // v10.2.0 Universal — ★Think-Beyond 단조 타임펜스(옵션·읽기)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1131,7 +1150,10 @@ namespace StockManager.Common
                                       OperatorDuressPanicSwitch? panicSwitch = null,
                                       TossPortfolioSyncAdapter? tossAdapter = null,
                                       TossWebSocketMarketDataGateway? tossGateway = null,
-                                      TossTokenService? tossToken = null)
+                                      TossTokenService? tossToken = null,
+                                      UniversalBrokerGatewayMesh? brokerMesh = null,
+                                      CrossBrokerFallbackSentinel? fallbackSentinel = null,
+                                      CrossBrokerMonotonicTimeFence? timeFence = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1226,6 +1248,9 @@ namespace StockManager.Common
             _tossAdapter  = tossAdapter;
             _tossGateway  = tossGateway;
             _tossToken    = tossToken;
+            _brokerMesh   = brokerMesh;
+            _fallbackSentinel = fallbackSentinel;
+            _timeFence    = timeFence;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1473,6 +1498,11 @@ namespace StockManager.Common
                     tossConn = (tossG.Connected && (_tossAdapter?.Connected ?? false)) ? 1L : 0L;
                 }
                 if (_tossToken is { } tossT) tossTokFresh = tossT.HasValidToken ? 1L : 0L;
+                // v10.2.0 Universal Broker Mesh — 다중 증권사 통합 텔레메트리(읽기).
+                long activeBrokerId = 0L, crossFallbacks = 0L, univRtt = 0L, meshTorn = 0L;
+                if (_fallbackSentinel is { } fbS) { activeBrokerId = (long)fbS.ActivePrimary; crossFallbacks = fbS.Fallbacks; }
+                if (_timeFence is { } tfF) meshTorn = tfF.TornDrifts;
+                if (_tossGateway is { } uGw) univRtt = uGw.LastRttMicros;   // 활성 브로커 범용 RTT(현 배선=Toss 게이트웨이)
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1508,7 +1538,8 @@ namespace StockManager.Common
                     dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce,
                     slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert,
                     signoffPass, signoffFail, canaryUtil, canaryDown, hostTimerRes, driftTrip, panicTrip, stagingReady,
-                    tossConn, tossEval, tossPnl, tossRtt, tossTokFresh, tossRecov, tossProv, tossVeto));
+                    tossConn, tossEval, tossPnl, tossRtt, tossTokFresh, tossRecov, tossProv, tossVeto,
+                    activeBrokerId, crossFallbacks, univRtt, meshTorn));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

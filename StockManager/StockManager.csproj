@@ -83,6 +83,14 @@
          [텔레메트리/UI] RingTelemetry +8(연결·총평가·총손익·WS RTT·토큰신선도·SeqHole복구·시퀀스잠정·발주veto, Cell 1856→1920=64×30=218필드). 💳 [Toss Open API Portfolio Control Panel](청/녹 [CONNECTED - READ-ONLY]·황 토큰갱신·암흑자색 비인가발주 전체화면 오버레이+포렌식 헥스·한국 관례 빨강=상승).
          [적대검증 수렴] 6렌즈 5 발견 교정: ★GetInt64 비-Number 예외(숫자-as-문자열/소수 — 한국 증권사 REST 관례)가 catch(JsonException) 회피 → fail-closed 붕괴 + WS 재연결 폭풍 → 토큰 타입 안전 TryReadLong(Number/String/소수 δ=0 파싱·throw 0); ConfirmBackfill 미확증 신규 갭 무조건 해제(손실 위장) → frontier 확증 시만 해제; −1 센티널↔음수 seq 충돌 → _started 플래그. 유닛 +9. 삼중 0W/0E·전체 2324 통과·회귀 0.
          [불변] δ=0(파싱/ingest/observe/seqlock 읽기 핫패스 힙 0 실증)·결정론(순수 바이트 파싱·단조 seq)·fail-closed(권한/인증/파싱/갭 → 거부·잠정)·liveArmed:false(★조회 전용 — IBroker·소켓 송신·onSend·실 발주 유발 0·RejectOrderAttempt 하드 veto).
+         ── v10.2.0 범용 다중 증권사 Open API 통합 게이트웨이 (Universal Broker Open API Mesh) ──
+         [정직] 직전 Toss 어댑터(커밋 7c513d9)를 다중 증권사로 일반화. Cell 은 이미 1920(Toss 슬라이스 확장)이라 재확장 없이 여유 슬롯에 +4(64×30 유지). IMarketDataStreamPort 신설·IPortfolioSyncPort/TossJsonParser.TryReadLong 재사용. KIS/LS 실 스펙·자격증명 부재로 '정의된 스키마 프리셋' 기준(실 배선 시 필드명 조정).
+         [통합 메쉬] UniversalBrokerGatewayMesh(브로커별 IPortfolioSyncPort DI 관리·Seal 후 δ=0 조회·발주 하드 veto·브로커별 격리 SyncAll) + BrokerSchema(증권사별 JSON 필드명 맵·Toss/KIS 프리셋) + UniversalPortfolioMapper(스키마 독립 δ=0 매핑·string 무할당) + OpenApiPortfolioAdapter(스키마 구동 범용 어댑터·seqlock δ=0·read-only fail-closed).
+         [폴백] CrossBrokerFallbackSentinel — Primary 다운/Rate Limit 시 우선순위 순환으로 다음 건강한 Secondary 로 δ=0 CAS 원자 스위치(&lt;1µs)·전 소스 다운 시 유지(fail-closed).
+         [★Think Beyond] CrossBrokerMonotonicTimeFence — 제미나이 B(Kalman 정규화 펜스)를 초월: '오차 매끈 보정'이 아니라 '융합 타임라인 절대 역행 불가'(monotonic fail-closed). recvMicros 기반·직전+1 하한·CAS 루프로 다중 생산자 단조 봉인 + 브로커 거래소 시각 역행 torn 탐지. 부동소수 0·역행/중복 emit 구조적 불가(어댑터 폴백 교체·동시 다중 수신에도 알파 엔진은 단조 시간만 관측).
+         [텔레메트리/UI] RingTelemetry +4(활성 Primary·교차폴백·범용RTT·torn drift, 기존 1920 여유 슬롯·222필드·64×30 유지). 🌐 [Universal Broker Open API Control Panel](청/녹 [MESH ACTIVE - READ-ONLY SYNC]·황 폴백스위칭·암흑자색 torn/비인가발주 오버레이+포렌식).
+         [적대검증 수렴] 4렌즈 5 발견 교정: ★Fence _lastUnified 비원자 RMW(다중 생산자서 역행/중복 emit·단조 봉인 붕괴) → CAS 루프 원자화; Sentinel health↔CAS TOCTOU + 복구 에지 미포착(죽은 primary 고착) → ReconcileActive(활성 불건강 시 재조정·CAS 후 재검·복구 포착); _brokerLastExchange 평문 경합 → Interlocked.Exchange; SyncAll 예외 전파 → 브로커별 격리 try/catch. 유닛 +10(멀티스레드 동시 단조 봉인 실증 포함). 삼중 0W/0E·전체 2334 통과·회귀 0.
+         [불변] δ=0(매핑/Fence/폴백/seqlock 읽기 핫패스 힙 0 실증)·결정론·fail-closed·liveArmed:false(★증권사 무관 조회 전용 — IBroker·소켓 송신·onSend·실 발주 유발 0·RejectOrderAttempt 하드 veto).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.

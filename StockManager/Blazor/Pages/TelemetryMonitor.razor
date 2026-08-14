@@ -349,6 +349,57 @@
         }
     </div>
 
+    @* ══ v10.2.0: Universal Broker Open API 통합 관제 ══════════════════════ *@
+    @{
+        bool uniActive   = _frame.UniversalMeshActive;
+        bool uniFallback = _frame.UniversalFallbackActive;
+        bool uniTorn     = _frame.UniversalTornAlarm;
+        long uniForensic = (_frame.MeshTornDrifts << 8) | (_frame.ActiveBrokerId & 0xF);
+    }
+    @if (uniTorn)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99995;background:radial-gradient(circle,rgba(74,20,140,0.08),rgba(40,10,70,0.30));border:8px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.85s ease-in-out infinite"></div>
+        <div style="position:fixed;top:120px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.94);color:#e1bee7;padding:10px 26px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 26px rgba(123,31,162,0.7)">
+            <div style="font-size:15px;font-weight:800">🟣 [UNIVERSAL BROKER TIMESTAMP TORN / UNAUTHORIZED - FAIL-CLOSED]</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">타임스탬프 찢어짐 @_frame.MeshTornDrifts.ToString("N0") · 발주 veto @_frame.TossOrderVetoes.ToString("N0") · FORENSIC 0x@(uniForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(uniTorn ? "kpi-alert" : (uniFallback ? "kpi-amber" : (uniActive ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">🌐 Universal Broker Open API 통합 관제 (Universal Broker Open API Control Panel)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:320px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (uniTorn)
+                    {
+                        <span class="prod-badge" style="background:rgba(74,20,140,0.30);color:#ce93d8;box-shadow:0 0 10px rgba(123,31,162,0.65)">[TORN / UNAUTHORIZED - FAIL-CLOSED]</span>
+                    }
+                    else if (uniFallback)
+                    {
+                        <span class="prod-badge chaos-amber">[CROSS-BROKER FALLBACK ACTIVE - @_frame.ActiveBrokerName]</span>
+                    }
+                    else if (uniActive)
+                    {
+                        <span class="prod-badge" style="background:rgba(66,133,244,0.22);color:#5b9bff;box-shadow:0 0 8px rgba(66,133,244,0.55)">[UNIVERSAL MESH ACTIVE - READ-ONLY SYNC]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[UNIVERSAL MESH IDLE - 미구성/미인증]</span>
+                    }
+                </div>
+                <div class="kpi-sub">활성 증권사 <b style="color:#5b9bff">@_frame.ActiveBrokerName</b> · 교차-폴백 <b style="font-family:var(--mono)">@_frame.CrossBrokerFallbacks.ToString("N0")</b>회</div>
+            </div>
+            <div style="min-width:220px">
+                <div class="kpi-value" style="font-size:14px">범용 RTT <b style="font-family:var(--mono)">@_frame.UniversalWsRttMicros.ToString("N0")µs</b></div>
+                <div class="kpi-sub">단조 타임펜스 <b style="color:@(uniTorn ? "#ce93d8" : "#66bb6a")">@(uniTorn ? "TORN DRIFT" : "MONOTONIC")</b> · 찢어짐 @_frame.MeshTornDrifts.ToString("N0")</div>
+            </div>
+            <div style="min-width:240px">
+                <div class="kpi-value" style="font-size:14px">발주 veto <b style="font-family:var(--mono)">@_frame.TossOrderVetoes.ToString("N0")</b></div>
+                <div class="kpi-sub">토스·KIS·LS 단일 규격 수용 · 스키마 독립 δ=0 매퍼</div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:6px">★조회 전용(read-only)·liveArmed:false — 증권사 무관 발주/변조 시도 하드 거부(실 브로커 소켓 무접촉). 실 배선 시 각 증권사 tokenProvider·accountFetch 구성 필요.</div>
+    </div>
+
     @* ══ v10.2.0: 토스증권 Open API 포트폴리오 관제 ══════════════════════ *@
     @{
         bool tossConn       = _frame.TossApiConnected;
