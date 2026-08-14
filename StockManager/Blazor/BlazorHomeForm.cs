@@ -857,6 +857,20 @@ namespace StockManager.Blazor
             services.AddSingleton(uiPortRegistry);
             services.AddSingleton(uiRenderGovernor);
             services.AddSingleton(uiEventBroker);
+            // v10.2.0 Toss — 토스증권 조회 전용 포트폴리오 동기화 + 실시간 시세 게이트웨이(★read-only·liveArmed:false —
+            //   발주 경로 무접촉·RejectOrderAttempt 하드 veto). 실 배선: tokenProvider=TossTokenService.CurrentAccessToken,
+            //   accountFetch=HttpClient GET 계좌 엔드포인트(미구성 시 미인증→미동기화·fail-closed).
+            var tossSeqGuardian      = new SequenceContinuityGuardian();
+            var tossGateway          = new TossWebSocketMarketDataGateway(tossSeqGuardian);
+            var tossPortfolioAdapter = new TossPortfolioSyncAdapter(
+                tokenProvider: static () => "",     // 미구성 시 미인증(실 배선 전까지 동기화 안 함)
+                accountFetch:  static _ => null,    // 미구성 시 취득 실패(fail-closed)
+                readOnlyKey:   true);               // ★조회 전용 키 선언(write 가능 키 오용 차단)
+            services.AddSingleton(tossPortfolioAdapter);
+            services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
+            services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
+            services.AddSingleton(tossGateway);
+            services.AddSingleton(tossSeqGuardian);
             var ringPublisher  = new RingTelemetryPublisher(dispatchRing, ringDispatcher, ringChannel, null, scenarioMon, alphaFactory, evolutionPipeline, ignition, execGuard, ledgerMesh, warmRestart, chaosGrid, prodSwap, newsIntel, riskShield, shadowRing, mmfFabric, blackbox, blackboxDumper, accountingMesh, shadowGateway, cutoverGate, accountGenesis, canaryProbe, blastRadius, killSwitch, deadman, liveWatchdog, failover, starvation, orphanReaper, liquiditySlicer, orderThrottle, toxicSentinel, reloadGate, stateCarrier, zombieShield, strategyMesh, basketNetter, washGuard, contagionFirewall, ms2Logger, kernelJitter, ioFirewall,
                 weaveClock: weaveClock, weaveRing: weaveRing, hwProbe: hwProbe, auditVault: auditVault, varEngine: varEngine,
                 cpuGrid: cpuGrid, thermalGuard: thermalGuard, coherence: coherence,
@@ -869,7 +883,8 @@ namespace StockManager.Blazor
                 ignitionGateway: ignGateway, ignitionAudit: ignAudit, keyPulse: keyPulse, sealedEmission: sealedEmit,
                 mockMirror: mockMirror, certSealer: certSealer, scopeBarrier: scopeBarrier,
                 slaGate: slaGate, jitterGuard: jitterGuard, releaseAttestor: releaseAttestor,   // v10.1.0 Final — 나노 SLA·지터·릴리스 봉인 텔레메트리
-                signoffValidator: signoffValidator, canaryGovernor: canaryGovernor, driftSentinel: driftSentinel, panicSwitch: panicSwitch);   // v10.1.0 Ops — 서명·카나리·드리프트·패닉 텔레메트리
+                signoffValidator: signoffValidator, canaryGovernor: canaryGovernor, driftSentinel: driftSentinel, panicSwitch: panicSwitch,   // v10.1.0 Ops — 서명·카나리·드리프트·패닉 텔레메트리
+                tossAdapter: tossPortfolioAdapter, tossGateway: tossGateway);   // v10.2.0 Toss — 조회 전용 포트폴리오/시세 텔레메트리
             services.AddSingleton(armingGate);     // /command 무장 상태 표시용(진단)
             services.AddSingleton(scenarioMon);    // FutureSimPage 주입 대상(시나리오 seqlock 보고)
             services.AddSingleton(dispatchRing);

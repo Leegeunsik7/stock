@@ -349,6 +349,59 @@
         }
     </div>
 
+    @* ══ v10.2.0: 토스증권 Open API 포트폴리오 관제 ══════════════════════ *@
+    @{
+        bool tossConn       = _frame.TossApiConnected;
+        bool tossTokRefresh = _frame.TossTokenRefreshing;
+        bool tossUnauth     = _frame.TossUnauthorized;
+        bool tossProv       = _frame.TossSeqProvisionalState;
+        long tossForensic   = (_frame.TossOrderVetoes << 8) | (_frame.TossSeqProvisional & 0xF);
+    }
+    @* 비인가 발주 시도 감지 → 암흑자색 전체화면 오버레이(포렌식 헥스) *@
+    @if (tossUnauth)
+    {
+        <div style="position:fixed;inset:0;pointer-events:none;z-index:99996;background:radial-gradient(circle,rgba(74,20,140,0.08),rgba(40,10,70,0.30));border:8px solid #7b1fa2;box-sizing:border-box;animation:recpulse 0.85s ease-in-out infinite"></div>
+        <div style="position:fixed;top:120px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:rgba(74,20,140,0.94);color:#e1bee7;padding:10px 26px;border:2px solid #ce93d8;border-radius:0 0 14px 14px;text-align:center;box-shadow:0 0 26px rgba(123,31,162,0.7)">
+            <div style="font-size:15px;font-weight:800">🟣 [TOSS UNAUTHORIZED ORDER ATTEMPT - READ-ONLY VETO FAIL-CLOSED]</div>
+            <div style="font-size:12px;margin-top:3px;font-family:var(--mono)">조회 전용 어댑터 경유 발주/변조 시도 하드 거부 · veto @_frame.TossOrderVetoes.ToString("N0")회 · FORENSIC 0x@(tossForensic.ToString("X"))</div>
+        </div>
+    }
+    <div class="kpi-card @(tossUnauth ? "kpi-alert" : (tossTokRefresh ? "kpi-amber" : (tossConn ? "kpi-hotswap-ok" : "")))" style="margin-bottom:22px">
+        <div class="kpi-label">💳 토스증권 Open API 포트폴리오 관제 (Toss Securities Open API Portfolio Control Panel)</div>
+        <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:6px">
+            <div style="min-width:320px">
+                <div class="kpi-value" style="font-size:15px">
+                    @if (tossUnauth)
+                    {
+                        <span class="prod-badge" style="background:rgba(74,20,140,0.30);color:#ce93d8;box-shadow:0 0 10px rgba(123,31,162,0.65)">[UNAUTHORIZED ORDER VETOED]</span>
+                    }
+                    else if (tossTokRefresh)
+                    {
+                        <span class="prod-badge chaos-amber">[TOSS TOKEN REFRESHING - AUTH RENEWING]</span>
+                    }
+                    else if (tossConn)
+                    {
+                        <span class="prod-badge" style="background:rgba(66,133,244,0.22);color:#5b9bff;box-shadow:0 0 8px rgba(66,133,244,0.55)">[TOSS OPEN API CONNECTED - READ-ONLY PORTFOLIO SYNC]</span>
+                    }
+                    else
+                    {
+                        <span class="prod-badge">[TOSS API IDLE - 미구성/미인증]</span>
+                    }
+                </div>
+                <div class="kpi-sub">총 평가 <b style="font-family:var(--mono)">₩@_frame.TossTotalEvalRaw.ToString("N0")</b> · 평가손익 <b style="font-family:var(--mono);color:@(_frame.TossTotalPnlRaw >= 0 ? "#ef5350" : "#42a5f5")">₩@_frame.TossTotalPnlRaw.ToString("N0")</b></div>
+            </div>
+            <div style="min-width:220px">
+                <div class="kpi-value" style="font-size:14px">WebSocket <b style="color:@(tossConn ? "#5b9bff" : "#9e9e9e")">@(tossConn ? "STREAMING" : "—")</b></div>
+                <div class="kpi-sub">RTT <b style="font-family:var(--mono)">@_frame.TossWsRttMicros.ToString("N0")µs</b> · 토큰 <b>@(_frame.TossTokenFreshSec != 0 ? "VALID" : "—")</b></div>
+            </div>
+            <div style="min-width:240px">
+                <div class="kpi-value" style="font-size:14px">시퀀스 <b style="color:@(tossProv ? "#ffb74d" : "#66bb6a")">@(tossProv ? "PROVISIONAL (HOLE)" : "CONTINUOUS")</b></div>
+                <div class="kpi-sub">Hole 복구 <b style="font-family:var(--mono)">@_frame.TossSeqHolesRecovered.ToString("N0")</b>회 · 발주 veto <b style="font-family:var(--mono)">@_frame.TossOrderVetoes.ToString("N0")</b></div>
+            </div>
+        </div>
+        <div class="kpi-sub" style="margin-top:6px">★조회 전용(read-only)·liveArmed:false — 발주/변조 시도는 RejectOrderAttempt 로 하드 거부(실 브로커 소켓 무접촉). 실 계좌 배선 시 tokenProvider·accountFetch 구성 필요.</div>
+    </div>
+
     @* ══ v7.2.0: 실시간 포트폴리오 VaR & Gershgorin 특이점 코어 ══════════════════════ *@
     @{
         bool vFuse   = _frame.CovSingularityFuse;      // 공분산 특이점 파열(암흑자색)

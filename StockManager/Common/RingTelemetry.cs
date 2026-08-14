@@ -265,6 +265,15 @@ namespace StockManager.Common
         public readonly long   HostDriftTripped;           // ★Think-Beyond 1=호스트 환경 드리프트 확정(안전 강등)
         public readonly long   PanicTripped;               // 1=운용자 비상 탈출(패닉 스위치) 격발
         public readonly long   CanaryStagingReady;         // 1=서명∧호스트튜닝∧무드리프트∧무강등∧무패닉(카나리 준비)
+        // v10.2.0 Toss — 토스증권 Open API 포트폴리오 동기화(조회 전용).
+        public readonly long   TossConnected;              // 1=REST 동기화∧WS 스트림 정상(read-only)
+        public readonly long   TossTotalEvalRaw;           // 총 평가금액(raw)
+        public readonly long   TossTotalPnlRaw;            // 총 평가손익(raw)
+        public readonly long   TossWsRttMicros;            // WebSocket RTT(µs)
+        public readonly long   TossTokenFreshSec;          // access token 유효(1)/만료·갱신중(0) — 신선도 지표
+        public readonly long   TossSeqHolesRecovered;      // ★Sequence Hole 확증 복구 횟수
+        public readonly long   TossSeqProvisional;         // 1=시퀀스 잠정(hole 미복구·fail-closed)
+        public readonly long   TossOrderVetoes;            // ★비인가 발주/변조 시도 하드 거부 카운트(암흑자색)
 
         public RingTelemetry(long published, long forwarded, long gatedOut, long dropped,
                              long writerCollisions, double throughputPerSec, long sendErrors = 0L,
@@ -335,7 +344,8 @@ namespace StockManager.Common
                              long slaP9999Nanos = 0L, long slaGateVeto = 0L, long slaJitterRejects = 0L, long jitterRatePermille = 0L,
                              long jitterRegressionTripped = 0L, long releaseSealValid = 0L, long releaseSealHex = 0L, long masterReleaseCertified = 0L,
                              long signoffPassed = 0L, long signoffFailMask = 0L, long canaryCapUtilPermille = 0L, long canaryDowngraded = 0L,
-                             long hostTimerResNanos = 0L, long hostDriftTripped = 0L, long panicTripped = 0L, long canaryStagingReady = 0L)
+                             long hostTimerResNanos = 0L, long hostDriftTripped = 0L, long panicTripped = 0L, long canaryStagingReady = 0L,
+                             long tossConnected = 0L, long tossTotalEval = 0L, long tossTotalPnl = 0L, long tossWsRtt = 0L, long tossTokenFresh = 0L, long tossSeqRecov = 0L, long tossSeqProv = 0L, long tossVetoes = 0L)
         {
             Published        = published;
             Forwarded        = forwarded;
@@ -547,6 +557,14 @@ namespace StockManager.Common
             HostDriftTripped             = hostDriftTripped;
             PanicTripped                 = panicTripped;
             CanaryStagingReady           = canaryStagingReady;
+            TossConnected                = tossConnected;
+            TossTotalEvalRaw             = tossTotalEval;
+            TossTotalPnlRaw              = tossTotalPnl;
+            TossWsRttMicros              = tossWsRtt;
+            TossTokenFreshSec            = tossTokenFresh;
+            TossSeqHolesRecovered        = tossSeqRecov;
+            TossSeqProvisional           = tossSeqProv;
+            TossOrderVetoes              = tossVetoes;
         }
 
         /// <summary>활동 존재 여부(UI '데이터 없음' 판별). 양의 카운터로 판정 — default(struct)(전부 0)는 false.
@@ -833,6 +851,11 @@ namespace StockManager.Common
         public bool    HostDrift                 => HostDriftTripped != 0L;                                    // ★암흑자색(호스트 환경 드리프트)
         public bool    OperatorPanic             => PanicTripped != 0L;                                        // ★암흑자색(패닉 스위치 격발)
         public bool    OpsAlarm                  => HostDriftTripped != 0L || PanicTripped != 0L || CanaryDowngraded != 0L; // 운용 비상(암흑자색)
+        // v10.2.0 Toss — 관제 배지.
+        public bool    TossApiConnected          => TossConnected != 0L;                         // 청/녹 [TOSS OPEN API CONNECTED - READ-ONLY PORTFOLIO SYNC]
+        public bool    TossTokenRefreshing       => TossConnected != 0L && TossTokenFreshSec == 0L; // 황색(토큰 갱신/만료)
+        public bool    TossUnauthorized          => TossOrderVetoes > 0L;                        // ★암흑자색(비인가 발주 시도 감지)
+        public bool    TossSeqProvisionalState   => TossSeqProvisional != 0L;                    // 시퀀스 잠정(hole 미복구)
         public double  HostTimerResMicros        => HostTimerResNanos / 1000.0;                                // 타이머 해상도(µs 표시)
     }
 
@@ -856,7 +879,8 @@ namespace StockManager.Common
         //   (v10.1.0 드라이런/인증: 드라이런활성·가상체결·슬리피지·RTT·인증점수·봉인유효·봉인·스코프Bounce 8필드 추가로 194필드 → 128+194×8=1680 → Size 1664→1728(64×27·잔여 6슬롯=48B).)
         //   (v10.1.0 Final Packaging: SLA P99.99·SLA veto·지터배제·지터율·지터회귀·릴리스봉인유효·릴리스봉인헥스·마스터인증 8필드 추가로 202필드 → 128+202×8=1744 → Size 1728→1792(64×28·잔여 6슬롯=48B).)
         //   (v10.1.0 Ops: 서명PASS·서명실패마스크·카나리집행율·카나리강등·타이머해상도·드리프트·패닉·카나리준비 8필드 추가로 210필드 → 128+210×8=1808 → Size 1792→1856(64×29·잔여 6슬롯=48B).)
-        [StructLayout(LayoutKind.Explicit, Size = 1856)]
+        //   (v10.2.0 Toss: 연결·총평가·총손익·WS RTT·토큰신선도·SeqHole복구·시퀀스잠정·발주veto 8필드 추가로 218필드 → 128+218×8=1872 → Size 1856→1920(64×30·잔여 6슬롯=48B).)
+        [StructLayout(LayoutKind.Explicit, Size = 1920)]
         private struct Cell
         {
             [FieldOffset(CacheLine)]     public long          Version;
@@ -1004,6 +1028,9 @@ namespace StockManager.Common
         private readonly MicroCapitalCanaryGovernor? _canaryGov;      // v10.1.0 Ops — 카나리 소액 집행 거버너(옵션·읽기)
         private readonly HostEnvironmentDriftSentinel? _driftSentinel; // v10.1.0 Ops — ★Think-Beyond 드리프트 센티널(옵션·읽기·Probe)
         private readonly OperatorDuressPanicSwitch? _panicSwitch;     // v10.1.0 Ops — 운용자 비상 탈출 패닉 스위치(옵션·읽기)
+        private readonly TossPortfolioSyncAdapter? _tossAdapter;      // v10.2.0 Toss — 포트폴리오 동기화 어댑터(옵션·읽기)
+        private readonly TossWebSocketMarketDataGateway? _tossGateway; // v10.2.0 Toss — WS 시세 게이트웨이(옵션·읽기)
+        private readonly TossTokenService? _tossToken;               // v10.2.0 Toss — 토큰 서비스(옵션·신선도 지표)
         private RioProbeReport _hwProbeReport;                      // 캐시된 프로브 리포트(콜드 1회)
         private bool _hwProbed;                                     // 프로브 수행 여부
         private long _lastAuditTick, _lastAuditEvict;               // 감사 기록 스로틀(δ=0)
@@ -1101,7 +1128,10 @@ namespace StockManager.Common
                                       IgnitionSignoffValidator? signoffValidator = null,
                                       MicroCapitalCanaryGovernor? canaryGovernor = null,
                                       HostEnvironmentDriftSentinel? driftSentinel = null,
-                                      OperatorDuressPanicSwitch? panicSwitch = null)
+                                      OperatorDuressPanicSwitch? panicSwitch = null,
+                                      TossPortfolioSyncAdapter? tossAdapter = null,
+                                      TossWebSocketMarketDataGateway? tossGateway = null,
+                                      TossTokenService? tossToken = null)
         {
             _ring         = ring         ?? throw new ArgumentNullException(nameof(ring));
             _dispatcher   = dispatcher   ?? throw new ArgumentNullException(nameof(dispatcher));
@@ -1193,6 +1223,9 @@ namespace StockManager.Common
             _canaryGov    = canaryGovernor;
             _driftSentinel = driftSentinel;
             _panicSwitch  = panicSwitch;
+            _tossAdapter  = tossAdapter;
+            _tossGateway  = tossGateway;
+            _tossToken    = tossToken;
             _auditIntervalTicks = Stopwatch.Frequency;             // 감사 기록 스로틀 1s
             if (_hwProbe is { } hp0) { _hwProbeReport = hp0.Probe(); _hwProbed = true; }   // ★콜드 1회 하드웨어 사전점검
             _lastBlackboxTotal = _blackbox?.TotalRecorded ?? 0L;   // ★C#11: 첫 Sample rate 델타 기준 초기화(허위 스파이크 제거)
@@ -1425,6 +1458,21 @@ namespace StockManager.Common
                 }
                 if (_panicSwitch is { } pncS) { if (pncS.Tripped) panicTrip = 1L; }
                 if (signoffPass == 1L && driftTrip == 0L && canaryDown == 0L && panicTrip == 0L) stagingReady = 1L;   // ★[HOST TUNED - CANARY STAGING READY]
+                // v10.2.0 Toss — 포트폴리오/시세 텔레메트리(읽기·δ=0 조회·조회 전용).
+                long tossConn = 0L, tossEval = 0L, tossPnl = 0L, tossRtt = 0L, tossTokFresh = 0L, tossRecov = 0L, tossProv = 0L, tossVeto = 0L;
+                if (_tossAdapter is { } tossA)
+                {
+                    tossVeto = tossA.OrderVetoes;
+                    if (tossA.TryGetAccount(out var tacc)) { tossEval = tacc.TotalEvalRaw; tossPnl = tacc.TotalPnlRaw; }
+                }
+                if (_tossGateway is { } tossG)
+                {
+                    tossRtt = tossG.LastRttMicros;
+                    tossRecov = tossG.Guardian.HolesRecovered;
+                    tossProv = tossG.Guardian.IsProvisional ? 1L : 0L;
+                    tossConn = (tossG.Connected && (_tossAdapter?.Connected ?? false)) ? 1L : 0L;
+                }
+                if (_tossToken is { } tossT) tossTokFresh = tossT.HasValidToken ? 1L : 0L;
                 _channel.Publish(new RingTelemetry(
                     published, _dispatcher.Forwarded, _dispatcher.GatedOut, _dispatcher.Dropped,
                     _ring.WriterCollisions, tps, _dispatcher.SendErrors, sVer, sWc, sFr,
@@ -1459,7 +1507,8 @@ namespace StockManager.Common
                     ignDualKey, ignState, ignVetoes, ignVetoCode, ignAudit, keyAlive, ignDoubleBlk, ignSealed,
                     dryRun, mockFills, mockSlip, mockRtt, certScore, certValid, certSeal, scopeBounce,
                     slaP9999, slaVeto, jitterRej, jitterRate, jitterRegr, relSealValid, relSealHex, masterCert,
-                    signoffPass, signoffFail, canaryUtil, canaryDown, hostTimerRes, driftTrip, panicTrip, stagingReady));
+                    signoffPass, signoffFail, canaryUtil, canaryDown, hostTimerRes, driftTrip, panicTrip, stagingReady,
+                    tossConn, tossEval, tossPnl, tossRtt, tossTokFresh, tossRecov, tossProv, tossVeto));
                 _lastPublished = published;
                 _lastTicks     = now;
             }

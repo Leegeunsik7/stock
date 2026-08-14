@@ -75,6 +75,14 @@
          [순수성 강제] UiAssemblyPurity 테스트 — MS2E.UI.Portable 이 엔진(MS2E.StockSuite/StockManager*) 참조 0 실증(0 Engine Ref 아크 불변식 CI 강제).
          [불변] δ=0(Get/ShouldRender/Publish/Drain 핫패스 힙 0)·결정론·fail-closed·liveArmed:false(순수 UI 서비스 — IBroker·소켓·실 발주 유발 0). 유닛 +9. 삼중 0W/0E·전체 2315 통과·회귀 0.
          [잔여 아크] 87개 컴포넌트(LocalDatabase 50 raw SQL + ~40종 서비스 Port화)는 후속 세션 증분 이주 — 라우팅 페이지는 Router.AdditionalAssemblies 배선 필요(전 페이지 블라스트 반경 관리).
+         ── v10.2.0 토스증권 Open API 포트폴리오 동기화 어댑터 (Toss Portfolio Sync Adapter) ──
+         [정직] IPortfolioSyncPort/IBrokerAccountPort 부재→신설. 기존 TossTokenService 재사용. ★자격증명·실 엔드포인트 부재로 '정의된 응답 스키마' 기준 아키텍처 구축 — 실 배선은 tokenProvider=TossTokenService.CurrentAccessToken·accountFetch=HttpClient GET·WS Start(endpoint) 구성 필요(미구성 시 미동기화·fail-closed·현 배선은 스텁이라 SyncNow/Start 미구동).
+         [REST] TossPortfolioSyncAdapter(IPortfolioSyncPort∧IBrokerAccountPort·조회 전용) + TossJsonParser(δ=0 Utf8JsonReader·심볼 FNV 해시·string 무할당). ★Read-Only fail-closed: write 가능 키/미인증/취득실패/파싱실패 → 거부·seqlock δ=0 읽기. ★RejectOrderAttempt 발주 시도 항상 하드 veto(구조적 발주 메서드 부재).
+         [WS] TossWebSocketMarketDataGateway(ClientWebSocket·δ=0 IngestPacket→Guardian.Observe→최신 틱·RTT). 수신 루프 콜드·인제스트 핫패스 힙 0.
+         [★Think Beyond] SequenceContinuityGuardian — 제미나이 B(갭 복구 거버너)를 초월: '갭을 REST 로 메운다'가 아니라 '갭이 연속 데이터로 위장 못하게 한다'(fail-closed). δ=0 hole 탐지 → 잠정(provisional) 워터마크(소비자가 불연속을 앎) → bounded backfill → frontier 확증 시에만 해제 · 초대형 갭 Stale(복구 불가·날조 금지). 손실이 판정에 스며드는 경로 원천 봉쇄.
+         [텔레메트리/UI] RingTelemetry +8(연결·총평가·총손익·WS RTT·토큰신선도·SeqHole복구·시퀀스잠정·발주veto, Cell 1856→1920=64×30=218필드). 💳 [Toss Open API Portfolio Control Panel](청/녹 [CONNECTED - READ-ONLY]·황 토큰갱신·암흑자색 비인가발주 전체화면 오버레이+포렌식 헥스·한국 관례 빨강=상승).
+         [적대검증 수렴] 6렌즈 5 발견 교정: ★GetInt64 비-Number 예외(숫자-as-문자열/소수 — 한국 증권사 REST 관례)가 catch(JsonException) 회피 → fail-closed 붕괴 + WS 재연결 폭풍 → 토큰 타입 안전 TryReadLong(Number/String/소수 δ=0 파싱·throw 0); ConfirmBackfill 미확증 신규 갭 무조건 해제(손실 위장) → frontier 확증 시만 해제; −1 센티널↔음수 seq 충돌 → _started 플래그. 유닛 +9. 삼중 0W/0E·전체 2324 통과·회귀 0.
+         [불변] δ=0(파싱/ingest/observe/seqlock 읽기 핫패스 힙 0 실증)·결정론(순수 바이트 파싱·단조 seq)·fail-closed(권한/인증/파싱/갭 → 거부·잠정)·liveArmed:false(★조회 전용 — IBroker·소켓 송신·onSend·실 발주 유발 0·RejectOrderAttempt 하드 veto).
          ── (이하 v10.0.0) ──
          Genesis Live Ignition Gateway(실자본 오더 사출 파이프라인 최종 빗장).
          선행 레이스 교정 + 물리 이중 키 하드웨어 인터락 결속 + 실물 사출 봉인. 메이저 안착.
