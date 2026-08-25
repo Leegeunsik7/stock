@@ -1,9 +1,9 @@
 @* ============================================================================
-   BrokerConnectionPage.razor — v11.3.0: 증권사별 연결 화면 (사이드바 '증권사 연결' 그룹)
-     증권사(토스/한국투자/LS)별 전용 연결 화면. Open API 자격증명을 DPAPI 암호화 저장 → 연결 테스트
-     (UniversalBrokerGatewayMesh 조회 전용 경유) → 포트폴리오 열기. 라우트 파라미터로 증권사 전환.
-     ★평문 디스크/JSON 미기록·입력 즉시 소거. ★연결 테스트는 실 토큰/엔드포인트·물리 무장 전엔 정직하게
-       fail-closed(미동기화)만 표시하며 가짜 잔고를 생성하지 않는다(liveArmed:false). 기존 DI 서비스 재사용.
+   BrokerConnectionPage.razor — v11.3.1: 증권사별 연결 화면 (사이드바 '증권사 연결' 그룹)
+     증권사(토스/한국투자/LS) Open API 자격증명을 DPAPI 암호화 저장 → 연결 테스트(UniversalBrokerGatewayMesh
+     조회 전용 경유) → 포트폴리오 열기. ★핵심 안내: 로그인 ID/비밀번호가 아니라 각 증권사가 발급하는 Open API 키
+     (client_id/client_secret = App Key/Secret)를 붙여넣는 OAuth 2.0 방식. 가독성 개선 + 발급 안내 + 필드 단순화.
+     ★평문 디스크/JSON 미기록·입력 즉시 소거. ★실 토큰/엔드포인트·물리 무장 전엔 조회도 fail-closed(가짜 잔고 미생성·liveArmed:false).
    ============================================================================ *@
 @page "/brokers"
 @page "/brokers/{Broker}"
@@ -15,8 +15,8 @@
 <div class="bc-wrap">
     <div class="bc-head">
         <div class="bc-title">🔗 증권사 연결</div>
-        <div class="bc-sub">증권사 Open API 자격증명을 안전하게 연결(DPAPI 암호화·평문 미기록)하고 연결 상태를 확인합니다.
-            ★물리 이중 키 무장 전에는 조회 전용으로만 동작하며 실물 발주는 100% Veto 됩니다(liveArmed:false).</div>
+        <div class="bc-sub">각 증권사가 발급하는 <b>Open API 키</b>로 안전하게 연결합니다(DPAPI 암호화·평문 미기록).
+            물리 이중 키 무장 전에는 조회 전용으로만 동작하며 실물 발주는 100% Veto 됩니다(liveArmed:false).</div>
     </div>
 
     @* ── 증권사 선택 탭 ── *@
@@ -39,7 +39,17 @@
             <span class="bc-bnm">@_active.Name</span>
             <span class="bc-state @StateClass()">@StateLabel()</span>
         </div>
-        <div class="bc-hint">ℹ️ @_active.Hint</div>
+
+        @* ★핵심 안내: 로그인 정보가 아니라 '발급받은 Open API 키' *@
+        <div class="bc-guide">
+            <div class="bc-guide-warn">⚠️ <b>@_active.Name 로그인 ID·비밀번호가 아닙니다.</b> 아래는 본인이 직접 발급받는 <b>Open API 전용 키</b>입니다(OAuth 2.0).</div>
+            <div class="bc-guide-steps">
+                <div class="bc-step"><span class="bc-num">1</span> @_active.IssueStep1</div>
+                <div class="bc-step"><span class="bc-num">2</span> @_active.IssueStep2</div>
+                <div class="bc-step"><span class="bc-num">3</span> 발급된 값을 아래에 붙여넣고 <b>[자격증명 저장]</b> → <b>[연결 테스트]</b></div>
+            </div>
+            <div class="bc-guide-portal">발급 포털: <code>@_active.Portal</code></div>
+        </div>
 
         <div class="bc-statrow">
             <span class="bc-stat">자격증명 <b class="@(_stored ? "on" : "off")">@(_stored ? "저장됨 🔒" : "미저장")</b></span>
@@ -49,30 +59,21 @@
 
         <div class="bc-grid">
             <label class="bc-field">
-                <span class="bc-lab">@_active.LabelApiKey</span>
-                <input class="bc-in" @bind="_active.ApiKey" placeholder="@(_active.LabelApiKey) 입력" type="password" autocomplete="off" />
+                <span class="bc-lab">App Key <span class="bc-labhint">(발급받은 @_active.KeyAlias)</span></span>
+                <input class="bc-in" @bind="_active.ApiKey" placeholder="예: 발급받은 @_active.KeyAlias 붙여넣기" type="password" autocomplete="off" />
             </label>
             <label class="bc-field">
-                <span class="bc-lab">@_active.LabelSecret</span>
-                <input class="bc-in" @bind="_active.Secret" placeholder="@(_active.LabelSecret) 입력" type="password" autocomplete="off" />
+                <span class="bc-lab">App Secret <span class="bc-labhint">(발급받은 @_active.SecretAlias)</span></span>
+                <input class="bc-in" @bind="_active.Secret" placeholder="예: 발급받은 @_active.SecretAlias 붙여넣기" type="password" autocomplete="off" />
             </label>
             <label class="bc-field">
-                <span class="bc-lab">금융기관 / 은행</span>
-                <select class="bc-in bc-sel" @bind="_active.BankCode">
-                    @foreach (var bk in _banks)
-                    {
-                        <option value="@bk.Code">@bk.Name (@bk.Code)</option>
-                    }
-                </select>
-            </label>
-            <label class="bc-field">
-                <span class="bc-lab">@_active.LabelAccount</span>
-                <input class="bc-in" @bind="_active.Account" placeholder="@(_active.LabelAccount) 입력" autocomplete="off" />
+                <span class="bc-lab">@_active.AccountLabel <span class="bc-labhint">@_active.AccountHint</span></span>
+                <input class="bc-in" @bind="_active.Account" placeholder="@(_active.AccountLabel) 입력" autocomplete="off" />
             </label>
         </div>
 
         <div class="bc-actions">
-            <button class="bc-btn primary" @onclick="Save">🔐 저장 및 연결</button>
+            <button class="bc-btn primary" @onclick="Save">🔐 자격증명 저장</button>
             <button class="bc-btn" disabled="@_testing" @onclick="Test">@(_testing ? "테스트 중…" : "⚡ 연결 테스트")</button>
             <button class="bc-btn ghost" @onclick="OpenPortfolio">📂 포트폴리오 열기</button>
         </div>
@@ -99,30 +100,32 @@
         public string Key = "";
         public BrokerId Id;
         public string Name = "", Icon = "", Accent = "";
-        public string LabelApiKey = "API Key", LabelSecret = "App Secret", LabelAccount = "계좌번호", Hint = "";
-        public string ApiKey = "", Secret = "", Account = "", BankCode = "";
+        public string KeyAlias = "App Key", SecretAlias = "App Secret";
+        public string AccountLabel = "계좌번호", AccountHint = "";
+        public string IssueStep1 = "", IssueStep2 = "", Portal = "";
+        public string ApiKey = "", Secret = "", Account = "";
     }
-
-    private static readonly (string Code, string Name)[] _banks =
-    {
-        ("029", "토스증권"), ("007", "한국투자증권"), ("078", "LS증권"),
-        ("230", "미래에셋증권"), ("264", "키움증권"), ("240", "삼성증권"),
-        ("092", "토스뱅크"), ("004", "KB국민은행"), ("088", "신한은행"),
-        ("011", "NH농협은행"), ("020", "우리은행"), ("081", "하나은행"),
-        ("003", "IBK기업은행"), ("090", "카카오뱅크"),
-    };
 
     private readonly BrokerMeta[] _brokers =
     {
         new() { Key = "toss", Id = BrokerId.Toss, Name = "토스증권", Icon = "🔷", Accent = "#3182f6",
-                LabelApiKey = "API Key (Client ID)", LabelSecret = "App Secret (Client Secret)", LabelAccount = "사용자 ID 또는 계좌 ID",
-                Hint = "토스증권 Open API 센터에서 발급받은 Client ID/Secret을 입력하세요.", BankCode = "029" },
+                KeyAlias = "client_id", SecretAlias = "client_secret",
+                AccountLabel = "계좌번호", AccountHint = "(선택 — 잔고 조회용)",
+                IssueStep1 = "토스증권 WTS(웹 트레이딩) 로그인 → 설정 → Open API 메뉴",
+                IssueStep2 = "client_id · client_secret 발급(개인 신청 후 오픈 알림 시)",
+                Portal = "corp.tossinvest.com/ko/open-api · developers.tossinvest.com" },
         new() { Key = "kis", Id = BrokerId.Kis, Name = "한국투자증권 (KIS)", Icon = "🔶", Accent = "#f5a623",
-                LabelApiKey = "App Key", LabelSecret = "App Secret", LabelAccount = "종합계좌번호 (8자리)",
-                Hint = "한국투자증권 KIS Developers 포털에서 발급한 App Key/App Secret과 종합계좌번호(앞 8자리)를 입력하세요.", BankCode = "007" },
+                KeyAlias = "App Key", SecretAlias = "App Secret",
+                AccountLabel = "종합계좌번호 (8자리)", AccountHint = "(잔고·주문 조회용)",
+                IssueStep1 = "KIS Developers 포털 로그인 → 앱(App) 등록",
+                IssueStep2 = "App Key · App Secret 발급 + 종합계좌번호(앞 8자리) 확인",
+                Portal = "apiportal.koreainvestment.com" },
         new() { Key = "ls", Id = BrokerId.Ls, Name = "LS증권", Icon = "🟢", Accent = "#22a06b",
-                LabelApiKey = "App Key", LabelSecret = "App Secret", LabelAccount = "계좌번호",
-                Hint = "LS증권 Open API 포털에서 발급한 App Key/App Secret과 계좌번호를 입력하세요.", BankCode = "078" },
+                KeyAlias = "App Key", SecretAlias = "App Secret",
+                AccountLabel = "계좌번호", AccountHint = "(잔고·주문 조회용)",
+                IssueStep1 = "LS증권 OPEN API 포털 로그인 → 앱 등록",
+                IssueStep2 = "App Key · App Secret 발급 + 계좌번호 확인",
+                Portal = "openapi.ls-sec.co.kr" },
     };
 
     private BrokerMeta _active = default!;
@@ -154,16 +157,12 @@
             int stored = 0;
             if (!string.IsNullOrEmpty(_active.ApiKey)) { Vault.Store($"{_active.Key}.apiKey", _active.ApiKey.AsSpan()); stored++; }
             if (!string.IsNullOrEmpty(_active.Secret)) { Vault.Store($"{_active.Key}.secret", _active.Secret.AsSpan()); stored++; }
-            if (!string.IsNullOrEmpty(_active.Account))
-            {
-                Vault.Store($"{_active.Key}.account", _active.Account.AsSpan()); stored++;
-                Vault.Store($"{_active.Key}.bankCode", _active.BankCode.AsSpan());   // 계좌와 함께 봉인
-            }
+            if (!string.IsNullOrEmpty(_active.Account)) { Vault.Store($"{_active.Key}.account", _active.Account.AsSpan()); stored++; }
             _active.ApiKey = ""; _active.Secret = ""; _active.Account = "";   // 입력 즉시 소거(평문 잔류 최소화)
             _saveOk = stored > 0;
             _saveMsg = stored > 0
-                ? $"✅ {_active.Name} 자격증명 {stored}건이 DPAPI 암호화·저장되었습니다(입력 소거 완료)."
-                : "⚠ 입력값이 비어 있습니다 — API Key·App Secret·계좌번호 중 하나 이상을 입력하세요.";
+                ? $"✅ {_active.Name} Open API 키 {stored}건이 DPAPI 암호화·저장되었습니다(입력 소거 완료). 이제 [연결 테스트]를 누르세요."
+                : "⚠ 입력값이 비어 있습니다 — 먼저 증권사 포털에서 발급한 App Key·App Secret을 붙여넣으세요.";
         }
         catch (Exception ex) { _saveOk = false; _saveMsg = $"❌ 저장 실패: {ex.Message}"; }
         finally { _saveTick++; RefreshStatus(); }
@@ -189,8 +188,8 @@
             {
                 _testOk = false;
                 _testMsg = Vault.Has($"{_active.Key}.apiKey")
-                    ? "⛔ 연결 미완료 — 자격증명은 저장됨. 실 토큰·조회 엔드포인트 배선 및 물리 이중 키 무장 후 동기화됩니다(liveArmed:false fail-closed)."
-                    : "⛔ 연결 미완료 — 먼저 [저장 및 연결]로 자격증명을 저장하세요. 이후 실 트랜스포트·무장 시 동기화(fail-closed).";
+                    ? "⛔ 연결 미완료 — 키는 저장됨. 실제 라이브 데이터는 실 토큰 발급·조회 엔드포인트 배선 및 물리 이중 키 무장 후 열립니다(현재 fail-closed·가짜 잔고 미표시)."
+                    : "⛔ 연결 미완료 — 먼저 [자격증명 저장]으로 App Key·App Secret을 저장하세요.";
             }
         }
         catch (Exception ex) { _testOk = false; _testMsg = $"❌ 연결 테스트 오류: {ex.Message}"; }
@@ -212,58 +211,71 @@
 }
 
 <style>
+    /* ★가독성 개선: 어두운 배경에서 텍스트 대비 대폭 상향 */
     .bc-wrap{padding:20px 26px;max-width:960px}
     .bc-head{margin-bottom:14px}
-    .bc-title{font-weight:800;font-size:19px}
-    .bc-sub{color:#8b97ad;font-size:12.5px;line-height:1.6;margin-top:3px}
+    .bc-title{font-weight:800;font-size:20px;color:#f0f4fb}
+    .bc-sub{color:#c2cde0;font-size:13px;line-height:1.65;margin-top:4px}
+    .bc-sub b{color:#eaf0fb}
 
     .bc-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-    .bc-tab{display:flex;align-items:center;gap:8px;text-decoration:none;background:rgba(30,40,64,.35);border:1px solid #2a3550;border-radius:10px;padding:10px 15px;color:#8b97ad;font-size:13px;font-weight:600;transition:all .15s}
-    .bc-tab:hover{color:#cdd9ef;border-color:#3a4869}
-    .bc-tab.active{color:#fff;border-color:var(--accent,#3182f6);border-left:3px solid var(--accent,#3182f6);background:rgba(255,255,255,.04)}
+    .bc-tab{display:flex;align-items:center;gap:8px;text-decoration:none;background:rgba(38,50,78,.5);border:1px solid #3a4869;border-radius:10px;padding:11px 16px;color:#c2cde0;font-size:13.5px;font-weight:700;transition:all .15s}
+    .bc-tab:hover{color:#fff;border-color:#4a5a80;background:rgba(48,62,96,.6)}
+    .bc-tab.active{color:#fff;border-color:var(--accent,#3182f6);border-left:3px solid var(--accent,#3182f6);background:rgba(255,255,255,.06)}
     .bc-tic{font-size:15px}
-    .bc-dot{width:8px;height:8px;border-radius:50%;background:#6b7688}
-    .bc-dot.on{background:#22a06b;box-shadow:0 0 6px rgba(34,160,107,.7)}
-    .bc-dot.stored{background:#f5a623}
-    .bc-dot.off{background:#6b7688}
+    .bc-dot{width:9px;height:9px;border-radius:50%;background:#8b97ad}
+    .bc-dot.on{background:#22c07e;box-shadow:0 0 7px rgba(34,192,126,.8)}
+    .bc-dot.stored{background:#f5b544}
+    .bc-dot.off{background:#8b97ad}
 
-    .bc-card{background:rgba(30,40,64,.35);border:1px solid #2a3550;border-left:3px solid var(--accent,#3182f6);border-radius:10px;padding:18px}
-    .bc-bhead{display:flex;align-items:center;gap:9px;margin-bottom:6px}
-    .bc-bic{font-size:17px}
-    .bc-bnm{font-weight:800;font-size:15px;color:#cdd9ef}
-    .bc-state{margin-left:auto;font-size:12px;font-weight:700;padding:4px 10px;border-radius:20px}
-    .bc-state.on{background:rgba(34,160,107,.18);color:#8fdca4}
-    .bc-state.stored{background:rgba(245,166,35,.15);color:#f0c088}
-    .bc-state.off{background:rgba(120,140,170,.12);color:#aeb9cf}
-    .bc-hint{font-size:12px;color:#8b97ad;margin-bottom:12px;line-height:1.5}
+    .bc-card{background:rgba(34,45,70,.55);border:1px solid #3a4869;border-left:3px solid var(--accent,#3182f6);border-radius:10px;padding:18px}
+    .bc-bhead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+    .bc-bic{font-size:18px}
+    .bc-bnm{font-weight:800;font-size:16px;color:#eaf0fb}
+    .bc-state{margin-left:auto;font-size:12px;font-weight:700;padding:5px 11px;border-radius:20px}
+    .bc-state.on{background:rgba(34,192,126,.22);color:#7fe6ac}
+    .bc-state.stored{background:rgba(245,181,68,.2);color:#f6c877}
+    .bc-state.off{background:rgba(139,151,173,.18);color:#c2cde0}
 
-    .bc-statrow{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:#8b97ad}
-    .bc-stat b{margin-left:5px}
-    .bc-stat b.on{color:#8fdca4}
-    .bc-stat b.off{color:#8b97ad}
+    /* 발급 안내 콜아웃 */
+    .bc-guide{background:rgba(15,22,38,.6);border:1px solid #3a4869;border-radius:9px;padding:13px 15px;margin-bottom:15px}
+    .bc-guide-warn{font-size:13px;color:#ffd9a0;line-height:1.6;margin-bottom:10px}
+    .bc-guide-warn b{color:#ffe9c7}
+    .bc-guide-steps{display:flex;flex-direction:column;gap:7px;margin-bottom:9px}
+    .bc-step{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;color:#d3ddf0;line-height:1.5}
+    .bc-step b{color:#fff}
+    .bc-num{flex:0 0 auto;width:18px;height:18px;border-radius:50%;background:var(--accent,#3182f6);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:1px}
+    .bc-guide-portal{font-size:12px;color:#aab6cc}
+    .bc-guide-portal code{background:#0b1220;color:#cfe0ff;padding:2px 7px;border-radius:4px;font-family:monospace;font-size:11.5px}
 
-    .bc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-    .bc-field{display:flex;flex-direction:column;gap:5px}
-    .bc-lab{font-size:11px;font-weight:700;color:#8b97ad}
-    .bc-in{background:#0f1626;border:1px solid #2a3550;color:#dfe7f5;border-radius:6px;padding:9px 11px;font-family:monospace;font-size:12.5px;width:100%;box-sizing:border-box}
-    .bc-in:focus{outline:none;border-color:var(--accent,#3182f6)}
-    .bc-sel{font-family:inherit;cursor:pointer}
+    .bc-statrow{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:15px;font-size:12.5px;color:#c2cde0}
+    .bc-stat b{margin-left:6px}
+    .bc-stat b.on{color:#7fe6ac}
+    .bc-stat b.off{color:#f0a894}
 
-    .bc-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
-    .bc-btn{background:transparent;color:#cdd9ef;border:1px solid #3a4869;border-radius:8px;padding:10px 16px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap}
-    .bc-btn:hover:not(:disabled){background:rgba(255,255,255,.05);border-color:var(--accent,#3182f6)}
+    .bc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+    .bc-field{display:flex;flex-direction:column;gap:6px}
+    .bc-lab{font-size:12.5px;font-weight:700;color:#e3eafa}
+    .bc-labhint{font-weight:500;color:#9fb0cc;font-size:11px}
+    .bc-in{background:#0c1322;border:1px solid #3a4869;color:#f0f4fb;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:13px;width:100%;box-sizing:border-box}
+    .bc-in::placeholder{color:#8391ad}
+    .bc-in:focus{outline:none;border-color:var(--accent,#3182f6);box-shadow:0 0 0 2px rgba(49,130,246,.2)}
+
+    .bc-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+    .bc-btn{background:rgba(48,62,96,.5);color:#e3eafa;border:1px solid #4a5a80;border-radius:8px;padding:11px 17px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
+    .bc-btn:hover:not(:disabled){background:rgba(58,74,112,.7);border-color:var(--accent,#3182f6)}
     .bc-btn:disabled{opacity:.55;cursor:default}
-    .bc-btn.primary{background:linear-gradient(180deg,#2d6be0,#1f52bb);color:#fff;border:0;font-weight:700}
-    .bc-btn.primary:hover{filter:brightness(1.08)}
-    .bc-btn.ghost{color:#8fb4ff}
+    .bc-btn.primary{background:linear-gradient(180deg,#3576ea,#2158c8);color:#fff;border:0}
+    .bc-btn.primary:hover{filter:brightness(1.1)}
+    .bc-btn.ghost{color:#a9c6ff}
 
-    .bc-toast{margin-top:14px;padding:11px 14px;border-radius:8px;font-size:13px;font-weight:600}
-    .bc-toast.ok{background:rgba(34,160,107,.16);border:1px solid rgba(34,160,107,.5);color:#a5e8bd}
-    .bc-toast.bad{background:rgba(231,154,90,.14);border:1px solid rgba(231,154,90,.45);color:#f0c088}
-    .bc-badge{margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12.5px;font-weight:600}
-    .bc-badge.ok{background:rgba(34,160,107,.2);border:1px solid rgba(34,160,107,.6);color:#a5e8bd;box-shadow:0 0 14px rgba(34,160,107,.25)}
-    .bc-badge.warn{background:rgba(120,140,170,.12);border:1px solid #3a4869;color:#aeb9cf}
+    .bc-toast{margin-top:15px;padding:12px 15px;border-radius:8px;font-size:13px;font-weight:600;line-height:1.55}
+    .bc-toast.ok{background:rgba(34,192,126,.18);border:1px solid rgba(34,192,126,.55);color:#a9efc9}
+    .bc-toast.bad{background:rgba(231,154,90,.16);border:1px solid rgba(231,154,90,.5);color:#f4c79a}
+    .bc-badge{margin-top:11px;padding:11px 15px;border-radius:8px;font-size:12.5px;font-weight:600;line-height:1.55}
+    .bc-badge.ok{background:rgba(34,192,126,.22);border:1px solid rgba(34,192,126,.6);color:#a9efc9;box-shadow:0 0 14px rgba(34,192,126,.25)}
+    .bc-badge.warn{background:rgba(139,151,173,.14);border:1px solid #4a5a80;color:#cdd8ec}
 
-    .bc-note{margin-top:16px;color:#7b8aa4;font-size:12px;line-height:1.6}
-    .bc-note code{background:#0f1626;padding:1px 6px;border-radius:4px;font-family:monospace;color:#cdd9ef}
+    .bc-note{margin-top:16px;color:#9fb0cc;font-size:12px;line-height:1.65}
+    .bc-note code{background:#0b1220;padding:2px 7px;border-radius:4px;font-family:monospace;color:#cfe0ff}
 </style>
