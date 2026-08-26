@@ -8,18 +8,25 @@
 // ============================================================================
 using System;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Quant;   // Phase 94-C — 읽기 전용 결과 계약 구현
 
 namespace MS2E.Infrastructure
 {
-    public sealed class McResult
+    // Phase 94-C: 필드 → 자동 프로퍼티 전환(IMcResult 자동 충족). 엔진의 r.X = ... 대입은 프로퍼티 set 으로 그대로 동작.
+    public sealed class McResult : IMcResult
     {
-        public int Sims, Days, Assets;
-        public double ExpReturnPct;   // 평균 기간수익률 %
-        public double P5, P50, P95;   // 백분위 기간수익률 %
-        public double Var95Pct;       // 95% VaR (양수 손실 %)
-        public double ProbLossPct;    // 손실(<0) 확률 %
-        public int[] Histogram = Array.Empty<int>();
-        public double HistMin, HistMax;
+        public int Sims { get; set; }
+        public int Days { get; set; }
+        public int Assets { get; set; }
+        public double ExpReturnPct { get; set; }   // 평균 기간수익률 %
+        public double P5 { get; set; }
+        public double P50 { get; set; }
+        public double P95 { get; set; }             // 백분위 기간수익률 %
+        public double Var95Pct { get; set; }        // 95% VaR (양수 손실 %)
+        public double ProbLossPct { get; set; }     // 손실(<0) 확률 %
+        public int[] Histogram { get; set; } = Array.Empty<int>();
+        public double HistMin { get; set; }
+        public double HistMax { get; set; }
     }
 
     public static class MonteCarlo

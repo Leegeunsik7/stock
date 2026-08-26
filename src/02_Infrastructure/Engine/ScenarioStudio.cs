@@ -15,10 +15,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Quant;   // Phase 94-C — 읽기 전용 결과 계약 구현
 
 namespace MS2E.Infrastructure
 {
-    public class AssetSensitivity
+    public class AssetSensitivity : IAssetSensitivity
     {
         public string Name { get; set; } = "";
         public double Weight { get; set; }
@@ -27,13 +28,15 @@ namespace MS2E.Infrastructure
         public double PredictedMovePct { get; set; }
     }
 
-    public class ScenarioResult
+    public class ScenarioResult : IScenarioResult
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
         public double FactorShockPct { get; set; }
         public double PortfolioMovePct { get; set; }     // 시장 팩터 영향만(환율 제외)
         public List<AssetSensitivity> Assets { get; set; } = new();
+        // ★covariant 명시 구현: List<AssetSensitivity>(:IAssetSensitivity) → IReadOnlyList<IAssetSensitivity>
+        IReadOnlyList<IAssetSensitivity> IScenarioResult.Assets => Assets;
     }
 
     public static class ScenarioStudio

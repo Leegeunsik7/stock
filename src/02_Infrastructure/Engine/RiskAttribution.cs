@@ -16,10 +16,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Quant;   // Phase 94-C — 읽기 전용 결과 계약 구현
 
 namespace MS2E.Infrastructure
 {
-    public class RiskContribution
+    public class RiskContribution : IRiskContribution
     {
         public string Name { get; set; } = "";
         public double WeightPct { get; set; }
@@ -28,7 +29,7 @@ namespace MS2E.Infrastructure
         public double Ratio => WeightPct > 1e-9 ? RiskContribPct / WeightPct : 0;  // >1이면 비중보다 리스크가 큼
     }
 
-    public class RiskReport
+    public class RiskReport : IRiskReport
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
@@ -40,6 +41,8 @@ namespace MS2E.Infrastructure
         public double[] CurrentWeights { get; set; } = Array.Empty<double>();
         public double[] RiskParityWeights { get; set; } = Array.Empty<double>();
         public string Insight { get; set; } = "";
+        // ★covariant 명시 구현: List<RiskContribution>(RiskContribution:IRiskContribution) → IReadOnlyList<IRiskContribution>
+        IReadOnlyList<IRiskContribution> IRiskReport.Contributions => Contributions;
     }
 
     public static class RiskAttribution

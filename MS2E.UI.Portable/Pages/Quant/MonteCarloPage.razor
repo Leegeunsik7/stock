@@ -1,14 +1,16 @@
-@* 🎲 몬테카를로 — RiskHub의 탭(자식). 보유·수익률은 허브에서 캐스케이딩(자체 수집 X). *@
+@* 🎲 몬테카를로 — RiskHub의 탭(자식). 보유·수익률은 허브에서 캐스케이딩(자체 수집 X). Phase 94-C: 순수 RCL·엔진 Port. *@
+@implements IDisposable
+@inject IMonteCarloPort Mc
 
 <div class="hubbar">
     <div class="hubbar-t">🎲 포트폴리오 몬테카를로 <span class="sub">과거수익률·상관관계로 미래 분포 시뮬 (정보 제공용)</span></div>
     <label>기간
-        <select class="srch" style="width:84px" @bind="_horizon" @bind:after="Recompute">
+        <select class="srch" style="width:84px" @bind="_horizon" @bind:after="RecomputeAsync">
             <option value="5">1주</option><option value="21">1개월</option><option value="63">3개월</option>
         </select>
     </label>
     <label style="margin:0 8px">시뮬
-        <select class="srch" style="width:90px" @bind="_sims" @bind:after="Recompute">
+        <select class="srch" style="width:90px" @bind="_sims" @bind:after="RecomputeAsync">
             <option value="2000">2,000</option><option value="5000">5,000</option><option value="10000">10,000</option>
         </select>
     </label>
@@ -46,24 +48,33 @@
 </div>
 
 @code {
-    [CascadingParameter] public PortfolioData? Data { get; set; }
+    [CascadingParameter] public IPortfolioSnapshot? Data { get; set; }
     private int _horizon = 21, _sims = 2000, _assets;
     private string _msg = "";
-    private McResult? _res;
+    private IMcResult? _res;
+    private readonly QuantComputeInterlock _lock = new();   // Think-Beyond: 이탈 취소·stale/파기 결과 드롭
 
     private string HzLabel => _horizon switch { 5 => "1주", 63 => "3개월", _ => "1개월" };
 
-    // 캐스케이드된 보유·수익률로 동기 재계산(자체 수집 X). 기간·시뮬 변경 시도 재계산.
-    protected override void OnParametersSet() => Recompute();
+    // 캐스케이드/기간·시뮬 변경 시 Port 로 비동기 재계산(고부하 → 백그라운드 오프로드·인터락이 이전 취소·결과 가드).
+    protected override Task OnParametersSetAsync() => RecomputeAsync();
 
-    private void Recompute()
+    private async Task RecomputeAsync()
     {
         if (Data is null) { _msg = "리스크 시뮬 허브에서 열어 주세요."; _res = null; return; }
         if (!Data.Loaded) { _msg = Data.Error.Length > 0 ? Data.Error : "데이터 수집 중…"; _res = null; return; }
-        _assets = Data.Used.Count;
-        _res = MonteCarlo.Simulate(Data.R, Data.Weights, _horizon, _sims);
-        _msg = _res.Sims == 0 ? "시뮬에 필요한 데이터가 부족합니다." : "";
+        _assets = Data.HoldingCount;
+        var (ct, gen) = _lock.Begin();
+        var res = await Mc.SimulateAsync(Data, _horizon, _sims, 12345, ct);
+        _lock.TryApply(gen, () =>
+        {
+            _res = res;
+            _msg = res.Sims == 0 ? "시뮬에 필요한 데이터가 부족합니다." : "";
+            StateHasChanged();
+        });
     }
+
+    public void Dispose() => _lock.Dispose();
 
     private string HistSvg()
     {

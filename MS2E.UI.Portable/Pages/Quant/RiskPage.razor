@@ -1,4 +1,6 @@
-@* 🧯 리스크 기여도 분해 — PortfolioHub의 탭(자식). 데이터는 허브에서 캐스케이딩(자체 수집 X). *@
+@* 🧯 리스크 기여도 분해 — PortfolioHub의 탭(자식). 데이터는 허브에서 캐스케이딩(자체 수집 X). Phase 94-C: 순수 RCL·엔진 Port. *@
+@implements IDisposable
+@inject IRiskAnalysisPort Risk
 
 <div class="hubbar">
     <div class="hubbar-t">🧯 리스크 기여도 분해 <span class="sub">변동성이 실제로 어디서 나오는가 + 리스크 패리티 (정보 제공용)</span></div>
@@ -74,21 +76,29 @@
 </div>
 
 @code {
-    [CascadingParameter] public PortfolioData? Data { get; set; }
+    [CascadingParameter] public IPortfolioSnapshot? Data { get; set; }
 
     private string _msg = "";
-    private RiskReport? _rep;
+    private IRiskReport? _rep;
+    private readonly QuantComputeInterlock _lock = new();   // Think-Beyond: 이탈 취소·stale/파기 결과 드롭
 
-    // 캐스케이드된 데이터가 갱신될 때 동기 재계산(순수 모듈). 자체 수집 없음.
-    protected override void OnParametersSet()
+    // 캐스케이드 갱신 시 Port 로 비동기 재계산(엔진 콘크리트 무참조). 인터락이 이전 연산 취소 + 결과 가드.
+    protected override async Task OnParametersSetAsync()
     {
         if (Data is null) { _msg = "포트폴리오 허브에서 열어 주세요."; _rep = null; return; }
         if (!Data.Loaded) { _msg = Data.Error.Length > 0 ? Data.Error : "데이터 수집 중…"; _rep = null; return; }
 
-        _rep = RiskAttribution.Analyze(Data.R, Data.Names, Data.Weights);
-        if (!_rep.IsValid) { _msg = _rep.Note; _rep = null; return; }
-        _msg = "";
+        var (ct, gen) = _lock.Begin();
+        var rep = await Risk.AnalyzeAsync(Data, ct);
+        _lock.TryApply(gen, () =>
+        {
+            if (!rep.IsValid) { _msg = rep.Note; _rep = null; }
+            else { _rep = rep; _msg = ""; }
+            StateHasChanged();
+        });
     }
+
+    public void Dispose() => _lock.Dispose();
 }
 
 <style>

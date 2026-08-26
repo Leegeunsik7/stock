@@ -878,6 +878,10 @@ namespace StockManager.Blazor
             services.AddSingleton(tossPortfolioAdapter);
             // Phase 94-B — 포트폴리오 조회 Port(DIP): 순수 UI 는 IPortfolioQueryPort 만 알고 콘크리트 로딩은 어댑터가 담당.
             services.AddSingleton<MS2E.UI.Portable.Ports.IPortfolioQueryPort, PortfolioQueryAdapter>();
+            // Phase 94-C — Risk/Quant 엔진 Port(DIP): 순수 UI 는 3 Port 만 알고 콘크리트 엔진은 어댑터가 격리(Task.Run 오프로드·취소).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Quant.IRiskAnalysisPort, MS2E.Infrastructure.RiskAnalysisAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Quant.IMonteCarloPort, MS2E.Infrastructure.MonteCarloAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Quant.IScenarioPort, MS2E.Infrastructure.ScenarioAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

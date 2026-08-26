@@ -1,4 +1,6 @@
-@* 🌪 시나리오 스튜디오 — RiskHub의 탭(자식). 보유·수익률은 허브에서 캐스케이딩(자체 수집 X). *@
+@* 🌪 시나리오 스튜디오 — RiskHub의 탭(자식). 보유·수익률은 허브에서 캐스케이딩(자체 수집 X). Phase 94-C: 순수 RCL·엔진 Port. *@
+@implements IDisposable
+@inject IScenarioPort Scenario
 
 <div class="hubbar">
     <div class="hubbar-t">🌪 시나리오 스튜디오 <span class="sub">시장/환율 충격을 종목별 베타로 전파 (스트레스 테스트)</span></div>
@@ -72,31 +74,39 @@
 </div>
 
 @code {
-    [CascadingParameter] public PortfolioData? Data { get; set; }
+    [CascadingParameter] public IPortfolioSnapshot? Data { get; set; }
 
     private string _msg = "";
-    private ScenarioResult? _base;     // 시장충격 1% 기준(베타 보존) — UI에서 선형 스케일
+    private IScenarioResult? _base;     // 시장충격 1% 기준(베타 보존) — UI에서 선형 스케일
     private double _mkt = -10, _fx = 0, _usdW;
+    private readonly QuantComputeInterlock _lock = new();   // Think-Beyond: 이탈 취소·stale/파기 드롭
 
     private double MktImpact => _base is { IsValid: true } ? _base.PortfolioMovePct * _mkt : 0;
     private double FxImpact => _usdW * _fx;
     private double Total => MktImpact + FxImpact;
 
-    private void Preset(double mkt, double fx) { _mkt = mkt; _fx = fx; }
+    private void Preset(double mkt, double fx) { _mkt = mkt; _fx = fx; }   // 로컬 스케일만(엔진 재계산 없음)
 
-    // 캐스케이드된 보유·수익률로 베타 1회 추정(동기). 충격은 UI에서 선형 스케일.
-    protected override void OnParametersSet()
+    // 캐스케이드 갱신 시 Port 로 베타 1회 비동기 추정. 충격 슬라이더/프리셋은 UI 선형 스케일(재계산 없음).
+    protected override async Task OnParametersSetAsync()
     {
         if (Data is null) { _msg = "리스크 시뮬 허브에서 열어 주세요."; _base = null; return; }
         if (!Data.Loaded) { _msg = Data.Error.Length > 0 ? Data.Error : "데이터 수집 중…"; _base = null; return; }
 
-        // USD 비중 합 (환율 충격 대상)
+        // USD 비중 합 (환율 충격 대상) — 콘크리트 Holding/Currency 대신 스냅샷 UsdMask 사용
         _usdW = 0;
-        for (int i = 0; i < Data.Used.Count && i < Data.Weights.Length; i++)
-            if (Data.Used[i].Currency == Currency.USD) _usdW += Data.Weights[i];
+        for (int i = 0; i < Data.HoldingCount && i < Data.Weights.Length; i++)
+            if (Data.UsdMask[i]) _usdW += Data.Weights[i];
 
-        _base = ScenarioStudio.ApplyShock(Data.R, Data.Names, Data.Weights, 1.0);
-        _msg = _base.IsValid ? "" : _base.Note;
-        if (!_base.IsValid) _base = null;
+        var (ct, gen) = _lock.Begin();
+        var res = await Scenario.ApplyShockAsync(Data, 1.0, ct);
+        _lock.TryApply(gen, () =>
+        {
+            _base = res.IsValid ? res : null;
+            _msg = res.IsValid ? "" : res.Note;
+            StateHasChanged();
+        });
     }
+
+    public void Dispose() => _lock.Dispose();
 }
