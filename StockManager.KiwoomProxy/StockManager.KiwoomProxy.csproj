@@ -31,7 +31,7 @@
     메인 프로젝트의 Blazor/QuestPDF 의존성을 끌어오지 않는다.
   -->
   <ItemGroup>
-    <Compile Include="..\StockManager\Common\BridgeProtocol.cs" />
+    <Compile Include="..\src\02_Infrastructure\Engine\BridgeProtocol.cs" />
   </ItemGroup>
 
 </Project>
