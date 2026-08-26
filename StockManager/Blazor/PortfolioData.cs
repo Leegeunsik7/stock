@@ -8,10 +8,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using MS2E.UI.Portable.Ports;   // Phase 94-B — IPortfolioSnapshot 읽기 전용 계약 구현
 
 namespace StockManager.Blazor
 {
-    public class PortfolioData
+    // Phase 94-B: 순수 UI(Risk/Quant)가 콘크리트가 아닌 IPortfolioSnapshot(읽기 전용)만 소비하도록 계약 구현.
+    //   기존 공개 프로퍼티(Loaded/Error/Names/R/Weights)가 인터페이스를 자동 충족 + HoldingCount·UsdMask 추가.
+    public class PortfolioData : IPortfolioSnapshot
     {
         public bool Loaded { get; set; }
         public string Error { get; set; } = "";
@@ -23,6 +26,10 @@ namespace StockManager.Blazor
         public string[] Names { get; set; } = Array.Empty<string>();
         public double[] Weights { get; set; } = Array.Empty<double>(); // 시총 비중(합 1)
         public double Total { get; set; }                         // 총 평가액(KRW)
+
+        // ★IPortfolioSnapshot 추가 멤버(순수 UI 소비용 — 콘크리트 Holding/Currency 노출 없이 파생 제공).
+        public int HoldingCount => Used.Count;
+        public bool[] UsdMask { get; set; } = Array.Empty<bool>();   // 종목별 USD 여부(통화노출)
 
         /// <summary>보유·환율·수익률을 1회 수집해 컨텍스트로 빌드(허브 공용 로더, DRY).</summary>
         public static async Task<PortfolioData> LoadAsync(IQuoteProvider provider, LocalDatabase db, FxConverter fx, int days)
@@ -42,6 +49,7 @@ namespace StockManager.Blazor
                 if (used.Count == 0) { d.Error = "수익률 히스토리를 수집하지 못했습니다(시세 제공자 확인)."; return d; }
 
                 d.Used = used;
+                d.UsdMask = used.Select(h => h.Currency == Currency.USD).ToArray();   // Phase 94-B: 통화노출(콘크리트 미노출)
                 d.R = used.Select(h => returns[h.Symbol].Select(x => (double)x).ToArray()).ToArray();
                 d.Names = used.Select(h => string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name).ToArray();
                 var rawW = used.Select(h => (double)(h.CurrentPrice * h.Quantity * (h.Currency == Currency.USD ? usd : 1m))).ToArray();

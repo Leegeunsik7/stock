@@ -876,6 +876,8 @@ namespace StockManager.Blazor
                 accountFetch:  tossLive.FetchAccountJson, // 거버너 게이팅 실 HTTP GET(실패/rate/429/회로 → null)
                 readOnlyKey:   true);                     // ★조회 전용 키 선언(write 가능 키 오용 차단)
             services.AddSingleton(tossPortfolioAdapter);
+            // Phase 94-B — 포트폴리오 조회 Port(DIP): 순수 UI 는 IPortfolioQueryPort 만 알고 콘크리트 로딩은 어댑터가 담당.
+            services.AddSingleton<MS2E.UI.Portable.Ports.IPortfolioQueryPort, PortfolioQueryAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
