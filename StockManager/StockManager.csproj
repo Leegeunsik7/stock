@@ -1,5 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
+  <!-- v11.2.0 Stage 1 — Clean Architecture 물리 재배치: Core/Infra 소스를 솔루션 루트 src/ 로 이동(네임스페이스 보존).
+       프로젝트 디렉터리 밖이라 기본 glob 이 못 잡으므로 명시 Compile include 로 StockManager.dll 에 그대로 컴파일. -->
+  <ItemGroup>
+    <Compile Include="..\src\01_Core\**\*.cs" />
+    <Compile Include="..\src\02_Infrastructure\**\*.cs" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
