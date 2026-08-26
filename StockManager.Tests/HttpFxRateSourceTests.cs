@@ -9,7 +9,6 @@
 // ============================================================================
 using System;
 using System.Text.Json;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

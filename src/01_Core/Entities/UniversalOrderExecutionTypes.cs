@@ -8,7 +8,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     // ★매수/매도 방향은 기존 QFixed.OrderSide(Buy=0, Sell=1) 재사용(엔진 canonical).
     public enum ExecOrderKind : byte { None = 0, Limit = 1, Market = 2, Cancel = 3 }

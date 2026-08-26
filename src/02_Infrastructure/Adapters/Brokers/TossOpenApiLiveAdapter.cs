@@ -28,7 +28,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class TossOpenApiLiveAdapter : IDisposable
     {

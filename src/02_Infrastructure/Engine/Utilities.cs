@@ -13,7 +13,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>API 키 등 민감 문자열 보호 (DPAPI · CurrentUser 범위)</summary>
     public static class Secret

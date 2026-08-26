@@ -26,7 +26,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>웜 스타트 복구 파이프라인 진행 상태. 부팅 기본 Idle. 실패 종단 = Frozen.</summary>
     public enum RecoveryState { Idle, Validating, Draining, Escalating, Stable, Frozen }

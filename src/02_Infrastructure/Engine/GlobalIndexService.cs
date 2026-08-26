@@ -10,7 +10,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record IndexRow(
         string Symbol, string Name, string Flag, string Region,

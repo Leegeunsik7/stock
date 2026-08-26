@@ -15,7 +15,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class ComplianceBridge
     {

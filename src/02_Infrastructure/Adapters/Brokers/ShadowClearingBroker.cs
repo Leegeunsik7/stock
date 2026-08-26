@@ -20,7 +20,7 @@
 using System;
 using System.Diagnostics;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>IBroker 데코레이터 — 게이트 권위에 따라 분기: LegacyPrimary=병렬 관측(레거시 권위 불변),
     /// QFixedPrimary=완전 집권(보수 정렬값으로 주문 치환 + 청산 실패 시 fail-closed 하드 단절).</summary>

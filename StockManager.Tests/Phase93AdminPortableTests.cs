@@ -10,7 +10,6 @@ using MS2E.UI.Portable.Bus;
 using MS2E.UI.Portable.Dto;
 using MS2E.UI.Portable.Ports;
 using MS2E.UI.Portable.Security;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

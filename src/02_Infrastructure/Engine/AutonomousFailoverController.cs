@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum ActiveChannel : byte { Primary = 0, Standby = 1, None = 2 }
 

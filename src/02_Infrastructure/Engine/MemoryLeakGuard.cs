@@ -21,7 +21,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 메모리·리스 스냅샷 ──────────────────────────────────────────────────────
 

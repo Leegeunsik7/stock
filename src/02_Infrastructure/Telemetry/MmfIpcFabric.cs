@@ -43,7 +43,7 @@ using System;
 using System.IO.MemoryMappedFiles;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>패브릭 역할 — Writer 는 MMF 헤더를 초기화(소유), Reader 는 검증만.</summary>
     public enum MmfFabricRole { Writer, Reader }

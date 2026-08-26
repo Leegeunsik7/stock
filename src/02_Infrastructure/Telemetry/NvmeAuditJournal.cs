@@ -23,7 +23,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>CausalAuditVault 의 MMF 영속 미러(비침습 데코레이터·Append-Only·δ=0 직기입). IDisposable.</summary>
     public sealed unsafe class NvmeAuditJournal : IDisposable

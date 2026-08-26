@@ -22,7 +22,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>공분산 특이점 방화벽 상태(텔레메트리·UI 배지). 값이 클수록 위중.</summary>
     public enum CovGuardState

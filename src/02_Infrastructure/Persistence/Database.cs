@@ -16,7 +16,7 @@ using System.Linq;
 using System.Threading;
 using Microsoft.Data.Sqlite;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public class LocalDatabase : IDisposable
     {

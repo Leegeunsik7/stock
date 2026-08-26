@@ -9,7 +9,6 @@
 using System;
 using System.IO;
 using System.Text;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

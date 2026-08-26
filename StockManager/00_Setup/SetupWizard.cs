@@ -11,7 +11,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using StockManager.Common;
 
 namespace StockManager
 {

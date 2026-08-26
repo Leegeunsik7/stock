@@ -15,7 +15,7 @@
 // ============================================================================
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>카나리 검역창 동안 주문 명목(raw)에 물리적 상한을 강제하는 락-프리 제한기. 기본 무제한.</summary>
     public sealed class BlastRadiusLimiter

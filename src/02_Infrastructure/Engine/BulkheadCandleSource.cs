@@ -17,7 +17,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class BulkheadCandleSource : ICandleSource
     {

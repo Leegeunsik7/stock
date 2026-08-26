@@ -9,7 +9,6 @@
 //    실제로 동작하고, 만료 경계(==)에서 fail-open 하지 않음을 박제.
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

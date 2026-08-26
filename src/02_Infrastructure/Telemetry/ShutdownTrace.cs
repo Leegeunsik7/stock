@@ -12,7 +12,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>종료 단계별 소요 시간을 파일에 기록하는 진단 계측(스레드 안전·예외 격리).</summary>
     public static class ShutdownTrace

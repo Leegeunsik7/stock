@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ============================================================================
     //  증권사별 수수료·세금 추정 — 매수/매도 기록 시 자동 채움(사용자 수정 가능).

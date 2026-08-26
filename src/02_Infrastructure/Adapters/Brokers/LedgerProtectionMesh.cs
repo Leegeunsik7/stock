@@ -23,7 +23,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>원장 쓰기 요청 blittable 페이로드(참조 0·힙 0). 심볼=KSE 6자리 long, 수치=QFixed raw(10^8).</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

@@ -7,7 +7,6 @@
 //   🔒 liveArmed:false: 강한 라우팅이어도 이중키 전 발주 0
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

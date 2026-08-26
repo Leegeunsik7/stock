@@ -11,7 +11,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>빙산호가 포획 센티널(δ=0·O(1)). ObserveBid/Ask(표시잔량,체결량,ticks) → 재전개 서명+누적체결로 숨은 물량 역추적.</summary>
     public sealed class IcebergHunterSentinel

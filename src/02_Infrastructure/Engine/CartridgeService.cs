@@ -11,7 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class CartridgeService
     {

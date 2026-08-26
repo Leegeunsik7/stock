@@ -19,7 +19,7 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>고정 크기 평면 L3 오더북(NativeMemory 상주·in-place 갱신·스팬 무복사 노출). IDisposable.</summary>
     public sealed unsafe class ZeroCopyOrderBook : IDisposable

@@ -15,7 +15,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum GenesisState : byte { Pending = 0, Synced = 1, Refused = 2 }
 

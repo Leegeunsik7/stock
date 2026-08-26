@@ -25,7 +25,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>CausalWeave 종합 상태(텔레메트리·UI 배지 매핑). 값이 클수록 위중.</summary>
     public enum CausalWeaveState

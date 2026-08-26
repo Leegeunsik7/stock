@@ -32,7 +32,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>RIO 수신 프레임 소비자(무할당 in 파라미터 — 봉인 QPC 동반).</summary>
     public delegate void RioFrameSink(ReadOnlySpan<byte> frame, long qpc);

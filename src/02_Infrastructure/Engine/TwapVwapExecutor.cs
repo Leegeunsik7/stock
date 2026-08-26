@@ -16,7 +16,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class TwapVwapExecutor : IBroker, IDisposable
     {

@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>카나리 소액 집행 거버너(δ=0). 자본 ≤0.1% 캡 내 주문만 admit·슬리피지 임계 초과 시 O(1) 드라이런 강등.</summary>
     public sealed class MicroCapitalCanaryGovernor

@@ -12,7 +12,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // 어셈블리 플러그인 격리 로드 컨텍스트(의존성 해석 포함, 수거 가능).
     internal sealed class PluginLoadContext : AssemblyLoadContext

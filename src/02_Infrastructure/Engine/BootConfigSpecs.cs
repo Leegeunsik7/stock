@@ -10,7 +10,7 @@
 // ============================================================================
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class BootConfigSpecs
     {

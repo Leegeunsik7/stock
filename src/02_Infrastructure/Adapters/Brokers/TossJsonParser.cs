@@ -16,7 +16,7 @@ using System;
 using System.Buffers.Text;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class TossJsonParser
     {

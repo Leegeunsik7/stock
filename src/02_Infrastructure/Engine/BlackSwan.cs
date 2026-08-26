@@ -11,7 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record CrisisProfile(string Id, string Name, string Period, IReadOnlyList<double> MarketDailyReturns, string Note);
 

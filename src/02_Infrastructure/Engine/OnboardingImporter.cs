@@ -15,7 +15,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>온보딩 초기 보유 1행 — 파싱 완료된 결정론 값(InvariantCulture 로 이미 파싱됨).</summary>
     public readonly record struct SeedHolding(string Symbol, decimal Qty, decimal AvgPrice, string? Name = null);

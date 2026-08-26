@@ -8,7 +8,7 @@ using System;
 using System.Buffers;
 using System.Security.Cryptography;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class CartridgeCrypto
     {

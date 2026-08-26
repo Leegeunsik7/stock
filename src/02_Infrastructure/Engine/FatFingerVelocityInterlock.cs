@@ -26,7 +26,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>실자본 사출 방화벽(δ=0). Admit(in OrderProposal)=false → fat-finger/폭주 veto·Frozen 래치. 디스패처가 ForceFreeze 승격.</summary>
     public sealed class FatFingerVelocityInterlock

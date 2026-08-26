@@ -22,7 +22,7 @@ using System.IO;                       // IOException(접근불가 분류)
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum RecoveryKind   : byte { None = 0, Rejection = 1, Champion = 2 }
 

@@ -31,7 +31,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>송출 라우팅 판정 — 섀도우(바이패스+가상체결)·실전(실 송출 허용)·차단(fail-closed).</summary>
     public enum RouteVerdict : byte { Shadow = 0, Live = 1, Blocked = 2 }

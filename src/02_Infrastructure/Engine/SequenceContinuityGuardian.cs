@@ -17,7 +17,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>시퀀스 관측 결과.</summary>
     public enum SeqObservation : byte

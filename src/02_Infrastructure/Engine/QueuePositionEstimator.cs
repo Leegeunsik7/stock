@@ -12,7 +12,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>지정가 주문 큐 위치 추정기(δ=0·FIFO 가격-시간 우선순위). Place→OnTrade(체결 소진)→FillImminence 프로젝션.</summary>
     public sealed class QueuePositionEstimator

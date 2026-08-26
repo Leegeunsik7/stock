@@ -4,7 +4,8 @@
 @inject LocalDatabase Db
 @inject AiService Ai
 @implements IDisposable
-@using StockManager.Common
+@using MS2E.Core
+@using MS2E.Infrastructure
 
 <div class="top">
     <div class="hello"><h1>🧱 LLM 전략 컴파일러 <span class="tag">NL → SPEC → BACKTEST</span></h1><p>자연어로 규칙을 쓰면 <b>선언적 전략 스펙</b>으로 컴파일 → 결정론 백테스트 → 서명 카트리지. LLM은 스펙만 제안하고 <b>검증·실행은 C#</b>(환각 방화벽), LLM 없이도 규칙 파서로 동작</p></div>

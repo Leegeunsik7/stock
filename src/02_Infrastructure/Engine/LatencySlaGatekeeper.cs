@@ -20,7 +20,7 @@ using System;
 using System.Numerics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>지연 분포 스냅샷(값타입·힙 0). 단위 ns.</summary>
     public readonly struct LatencySnapshotNs

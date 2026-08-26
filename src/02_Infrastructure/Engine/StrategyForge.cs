@@ -10,7 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record ForgeCandidate(int Short, int Long, double OosMeanPct, double OosStdPct, double Score, int Trades, double FullReturnPct, bool Valid);
 

@@ -17,7 +17,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum RejectionStage : byte { None = 0, Approve = 1, Activate = 2 }
 

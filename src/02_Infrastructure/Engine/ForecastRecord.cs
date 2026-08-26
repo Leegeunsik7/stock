@@ -8,7 +8,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum ForecastEngineType
     {

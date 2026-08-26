@@ -10,7 +10,6 @@
 //    환율만 청산 경로(KrxFxClearing)로 흐른다(fail-open 원천 차단).
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

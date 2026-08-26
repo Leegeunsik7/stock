@@ -19,7 +19,7 @@
 using System.Buffers;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class ZeroAllocJsonParser
     {

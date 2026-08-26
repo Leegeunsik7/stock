@@ -10,7 +10,7 @@
 using System;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     /// <summary>증권사 식별자.</summary>
     public enum BrokerId : byte { None = 0, Toss = 1, Kis = 2, Ls = 3 }

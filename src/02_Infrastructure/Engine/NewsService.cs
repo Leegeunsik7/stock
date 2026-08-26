@@ -12,7 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public class NewsService
     {

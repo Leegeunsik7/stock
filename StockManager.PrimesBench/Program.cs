@@ -8,7 +8,6 @@
 //  실행: dotnet run --project StockManager.PrimesBench -c Release
 // ============================================================================
 using System.Diagnostics;
-using StockManager.Common;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 Console.WriteLine("== Primes 벤치마크 (Release 권장 · 외부 패키지 0) ==\n");

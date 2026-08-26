@@ -18,7 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>가상 서브계좌 1건의 (가상) 체결 분배.</summary>
     public sealed record SubAccountFill(string SubAccountId, long Qty, decimal Price);

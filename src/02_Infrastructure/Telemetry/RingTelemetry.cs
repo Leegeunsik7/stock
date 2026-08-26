@@ -17,7 +17,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>관제탑이 비추는 링 디스패처 계기 스냅샷(블리터블 값 타입·참조 0·힙 0).</summary>
     public readonly struct RingTelemetry

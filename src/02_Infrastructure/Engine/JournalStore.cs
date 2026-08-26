@@ -15,7 +15,7 @@ using System;
 using System.IO;
 using System.IO.MemoryMappedFiles;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>저널 원장 바이트의 물리 backing. Read/Write 는 I/O 오류 시 예외를 전파한다(journaler 가 분류).</summary>
     public interface IJournalStore

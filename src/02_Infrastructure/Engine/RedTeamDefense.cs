@@ -15,7 +15,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum KillSwitchState : byte { Ready = 0, Tripped = 1 }
     public enum DeadmanState    : byte { Idle = 0, Watching = 1, Reverted = 2 }

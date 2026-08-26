@@ -20,7 +20,7 @@
 // ============================================================================
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>Pre-Flight 점검 입력(δ=0 블리터블 값타입·콜드 샘플러가 스냅샷에서 수집·주입). 단위 주석 참조.</summary>
     public readonly struct PreFlightInputs

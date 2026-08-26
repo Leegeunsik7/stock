@@ -6,7 +6,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum AlgoStyle { Twap, Vwap }
 

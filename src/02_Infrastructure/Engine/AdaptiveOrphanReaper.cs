@@ -18,7 +18,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>고아 주문 진상 조회 결과. Unknown 이 재수확 데드라인 초과 시 fail-closed.</summary>
     public enum OrphanVerdict : byte { NotFilled = 0, Filled = 1, Unknown = 2 }

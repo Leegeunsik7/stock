@@ -24,7 +24,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>OAuth 토큰 1회 취득 결과(불변 값). Ok=false 또는 LifetimeSeconds≤0 은 무효로 간주(fail-closed).</summary>
     public readonly record struct TossTokenResult(bool Ok, string AccessToken, long LifetimeSeconds);

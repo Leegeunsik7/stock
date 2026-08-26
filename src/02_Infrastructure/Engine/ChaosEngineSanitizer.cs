@@ -20,7 +20,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>무할당 카오스 결함 주입 엔진(δ=0·결정론). Inject(결함,강도)→SafeHold/ForceFreeze·질의로 결함 효과 산출.</summary>
     public sealed class ChaosEngineSanitizer

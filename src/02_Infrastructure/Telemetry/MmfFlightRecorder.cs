@@ -37,7 +37,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>블랙박스 이산 사건 분류(byte). 핫패스 엔진별 통과 사건.</summary>
     public enum FlightEventKind : byte

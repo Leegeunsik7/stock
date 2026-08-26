@@ -10,7 +10,7 @@
 // ============================================================================
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>MMF 프레임 시퀀스 gap 감사기(δ=0·락프리). Observe(seq) → 유실/리셋 계수.</summary>
     public sealed class MmAuditTracker

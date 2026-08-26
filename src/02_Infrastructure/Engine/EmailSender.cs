@@ -10,7 +10,7 @@ using System.Net;
 using System.Net.Mail;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class EmailSender
     {

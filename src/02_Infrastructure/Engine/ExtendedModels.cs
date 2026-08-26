@@ -5,7 +5,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>섹터 분류 (GICS 11섹터 + 한국 보완)</summary>
     public enum Sector

@@ -17,7 +17,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 적응도 성분 벡터 (zero-alloc readonly record struct) ─────────────────────
     public readonly record struct FitnessVector(

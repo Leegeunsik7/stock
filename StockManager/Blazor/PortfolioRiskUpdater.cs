@@ -11,7 +11,6 @@
 // ============================================================================
 using System;
 using System.Threading;
-using StockManager.Common;
 
 namespace StockManager.Blazor
 {

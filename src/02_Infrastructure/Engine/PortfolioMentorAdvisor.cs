@@ -13,7 +13,7 @@ using System.Globalization;
 using System.Text;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>AI 멘토 파이프라인 FSM.</summary>
     public enum MentorFsmState : byte { Idle = 0, Analyzing = 1, Advised = 2, Amber = 3 }

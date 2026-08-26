@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>허니키 디코이 트랩(δ=0·관리형). Decoys 를 힙에 배치, CheckIntegrity(카나리)·WasExfiltrated(유출) 로 침해 탐지.</summary>
     public sealed class HoneyKeyDecoyMesh

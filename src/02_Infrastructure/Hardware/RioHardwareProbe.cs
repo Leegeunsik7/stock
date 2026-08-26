@@ -21,7 +21,7 @@ using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>RIO 하드웨어 사전 점검 결과(블리터블 값타입·힙 0). 텔레메트리/UI 매트릭스 직결.</summary>
     public readonly struct RioProbeReport

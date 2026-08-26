@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     /// <summary>자산별 성장 가정 — 연 기대수익률(drift)·연 변동성(vol)을 분수 raw 로 보관(0.07 → 7,000,000).</summary>
     public readonly record struct GrowthAssumption

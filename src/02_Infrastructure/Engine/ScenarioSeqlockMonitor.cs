@@ -11,7 +11,7 @@
 // ============================================================================
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>시나리오 seqlock 카운터의 싱글톤 관제 브리지(페이지 transient → 호스트 싱글톤 시임). 무할당.</summary>
     public sealed class ScenarioSeqlockMonitor

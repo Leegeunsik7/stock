@@ -38,7 +38,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>컷오버 수명주기 상태(관제·텔레메트리). 단조: Shadow→ArmedReady→CanaryQuarantine→Live, 이탈: RolledBack/Frozen.</summary>
     public enum CutoverState : byte { Shadow = 0, ArmedReady = 1, CanaryQuarantine = 2, Live = 3, RolledBack = 4, Frozen = 5 }

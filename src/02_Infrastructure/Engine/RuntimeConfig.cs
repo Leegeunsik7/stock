@@ -16,7 +16,7 @@
 using System;
 using System.Globalization;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class RuntimeConfig
     {

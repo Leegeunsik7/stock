@@ -6,7 +6,6 @@
 //   🔒 liveArmed:false: 드라이런 100% 가상 체결이어도 실 브로커 소켓 0비트(실전 경로 end-to-end)
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

@@ -23,7 +23,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>거시/섹터 쇼크 분류(LLM ACL 추출 대상). None=무충격.</summary>
     public enum NewsShockClass : byte { None = 0, MacroInterest = 1, SupplyChainLithium = 2, Geopolitical = 3 }

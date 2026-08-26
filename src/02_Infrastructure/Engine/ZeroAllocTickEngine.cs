@@ -9,7 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 캔들 원소 구조체 ──────────────────────────────────────────────────────────
     // double 필드 4 + long 필드 2 = 48바이트 (64B 캐시 라인에 최소 1개 완전 적합)

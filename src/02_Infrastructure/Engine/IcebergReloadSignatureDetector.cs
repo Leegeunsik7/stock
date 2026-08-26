@@ -13,7 +13,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>호가 재전개 서명 계측기(δ=0·O(1)). Observe(표시잔량,ticks) → dip→즉시 refill 반복 시 빙산 확정 확률 사출.</summary>
     public sealed class IcebergReloadSignatureDetector

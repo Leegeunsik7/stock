@@ -21,7 +21,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum BrokerKind    : byte { KisQuote = 0, KisOrder = 1, Toss = 2, Fx = 3 }
     public enum EndpointMode  : byte { Sandbox = 0, Production = 1 }

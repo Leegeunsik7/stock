@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Intrinsics;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class VectorizedAlphaEngine
     {

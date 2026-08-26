@@ -14,7 +14,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>거시 폭풍 시나리오. None 은 무충격(기준).</summary>
     public enum ChaosScenario : byte { None = 0, Gfc2008, RateSpike, InflationShock, CryptoWinter }

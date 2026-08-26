@@ -12,7 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // 코치 입력 거래(앱 Transactions에서 매핑). PriorRet5dPct = 체결 직전 5거래일 수익률(%) — 추격/패닉 판정용(없으면 null).
     public sealed record CoachTx(string Symbol, TransactionType Type, int Quantity, decimal Price, decimal Fees, DateTime ExecutedAt, double? PriorRet5dPct);

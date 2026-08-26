@@ -24,7 +24,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>하드웨어 코히런스 센티널(캐시라인 격리·코어 바운싱·아레나 카나리). IDisposable·δ=0.</summary>
     public sealed unsafe class CacheLineCoherenceSentinel : IDisposable

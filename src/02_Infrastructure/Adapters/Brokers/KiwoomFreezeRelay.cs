@@ -21,7 +21,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>
     /// 32bit 키움 OCX(COM) 추상화. 실 DLL(KHOPENAPI.OCX) 의존부는 KiwoomProxyHost(x86)가

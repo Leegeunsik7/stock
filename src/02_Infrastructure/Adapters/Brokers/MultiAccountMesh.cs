@@ -16,7 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>가상 서브계좌 정의 — 식별자 + 지분 가중치(≥0).</summary>
     public sealed record SubAccountSpec(string Id, decimal Weight);

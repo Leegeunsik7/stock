@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ============================================================================
     //  자산군 분류 집계 — 보유를 국내주식 / 해외주식 / 코인 3분류로 묶어 KRW 환산 평가·손익·비중을 낸다.

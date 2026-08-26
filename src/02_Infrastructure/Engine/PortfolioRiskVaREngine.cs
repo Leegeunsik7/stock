@@ -25,7 +25,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>거시 스트레스 시나리오(값타입). 지수 급락·환율 스파이크·금리 충격을 불리 방향 합성.</summary>
     public readonly struct StressScenario

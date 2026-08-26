@@ -21,7 +21,7 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>64B 정렬 SIMD 틱 링 익스트랙터(δ=0·정렬 로드). Push(tick) → WeightedMomentum(weights). IDisposable.</summary>
     public sealed unsafe class SimdAlignedRingVectorizer : IDisposable

@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>5대 Clean Architecture 레이어(안쪽=낮은 번호). 의존은 '안으로만' 향한다.</summary>
     public enum ArchLayer : byte

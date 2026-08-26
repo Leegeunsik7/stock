@@ -17,7 +17,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum ThreadPoolHealth : byte { Healthy = 0, Starved = 1 }
 

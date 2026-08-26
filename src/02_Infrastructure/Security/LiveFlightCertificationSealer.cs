@@ -17,7 +17,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>전방위 인증 봉인기(δ=0). Certify(in frame)로 전역 불변식 ~50항목 채점(0~100)·100점 시에만 키드-FNV 봉인·무장 차단.</summary>
     public sealed class LiveFlightCertificationSealer

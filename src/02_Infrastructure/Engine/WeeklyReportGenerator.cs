@@ -12,7 +12,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class WeeklyReportGenerator
     {

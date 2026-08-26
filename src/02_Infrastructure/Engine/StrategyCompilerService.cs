@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class StrategyCompilerService
     {

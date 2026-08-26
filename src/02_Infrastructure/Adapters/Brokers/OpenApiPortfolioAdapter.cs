@@ -10,7 +10,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class OpenApiPortfolioAdapter : IPortfolioSyncPort
     {

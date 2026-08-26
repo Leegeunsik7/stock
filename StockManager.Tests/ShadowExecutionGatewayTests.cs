@@ -13,7 +13,6 @@ using System;
 using System.Diagnostics;
 using System.Text;
 using System.Threading;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

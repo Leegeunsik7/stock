@@ -20,7 +20,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>서멀/주파수 스로틀링 센티널. Start() → 전용 스레드 주기 Sample, Dispose() → 정지. 홀드는 가역.</summary>
     public sealed class ThermalFrequencyJitterGuard : IDisposable

@@ -20,7 +20,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>릴리스 아티팩트 SHA-256 포렌식 봉인기(콜드 산출·δ=0 상태 조회). 실행 바이너리 자가-봉인 + 매니페스트 대조 + 감사 각인.</summary>
     public sealed class ReleaseArtifactSha256Attestor

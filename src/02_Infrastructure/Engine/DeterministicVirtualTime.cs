@@ -15,7 +15,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>가상 스케줄러가 무한루프/행에 빠지는 것을 방어할 때 던지는 예외(테스트 러너 hang 차단).</summary>
     public sealed class ChaosGridHangException : Exception

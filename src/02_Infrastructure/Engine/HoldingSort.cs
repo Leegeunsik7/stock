@@ -13,7 +13,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class HoldingSort
     {

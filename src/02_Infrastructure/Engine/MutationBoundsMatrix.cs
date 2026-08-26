@@ -19,7 +19,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 제약 상수 (전부 init — 환경별 튜닝 허용, 기본값은 보수적) ────────────────
     public sealed record MutationBounds

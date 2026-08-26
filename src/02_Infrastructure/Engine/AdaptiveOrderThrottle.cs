@@ -17,7 +17,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>1s/10s 시간창 송출 패킷 수를 무할당 원자 패킹 버킷으로 추적해 상한 90% 도달 시 Hold 하는 락프리 rate 센티널.</summary>
     public sealed class AdaptiveOrderThrottle

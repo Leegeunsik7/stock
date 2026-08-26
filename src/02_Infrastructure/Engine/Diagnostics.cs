@@ -6,7 +6,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public record DiagRow(string Area, string Status, string Detail);
 

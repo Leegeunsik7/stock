@@ -19,7 +19,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum BootSafety : byte { Clean, Recovered, Frozen }
 

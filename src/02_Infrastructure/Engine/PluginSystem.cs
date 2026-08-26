@@ -13,7 +13,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum PluginKind { Indicator, AlertRule, PromptTemplate, Assembly, Unknown }
 

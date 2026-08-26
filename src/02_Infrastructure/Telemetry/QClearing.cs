@@ -25,7 +25,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>자산별 격자 사양 — 호가틱(QPrice)·수량스텝(QQty). 멀티-스케일 정합 기준.</summary>
     public readonly record struct QTickSpec(QPrice Tick, QQty Step)

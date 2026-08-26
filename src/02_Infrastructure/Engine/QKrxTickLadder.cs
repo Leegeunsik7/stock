@@ -28,7 +28,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>
     /// KRX 가격대별 호가단위(틱) 사다리 — 순수 함수·무할당·결정론. 가격(원)을 받아 그 가격대에 적용되는

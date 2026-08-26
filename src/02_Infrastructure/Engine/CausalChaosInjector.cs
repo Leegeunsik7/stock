@@ -22,7 +22,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>마이크로-버스트 폭주 결과(값타입·힙 0). 처리량은 계측치(하드웨어 의존).</summary>
     public readonly struct MicroBurstResult

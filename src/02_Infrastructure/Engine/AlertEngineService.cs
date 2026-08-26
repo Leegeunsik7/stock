@@ -15,7 +15,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public class AlertEngineService
     {

@@ -17,7 +17,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>하드웨어 키 펄스 심박 센티널(δ=0). Pulse(물리 접점 생존)→KeyAlive·단선 지속 시 하드 래치+무장 차단.</summary>
     public sealed class HardwareKeyPulseHeartbeatSentinel : IDisposable

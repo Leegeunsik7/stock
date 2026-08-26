@@ -16,7 +16,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>점화 감사 이벤트 종류.</summary>
     public enum IgnitionEventKind : long

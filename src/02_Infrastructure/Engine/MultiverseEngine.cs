@@ -9,7 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum MultiverseScenario { Live = 0, BullRun = 1, Stagflation = 2, DeepRecession = 3 }
 

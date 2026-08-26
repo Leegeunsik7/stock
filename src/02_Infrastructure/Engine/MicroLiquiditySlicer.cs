@@ -18,7 +18,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>C#12 InlineArray — 5원소 long 고정 인라인 버퍼(힙 0·blittable). 5호가 사다리 저장용.</summary>
     [InlineArray(5)]

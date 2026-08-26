@@ -21,7 +21,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>원장 무결성 상태(텔레메트리/UI). </summary>
     public enum LedgerIntegrity { Unverified = 0, Intact = 1, Corrupted = 2 }

@@ -19,7 +19,7 @@
 using System;
 using System.Runtime.CompilerServices;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     public enum OrderSide : byte { Buy = 0, Sell = 1 }
 

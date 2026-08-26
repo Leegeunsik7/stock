@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>거버너 회로 상태(관측).</summary>
     public enum GovernorCircuit : byte { Closed = 0, Open = 1, HalfOpen = 2 }

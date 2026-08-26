@@ -19,7 +19,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class LogRedactor
     {

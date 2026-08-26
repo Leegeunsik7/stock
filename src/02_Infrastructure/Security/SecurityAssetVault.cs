@@ -25,7 +25,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>복호화된 자격증명의 수명 스코프. using 종료 시 char 버퍼를 ZeroMemory 로 소거 후 풀 반환.</summary>
     public sealed class SecretLease : IDisposable

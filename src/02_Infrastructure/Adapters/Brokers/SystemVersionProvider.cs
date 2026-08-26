@@ -16,7 +16,7 @@
 // ============================================================================
 using System.Reflection;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class SystemVersionProvider
     {

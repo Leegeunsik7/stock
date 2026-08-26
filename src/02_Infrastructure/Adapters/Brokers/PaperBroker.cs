@@ -10,7 +10,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum PaperAsset { Stock, Coin }
     public enum PaperSide { Buy, Sell }

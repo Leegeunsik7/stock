@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum CondMetric { Price, ChangePct, MaGapPct, Rsi, VolumeSurgePct }
     public enum CondOp { Gte, Lte }

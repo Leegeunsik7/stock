@@ -8,7 +8,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class PortfolioService
     {

@@ -17,7 +17,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>C#12 InlineArray — 8원소 long 인라인 버퍼(힙 0). 이월 In-Flight 주문 ID 최대 8건.</summary>
     [InlineArray(8)] public struct Fixed8Long { private long _e0; }

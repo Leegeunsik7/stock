@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>판독-검증 시큐어 제로라이저(δ=0·순수 관리형). Zeroize → 와이프 후 전 바이트 0x00 판독 증명. 잔류 시 재와이프+계수.</summary>
     public sealed class VerifiedSecureZeroizer

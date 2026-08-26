@@ -23,7 +23,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>사전 점화 서명 체정기(δ=0). Certify(in frame)로 호스트/하드웨어/보안 8항목 채점·전 항목 PASS 시에만 키드-FNV 서명·미달 시 무장 하드 차단.</summary>
     public sealed class IgnitionSignoffValidator

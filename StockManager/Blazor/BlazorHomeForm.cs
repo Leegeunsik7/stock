@@ -2,7 +2,6 @@
 using System.Windows.Forms;
 using Microsoft.AspNetCore.Components.WebView.WindowsForms;
 using Microsoft.Extensions.DependencyInjection;
-using StockManager.Common;
 using MS2E.UI.Portable.Bus;
 using MS2E.UI.Portable.Ports;
 using MS2E.UI.Portable.Security;

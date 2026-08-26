@@ -22,7 +22,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>유동성 진위 인증기(δ=0·O(1) 링). RecordBid/Ask(체결,취소,ticks) → 진짜 빙산 vs 가짜 스푸핑 구별·라우팅 게이팅.</summary>
     public sealed class LiquidityAuthenticityVerifier

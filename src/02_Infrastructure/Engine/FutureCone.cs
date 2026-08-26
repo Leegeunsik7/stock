@@ -10,7 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record ConeBand(int Day, double P5, double P25, double P50, double P75, double P95);
 

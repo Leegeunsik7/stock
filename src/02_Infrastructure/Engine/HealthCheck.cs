@@ -10,7 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record HealthInputs(
         int Holdings, int PricedHoldings, double AvgCorrelation, double TopRiskConcentrationPct, double EvenSharePct,

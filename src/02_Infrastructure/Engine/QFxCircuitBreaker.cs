@@ -21,7 +21,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>실시간 환율 폴 소스 추상(실 피드 격리). TryPoll: true=신규 환율 1건, false=없음(정상).</summary>
     public interface IFxRateSource

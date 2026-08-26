@@ -17,7 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>한 폴드(train→test)의 in/out 성과.</summary>
     public class WalkForwardFold

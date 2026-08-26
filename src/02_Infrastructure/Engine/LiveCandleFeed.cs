@@ -21,7 +21,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>라이브 캔들 소스(네트워크 경계 추상화). buffer 의 기존 Candle 필드를 덮어쓰고 개수 반환.</summary>
     public interface ICandleSource

@@ -31,7 +31,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>블랙박스 덤프 상태(텔레메트리). 0 유휴/1 봉인·덤프중/2 완료/3 실패.</summary>
     public enum BlackboxDumpState { Idle = 0, Sealed = 1, Completed = 2, Failed = 3 }

@@ -13,7 +13,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SOR 라우팅 계획(블리터블 값타입·힙 0). 발주 '수치'만 — 실 사출은 무장 게이트 하류.</summary>
     public readonly struct RouteResult

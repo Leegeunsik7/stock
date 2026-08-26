@@ -11,7 +11,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>결정론 결함 이벤트(블리터블 값타입). 직전 이벤트로부터의 상대 지연 + 결함 비트 + 강도.</summary>
     public readonly struct ChaosScheduledFault

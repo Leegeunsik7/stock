@@ -16,7 +16,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SHA-256 릴리즈 매니페스트 생성/검증(제네시스 봉인). 콜드 패키징 도구.</summary>
     public static class ReleasePackager

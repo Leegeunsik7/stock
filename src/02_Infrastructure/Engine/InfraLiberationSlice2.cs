@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 포트(코어가 아는 유일한 인프라 계약) ──────────────────────────────────
     /// <summary>시스템 설정 포트 — 코어는 이 계약만 안다(콘크리트 설정소스 비의존). 실패 시 기본값(fail-safe).</summary>

@@ -6,7 +6,6 @@
 //   🟣 OperatorDuressPanicSwitch: O(1) ForceFreeze·멱등·δ=0 상태 조회
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

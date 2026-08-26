@@ -14,7 +14,7 @@
 using System.IO;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class ScrubbingTextWriter : TextWriter
     {

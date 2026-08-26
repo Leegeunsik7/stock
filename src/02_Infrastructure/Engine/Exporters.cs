@@ -8,7 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class CsvExporter
     {

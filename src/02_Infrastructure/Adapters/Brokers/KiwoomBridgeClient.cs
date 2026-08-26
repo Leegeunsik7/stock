@@ -15,7 +15,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>파이프 큐 항목 — 타입 + 역직렬화 전 raw 페이로드.</summary>
     public readonly record struct BridgeEnvelope(BridgeMessageType Type, byte[] Payload);

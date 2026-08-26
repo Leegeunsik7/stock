@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>불변 봉인 페이로드(blittable 값타입·δ=0). 소켓 접촉 이전 동결 — 조립 중 중단이 반쪽을 노출 못함.</summary>
     public readonly struct SealedOrderToken

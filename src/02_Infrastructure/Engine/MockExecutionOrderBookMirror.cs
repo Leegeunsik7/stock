@@ -13,7 +13,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>무할당 가상 체결 미러(δ=0). SealAndVirtualFill = 실전 동일 봉인 경로 통과 후 미러 루프백. 슬리피지/부분/RTT 모사.</summary>
     public sealed class MockExecutionOrderBookMirror

@@ -26,7 +26,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>AVX 실행폭 경험적 자동조율기(웜업+다운클럭 통합 방어·δ=0). 콜드 스레드가 각 폭 지연 실측 → 최속 폭 선택.</summary>
     public sealed class AvxExecutionWidthAutotuner : IDisposable

@@ -5,7 +5,7 @@
 // LocalDatabase._WriteFraudAlert() — 트랜잭션 검증 실패 자동 기록
 // LocalDatabase.AddFraudAlert()    — SlippageSentinel 등 외부 경보 소스 직접 기록
 // ============================================================================
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>감사 원장 1행 (FraudAlerts 테이블)</summary>
     public class FraudAlert

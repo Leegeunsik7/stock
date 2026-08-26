@@ -8,7 +8,6 @@
 //      정상 USD→KRW base 보수 floor 청산 통과
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

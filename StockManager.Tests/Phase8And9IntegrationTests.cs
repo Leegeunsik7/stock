@@ -7,7 +7,6 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

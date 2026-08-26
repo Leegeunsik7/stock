@@ -8,7 +8,6 @@
 // ============================================================================
 using System;
 using System.IO;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

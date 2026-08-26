@@ -17,7 +17,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>Native API 후킹 무결성 가드(δ=0 상태). CheckIntegrity(진입점 JMP 서명) → 변조 시 SafeHoldActive(무장 하향).</summary>
     public sealed class AntiHookingCodeIntegrityGuard

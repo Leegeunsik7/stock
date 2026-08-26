@@ -23,7 +23,7 @@ using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>챔피언 게놈의 블리터블 스냅샷(Pack=1·참조 0). 전체 StrategySpec 그래프 대신 식별 해시+메트릭.</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

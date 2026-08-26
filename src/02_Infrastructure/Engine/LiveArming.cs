@@ -21,7 +21,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>
     /// 3중 안전 게이트 실 무장 술어. IsArmed() = (미동결) ∧ (점화 물리 허용) ∧ (브로커 무장).

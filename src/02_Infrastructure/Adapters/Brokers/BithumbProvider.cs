@@ -9,7 +9,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public record BithumbTick(
         string Symbol, decimal Price, decimal ChangeRate, decimal ChangeAmt,

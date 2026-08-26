@@ -17,7 +17,7 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SIMD SNR 노이즈 양자화기(δ=0). Quantize(recent, rawAlpha) → SNR&lt;임계면 0 억제(스푸핑 노이즈 소거).</summary>
     public sealed class AlphaSignalNoiseQuantizer

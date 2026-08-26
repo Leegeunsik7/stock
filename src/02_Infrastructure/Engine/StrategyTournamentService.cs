@@ -9,7 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record TournamentView(LeagueResult League, int Cartridges, int FromCartridges, string Note);
 

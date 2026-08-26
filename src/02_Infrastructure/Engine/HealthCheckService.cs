@@ -13,7 +13,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record HealthView(bool IsValid, HealthScoreResult Score, RiskReport? Risk,
         BlackSwanResult? Worst, string WorstCrisis, FutureConeResult? Future, CoachReport? Behavior,

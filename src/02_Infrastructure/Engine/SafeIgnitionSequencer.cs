@@ -30,7 +30,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>안전 점화 시퀀스의 4단계 + 종단 상태. 부팅 기본 Disarmed.</summary>
     public enum IgnitionSeqState { Disarmed, Probing, Verifying, MasterIgnited, Frozen }

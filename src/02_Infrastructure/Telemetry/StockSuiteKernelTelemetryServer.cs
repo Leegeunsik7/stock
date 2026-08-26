@@ -32,7 +32,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>커널 텔레메트리 플래그 스냅샷(블리터블 값타입·힙 0).</summary>
     public readonly struct KernelFlags

@@ -18,7 +18,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>δ=0 교차 브로커 단조 타임펜스. 융합 타임라인 엄격 단조 보장 + 거래소 시각 역행(torn) 탐지.</summary>
     public sealed class CrossBrokerMonotonicTimeFence

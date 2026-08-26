@@ -5,7 +5,6 @@
 //   🦅 ClaudeBlackSwanEngine: 선지 캐시-예열 격자(사전판정 재사용·분기 락·Black Swan 안전 낙하)·δ=0
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

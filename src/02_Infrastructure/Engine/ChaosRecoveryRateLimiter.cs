@@ -13,7 +13,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>단계별 복구 스로틀러(δ=0). EnterChaos→BeginRecovery→AttemptReauth×N(간격 강제)→Ready. Herd 쇄도 거부.</summary>
     public sealed class ChaosRecoveryRateLimiter

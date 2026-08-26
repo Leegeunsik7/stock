@@ -10,7 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record SignalRow(string Name, string Source, string State, string Detail, bool InPosition);
     public sealed record SignalView(bool IsValid, string Symbol, DateTime AsOf, IReadOnlyList<SignalRow> Rows, string Note);

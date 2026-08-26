@@ -20,7 +20,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SLA 측정-무결성 게이트(δ=0). Admit(raw)=클린/오염 판정(디스케줄 아티팩트 배제)·집계 지터율 회귀 시 인증 차단 래치.</summary>
     public sealed class SlaJitterRegressionGuard

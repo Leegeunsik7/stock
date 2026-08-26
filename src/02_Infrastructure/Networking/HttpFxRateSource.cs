@@ -20,7 +20,7 @@ using System;
 using System.Net.Http;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>REST GET 폴 기반 환율 공급자. 응답 값 위치는 dot-path 키로 주입(공급자 스키마 비박제).</summary>
     public sealed class HttpFxRateSource : IFxRateSource, IDisposable

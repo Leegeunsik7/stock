@@ -11,7 +11,7 @@
 using System;
 using System.Runtime.CompilerServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>추측 L3 오더북 캐시(상위 3후보·1-사이클 핑거프린트 적중). 단일 라이터(유휴) + 단일 리더(수신).</summary>
     public sealed class SpeculativeOrderBook

@@ -19,7 +19,7 @@ using System;
 using System.Runtime.Loader;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>핫스왑 대상 전략 계약(다형). δ=0 신호 산출 — 반환=목표 수량 raw(+매수/-매도/0). 실 발주는 하류 무장 게이트.</summary>
     public interface IHotStrategy

@@ -16,7 +16,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>단일 검증 오류</summary>
     public record ValidationError(string Field, string Message);

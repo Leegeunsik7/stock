@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>전략 간 교차 자전거래 차단막 — 동일 심볼 대향 잔여가 마이크로 윈도우 내면 거부(OrderRejected).</summary>
     public sealed class WashTradeGuard

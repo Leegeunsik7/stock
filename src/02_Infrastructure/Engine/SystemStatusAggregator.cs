@@ -18,7 +18,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 심각도 (정렬 가능: Ok < Notice < Warning < Critical) ────────────────────
 

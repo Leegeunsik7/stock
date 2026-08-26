@@ -24,7 +24,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>슬롯에서 '확정된' 필드 비트. 심볼만 확정·수량/평단 미상 상태를 표현(제로-마찰 점진 입력).</summary>
     [Flags]

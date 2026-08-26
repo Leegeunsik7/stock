@@ -10,7 +10,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum AgentTool { Unknown, Help, BlackSwan, Future, Health, Compile, Coach, Tournament, Risk }
 

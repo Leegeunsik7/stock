@@ -15,7 +15,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>시간 제한 무장 임대(δ=0·원자). Start/Renew(재인증) → 유효, leaseSeconds 무갱신 → Expired 자동 하향.</summary>
     public sealed class AtomicArmingLease

@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 수치 안전 검증기 — Attest 결과를 ECDsa 서명 전에 점검 ─────────────────
     public static class CartridgeNumericsGuard

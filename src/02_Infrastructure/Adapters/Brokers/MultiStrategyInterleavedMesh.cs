@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>레인 운영 상태(원자). Active=정상, Muted=신규 진입 억제(진압), Sealed=봉인(자본 격리 예치·유폐).</summary>
     public enum LaneState { Active = 0, Muted = 1, Sealed = 2 }

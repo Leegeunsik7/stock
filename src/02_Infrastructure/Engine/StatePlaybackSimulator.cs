@@ -28,7 +28,7 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>재생 상태(텔레메트리·UI 배지). </summary>
     public enum PlaybackState { Idle = 0, Playing = 1, Paused = 2, Stepping = 3, Completed = 4, Faulted = 5 }

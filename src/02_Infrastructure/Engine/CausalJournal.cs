@@ -19,7 +19,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum JournalKind { Transaction, Signal, Alert, News, Dividend }
 

@@ -23,7 +23,7 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SIMD 가속 티어(활성 실행 경로 보고용).</summary>
     public enum AlphaAccelTier { Scalar = 0, Avx2 = 1, Avx512 = 2 }

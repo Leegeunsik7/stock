@@ -10,7 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>검색 결과 1건 — 코드·이름·시장·통화. 폼에 그대로 자동 채워진다.</summary>
     public readonly struct SymbolEntry

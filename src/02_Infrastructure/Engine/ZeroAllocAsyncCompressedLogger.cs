@@ -24,7 +24,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>고정 크기 blittable 로그 이벤트(32B·[Sequential,Pack=1]·참조 0·언매니지드 링 원소).</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 32)]

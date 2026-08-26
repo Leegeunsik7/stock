@@ -2,7 +2,6 @@
 // AlertPolicyTests - 알림 발동 판정(AlertPolicy) 회귀 테스트
 //  코인 지정가 교차 / 주식 규칙 조건 / 5% 급변 (경계 포함).
 // ============================================================================
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

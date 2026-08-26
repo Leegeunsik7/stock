@@ -21,7 +21,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>라이브 호스트 환경 드리프트 센티널(δ=0). SealBaseline(서명 시점 봉인)·Probe(연속 divergence 확인 시 원자 강등).</summary>
     public sealed partial class HostEnvironmentDriftSentinel

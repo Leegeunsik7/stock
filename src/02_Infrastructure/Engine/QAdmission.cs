@@ -23,7 +23,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>펌프 진입 검문 결과. Admitted 외 전부 fail-closed 거부(사유별).</summary>
     public enum AdmitResult : byte

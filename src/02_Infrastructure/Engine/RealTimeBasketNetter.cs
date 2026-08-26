@@ -15,7 +15,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>동일 심볼·동일 틱 대향 주문 상쇄 결과(blittable·δ=0). 잔여만 물리 사출.</summary>
     public readonly struct NetResult

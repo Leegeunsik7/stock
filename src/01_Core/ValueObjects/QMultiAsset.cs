@@ -23,7 +23,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     /// <summary>Mission 1 — 자산별 격자 레지스트리. 불변·락-프리·무할당. TryGet(string)은 심볼 검증으로 충돌 안전.</summary>
     public sealed class QTickRegistry

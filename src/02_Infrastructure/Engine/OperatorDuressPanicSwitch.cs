@@ -16,7 +16,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>운용자 비상 탈출 패닉 스위치. Trip()=O(1) ForceFreeze+훅+감사+비가역 래치. 상태 조회 δ=0.</summary>
     public sealed class OperatorDuressPanicSwitch

@@ -18,7 +18,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // =========================================================================
     // 키움 OpenAPI+ 프로바이더 (32-bit COM 전용)

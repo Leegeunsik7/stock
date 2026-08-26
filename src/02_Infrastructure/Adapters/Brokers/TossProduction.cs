@@ -21,7 +21,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>실 WSS 시세 수신부. ITossSocket 구현 — TossHttpTransport 에 주입되어 인입 파이프를 완성한다.</summary>
     public sealed class TossProductionSocket : ITossSocket, IDisposable

@@ -21,7 +21,7 @@
 // ============================================================================
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>슬롯이 부여하는 집행 권한.</summary>
     public enum SlotPermission

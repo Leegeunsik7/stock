@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>시장 구분</summary>
     public enum Market

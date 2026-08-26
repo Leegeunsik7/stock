@@ -16,7 +16,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>업비트 실주문/조회/취소/잔고 — JWT(HS256) + 쿼리 SHA512 해시.</summary>
     public class UpbitLiveBroker : IBroker

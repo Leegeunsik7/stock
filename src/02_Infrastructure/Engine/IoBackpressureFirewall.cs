@@ -24,7 +24,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>I/O 역류 방화벽 — 디스크 stall(→ForceFreeze) + 자가계측 페이지폴트 thrashing(→가역 홀드/Downgrade) 분리 방어.</summary>
     public sealed unsafe class IoBackpressureFirewall : IDisposable

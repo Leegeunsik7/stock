@@ -18,7 +18,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ChaosScenario(QChaos.cs 포트폴리오 스트레스) · MacroCrisisScenario(TailBudget.cs record) 와 별개:
     // 이 enum 은 슬리피지 탐지 꼬리 리스크 재현 전용.

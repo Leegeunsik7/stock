@@ -9,7 +9,7 @@ using System.Data;
 using System.Linq;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class PortfolioContext
     {

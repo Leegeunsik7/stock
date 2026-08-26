@@ -18,7 +18,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // 한 종목의 밤사이 발견(최고 전략) + 미래 투영 요약
     public sealed record ResearchFinding(

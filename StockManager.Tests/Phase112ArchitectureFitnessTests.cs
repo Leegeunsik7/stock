@@ -6,7 +6,6 @@
 //   ⚡ δ=0: Classify/CanReference/Ingest 핫패스 힙 0(Span·enum·정수 카운터)
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

@@ -5,7 +5,6 @@
 // ============================================================================
 using System;
 using System.Reflection;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

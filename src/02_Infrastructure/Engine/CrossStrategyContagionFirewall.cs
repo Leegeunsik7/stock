@@ -21,7 +21,7 @@ using System;
 using System.Numerics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>방화벽 평가 판정(blittable) — 신규 봉인 레인 비트마스크 + 사유 + 공진 메트릭 + 전역 캐스케이드 여부.</summary>
     public readonly struct FirewallVerdict

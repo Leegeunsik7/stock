@@ -60,7 +60,7 @@
     {
         Toasts.Dismiss(t.Id);
         try { await b.OnClick(); }
-        catch (Exception ex) { StockManager.Common.Log.Warn($"[Toast] 액션 실패: {ex.Message}"); }
+        catch (Exception ex) { MS2E.Infrastructure.Log.Warn($"[Toast] 액션 실패: {ex.Message}"); }
     }
 
     private static string LevelCls(ToastLevel l) => l switch

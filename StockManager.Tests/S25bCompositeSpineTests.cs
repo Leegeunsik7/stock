@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Threading;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

@@ -17,7 +17,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>SIMD 리스크 이상 사유(값이 곧 포렌식 코드). </summary>
     public enum RiskAnomaly

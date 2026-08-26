@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>주문 제안 — 고정소수점 전송 단위(unmanaged 값 타입, 링버퍼 슬롯에 무할당 복사).</summary>
     public readonly struct OrderProposal

@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>선지 캐시-예열 리스크 격자. Prime(유휴·사전판정+예열) → TryPrecognize(수신·0ns 관통). IDisposable.</summary>
     public sealed unsafe class ClaudeBlackSwanEngine : IDisposable

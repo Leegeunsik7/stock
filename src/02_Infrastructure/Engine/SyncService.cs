@@ -19,7 +19,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record SyncOptions(bool Transactions = true, bool Holdings = true, bool Settings = false);
 

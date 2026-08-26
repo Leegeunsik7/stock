@@ -10,7 +10,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public static class SyncCrypto
     {

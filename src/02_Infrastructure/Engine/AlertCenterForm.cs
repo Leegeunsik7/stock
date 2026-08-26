@@ -5,9 +5,8 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
-using StockManager.Common;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public class AlertCenterForm : Form
     {

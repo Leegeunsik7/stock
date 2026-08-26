@@ -20,7 +20,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>스코프-봉인 전환 장벽(δ=0). Transition(에폭 전진+퍼지+쿨다운)·RouteNow(미러/브로커/Bounce O(1) 라우팅).</summary>
     public sealed class ScopeSealedTransitionBarrier

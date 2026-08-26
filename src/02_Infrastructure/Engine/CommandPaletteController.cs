@@ -12,7 +12,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>명령 팔레트 열기 요청을 C# 컴포넌트 간 전달하는 경량 싱글톤 브로커(JS 왕복 없음). 구독자는 CommandPalette.</summary>
     public sealed class CommandPaletteController

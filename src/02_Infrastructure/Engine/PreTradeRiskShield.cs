@@ -39,7 +39,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>실드 판정 결과 코드. Admit 외 전부 거부(발주 차단).</summary>
     public enum RiskVerdict

@@ -14,7 +14,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>실전 점화 게이트웨이(δ=0·이중키 최종 빗장). 이중키∧방어선∧펄스 PASS 시 1회성 개통 + 봉인 사출.</summary>
     public sealed class GenesisLiveIgnitionGateway

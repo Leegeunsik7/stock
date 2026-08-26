@@ -34,7 +34,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>발주 접수증 — 반대편 취소를 위한 브로커 주문ID 왕복(IBroker.Place 의 (bool,string) 갭 해소). 값 타입.</summary>
     public readonly record struct PlaceReceipt(bool Ok, string BrokerOrderId, string Msg)

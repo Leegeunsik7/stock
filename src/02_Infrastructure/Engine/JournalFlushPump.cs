@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>최신 상태를 JournalRecord 로 dest 에 채워 개수 반환(백그라운드 단일 스레드 호출).</summary>
     public interface IJournalSnapshotProvider

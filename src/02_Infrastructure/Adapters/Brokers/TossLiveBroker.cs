@@ -30,7 +30,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 인입 운반 추상(실 Toss API 격리) ──────────────────────────────────────
     /// <summary>

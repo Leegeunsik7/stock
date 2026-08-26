@@ -40,7 +40,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>정산 자산 분류 — 국내주식(원화 정수)·해외주식(달러 소수)·코인(원화 호가).</summary>
     public enum AssetKind : byte { Domestic = 0, Foreign = 1, Crypto = 2 }

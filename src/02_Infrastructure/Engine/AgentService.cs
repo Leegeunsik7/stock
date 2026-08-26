@@ -10,7 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record AgentReply(bool Ok, AgentTool Tool, string Title, string Summary, string Link, string Hint);
 

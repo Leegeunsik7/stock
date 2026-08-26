@@ -15,7 +15,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum SpecKind { Price, Sma, Ema, Rsi, MacdHist, PctB }     // 지표 항(Term)
     public enum SpecOp { CrossAbove, CrossBelow, Gt, Lt }              // 비교 연산

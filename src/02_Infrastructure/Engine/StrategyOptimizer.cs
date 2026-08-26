@@ -16,7 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>한 (short,long) 조합의 백테스트 점수.</summary>
     public class OptCandidate

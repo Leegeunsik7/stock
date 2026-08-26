@@ -19,7 +19,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum ToxicityVerdict : byte { Clear = 0, Caution = 1, Toxic = 2 }
 

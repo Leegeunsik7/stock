@@ -13,7 +13,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 와이어 메시지 타입 ────────────────────────────────────────────────────
     public enum BridgeMessageType : int

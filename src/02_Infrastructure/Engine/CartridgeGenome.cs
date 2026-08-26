@@ -13,7 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record GenomeEntry(
         StrategySpec Spec, string Origin, string Lineage, int Generation,

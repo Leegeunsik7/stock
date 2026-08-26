@@ -18,7 +18,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>세대 펜스(고아 이벤트 거부) + WeakReference 수거 어테스테이션(좀비 누수 방어) 통합 CLR 방어막.</summary>
     public sealed class ZombieAssemblyShield

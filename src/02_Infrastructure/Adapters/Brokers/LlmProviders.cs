@@ -15,7 +15,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>설정·가용성으로 사용할 LLM 백엔드를 결정(순수).</summary>
     public static class LlmRouter

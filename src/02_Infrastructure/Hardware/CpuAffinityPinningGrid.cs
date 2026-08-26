@@ -19,7 +19,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>우선순위 승격 등급(안전 기본 High — Realtime 은 옵트인).</summary>
     public enum CpuPriorityTier { Normal = 0, High = 1, Realtime = 2 }

@@ -6,7 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

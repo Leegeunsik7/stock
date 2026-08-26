@@ -10,7 +10,7 @@ using System;
 using System.Windows.Forms;
 using System.Drawing;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public interface IBroker
     {
@@ -137,7 +137,7 @@ namespace StockManager.Common
     }
 }
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>거래 설정: 모의/실전 토글 + API 키 보관(DPAPI). 실전은 현재 비활성(주문 거부).</summary>
     public class BrokerSettingsForm : Form

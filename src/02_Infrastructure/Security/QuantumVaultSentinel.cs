@@ -22,7 +22,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>안티-RAM 퀀텀 금고 센티널(자가 소멸·주입식 탐지/onBreach·δ=0 상태 읽기). Register(시크릿)→Start→브리치 시 검증 제로화.</summary>
     public sealed class QuantumVaultSentinel : IDisposable

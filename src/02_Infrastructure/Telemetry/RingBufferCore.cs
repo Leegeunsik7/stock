@@ -21,7 +21,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>64B 캐시 라인에 단독 배치되는 시퀀스 카운터 — 거짓 공유 완화용 패딩 프리미티브.</summary>
     [StructLayout(LayoutKind.Explicit, Size = 128)]

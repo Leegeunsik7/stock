@@ -20,7 +20,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum TournamentPipelineMode : long { Idle = 0, Testing = 1, Signing = 2, Deployed = 3, Paused = 4 }
 

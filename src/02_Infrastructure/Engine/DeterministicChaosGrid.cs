@@ -28,7 +28,7 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>카오스 장애 벡터(비트 플래그 — 복합 투하 누적).</summary>
     [Flags]

@@ -15,7 +15,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 예측 레코드 JSON DTO (DateTime → ISO8601 문자열, 교차 런타임 안정) ─────────────
     public sealed class QBridgeForecast

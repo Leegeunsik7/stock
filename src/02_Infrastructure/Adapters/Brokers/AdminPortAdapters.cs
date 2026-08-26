@@ -14,7 +14,7 @@ using MS2E.UI.Portable.Dto;
 using MS2E.UI.Portable.Ports;
 using MS2E.UI.Portable.Security;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>시크릿을 dest char 버퍼에 직접 기입(string 미생성·반환=길이). DPAPI 금고/config 배선이 제공.</summary>
     public delegate int AdminSecretFill(long secretId, Span<char> dest);

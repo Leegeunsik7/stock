@@ -7,7 +7,7 @@
 // ============================================================================
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>위원회 근거 팩트 시트 (순수 C# 결정론 조립).</summary>
     public sealed record CommitteeFactSheet(

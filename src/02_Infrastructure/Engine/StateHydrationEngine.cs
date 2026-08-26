@@ -21,7 +21,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 값 타입 상태 슬롯 — 등록 및 직접 접근 편의 래퍼 ──────────────────────────
     public sealed class HydrationSlot<T> where T : unmanaged

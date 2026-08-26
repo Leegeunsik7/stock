@@ -15,7 +15,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>데드맨 스위치 왓치독(격리 스레드·δ=0 심박). Beat() 심박 끊김+무장 → onDeadManTrip 원자 격발. IDisposable.</summary>
     public sealed class DeadMansSwitchWatchdog : IDisposable

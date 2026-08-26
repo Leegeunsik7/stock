@@ -20,7 +20,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>커널/GC/NIC 지터를 앱 지연과 분리 측정 → 스파이크 시 가역 안전 홀드(무장 억제), 지속 시 Downgrade 에스컬레이션.</summary>
     public sealed class KernelJitterSpikeSentinel : IDisposable

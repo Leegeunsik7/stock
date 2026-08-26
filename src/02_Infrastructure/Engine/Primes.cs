@@ -26,7 +26,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>소수 관련 순수 함수 모음. 상태가 없어 어디서든 안전하게 호출 가능.</summary>
     public static class Primes

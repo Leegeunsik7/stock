@@ -16,7 +16,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>카나리 1주 종단 검증기 — RTT 단위 정규화 + 건별 net 정산 1raw 대조. AtomicCutoverGate/LiveAccountingMesh 재사용.</summary>
     public sealed class CanaryLiveProbe

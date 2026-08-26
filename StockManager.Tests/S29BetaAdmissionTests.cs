@@ -1,5 +1,4 @@
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

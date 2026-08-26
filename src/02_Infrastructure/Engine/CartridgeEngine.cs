@@ -12,7 +12,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed record CartMacro(string Alias, string Command);
     public sealed record CartPrompt(string Id, string Template);

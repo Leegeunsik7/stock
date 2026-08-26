@@ -5,7 +5,6 @@
 //   🔒 liveArmed:false: 리스크 밸브 tighten-only(발주 경로 무접촉)
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

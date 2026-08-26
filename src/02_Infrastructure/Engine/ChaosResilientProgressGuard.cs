@@ -22,7 +22,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>카오스 스핀 펜스(δ=0 값타입). 락프리 재시도에 하드 상한 — 초과 시 Retry()=false 로 O(1) fail-closed 탈출.</summary>
     public struct ChaosSpinFence

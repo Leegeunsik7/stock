@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public class AlertCenter
     {

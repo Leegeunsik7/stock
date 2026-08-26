@@ -17,7 +17,7 @@
 using System.Numerics;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>IPC 지연 지터 분포 스냅샷(값타입·힙 0). 단위 ns.</summary>
     public readonly struct JitterSnapshotNs

@@ -18,7 +18,7 @@
 using System;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>나노 파이프라인 1틱 결과(블리터블 값타입·힙 0).</summary>
     public readonly struct PipelineResult

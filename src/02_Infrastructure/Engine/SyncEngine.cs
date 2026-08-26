@@ -13,7 +13,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public enum SyncKind { Transaction, Holding, Setting }
 

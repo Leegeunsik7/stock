@@ -10,7 +10,7 @@
 // ============================================================================
 using System;
 
-namespace StockManager.Common
+namespace MS2E.Core
 {
     /// <summary>보유 종목(δ=0 값타입). 금액=고정소수 raw, 종목코드=FNV 해시(string 무할당).</summary>
     public readonly record struct TossHolding(

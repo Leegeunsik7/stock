@@ -28,7 +28,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     // ── 제로-할당 통계 스냅샷 (readonly struct → 스택 전달) ──────────────────
 

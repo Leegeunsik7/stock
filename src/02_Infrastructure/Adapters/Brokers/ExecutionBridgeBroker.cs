@@ -17,7 +17,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     public sealed class ExecutionBridgeBroker : IBroker, IDisposable
     {

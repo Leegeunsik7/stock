@@ -19,7 +19,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace StockManager.Common
+namespace MS2E.Infrastructure
 {
     /// <summary>UI 전달용 무할당 blittable 레이턴시/변동성 스냅샷(참조 0·힙 0). 전 필드 raw 정수(ticks/10^8).</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
