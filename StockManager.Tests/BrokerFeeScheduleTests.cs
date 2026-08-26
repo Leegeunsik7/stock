@@ -3,7 +3,6 @@
 //  고정 룰: 세금은 매도에만(KRX 거래세 / US 제비용) · 코인 거래세 0 · KRW 원단위/USD 센트단위 반올림 ·
 //           gross<=0 → (0,0) · 미등록 증권사는 시장 기본 수수료율 폴백.
 // ============================================================================
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

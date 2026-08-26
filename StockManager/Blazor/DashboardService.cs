@@ -9,7 +9,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using StockManager.Common;
 
 namespace StockManager.Blazor
 {

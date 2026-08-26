@@ -8,7 +8,6 @@
 //  §5 텔레메트리(2)                  — 집행 필드/헬퍼·퍼블리셔 반영.
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

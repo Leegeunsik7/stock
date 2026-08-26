@@ -7,7 +7,6 @@
 //  · CandleFrame / ZeroAllocResult 값 타입 확인
 // ============================================================================
 using System;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

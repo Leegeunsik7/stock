@@ -4,7 +4,6 @@
 //  §1 정상 통과(1)   — gate·registry 격자 일치 시 기존 결과와 동일(2중 펜스 통과).
 //  §2 방화벽 포착(2) — gate↔registry 격자 디싱크(틱 불일치·미등록) → ForceFreeze + false.
 // ============================================================================
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

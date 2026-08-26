@@ -2,7 +2,6 @@
 // RebalanceDriftTests - 리밸런싱 드리프트 계산/판정 (순수·결정적)
 // ============================================================================
 using System.Collections.Generic;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

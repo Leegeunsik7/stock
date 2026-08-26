@@ -3,7 +3,6 @@
 //  포함(", ")하여 기존 정규식이 0건 매치 → 차트 공백 버그가 있었음. 그 회귀 방지.
 // ============================================================================
 using System.Linq;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

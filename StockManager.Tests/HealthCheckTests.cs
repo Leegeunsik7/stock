@@ -3,7 +3,6 @@
 //  점수·등급·권고 + 정직성 가드(데이터 부족 시 중립·등급 보류, 거짓 고득점 방지).
 // ============================================================================
 using System.Linq;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

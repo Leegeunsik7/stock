@@ -5,7 +5,6 @@
 //  · v2.0 신규: NextPrime(null 시그널)/NthPrime/CountPrimes/IsCoprime/Totient/청크 구간체
 // ============================================================================
 using System.Numerics;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

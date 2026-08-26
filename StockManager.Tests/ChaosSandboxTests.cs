@@ -9,7 +9,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

@@ -13,7 +13,6 @@
 //   보유한다. DashboardHome.razor 에서는 NavigateTo() 를 쓰고, Bridge.Open() 은
 //   WinForms 창이 필수인 엣지 케이스(설정 마법사 등) 전용으로 남는다.
 using System.Windows.Forms;
-using StockManager.Common;
 
 namespace StockManager.Blazor
 {

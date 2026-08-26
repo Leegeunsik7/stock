@@ -17,7 +17,6 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Intrinsics;
-using StockManager.Common;
 
 namespace StockManager.PrimesBench
 {

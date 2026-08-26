@@ -1,7 +1,6 @@
 // ============================================================================
 // SymbolContextTests - 전역 활성 종목 상태 (Set 가드·OnChange) 테스트 (순수)
 // ============================================================================
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

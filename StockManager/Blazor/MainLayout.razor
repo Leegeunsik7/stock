@@ -1,6 +1,6 @@
 @inherits LayoutComponentBase
 @inject StockManager.Common.Account.SessionState Session
-@inject StockManager.Common.LocalDatabase Db
+@inject LocalDatabase Db
 @inject NavigationManager Nav
 
 @* ★ [회원 로그인 게이트] 미인증 시 /login 으로. BlazorWebView 는 항상 인터랙티브라 레이아웃에서 직접 판독 가능(정적 SSR 트릭 불요).

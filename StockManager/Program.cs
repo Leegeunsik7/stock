@@ -3,7 +3,6 @@
 // ============================================================================
 using System;
 using System.Windows.Forms;
-using StockManager.Common;
 
 namespace StockManager
 {

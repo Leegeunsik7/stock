@@ -7,7 +7,6 @@
 //      ·곱셈 소멸·가중합·결정론·커스텀 경계
 // ============================================================================
 using System.Collections.Generic;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

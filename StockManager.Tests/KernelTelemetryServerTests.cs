@@ -8,7 +8,6 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Threading;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

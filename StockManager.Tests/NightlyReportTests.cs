@@ -2,7 +2,6 @@
 // NightlyReportTests - 야간 리포트 요약 텍스트 조립 (순수)
 // ============================================================================
 using System.Collections.Generic;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

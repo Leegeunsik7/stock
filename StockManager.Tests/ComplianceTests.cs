@@ -12,7 +12,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

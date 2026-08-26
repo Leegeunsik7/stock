@@ -13,7 +13,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests

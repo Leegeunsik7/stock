@@ -11,7 +11,6 @@
 //   · LUNA 첫 위기: slippage 0.30→0.60→0.90 (Z > 100)
 //   · 정상 시나리오: 슬리피지 0.00075~0.00125 → Z < 1.5 → 경보 없음
 // ============================================================================
-using StockManager.Common;
 using Xunit;
 
 namespace StockManager.Tests
