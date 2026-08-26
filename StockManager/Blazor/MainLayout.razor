@@ -1,13 +1,40 @@
 @inherits LayoutComponentBase
+@inject StockManager.Common.Account.SessionState Session
+@inject StockManager.Common.LocalDatabase Db
+@inject NavigationManager Nav
 
-<div class="app-shell">
-    <NavMenu />
-    <div class="main">
-        <MarketTicker />
-        <SymbolBar />
-        <AsOfBar />
-        @Body
+@* ★ [회원 로그인 게이트] 미인증 시 /login 으로. BlazorWebView 는 항상 인터랙티브라 레이아웃에서 직접 판독 가능(정적 SSR 트릭 불요).
+   --headless 모드엔 WebView 자체가 없고 단위테스트는 레이아웃을 렌더하지 않으므로 우회 불요. DB 설정 Auth:RequireLogin=false 로 해제 가능. *@
+@if (_pass)
+{
+    <div class="app-shell">
+        <NavMenu />
+        <div class="main">
+            <MarketTicker />
+            <SymbolBar />
+            <AsOfBar />
+            @Body
+        </div>
+        <CommandPalette />
+        <ToastHost />
     </div>
-    <CommandPalette />
-    <ToastHost />
-</div>
+}
+
+@code {
+    private bool _pass;
+
+    protected override void OnInitialized()
+    {
+        var require = !string.Equals(Db.GetSetting("Auth:RequireLogin"), "false", StringComparison.OrdinalIgnoreCase);
+        if (require && !Session.IsAuthenticated)
+        {
+            var path = new Uri(Nav.Uri).AbsolutePath.Trim('/');
+            if (!string.Equals(path, "login", StringComparison.OrdinalIgnoreCase))
+            {
+                Nav.NavigateTo("login");
+                return;
+            }
+        }
+        _pass = true;
+    }
+}

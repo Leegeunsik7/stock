@@ -862,10 +862,20 @@ namespace StockManager.Blazor
             //   accountFetch=HttpClient GET 계좌 엔드포인트(미구성 시 미인증→미동기화·fail-closed).
             var tossSeqGuardian      = new SequenceContinuityGuardian();
             var tossGateway          = new TossWebSocketMarketDataGateway(tossSeqGuardian);
+            // v10.2.1 Toss Live REST 실통신 — OAuth Basic 토큰 교환(TossTokenService 재사용·백그라운드 선제 갱신·락-프리 핫패스)
+            //   + Bearer 잔고 GET(/v1/accounts/holdings) + TossLiveApiGovernor(레이트/429/서킷) 게이팅 + TossJsonParser δ=0 파싱.
+            //   ★조회 전용·liveArmed:false: 발주 메서드 0. 자격증명은 금고에서 콜드 패스에서만 복호화(requireArmed:false 읽기전용).
+            //   ★attestation 미전달: 잔고-읽기 토큰 실패(미저장/네트워크)가 주문 시스템을 ForceFreeze 하지 않도록 격리(fail-closed 국소화).
+            var tossLive = new TossOpenApiLiveAdapter(
+                securityVault, clientIdKey: "toss.apiKey", clientSecretKey: "toss.secret", accountKey: "toss.account",
+                clock: static () => DateTime.UtcNow.Ticks);
+            tossLive.Start();   // 백그라운드 토큰 갱신 루프(핫패스 무접촉·미저장 시 저비용 fail-fast)
+            services.AddSingleton(tossLive);
+            FormClosed += (_, _) => ShutdownTrace.Step("tossLive", () => tossLive.Dispose());
             var tossPortfolioAdapter = new TossPortfolioSyncAdapter(
-                tokenProvider: static () => "",     // 미구성 시 미인증(실 배선 전까지 동기화 안 함)
-                accountFetch:  static _ => null,    // 미구성 시 취득 실패(fail-closed)
-                readOnlyKey:   true);               // ★조회 전용 키 선언(write 가능 키 오용 차단)
+                tokenProvider: tossLive.AccessToken,      // 락-프리 δ=0 토큰(없음/만료 시 "" — fail-closed)
+                accountFetch:  tossLive.FetchAccountJson, // 거버너 게이팅 실 HTTP GET(실패/rate/429/회로 → null)
+                readOnlyKey:   true);                     // ★조회 전용 키 선언(write 가능 키 오용 차단)
             services.AddSingleton(tossPortfolioAdapter);
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
@@ -978,11 +988,24 @@ namespace StockManager.Blazor
             services.AddSingleton(new SystemStatusAggregator(
                 attestation, MemoryLeakGuard.Shared, tuner, bridge, promotionGateway, rejectionForensics));
 
+            // ★ [회원가입·로그인·라이선스 서브시스템] 모니터링/스마트팜/PLAI/UAV와 동일 · 전부 싱글턴(단일 사용자 데스크톱).
+            //   LicenseService/StockEmailOtpService 는 LocalDatabase(db) 주입 · 나머지는 파라미터리스. 기존 트레이딩 권한 게이트와 별개.
+            services.AddSingleton<StockManager.Common.Account.LicenseService>();
+            services.AddSingleton<StockManager.Common.Account.MemberRegistryService>();
+            services.AddSingleton<StockManager.Common.Account.StockEmailOtpService>();
+            services.AddSingleton<StockManager.Common.Account.InstallTelemetryService>();
+            services.AddSingleton<StockManager.Common.Account.SessionState>();
+
+            var sp = services.BuildServiceProvider();
+            // 기동 시 — 관리자(GSLEE) 시드 보장 + 설치 PC 텔레메트리 1회 수집(실패해도 앱 기동 무영향).
+            try { sp.GetRequiredService<StockManager.Common.Account.MemberRegistryService>(); } catch { /* 시드 실패 무시 */ }
+            try { sp.GetRequiredService<StockManager.Common.Account.InstallTelemetryService>().CaptureAndPersist(); } catch { /* 텔레메트리 실패 무시 */ }
+
             var view = new BlazorWebView
             {
                 Dock = DockStyle.Fill,
                 HostPage = "wwwroot/index.html",
-                Services = services.BuildServiceProvider()
+                Services = sp
             };
             view.RootComponents.Add<App>("#app");
             Controls.Add(view);

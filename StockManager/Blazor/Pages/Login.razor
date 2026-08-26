@@ -1,0 +1,304 @@
+@page "/login"
+@layout EmptyLayout
+@implements IDisposable
+@inject StockManager.Common.Account.MemberRegistryService Members
+@inject StockManager.Common.Account.SessionState Session
+@inject NavigationManager Nav
+
+@* [MS2E StockSuite] 통합 트레이딩 콘솔 로그인 — 핀테크 트레이딩 터미널.
+   좌: 브랜딩(로고·실시간 지수 HUD·4대 기능 필러) + 캔들차트 워터마크(우측 블리드·텍스트 뒤) / 우: 보안 접속 카드.
+   자립형 SVG·CSS + 서버 타이머(외부 라이브러리 0). 회원 원장(MemberRegistry) 실인증 · BlazorWebView 단일 인터랙티브. *@
+
+<div class="lg-wrap">
+    <div class="lg-frame" aria-hidden="true"><span class="c tl"></span><span class="c tr"></span><span class="c bl"></span><span class="c br"></span></div>
+    <div class="lg-scanlines" aria-hidden="true"></div>
+
+    <div class="lg-brand">
+        @* ── 캔들스틱 차트 워터마크(우측 블리드 · 저투명 · 텍스트 뒤) ── *@
+        <svg class="lg-chart" viewBox="0 0 600 360" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <g stroke="rgba(124,138,255,.12)" stroke-width="1">
+                <line x1="20" y1="70" x2="580" y2="70" /><line x1="20" y1="140" x2="580" y2="140" />
+                <line x1="20" y1="210" x2="580" y2="210" /><line x1="20" y1="280" x2="580" y2="280" />
+            </g>
+            @foreach (var c in Candles)
+            {
+                <line x1="@F(c.X)" y1="@F(c.Wy1)" x2="@F(c.X)" y2="@F(c.Wy2)" stroke="@(c.Up ? "#34d399" : "#f87171")" stroke-width="1.4" opacity=".85" />
+                <rect x="@F(c.X - 8)" y="@F(c.By)" width="16" height="@F(Math.Max(2, c.Bh))" rx="2"
+                      fill="@(c.Up ? "rgba(52,211,153,.85)" : "rgba(248,113,113,.85)")" stroke="@(c.Up ? "#34d399" : "#f87171")" stroke-width="1" />
+            }
+            <polyline points="@MaPoints" fill="none" stroke="#f0a028" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity=".9" class="lg-ma" />
+            <polyline points="30,300 570,70" fill="none" stroke="rgba(129,140,245,.55)" stroke-width="1.6" stroke-dasharray="3 8" />
+        </svg>
+        <div class="lg-scrim" aria-hidden="true"></div>
+
+        <div class="lg-brand-in">
+            @* 실시간 지수 텔레메트리 HUD *@
+            <div class="lg-tele">
+                <span class="lg-arm"><span class="lg-arm-dot"></span>MARKET LIVE</span>
+                @foreach (var t in _ticks)
+                {
+                    <span class="lg-t-i">
+                        <i>@t.Label</i>
+                        <b>@t.Val.ToString(t.Fmt, Ci)</b>
+                        <u class="@(t.Chg >= 0 ? "up" : "down")">@(t.Chg >= 0 ? "▲" : "▼")@Math.Abs(t.Chg).ToString("0.00", Ci)%</u>
+                    </span>
+                }
+            </div>
+
+            <div class="lg-brandrow">
+                <div class="lg-logobox"><span style="font-size:20px;font-weight:800;letter-spacing:-.5px">ANG</span><span class="lg-lb-ring"></span></div>
+                <div>
+                    <div class="lg-logo"><span class="lg-logo-t">MS2E StockSuite</span></div>
+                    <div class="lg-logo-sub">AI QUANT TRADING TERMINAL</div>
+                </div>
+            </div>
+            <div class="lg-h1">AI 퀀트 <span class="lg-em">트레이딩 터미널</span></div>
+            <div class="lg-sub">실시간 시세 · AI 분석 · 시그널 · 자동매매 통합 관제 센터 · Integrated Quant Trading Operations</div>
+            <div class="lg-pillars">
+                <div class="lg-pill"><span class="lg-pill-ic">📊</span><div><b>실시간 시세 감시</b><small>국내·해외·암호화폐 통합</small></div></div>
+                <div class="lg-pill"><span class="lg-pill-ic">🤖</span><div><b>AI 분석 엔진</b><small>뉴스 레이더 · 시그널 스코어</small></div></div>
+                <div class="lg-pill"><span class="lg-pill-ic">⚡</span><div><b>시그널 엔진</b><small>진입·청산 전략 자동 탐지</small></div></div>
+                <div class="lg-pill"><span class="lg-pill-ic">💹</span><div><b>모의·자동매매</b><small>페이퍼 트레이딩 · 총자산</small></div></div>
+            </div>
+            <div class="lg-badges">
+                <span class="lg-badge ok">📡 거래소 실시간 연동</span>
+                <span class="lg-badge">🔒 로컬 암호화 보관</span>
+                <span class="lg-badge">📋 폐쇄망 격리 운용</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="lg-panel">
+        <span class="lg-pc tl"></span><span class="lg-pc tr"></span><span class="lg-pc bl"></span><span class="lg-pc br"></span>
+        <div class="lg-pscan" aria-hidden="true"></div>
+
+        <div class="lg-p-status"><span class="lg-p-dot"></span>SECURE CHANNEL · AES-256 · DPAPI<span class="lg-p-armed">● ARMED</span></div>
+
+        <div class="lg-p-head">
+            <div class="lg-p-title">🔐 통합 트레이딩 콘솔 로그인</div>
+            <div class="lg-p-sub">인가된 운영자만 접근할 수 있습니다.</div>
+        </div>
+
+        @if (_justRegistered is { Length: > 0 })
+        {
+            <div class="lg-reg-ok">🎉 가입 완료(<b>@_justRegistered</b>) · 아이디가 자동 입력되었습니다. 비밀번호를 입력해 로그인하세요.</div>
+        }
+
+        <label class="lg-lbl">아이디</label>
+        <div class="lg-inwrap"><span class="lg-in-ic">👤</span><input class="lg-in2" placeholder="USER ID" @bind="_id" @bind:event="oninput" @onkeydown="OnKey" /></div>
+        <label class="lg-lbl">비밀번호</label>
+        <div class="lg-inwrap"><span class="lg-in-ic">🔒</span><input class="lg-in2" type="password" placeholder="••••••••" @bind="_pw" @bind:event="oninput" @onkeydown="OnKey" /></div>
+
+        @if (_error is { Length: > 0 })
+        {
+            <div class="lg-err">⚠ @_error</div>
+        }
+
+        <button class="lg-btn" @onclick="DoLogin"><span>인증 · 로그인</span><span class="lg-arrow">➔</span></button>
+        <button class="lg-alt" @onclick="() => _showRegister = true">📝 신규 회원가입</button>
+
+        <div class="lg-trust"><span>🔒 오프라인 서명 검증</span><span>🛡️ DPAPI 로컬 보관</span><span>📋 에어갭 격리</span></div>
+        <div class="lg-foot">© ANG Technology · MS2E StockSuite</div>
+    </div>
+</div>
+
+<StockRegisterModal Visible="_showRegister" OnComplete="OnRegistered" OnClose="() => _showRegister = false" />
+
+<style>
+    .lg-wrap{position:fixed;inset:0;display:grid;grid-template-columns:1.15fr .85fr;gap:0;color:#cdd5e8;font-family:'Pretendard Variable','Pretendard','Segoe UI','Malgun Gothic',system-ui,sans-serif;
+        background:radial-gradient(1200px 800px at 18% 16%,#131c34 0%,#0b1020 46%,#070a14 100%),linear-gradient(135deg,#070a14,#0d1326);overflow:auto}
+
+    .lg-frame{position:fixed;inset:14px;z-index:5;pointer-events:none}
+    .lg-frame .c{position:absolute;width:34px;height:34px;border:2px solid rgba(129,140,245,.5);filter:drop-shadow(0 0 6px rgba(124,138,255,.4));animation:lgFrame 3.2s ease-in-out infinite}
+    .lg-frame .tl{top:0;left:0;border-right:0;border-bottom:0}.lg-frame .tr{top:0;right:0;border-left:0;border-bottom:0}
+    .lg-frame .bl{bottom:0;left:0;border-right:0;border-top:0}.lg-frame .br{bottom:0;right:0;border-left:0;border-top:0}
+    @@keyframes lgFrame{0%,100%{opacity:.55}50%{opacity:1}}
+    .lg-scanlines{position:fixed;inset:0;z-index:4;pointer-events:none;opacity:.28;
+        background:repeating-linear-gradient(0deg,rgba(124,138,255,.05) 0,rgba(124,138,255,.05) 1px,transparent 2px,transparent 4px)}
+    .lg-scanlines::after{content:'';position:absolute;left:0;right:0;height:140px;
+        background:linear-gradient(180deg,transparent,rgba(124,138,255,.06),transparent);animation:lgSweepY 6.5s linear infinite}
+    @@keyframes lgSweepY{0%{top:-140px}100%{top:100%}}
+
+    .lg-brand{position:relative;display:flex;flex-direction:column;justify-content:center;padding:6vh 6vw;overflow:hidden}
+    .lg-brand::before{content:'';position:absolute;inset:0;pointer-events:none;background:
+        radial-gradient(600px 420px at 12% 30%,rgba(124,138,255,.1),transparent 60%),
+        radial-gradient(520px 480px at 42% 92%,rgba(52,211,153,.07),transparent 62%)}
+    .lg-chart{position:absolute;right:clamp(-140px,-4vw,-24px);top:50%;width:clamp(400px,50vw,720px);height:auto;z-index:1;opacity:.26;
+        transform:translateY(-50%);filter:drop-shadow(0 18px 46px rgba(52,211,153,.12));
+        -webkit-mask-image:radial-gradient(circle at 60% 50%,#000 42%,transparent 78%);mask-image:radial-gradient(circle at 60% 50%,#000 42%,transparent 78%)}
+    .lg-ma{stroke-dasharray:1400;stroke-dashoffset:1400;animation:lgDraw 2.6s ease-out .3s forwards}
+    @@keyframes lgDraw{to{stroke-dashoffset:0}}
+    .lg-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
+        background:linear-gradient(100deg,rgba(7,10,20,.74) 0%,rgba(7,10,20,.42) 34%,rgba(7,10,20,0) 66%)}
+    .lg-brand-in{position:relative;z-index:2;max-width:640px}
+
+    .lg-tele{display:flex;align-items:center;gap:9px 16px;flex-wrap:wrap;margin-bottom:24px;padding:9px 14px;border-radius:12px;
+        background:linear-gradient(180deg,rgba(13,19,38,.72),rgba(9,12,24,.5));border:1px solid rgba(124,138,255,.2);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 6px 20px rgba(0,0,0,.3);backdrop-filter:blur(6px);max-width:40em}
+    .lg-arm{display:inline-flex;align-items:center;gap:7px;font:800 10.5px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.1em;color:#6ee7b7}
+    .lg-arm-dot{width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;animation:lgPulse 1.4s ease-in-out infinite}
+    @@keyframes lgPulse{0%,100%{opacity:.35}50%{opacity:1}}
+    .lg-t-i{display:inline-flex;align-items:baseline;gap:5px;font-family:'Roboto Mono',Consolas,monospace}
+    .lg-t-i i{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.06em;color:#6b78a0}
+    .lg-t-i b{font-size:12px;font-weight:800;color:#dfe4f5;font-variant-numeric:tabular-nums}
+    .lg-t-i u{text-decoration:none;font-size:10px;font-weight:800;font-variant-numeric:tabular-nums}
+    .lg-t-i u.up{color:#34d399}.lg-t-i u.down{color:#f87171}
+
+    .lg-brandrow{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+    .lg-logobox{position:relative;width:58px;height:58px;display:grid;place-items:center;font-size:26px;border-radius:16px;background:rgba(124,138,255,.12);border:1px solid rgba(124,138,255,.4);box-shadow:0 10px 30px rgba(60,72,180,.3),inset 0 1px 0 rgba(255,255,255,.08)}
+    .lg-lb-ring{position:absolute;inset:-6px;border-radius:20px;border:1px solid rgba(124,138,255,.35);animation:lgRing 2.6s ease-out infinite}
+    @@keyframes lgRing{0%{transform:scale(.9);opacity:.8}100%{transform:scale(1.18);opacity:0}}
+    .lg-logo{font-size:24px;font-weight:900;letter-spacing:.3px;line-height:1;margin:0}
+    .lg-logo-t{background:linear-gradient(90deg,#a5b0ff,#818cf5,#34d399);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 16px rgba(124,138,255,.35))}
+    .lg-logo-sub{font:800 9.5px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.22em;color:#7f8bc4;margin-top:6px;opacity:.95}
+    .lg-h1{font-size:clamp(28px,4.2vw,50px);font-weight:800;line-height:1.08;letter-spacing:-1px;color:#eef1fb;text-shadow:0 2px 30px rgba(60,72,180,.35)}
+    .lg-em{background:linear-gradient(90deg,#818cf5,#a5b0ff,#34d399);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 22px rgba(124,138,255,.32))}
+    .lg-sub{margin-top:14px;font-size:14.5px;color:#97a1bd;letter-spacing:.2px}
+    .lg-pillars{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:35em;margin:30px 0 0}
+    .lg-pill{position:relative;display:flex;align-items:center;gap:11px;padding:12px 13px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:13px;overflow:hidden;transition:border-color .18s,transform .18s,background .18s}
+    .lg-pill::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,#818cf5,transparent);opacity:.7}
+    .lg-pill::after{content:'';position:absolute;top:6px;right:6px;width:6px;height:6px;border-top:1px solid rgba(124,138,255,.5);border-right:1px solid rgba(124,138,255,.5)}
+    .lg-pill:hover{border-color:rgba(124,138,255,.44);background:rgba(124,138,255,.07);transform:translateY(-2px)}
+    .lg-pill-ic{font-size:1.35rem;flex:0 0 auto}
+    .lg-pill b{display:block;font-size:13px;color:#eef1fb}
+    .lg-pill small{font-size:10.5px;color:#97a1bd}
+    .lg-badges{margin-top:28px;display:flex;gap:9px;flex-wrap:wrap}
+    .lg-badge{font-size:11.5px;font-weight:700;padding:6px 13px;border-radius:999px;background:rgba(124,138,255,.1);border:1px solid rgba(124,138,255,.3);color:#a9b2f0}
+    .lg-badge.ok{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.4);color:#6ee7b7}
+
+    .lg-panel{position:relative;align-self:center;justify-self:center;width:min(410px,86%);margin:5vh 6% 5vh 0;padding:30px 32px 34px;border-radius:20px;overflow:hidden;z-index:3;
+        background:linear-gradient(180deg,rgba(16,22,42,.86),rgba(9,12,24,.92));backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+        border:1px solid rgba(124,138,255,.24);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 40px rgba(60,72,180,.12),inset 0 1px 0 rgba(255,255,255,.05)}
+    .lg-pc{position:absolute;width:18px;height:18px;border:2px solid rgba(129,140,245,.6);z-index:2}
+    .lg-pc.tl{top:10px;left:10px;border-right:0;border-bottom:0}.lg-pc.tr{top:10px;right:10px;border-left:0;border-bottom:0}
+    .lg-pc.bl{bottom:10px;left:10px;border-right:0;border-top:0}.lg-pc.br{bottom:10px;right:10px;border-left:0;border-top:0}
+    .lg-pscan{position:absolute;left:0;right:0;height:70px;pointer-events:none;background:linear-gradient(180deg,transparent,rgba(124,138,255,.07),transparent);animation:lgSweepY 5.5s linear infinite}
+    .lg-p-status{display:flex;align-items:center;gap:8px;font:700 9.5px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.1em;color:#6b78a0;margin-bottom:16px}
+    .lg-p-dot{width:7px;height:7px;border-radius:50%;background:#818cf5;box-shadow:0 0 8px #818cf5;animation:lgPulse 1.6s ease-in-out infinite}
+    .lg-p-armed{margin-left:auto;color:#6ee7b7;letter-spacing:.08em}
+    .lg-p-head{margin-bottom:18px}
+    .lg-p-title{font-size:19px;font-weight:800;color:#eef1fb}
+    .lg-p-sub{font-size:12.5px;color:#97a1bd;margin-top:5px}
+    .lg-lbl{display:block;font-size:12px;font-weight:600;color:#9aa4cf;margin:14px 0 6px}
+    .lg-inwrap{position:relative;display:flex;align-items:center;gap:9px;background:rgba(8,11,22,.6);border:1px solid rgba(124,138,255,.2);border-radius:11px;padding:0 13px;transition:border-color .15s,box-shadow .15s}
+    .lg-inwrap:focus-within{border-color:#818cf5;box-shadow:0 0 0 3px rgba(124,138,255,.15),0 0 22px rgba(124,138,255,.12)}
+    .lg-in-ic{font-size:14px;opacity:.82}
+    .lg-in2{flex:1;min-width:0;box-sizing:border-box;background:transparent;border:none;outline:none;color:#eef1fb;font-size:14px;font-family:inherit;padding:12px 0;letter-spacing:.3px}
+    .lg-in2::placeholder{color:#5f6a90}
+    .lg-err{margin-top:12px;padding:9px 12px;border-radius:9px;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.35);color:#fca5a5;font-size:12.5px}
+    .lg-reg-ok{margin-bottom:14px;padding:10px 12px;border-radius:10px;font-size:12.5px;font-weight:700;color:#a9b2f0;background:rgba(124,138,255,.1);border:1px solid rgba(124,138,255,.3);line-height:1.5}
+    .lg-reg-ok b{color:#eef1fb}
+    .lg-btn{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:20px;padding:14px;border-radius:12px;border:0;cursor:pointer;font-family:inherit;font-size:15px;font-weight:800;overflow:hidden;
+        color:#fff;background:linear-gradient(135deg,#818cf5,#4f5bd5);box-shadow:0 10px 26px rgba(79,91,213,.36);transition:filter .15s,transform .1s}
+    .lg-btn::after{content:'';position:absolute;top:0;left:-60%;width:45%;height:100%;transform:skewX(-20deg);background:linear-gradient(90deg,transparent,rgba(255,255,255,.4),transparent);animation:lgShine 3.6s ease-in-out infinite}
+    @@keyframes lgShine{0%{left:-60%}55%,100%{left:130%}}
+    .lg-btn:hover{filter:brightness(1.08)}.lg-btn:active{transform:translateY(1px)}
+    .lg-arrow{font-weight:900}
+    .lg-alt{width:100%;margin-top:11px;padding:11px;border-radius:11px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;
+        color:#a9b2f0;background:transparent;border:1px solid rgba(124,138,255,.3);transition:background .15s,border-color .15s}
+    .lg-alt:hover{background:rgba(124,138,255,.08);border-color:rgba(124,138,255,.5)}
+    .lg-trust{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.07)}
+    .lg-trust span{font-size:10px;font-weight:700;color:#6b78a0}
+    .lg-foot{margin-top:12px;text-align:center;font-size:11px;color:#5f6a90}
+
+    @@media(max-width:860px){.lg-wrap{grid-template-columns:1fr}.lg-brand{padding:7vh 8vw 2vh}.lg-panel{margin:2vh auto 6vh}.lg-pillars{grid-template-columns:1fr}.lg-chart{display:none}.lg-brand-in{max-width:none}.lg-tele{max-width:none}}
+    @@media(prefers-reduced-motion:reduce){.lg-ma,.lg-btn::after,.lg-scanlines::after,.lg-pscan{animation:none}}
+</style>
+
+@code {
+    private string _id = "", _pw = "", _error = "";
+    private bool _showRegister;
+    private string _justRegistered = "";
+    private static readonly System.Globalization.CultureInfo Ci = System.Globalization.CultureInfo.InvariantCulture;
+
+    // ── 캔들스틱 차트(정적 · 상승 추세) ──
+    private readonly record struct Candle(double X, double Wy1, double Wy2, double By, double Bh, bool Up);
+    private static readonly (Candle[] Cs, string Ma) Chart = BuildChart();
+    private static Candle[] Candles => Chart.Cs;
+    private static string MaPoints => Chart.Ma;
+    private static string F(double v) => v.ToString("0.#", Ci);
+
+    private static (Candle[], string) BuildChart()
+    {
+        double[] p = { 100, 104, 101, 107, 111, 108, 114, 118, 116, 123, 128, 125, 132, 137, 134, 141, 146 };
+        double min = p.Min() - 4, max = p.Max() + 4;
+        double Y(double price) => 30 + (max - price) / (max - min) * 300;
+        int n = p.Length - 1;
+        var list = new List<Candle>(n);
+        var ma = new System.Text.StringBuilder();
+        for (int i = 1; i <= n; i++)
+        {
+            double open = p[i - 1], close = p[i];
+            double wick = 1.6 + (i % 3) * 1.4;
+            double hi = Math.Max(open, close) + wick, lo = Math.Min(open, close) - wick;
+            double x = 34 + (i - 1) * (520.0 / (n - 1));
+            double byTop = Y(Math.Max(open, close));
+            double bh = Math.Abs(Y(open) - Y(close));
+            list.Add(new Candle(x, Y(hi), Y(lo), byTop, bh, close >= open));
+            double m = 0; int c = 0;
+            for (int k = Math.Max(0, i - 3); k <= i; k++) { m += p[k]; c++; }
+            ma.Append(x.ToString("0.#", Ci)).Append(',').Append(Y(m / c).ToString("0.#", Ci)).Append(' ');
+        }
+        return (list.ToArray(), ma.ToString().Trim());
+    }
+
+    // ── 실시간 지수 텔레메트리(서버 타이머) ──
+    private sealed class Tick { public string Label = ""; public double Val; public double Chg; public string Fmt = "N2"; }
+    private readonly List<Tick> _ticks = new()
+    {
+        new Tick { Label = "KOSPI", Val = 2648.70, Chg = 0.42, Fmt = "N2" },
+        new Tick { Label = "KOSDAQ", Val = 858.30, Chg = -0.31, Fmt = "N2" },
+        new Tick { Label = "NASDAQ", Val = 18327.4, Chg = 0.88, Fmt = "N2" },
+        new Tick { Label = "USD/KRW", Val = 1362.5, Chg = -0.12, Fmt = "N1" },
+        new Tick { Label = "BTC", Val = 94215, Chg = 1.34, Fmt = "N0" },
+    };
+    private readonly Random _rng = new();
+    private System.Threading.Timer? _hudTimer;
+    private volatile bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        if (Session.IsAuthenticated) { Nav.NavigateTo("", forceLoad: false); return; }
+        _hudTimer = new System.Threading.Timer(_ => HudTick(), null, 1300, 1300);
+    }
+
+    private void HudTick()
+    {
+        if (_disposed) return;
+        try
+        {
+            foreach (var t in _ticks)
+            {
+                var drift = (_rng.NextDouble() - 0.5) * (t.Val * 0.0007);
+                t.Val = Math.Max(0.01, t.Val + drift);
+                t.Chg = Math.Clamp(t.Chg + (_rng.NextDouble() - 0.5) * 0.07, -3.8, 3.8);
+            }
+            InvokeAsync(StateHasChanged);
+        }
+        catch { /* 회로 종료 후 무시 */ }
+    }
+
+    private void DoLogin()
+    {
+        var id = _id.Trim();
+        if (id.Length < 3 || _pw.Length < 4) { _error = "아이디 3자·비밀번호 4자 이상 입력하세요."; return; }
+        var m = Members.Authenticate(id, _pw);
+        if (!m.Ok) { _error = m.Message; _pw = ""; return; }
+        Session.SignIn(id, m.Role, m.Message);
+        _error = "";
+        Nav.NavigateTo("", forceLoad: false);   // BlazorWebView 단일 컨텍스트 — SPA 네비게이션(게이트가 싱글턴 세션 판독)
+    }
+
+    private void OnRegistered(StockRegisterModal.RegisterResult res)
+    {
+        _showRegister = false;
+        _id = res.UserId;
+        _pw = "";
+        _justRegistered = res.MemberId;
+        _error = "";
+    }
+
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") DoLogin(); }
+
+    public void Dispose() { _disposed = true; _hudTimer?.Dispose(); _hudTimer = null; }
+}

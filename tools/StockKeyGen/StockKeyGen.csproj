@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>MS2E_StockSuite_라이선스_발급기</AssemblyName>
+    <RootNamespace>LicenseKeyGen</RootNamespace>
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
+    <Product>MS2E StockSuite · 라이선스 키 발급기</Product>
+    <AssemblyTitle>MS2E StockSuite 라이선스 키 발급기</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <Company>ANGTEC</Company>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

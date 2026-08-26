@@ -1,0 +1,285 @@
+@page "/admin/users"
+@inject StockManager.Common.Account.MemberRegistryService Members
+@inject StockManager.Common.Account.LicenseService License
+@inject StockManager.Common.Account.InstallTelemetryService Install
+@inject StockManager.Common.Account.SessionState Session
+@implements IDisposable
+
+@* [MS2E StockSuite] 관리자 전용 사용자 관리 — 회원(RBAC) + 발급 라이선스 관리 + 설치 PC 관리.
+   모니터링/스마트팜/PLAI/UAV와 동일 3구성 · Admin 게이트 · 앱 테마 토큰(라이트/다크 자동) · 완전 오프라인. *@
+
+<PageTitle>MS2E StockSuite · 사용자 관리</PageTitle>
+
+<div class="ua-top">
+    <h1 class="ua-h1">👥 사용자 계정 관리</h1>
+    <div class="ua-sub">회원·권한(RBAC)·라이선스·설치 PC를 한 곳에서 관리하는 관리자 콘솔 · 완전 오프라인</div>
+</div>
+
+@if (!Session.IsAdmin)
+{
+    <div class="ua-notice">🔒 관리자(Admin) 권한이 필요한 화면입니다. 현재 권한: <b>@Session.Role</b> · Admin 계정(GSLEE)으로 로그인하세요.</div>
+}
+else
+{
+    @if (_temp is { } t)
+    {
+        <div class="ua-temp">🔑 <b>@t.Item1</b> 임시 비밀번호가 발급되었습니다: <b class="v">@t.Item2</b> — 사용자에게 안전하게 전달하세요.</div>
+    }
+
+    <div class="ua-stats">
+        <div class="ua-stat"><div class="ua-stat-ic">👥</div><div><div class="ua-stat-v">@Members.Count<span> 명</span></div><div class="ua-stat-l">등록 회원 · 승인 대기 @(Members.PendingCount)명</div></div></div>
+        <div class="ua-stat"><div class="ua-stat-ic">🪪</div><div><div class="ua-stat-v">@_issued.Count<span> 건</span></div><div class="ua-stat-l">발급 라이선스 · 이 PC @(License.IsIssuerMachine ? "발급자" : "수령자")</div></div></div>
+        <div class="ua-stat"><div class="ua-stat-ic">💻</div><div><div class="ua-stat-v">@_installs.Count<span> 대</span></div><div class="ua-stat-l">설치 PC 자동 수집</div></div></div>
+    </div>
+
+    <div class="ua-card">
+        <div class="ua-ch"><h3 class="ua-ct">👥 회원 · 권한(RBAC) 관리</h3><span class="ua-cs">총 @(Members.Count)명 · 승인 대기 @(Members.PendingCount)명</span></div>
+        <div class="ua-wrap">
+            <table class="ua-tbl">
+                <thead><tr><th>아이디</th><th>이름 · 연락처 · 소속</th><th>권한</th><th>상태</th><th>관리</th></tr></thead>
+                <tbody>
+                    @foreach (var u in Members.Members)
+                    {
+                        <tr>
+                            <td class="ua-id">@u.Id</td>
+                            <td>
+                                <div><b>@u.Name</b><span class="ua-mut"> · @u.Email · @u.Phone</span></div>
+                                @if (!string.IsNullOrWhiteSpace(u.Company)) { <div class="ua-mut2">🏢 @u.Company</div> }
+                                @{ var lic = string.IsNullOrWhiteSpace(u.LicenseKey) ? null : License.VerifyKey(u.LicenseKey); }
+                                @if (lic is not null)
+                                {
+                                    <div class="ua-lic @(lic.Valid ? "ok" : "bad")">@(lic.Valid ? $"✅ 라이선스 유효 · 만료 {(string.IsNullOrEmpty(lic.Expiry) ? "무기한" : Ymd(lic.Expiry))}" : "⛔ " + lic.Reason)</div>
+                                }
+                            </td>
+                            <td>
+                                <select class="ua-role" value="@u.Role" @onchange="e => SetMemberRole(u.Id, e.Value?.ToString())">
+                                    <option value="Admin">Admin</option><option value="Operator">Operator</option><option value="Viewer">Viewer</option>
+                                </select>
+                            </td>
+                            <td><span class="ua-bdg @StatusCls(u.Status)">@StatusKo(u.Status)</span></td>
+                            <td class="ua-acts">
+                                <button class="ua-b acc" @onclick="() => BeginLic(u.Id)">🔑 라이선스</button>
+                                @if (u.Status == "pending")
+                                {
+                                    <button class="ua-b ok" @onclick="() => Members.Approve(u.Id)">승인</button>
+                                }
+                                else
+                                {
+                                    <button class="ua-b" @onclick="() => Members.ToggleStatus(u.Id)">@(u.Status == "active" ? "잠금" : "해제")</button>
+                                }
+                                <button class="ua-b" @onclick="() => Reset(u.Id)">비번 리셋</button>
+                                @if (u.Role != "Admin")
+                                {
+                                    <button class="ua-b del" @onclick="() => Members.Delete(u.Id)">삭제</button>
+                                }
+                            </td>
+                        </tr>
+                        @if (_licEditId == u.Id)
+                        {
+                            <tr class="ua-subrow"><td colspan="5">
+                                <div class="ua-le">
+                                    <span>🔑 <b>@u.Name</b> 라이선스 재발급 · 만료일</span>
+                                    <input type="date" min="2024-01-01" max="2099-12-31" value="@_licExpiry" @onchange="e => _licExpiry = e.Value?.ToString() ?? string.Empty" />
+                                    <span class="ua-note">(비우면 무기한)</span>
+                                    <button class="ua-b ok" @onclick="() => ApplyLic(u.Id, u.Name)" disabled="@_licBusy">@(_licBusy ? "발급 중…" : "발급 & 적용")</button>
+                                    <button class="ua-b" @onclick="() => { _licEditId = null; _licMsg = null; }">취소</button>
+                                    @if (_licMsg is not null) { <span class="ua-licmsg">@_licMsg</span> }
+                                </div>
+                            </td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="ua-card">
+        <div class="ua-ch"><h3 class="ua-ct">🪪 발급 라이선스 관리</h3><span class="ua-cs">발급 @(_issued.Count)건 · 이 PC <b>@(License.IsIssuerMachine ? "발급자(자동 통과)" : "수령자")</b><button class="ua-rf" @onclick="RefreshLic" title="새로고침">↻</button></span></div>
+        @if (_issued.Count == 0)
+        {
+            <div class="ua-empty">아직 발급한 라이선스가 없습니다. 바탕화면 <b>MS2E StockSuite 라이선스 발급기</b>로 발급하거나, 위 회원의 <b>[🔑 라이선스]</b> 버튼으로 발급하면 여기에 표시됩니다.</div>
+        }
+        else
+        {
+            <div class="ua-wrap">
+                <table class="ua-tbl">
+                    <thead><tr><th>대상</th><th>발급일</th><th>만료</th><th>상태</th><th>관리</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in _issued)
+                        {
+                            var st = License.VerifyKey(r.Key);
+                            <tr>
+                                <td class="ua-id">@r.Licensee</td>
+                                <td class="ua-mono">@Ymd(r.IssuedAt)</td>
+                                <td class="ua-mono">@(string.IsNullOrEmpty(r.Expiry) ? "무기한" : Ymd(r.Expiry))</td>
+                                <td><span class="ua-bdg @(st.Valid ? "ok" : "bad")">@(st.Valid ? "유효" : st.Reason)</span></td>
+                                <td class="ua-acts">
+                                    <button class="ua-b" @onclick="() => ToggleKey(r.Id)">@(_shownKeyId == r.Id ? "닫기" : "키 보기")</button>
+                                    <button class="ua-b acc" @onclick="() => BeginExtend(r)">📅 연장</button>
+                                    <button class="ua-b del" @onclick="() => RemoveIssued(r.Id)">삭제</button>
+                                </td>
+                            </tr>
+                            @if (_shownKeyId == r.Id)
+                            {
+                                <tr class="ua-subrow"><td colspan="5"><textarea class="ua-out" rows="2" readonly onclick="this.select()">@r.Key</textarea></td></tr>
+                            }
+                            @if (_extendId == r.Id)
+                            {
+                                <tr class="ua-subrow"><td colspan="5">
+                                    <div class="ua-le">
+                                        <span class="ua-note">새 만료일</span>
+                                        <input type="date" min="2024-01-01" max="2099-12-31" value="@_extendDate" @onchange="e => _extendDate = e.Value?.ToString() ?? string.Empty" />
+                                        <button class="ua-b acc" @onclick="() => DoExtend(r)">🔁 연장 재발급</button>
+                                        <button class="ua-b" @onclick="() => { _extendId = null; _extendedKey = null; }">취소</button>
+                                    </div>
+                                    @if (_extendedKey is not null)
+                                    {
+                                        <textarea class="ua-out" rows="2" readonly onclick="this.select()">@_extendedKey</textarea>
+                                    }
+                                </td></tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="ua-empty" style="padding-top:10px">※ '삭제'는 이 관리 장부에서만 제거합니다. 이미 배포된 키를 무효화하려면 <b>만료일</b>을 설정해 재발급하세요.</div>
+        }
+        <div class="ua-path">🔒 @License.RegistryPath</div>
+    </div>
+
+    <div class="ua-card">
+        <div class="ua-ch"><h3 class="ua-ct">💻 설치 PC 관리</h3><span class="ua-cs">@(_installs.Count)건 수집<button class="ua-rf" @onclick="RefreshInstall" title="새로고침">↻</button></span></div>
+        @if (_installs.Count == 0)
+        {
+            <div class="ua-empty">설치 이력이 없습니다. 프로그램이 기동될 때마다 호스트·사용자·IP·MAC·OS 가 자동 수집됩니다.</div>
+        }
+        else
+        {
+            <div class="ua-wrap">
+                <table class="ua-tbl">
+                    <thead><tr><th>호스트</th><th>사용자</th><th>IP</th><th>MAC</th><th>OS</th><th>수집시각</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in _installs)
+                        {
+                            <tr>
+                                <td class="ua-id">@p.MachineName</td>
+                                <td>@p.UserName</td>
+                                <td class="ua-mono">@(p.IpAddresses.Length > 0 ? string.Join(", ", p.IpAddresses) : "-")</td>
+                                <td class="ua-mono">@(p.MacAddresses.Length > 0 ? string.Join(", ", p.MacAddresses) : "-")</td>
+                                <td>@p.OsDescription</td>
+                                <td class="ua-mono">@p.CapturedAt</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        <div class="ua-path">🔒 @Install.FilePath</div>
+    </div>
+}
+
+<style>
+    .ua-top { margin: 2px 0 16px; }
+    .ua-h1 { font-size: 1.5rem; font-weight: 800; color: var(--ink); margin: 0; }
+    .ua-sub { font-size: 12.5px; color: var(--sub); margin-top: 6px; }
+    .ua-notice { padding: 16px 18px; border-radius: 12px; background: color-mix(in srgb, var(--down) 12%, transparent); border: 1px solid color-mix(in srgb, var(--down) 40%, transparent); color: var(--down); font-size: 13.5px; line-height: 1.6; }
+    .ua-temp { padding: 12px 16px; margin-bottom: 16px; border-radius: 11px; background: color-mix(in srgb, var(--up) 12%, transparent); border: 1px solid color-mix(in srgb, var(--up) 42%, transparent); color: var(--up); font-size: 13px; }
+    .ua-temp b.v { font-family: var(--mono); font-size: 14px; }
+    .ua-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 0 0 18px; }
+    .ua-stat { display: flex; align-items: center; gap: 15px; padding: 16px 18px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .ua-stat-ic { width: 48px; height: 48px; flex: 0 0 auto; display: grid; place-items: center; font-size: 23px; border-radius: 13px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+    .ua-stat-v { font-size: 27px; font-weight: 800; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+    .ua-stat-v span { font-size: 14px; font-weight: 700; color: var(--sub); }
+    .ua-stat-l { font-size: 11.5px; color: var(--sub); margin-top: 6px; }
+    @@media (max-width: 900px) { .ua-stats { grid-template-columns: 1fr; } }
+    .ua-card { margin-bottom: 16px; padding: 16px 18px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    .ua-ch { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+    .ua-ct { font-size: 15px; font-weight: 800; color: var(--ink); margin: 0; }
+    .ua-cs { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--sub); display: flex; align-items: center; gap: 8px; } .ua-cs b { color: var(--accent); }
+    .ua-rf { width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--line); background: var(--card-2); color: var(--sub); cursor: pointer; font-size: 14px; }
+    .ua-rf:hover { border-color: var(--accent); color: var(--ink); }
+    .ua-empty { font-size: 13px; color: var(--sub); line-height: 1.65; } .ua-empty b { color: var(--ink); }
+    .ua-path { font-family: var(--mono); font-size: 11px; color: var(--sub); margin-top: 12px; word-break: break-all; opacity: .85; }
+    .ua-wrap { overflow-x: auto; }
+    .ua-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ua-tbl th { text-align: left; color: var(--sub); font-weight: 700; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11.5px; letter-spacing: .02em; }
+    .ua-tbl td { padding: 11px 10px; border-bottom: 1px solid var(--hairline); color: var(--ink); vertical-align: middle; }
+    .ua-tbl tbody tr:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+    .ua-subrow td { background: color-mix(in srgb, var(--accent) 6%, transparent) !important; }
+    .ua-id { font-weight: 800; color: var(--ink); }
+    .ua-mut { color: var(--sub); font-size: 12px; } .ua-mut2 { color: var(--sub); font-size: 12px; margin-top: 3px; }
+    .ua-lic { margin-top: 4px; font-size: 11.5px; font-weight: 700; } .ua-lic.ok { color: var(--up); } .ua-lic.bad { color: var(--down); }
+    .ua-mono { font-family: var(--mono); font-size: 12px; color: var(--sub); }
+    .ua-role { background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; color: var(--ink); font-size: 12.5px; cursor: pointer; font-family: inherit; }
+    .ua-bdg { font-size: 10.5px; font-weight: 800; padding: 3px 10px; border-radius: 999px; white-space: nowrap; letter-spacing: .02em; }
+    .ua-bdg.ok { color: var(--up); background: color-mix(in srgb, var(--up) 14%, transparent); border: 1px solid color-mix(in srgb, var(--up) 40%, transparent); }
+    .ua-bdg.bad { color: var(--down); background: color-mix(in srgb, var(--down) 13%, transparent); border: 1px solid color-mix(in srgb, var(--down) 38%, transparent); }
+    .ua-bdg.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent); }
+    .ua-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ua-b { font-size: 11.5px; font-weight: 700; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--card-2); color: var(--sub); cursor: pointer; white-space: nowrap; font-family: inherit; transition: border-color .14s ease, color .14s ease, background .14s ease; }
+    .ua-b:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+    .ua-b:disabled { opacity: .5; cursor: default; }
+    .ua-b.acc { border-color: color-mix(in srgb, var(--accent) 42%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+    .ua-b.ok { border-color: color-mix(in srgb, var(--up) 50%, transparent); background: color-mix(in srgb, var(--up) 14%, transparent); color: var(--up); }
+    .ua-b.del { border-color: color-mix(in srgb, var(--down) 40%, transparent); background: color-mix(in srgb, var(--down) 10%, transparent); color: var(--down); }
+    .ua-le { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 12.5px; color: var(--sub); }
+    .ua-le input[type=date] { background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; color: var(--ink); font-family: inherit; }
+    .ua-note { font-size: 11.5px; color: var(--sub); }
+    .ua-licmsg { font-size: 12px; font-weight: 700; color: var(--down); }
+    .ua-out { width: 100%; box-sizing: border-box; background: var(--card-2); border: 1px solid color-mix(in srgb, var(--up) 45%, transparent); border-radius: 9px; padding: 9px 11px; color: var(--up); font-family: var(--mono); font-size: 12px; word-break: break-all; resize: vertical; outline: none; }
+</style>
+
+@code {
+    private (string, string)? _temp;
+
+    protected override void OnInitialized() { Members.Changed += OnCh; Session.OnChange += OnCh; RefreshLic(); RefreshInstall(); }
+    private void OnCh() => InvokeAsync(StateHasChanged);
+
+    private void SetMemberRole(string id, string? role) { if (role is not null) Members.SetRole(id, role); }
+    private void Reset(string id) { var t = Members.ForceReset(id); if (t.Length > 0) _temp = (id, t); }
+
+    private string? _licEditId;
+    private string _licExpiry = "";
+    private bool _licBusy;
+    private string? _licMsg;
+    private void BeginLic(string id) { _licEditId = id; _licExpiry = ""; _licMsg = null; }
+    private void ApplyLic(string id, string name)
+    {
+        _licBusy = true; _licMsg = null;
+        try
+        {
+            DateTime? expiry = (!string.IsNullOrWhiteSpace(_licExpiry) && DateTime.TryParse(_licExpiry, out var d)) ? d : null;
+            var target = string.IsNullOrWhiteSpace(name) ? id : name.Trim();
+            var newKey = License.IssueLicense(target, expiry);
+            var info = License.VerifyKey(newKey);
+            if (!info.Valid) { _licMsg = "발급된 키 검증 실패: " + info.Reason; return; }
+            if (!Members.UpdateLicense(id, newKey)) { _licMsg = "회원 원장 갱신 실패"; return; }
+            _licEditId = null; RefreshLic();
+        }
+        catch (Exception ex) { _licMsg = "오류: " + ex.Message; }
+        finally { _licBusy = false; }
+    }
+
+    private List<StockManager.Common.Account.LicenseRecord> _issued = new();
+    private string? _shownKeyId, _extendId, _extendedKey;
+    private string _extendDate = "";
+    private void RefreshLic() => _issued = License.ListIssued();
+    private void ToggleKey(string id) { _shownKeyId = _shownKeyId == id ? null : id; _extendId = null; }
+    private void RemoveIssued(string id) { License.RemoveIssued(id); if (_shownKeyId == id) _shownKeyId = null; if (_extendId == id) _extendId = null; RefreshLic(); }
+    private void BeginExtend(StockManager.Common.Account.LicenseRecord r) { _extendId = r.Id; _extendDate = string.IsNullOrEmpty(r.Expiry) ? "" : Ymd(r.Expiry); _extendedKey = null; _shownKeyId = null; }
+    private void DoExtend(StockManager.Common.Account.LicenseRecord r)
+    {
+        DateTime? exp = (!string.IsNullOrWhiteSpace(_extendDate) && DateTime.TryParse(_extendDate, out var d)) ? d : null;
+        _extendedKey = License.IssueLicense(r.Licensee, exp);
+        RefreshLic();
+    }
+
+    private List<StockManager.Common.Account.InstallInfo> _installs = new();
+    private void RefreshInstall() => _installs = Install.All();
+
+    private static string StatusKo(string s) => s switch { "active" => "활성", "locked" => "잠김", _ => "승인 대기" };
+    private static string StatusCls(string s) => s switch { "active" => "ok", "locked" => "bad", _ => "warn" };
+    private static string Ymd(string? s) => (s is not null && s.Length == 8) ? $"{s[..4]}-{s.Substring(4, 2)}-{s.Substring(6, 2)}" : (s ?? "");
+
+    public void Dispose() { Members.Changed -= OnCh; Session.OnChange -= OnCh; }
+}

@@ -5,7 +5,7 @@
 
 <aside class="side">
     <div class="brand">
-        <div class="logo">₩</div>
+        <div class="logo" style="font-size:12.5px;letter-spacing:-.3px">ANG</div>
         <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · @SystemVersionProvider.Version</div></div>
     </div>
     <div class="kbar" @onclick="() => Palette.RequestOpen()">
@@ -72,6 +72,12 @@
             new Item("🪟", "결정 품질 미러", "/mirror", NavLinkMatch.All),
             new Item("🌌", "멀티버스 관측실", "/portfolio/multiverse", NavLinkMatch.All),
         }),
+        new("brokers", "🔗", "증권사 연결", "BROKERS", new[] { "/brokers" }, new[]
+        {
+            new Item("🔷", "토스증권", "/brokers/toss", NavLinkMatch.All),
+            new Item("🔶", "한국투자증권", "/brokers/kis", NavLinkMatch.All),
+            new Item("🟢", "LS증권", "/brokers/ls", NavLinkMatch.All),
+        }),
         new("lab", "🔬", "전략 연구소", "STRATEGY LAB", new[] { "/lab", "/forge", "/compiler", "/tournament" }, new[]
         {
             new Item("⚡", "시그널 엔진", "/lab", NavLinkMatch.All),
@@ -122,7 +128,7 @@
             new Item("📜", "알림 이력", "/alertcenter/history", NavLinkMatch.All),
             new Item("🚨", "부정거래 경고", "/fraud-alerts", NavLinkMatch.All),
         }),
-        new("tools", "🧰", "도구", "TOOLS", new[] { "/command", "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading", "/tools" }, new[]
+        new("tools", "🧰", "도구", "TOOLS", new[] { "/command", "/paper", "/copilot", "/diagnostics", "/plugins", "/cartridges", "/sync", "/settings", "/broker", "/trading", "/tools", "/admin/users" }, new[]
         {
             new Item("🗺️", "관제 탑", "/command", NavLinkMatch.Prefix),
             new Item("🧑‍✈️", "코파일럿", "/copilot", NavLinkMatch.Prefix),
@@ -140,6 +146,8 @@
             new Item("🧭", "온보딩 마법사", "/setup/wizard", NavLinkMatch.All),
             new Item("📦", "배포 패키지 만들기", "/tools/distribute", NavLinkMatch.All),
             new Item("🔑", "증권사 API 자격증명", "/tools/credentials", NavLinkMatch.All),
+            new Item("🗺️", "코드맵 뷰어", "/tools/codemap", NavLinkMatch.All),
+            new Item("👥", "사용자 계정 관리", "/admin/users", NavLinkMatch.All),
             new Item("⚙️", "거래 설정", "/settings", NavLinkMatch.Prefix),
         }),
     };
