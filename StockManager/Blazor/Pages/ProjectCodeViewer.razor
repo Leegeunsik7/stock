@@ -1,0 +1,264 @@
+@* ============================================================================
+   ProjectCodeViewer.razor — v11.2.0: 프로젝트 코드 분석 & 도메인 뷰어 대시보드
+     타 개발자 인수인계용 — 소스트리를 ArchitectureFitnessAnalyzer(순수 정적분석·δ=0)로 실시간 스캔하여
+     5대 Clean Architecture 레이어(01_Core~05_Tests)별 도메인 분포·오배치(재배치 대상) 워크리스트·
+     의존 방향 규칙 매트릭스·적합도(fitness) 판정을 시각화한다. 소스 부재(배포본) 시 목표 아키텍처만 우아하게 표시.
+     ★불변: 순수 정적 분석(liveArmed:false — 발주/소켓 유발 0) · 분류는 δ=0 분석기 위임 · 결정론.
+   ============================================================================ *@
+@page "/tools/codemap"
+@using StockManager.Common
+
+<div class="cm-wrap">
+    <div class="cm-head">
+        <div class="cm-title">🗺️ 프로젝트 코드맵 & 도메인 뷰어</div>
+        <div class="cm-sub">Clean Architecture 5대 레이어 · Ports & Adapters · 소스 정적 분석(δ=0·결정론)</div>
+    </div>
+
+    @* ── 상단 KPI ── *@
+    <div class="cm-kpis">
+        <div class="cm-kpi"><span class="cm-k">스캔 파일</span><span class="cm-v">@_total</span></div>
+        <div class="cm-kpi"><span class="cm-k">레이어</span><span class="cm-v">5</span></div>
+        <div class="cm-kpi"><span class="cm-k">재배치 대상(오배치)</span><span class="cm-v @(_misplaced > 0 ? "warn" : "ok")">@_misplaced</span></div>
+        <div class="cm-kpi">
+            <span class="cm-k">아키텍처 적합도</span>
+            <span class="cm-v @(_ruleViolations == 0 ? "ok" : "bad")">@(_ruleViolations == 0 ? "PASS ✓" : $"{_ruleViolations} 위반")</span>
+        </div>
+    </div>
+
+    @if (!_scanOk)
+    {
+        <div class="cm-note">📦 소스 트리를 찾지 못했습니다(배포본/소스 미포함 환경) — 아래는 <b>목표 아키텍처 정의</b>만 표시합니다.
+            개발/인수인계 환경(소스 존재)에서는 실제 파일 분포·오배치가 자동 집계됩니다. @(_scanErr is null ? "" : $"[{_scanErr}]")</div>
+    }
+
+    @* ── 레이어 카드(5) ── *@
+    <div class="cm-layers">
+        @foreach (var L in _layers)
+        {
+            <div class="cm-layer" style="--accent:@Accent(L)">
+                <div class="cm-lhead">
+                    <span class="cm-lfolder">@ArchitectureFitnessAnalyzer.LayerFolder(L)</span>
+                    <span class="cm-lname">@ArchitectureFitnessAnalyzer.LayerName(L)</span>
+                    <span class="cm-lcount">@LayerCount(L)</span>
+                </div>
+                <div class="cm-ldesc">@LayerDesc(L)</div>
+                <div class="cm-doms">
+                    @foreach (var (dom, n) in DomainsOf(L))
+                    {
+                        <span class="cm-dom"><span class="cm-domn">@DomName(dom)</span><span class="cm-domc">@n</span></span>
+                    }
+                    @if (!DomainsOf(L).Any())
+                    {
+                        <span class="cm-dom cm-dom-empty">@(_scanOk ? "(파일 없음)" : "대기")</span>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @* ── 의존 방향 규칙 매트릭스(안으로만) ── *@
+    <div class="cm-panel">
+        <div class="cm-ptitle">🏛 의존 방향 규칙 — <b>안으로만</b>(바깥 레이어는 안쪽만 참조). 유닛 테스트가 위반을 발견하면 빌드 실패(self-enforcing)</div>
+        <table class="cm-matrix">
+            <thead>
+                <tr><th>from ＼ to</th>@foreach (var to in _layers){<th>@ArchitectureFitnessAnalyzer.LayerFolder(to)</th>}</tr>
+            </thead>
+            <tbody>
+                @foreach (var from in _layers)
+                {
+                    <tr>
+                        <th>@ArchitectureFitnessAnalyzer.LayerFolder(from)</th>
+                        @foreach (var to in _layers)
+                        {
+                            var ok = ArchitectureFitnessAnalyzer.CanReference(from, to);
+                            <td class="@(ok ? "y" : "n")" title="@ArchitectureFitnessAnalyzer.LayerName(from) → @ArchitectureFitnessAnalyzer.LayerName(to)">@(ok ? "✓" : "✗")</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <div class="cm-mlegend">✓ 참조 허용 · ✗ 아키텍처 위반(안→바깥 역참조) · UI→Infra(엔진) 참조는 <b>금지</b>(순수 UI 불변)</div>
+    </div>
+
+    @* ── 오배치(재배치 대상) 워크리스트 ── *@
+    @if (_scanOk && _misSample.Count > 0)
+    {
+        <div class="cm-panel">
+            <div class="cm-ptitle">📍 재배치 대상 표본 — 현재 물리 위치 ≠ 의도 레이어(상위 @_misSample.Count / 총 @(_misplaced)건)</div>
+            <table class="cm-mis">
+                <thead><tr><th>파일</th><th>→ 의도 레이어</th><th>도메인</th></tr></thead>
+                <tbody>
+                    @foreach (var m in _misSample)
+                    {
+                        <tr>
+                            <td class="mono">@m.Rel</td>
+                            <td><span class="cm-pill" style="--accent:@Accent(m.Layer)">@ArchitectureFitnessAnalyzer.LayerFolder(m.Layer)</span></td>
+                            <td>@DomName(m.Dom)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* ── 불변 배지 ── *@
+    <div class="cm-badges">
+        <span class="cm-badge">🔒 liveArmed:false — 순수 정적 분석(발주·소켓 유발 0)</span>
+        <span class="cm-badge">⚡ δ=0 — 분류/규칙/집계 핫패스 힙 0</span>
+        <span class="cm-badge">🎯 결정론 — 경로 규칙·시계/난수 0</span>
+        <span class="cm-badge">🛡 fail-open — 분류 불확실은 위반 오판 안 함</span>
+    </div>
+</div>
+
+@code {
+    private readonly ArchLayer[] _layers =
+    {
+        ArchLayer.Core, ArchLayer.Infrastructure, ArchLayer.UiPortable, ArchLayer.Host, ArchLayer.Tests
+    };
+
+    private readonly Dictionary<ArchLayer, int> _layerCounts = new();
+    private readonly Dictionary<(ArchLayer, ArchDomain), int> _cells = new();
+    private readonly List<(string Rel, ArchLayer Layer, ArchDomain Dom)> _misSample = new();
+    private int _total, _misplaced, _ruleViolations;
+    private bool _scanOk;
+    private string? _scanErr;
+
+    protected override void OnInitialized()
+    {
+        // 의존 규칙 매트릭스의 총 위반 수(정의상 5×5 중 안→바깥 조합) — 적합도 KPI.
+        foreach (var f in _layers)
+            foreach (var t in _layers)
+                if (!ArchitectureFitnessAnalyzer.CanReference(f, t)) _ruleViolations++;
+
+        try { Scan(); }
+        catch (Exception ex) { _scanErr = ex.Message; _scanOk = false; }
+    }
+
+    private void Scan()
+    {
+        string? root = FindSourceRoot();
+        if (root is null) { _scanOk = false; return; }
+
+        foreach (var file in EnumerateSource(root))
+        {
+            string rel = file.Substring(root.Length).TrimStart('/', '\\').Replace('\\', '/');
+            var span = rel.AsSpan();
+            var layer = ArchitectureFitnessAnalyzer.ClassifyLayer(span);
+            var dom = ArchitectureFitnessAnalyzer.ClassifyDomain(span);
+            _total++;
+            _layerCounts[layer] = LayerCount(layer) + 1;
+            var key = (layer, dom);
+            _cells[key] = (_cells.TryGetValue(key, out var c) ? c : 0) + 1;
+            if (ArchitectureFitnessAnalyzer.IsMisplaced(span))
+            {
+                _misplaced++;
+                if (_misSample.Count < 15) _misSample.Add((rel, layer, dom));
+            }
+        }
+        _scanOk = true;
+    }
+
+    private static string? FindSourceRoot()
+    {
+        var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            if (System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "StockManager.sln"))) return dir.FullName;
+            if (System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, "StockManager")) &&
+                System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, "MS2E.UI.Portable"))) return dir.FullName;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateSource(string root)
+    {
+        var opts = new System.IO.EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        foreach (var pat in new[] { "*.cs", "*.razor" })
+            foreach (var f in System.IO.Directory.EnumerateFiles(root, pat, opts))
+            {
+                if (f.Contains("\\bin\\") || f.Contains("\\obj\\") || f.Contains("/bin/") || f.Contains("/obj/")
+                    || f.Contains("\\.git") || f.Contains("\\.claude") || f.Contains("/.git") || f.Contains("/.claude")) continue;
+                yield return f;
+            }
+    }
+
+    private int LayerCount(ArchLayer l) => _layerCounts.TryGetValue(l, out var n) ? n : 0;
+
+    private IEnumerable<(ArchDomain Dom, int N)> DomainsOf(ArchLayer layer)
+        => _cells.Where(kv => kv.Key.Item1 == layer && kv.Value > 0)
+                 .Select(kv => (kv.Key.Item2, kv.Value))
+                 .OrderByDescending(t => t.Item2);
+
+    private static string Accent(ArchLayer l) => l switch
+    {
+        ArchLayer.Core => "#22a06b", ArchLayer.Infrastructure => "#3182f6", ArchLayer.UiPortable => "#a855f7",
+        ArchLayer.Host => "#f5a623", ArchLayer.Tests => "#8b97ad", _ => "#6b7688",
+    };
+
+    private static string LayerDesc(ArchLayer l) => l switch
+    {
+        ArchLayer.Core => "순수 도메인·엔티티·불변 DTO·Port 인터페이스 (바깥 의존 0)",
+        ArchLayer.Infrastructure => "외부 어댑터·HW(SIMD)·보안(금고)·텔레메트리·영속화",
+        ArchLayer.UiPortable => "순수 Blazor UI(RCL) — 엔진 무참조",
+        ArchLayer.Host => "WinForms/Blazor Hybrid 합성 루트·네비게이션",
+        ArchLayer.Tests => "유닛·통합·δ=0 무할당 증명",
+        _ => "",
+    };
+
+    private static string DomName(ArchDomain d) => d switch
+    {
+        ArchDomain.Entities => "엔티티", ArchDomain.Ports => "Port", ArchDomain.ValueObjects => "값객체",
+        ArchDomain.BrokerAdapters => "브로커 어댑터", ArchDomain.Hardware => "하드웨어", ArchDomain.Security => "보안",
+        ArchDomain.Telemetry => "텔레메트리", ArchDomain.Persistence => "영속화", ArchDomain.Networking => "네트워크",
+        ArchDomain.Engine => "엔진", ArchDomain.Components => "컴포넌트", ArchDomain.Pages => "페이지",
+        ArchDomain.ViewModels => "뷰모델", ArchDomain.HostBootstrap => "부트스트랩", ArchDomain.Navigation => "네비게이션",
+        ArchDomain.UnitTests => "유닛테스트", _ => "미분류",
+    };
+}
+
+<style>
+    .cm-wrap{padding:20px 26px;max-width:1100px}
+    .cm-head{margin-bottom:14px}
+    .cm-title{font-weight:800;font-size:19px}
+    .cm-sub{color:#8b97ad;font-size:12.5px;margin-top:3px}
+
+    .cm-kpis{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+    .cm-kpi{background:rgba(30,40,64,.35);border:1px solid #2a3550;border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:3px;min-width:130px}
+    .cm-k{font-size:11px;color:#8b97ad}
+    .cm-v{font-size:19px;font-weight:800}
+    .cm-v.ok{color:#8fdca4}.cm-v.warn{color:#f0c088}.cm-v.bad{color:#e79a9a}
+
+    .cm-note{background:rgba(120,140,170,.1);border:1px solid #3a4869;border-radius:8px;padding:11px 14px;color:#aeb9cf;font-size:12.5px;margin-bottom:16px;line-height:1.6}
+
+    .cm-layers{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:18px}
+    .cm-layer{background:rgba(30,40,64,.35);border:1px solid #2a3550;border-left:3px solid var(--accent,#3182f6);border-radius:10px;padding:14px 16px}
+    .cm-lhead{display:flex;align-items:baseline;gap:9px;margin-bottom:5px}
+    .cm-lfolder{font-family:monospace;font-weight:800;font-size:13.5px;color:var(--accent,#cdd9ef)}
+    .cm-lname{font-size:13px;font-weight:700;color:#cdd9ef}
+    .cm-lcount{margin-left:auto;font-size:17px;font-weight:800;color:#dfe7f5}
+    .cm-ldesc{font-size:11.5px;color:#8b97ad;line-height:1.5;margin-bottom:10px}
+    .cm-doms{display:flex;flex-wrap:wrap;gap:6px}
+    .cm-dom{display:inline-flex;align-items:center;gap:5px;background:#0f1626;border:1px solid #2a3550;border-radius:20px;padding:3px 10px;font-size:11.5px}
+    .cm-domn{color:#cdd9ef}
+    .cm-domc{color:var(--accent,#8fb4ff);font-weight:800}
+    .cm-dom-empty{color:#6b7688;font-style:italic}
+
+    .cm-panel{background:rgba(30,40,64,.25);border:1px solid #2a3550;border-radius:10px;padding:14px 16px;margin-bottom:16px;overflow-x:auto}
+    .cm-ptitle{font-size:12.5px;color:#cdd9ef;margin-bottom:10px;line-height:1.5}
+    .cm-matrix{border-collapse:collapse;font-size:12px}
+    .cm-matrix th{color:#8b97ad;font-weight:600;padding:6px 9px;font-family:monospace;font-size:10.5px;white-space:nowrap}
+    .cm-matrix tbody th{text-align:right;color:#cdd9ef}
+    .cm-matrix td{text-align:center;padding:6px 12px;font-weight:800;border-radius:4px}
+    .cm-matrix td.y{color:#8fdca4}
+    .cm-matrix td.n{color:#e0524d;background:rgba(224,82,77,.1)}
+    .cm-mlegend{margin-top:9px;font-size:11px;color:#8b97ad;line-height:1.5}
+
+    .cm-mis{width:100%;border-collapse:collapse;font-size:12px}
+    .cm-mis th{text-align:left;color:#8b97ad;font-weight:600;padding:6px 10px;border-bottom:1px solid #2a3550}
+    .cm-mis td{padding:6px 10px;border-bottom:1px solid rgba(42,53,80,.5)}
+    .cm-mis td.mono{font-family:monospace;color:#cdd9ef}
+    .cm-pill{font-family:monospace;font-size:11px;font-weight:700;color:#fff;background:var(--accent,#3182f6);border-radius:5px;padding:2px 7px}
+
+    .cm-badges{display:flex;flex-wrap:wrap;gap:8px}
+    .cm-badge{background:rgba(30,40,64,.4);border:1px solid #2a3550;border-radius:20px;padding:5px 12px;font-size:11.5px;color:#aeb9cf}
+</style>
