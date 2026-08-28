@@ -1,0 +1,149 @@
+@* ============================================================================
+   BacktestLabPanel — Phase 94-D: 순수 RCL 전략/백테스트 랩 (★0 Concrete Ref)
+     IStrategyLabPort(카트리지·시장·바인딩) + IBacktestExecutionPort(격자탐색 오프로드)만 소비 — 시세/DB/엔진
+     콘크리트를 0개 참조한 채 전략 UI 가 RCL 에서 동작함을 실증(UI Liberation 패턴).
+     비동기 컴퓨트 이탈/파기 방어는 94-C QuantComputeInterlock 재사용(δ=0 가드·stale 드롭).
+     ★한국 관례색: 수익률 상승=빨강(up)·하락=파랑(down). liveArmed:false(순수 발굴 — 발주 무접촉).
+   =========================================================================== *@
+@implements IDisposable
+@inject IStrategyLabPort Lab
+@inject IBacktestExecutionPort Backtest
+
+<div class="bl">
+    <div class="bl-head">
+        <div>
+            <div class="bl-t">🅔 전략 백테스트 랩 <span class="bl-tag">PORTABLE · 0 CONCRETE REF</span></div>
+            <div class="bl-s">전략 카트리지 격자 전수 백테스트 — 순수 UI(Port 경유·엔진 무참조·정보 제공용)</div>
+        </div>
+    </div>
+
+    @if (_cartridge is not null)
+    {
+        <div class="bl-cart">
+            <span class="bl-cart-n">🧬 @_cartridge.Name</span>
+            <span class="bl-cart-d">@_cartridge.Description</span>
+            <span class="bl-cart-g">격자 short{@string.Join("·", _cartridge.ShortParams)} × long{@string.Join("·", _cartridge.LongParams)} = @_cartridge.GridSize 조합</span>
+        </div>
+    }
+
+    <div class="bl-ctl">
+        <input class="bl-in" placeholder="종목코드 (예 005930)" @bind="_symbol" @bind:event="oninput" @onkeydown="OnKey" />
+        <select class="bl-sel" @bind="_marketCode">
+            @foreach (var m in _markets) { <option value="@m.Code">@m.Label</option> }
+        </select>
+        <button class="bl-btn" disabled="@_busy" @onclick="RunAsync">@(_busy ? "분석 중…" : "▶ 격자 백테스트")</button>
+    </div>
+
+    @if (_msg.Length > 0) { <div class="bl-msg">@_msg</div> }
+
+    @if (_rep is { IsValid: true } r && r.Best is not null)
+    {
+        <div class="bl-win">🏆 우승 <b>@r.Best.Label</b> · @r.Note</div>
+        <div class="bl-kpis">
+            <div class="bl-kpi @(r.Best.TotalReturn >= 0 ? "up" : "down")"><span>총 수익률</span><b>@r.Best.TotalReturn.ToString("+0.0;-0.0")%</b></div>
+            <div class="bl-kpi"><span>최대 낙폭(MDD)</span><b>@r.Best.MaxDrawdown.ToString("0.0")%</b></div>
+            <div class="bl-kpi"><span>승률 · 거래</span><b>@r.Best.WinRate.ToString("0")% · @r.Best.TradeCount</b></div>
+            <div class="bl-kpi"><span>Sharpe</span><b>@r.Best.Sharpe.ToString("0.00")</b></div>
+        </div>
+
+        <div class="bl-tbl-wrap">
+            <table class="bl-tbl">
+                <thead><tr><th>조합</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">승률</th><th class="r">거래</th><th class="r">Sharpe</th></tr></thead>
+                <tbody>
+                    @foreach (var c in r.Candidates.OrderByDescending(x => x.TotalReturn))
+                    {
+                        bool win = c.ShortP == r.Best.ShortP && c.LongP == r.Best.LongP;
+                        <tr class="@(win ? "win" : "")">
+                            <td>@(win ? "🏆 " : "")@c.Label</td>
+                            <td class="r @(c.TotalReturn >= 0 ? "up" : "down")">@c.TotalReturn.ToString("+0.0;-0.0")%</td>
+                            <td class="r">@c.MaxDrawdown.ToString("0.0")%</td>
+                            <td class="r">@c.WinRate.ToString("0")%</td>
+                            <td class="r">@c.TradeCount</td>
+                            <td class="r">@c.Sharpe.ToString("0.00")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="bl-note">캔들 @(r.CandlesUsed)개 · 과거 성과가 미래를 보장하지 않습니다(투자 권유 아님).</div>
+    }
+</div>
+
+<style>
+    .bl{padding:20px 24px 44px;color:var(--txt,#dbe7e5)}
+    .bl-head{margin-bottom:14px}
+    .bl-t{font-weight:800;font-size:17px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+    .bl-tag{font:700 9px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.08em;color:#6ee7b7;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);border-radius:6px;padding:3px 7px}
+    .bl-s{font-size:12px;color:var(--sub,#8ea3ad);margin-top:4px}
+    .bl-cart{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;padding:11px 14px;margin-bottom:14px;border-radius:12px;background:color-mix(in srgb,var(--accent,#14b8a6) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent,#14b8a6) 28%,transparent)}
+    .bl-cart-n{font-weight:800;color:var(--accent,#2dd4bf)}
+    .bl-cart-d{font-size:12px;color:var(--sub,#8ea3ad)}
+    .bl-cart-g{margin-left:auto;font:700 11px/1 'Roboto Mono',Consolas,monospace;color:var(--sub,#8ea3ad)}
+    .bl-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+    .bl-in{background:var(--card,#101a2e);border:1px solid var(--line,#2a3550);border-radius:10px;padding:9px 12px;color:var(--txt,#e6f2ef);font-size:13px;outline:none;width:180px}
+    .bl-in:focus{border-color:var(--accent,#14b8a6)}
+    .bl-sel{background:var(--card,#101a2e);border:1px solid var(--line,#2a3550);border-radius:10px;padding:9px 12px;color:var(--txt,#e6f2ef);font-size:13px;color-scheme:dark}
+    .bl-btn{background:linear-gradient(135deg,#2dd4bf,#14b8a6);color:#04201c;border:0;border-radius:10px;padding:9px 18px;font-weight:800;font-size:13px;cursor:pointer}
+    .bl-btn:disabled{opacity:.55;cursor:default}
+    .bl-msg{color:var(--down,#2f6df6);padding:6px 2px 12px;font-size:13px}
+    .bl-win{font-weight:700;margin:6px 0 12px;font-size:13.5px}
+    .bl-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+    .bl-kpi{background:var(--card,#101a2e);border:1px solid var(--line,#2a3550);border-radius:12px;padding:12px 14px}
+    .bl-kpi span{display:block;font-size:11px;color:var(--sub,#8ea3ad);margin-bottom:4px}
+    .bl-kpi b{font-size:18px;font-variant-numeric:tabular-nums}
+    .bl-tbl-wrap{overflow-x:auto;border:1px solid var(--line,#2a3550);border-radius:12px}
+    .bl-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+    .bl-tbl th{text-align:left;color:var(--sub,#8ea3ad);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--line,#2a3550);background:color-mix(in srgb,var(--accent,#14b8a6) 5%,transparent)}
+    .bl-tbl th.r{text-align:right}
+    .bl-tbl td{padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--line,#2a3550) 60%,transparent);font-variant-numeric:tabular-nums}
+    .bl-tbl td.r{text-align:right}
+    .bl-tbl tr.win{background:color-mix(in srgb,var(--up,#e5484d) 9%,transparent);font-weight:700}
+    .bl-note{font-size:11.5px;color:var(--sub,#8ea3ad);margin-top:8px}
+    .up{color:var(--up,#e5484d)}      /* 한국 관례: 상승/이익 = 빨강 */
+    .down{color:var(--down,#2f6df6)}  /* 한국 관례: 하락/손실 = 파랑 */
+    .bl-kpi.up b{color:var(--up,#e5484d)}.bl-kpi.down b{color:var(--down,#2f6df6)}
+</style>
+
+@code {
+    private StrategyCartridge? _cartridge;
+    private IReadOnlyList<MarketOption> _markets = Array.Empty<MarketOption>();
+    private string _symbol = "";
+    private int _marketCode;
+    private bool _busy;
+    private string _msg = "";
+    private IOptimizationReport? _rep;
+
+    private readonly QuantComputeInterlock _lock = new();   // 94-C 재사용: 이탈 취소·stale/파기 결과 드롭(δ=0 가드)
+
+    protected override void OnInitialized()
+    {
+        _cartridge = Lab.GetCartridges().FirstOrDefault();
+        _markets = Lab.GetMarkets();
+        if (_markets.Count > 0) _marketCode = _markets[0].Code;
+    }
+
+    private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter" && !_busy) _ = RunAsync(); }
+
+    private async Task RunAsync()
+    {
+        var sym = (_symbol ?? "").Trim().Split(' ')[0];
+        if (sym.Length == 0) { _msg = "종목코드를 입력하세요."; _rep = null; return; }
+        _busy = true; _msg = ""; _rep = null; StateHasChanged();
+
+        var (ct, gen) = _lock.Begin();
+        try
+        {
+            var rep = await Backtest.OptimizeAsync(sym, sym, _marketCode, 18, ct);
+            _lock.TryApply(gen, () =>
+            {
+                if (!rep.IsValid) { _msg = $"분석 불가: {rep.Note}"; _rep = null; }
+                else { _rep = rep; _msg = ""; }
+            });
+        }
+        catch (OperationCanceledException) { /* 이탈/재실행으로 취소 — 무시 */ }
+        catch (Exception ex) { _lock.TryApply(gen, () => _msg = "오류: " + ex.Message); }
+        finally { _lock.TryApply(gen, () => _busy = false); StateHasChanged(); }
+    }
+
+    public void Dispose() => _lock.Dispose();
+}

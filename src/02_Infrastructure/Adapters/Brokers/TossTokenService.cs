@@ -98,6 +98,15 @@ namespace MS2E.Infrastructure
         /// <summary>현재 유효 토큰 유무(빈 문자열이면 false).</summary>
         public bool HasValidToken => CurrentAccessToken().Length != 0;
 
+        /// <summary>현재 토큰 만료까지 남은 초. 스냅샷 없음 → -1(N/A) · 만료(경계 포함) → 0. 관제 표시용(δ=0·기존 상태 판독).</summary>
+        public long SecondsUntilExpiry()
+        {
+            Snapshot? s = Volatile.Read(ref _snapshot);
+            if (s is null) return -1;
+            long remain = s.ExpiresAtTicks - _clock();
+            return remain <= 0 ? 0 : remain / TimeSpan.TicksPerSecond;
+        }
+
         // ====================================================================
         // 핫패스(락-프리) — 실 주문 경로가 만지는 유일 지점. 네트워크 블록 0·할당 0.
         // ====================================================================

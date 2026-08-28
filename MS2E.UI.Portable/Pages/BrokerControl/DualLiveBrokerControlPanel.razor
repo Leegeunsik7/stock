@@ -1,0 +1,276 @@
+@* ============================================================================
+   DualLiveBrokerControlPanel — v11.3.0: 키움(x86 COM IPC) + 토스(OAuth REST) 이중 실통신 통합 관제.
+     · 이중 데이터 인제스트: 키움 하트비트(RTT/pong) + 토스 토큰 만료·429 누적을 실시간 점등.
+     · 양 브로커 평가자산/보유종목 병렬 비교표.
+     · ★Think-Beyond 배선: 이종 피드가 몰아쳐도 CrossBrokerDispatchCoalescer 가 프레임당 1회로 렌더 병합
+       (Cross-Broker UI Dispatcher Stalling 격리). SafeHold 격리 래치를 UI 헬스에 반영.
+     · ★liveArmed:false: 조회/관제 전용 — 이 화면에 발주 컨트롤은 존재하지 않는다(실 주문 패킷 100% Veto).
+   =========================================================================== *@
+@implements IDisposable
+@inject MS2E.UI.Portable.Ports.Brokers.IDualBrokerStatusPort Status
+
+<div class="dlb">
+    <div class="dlb-head">
+        <div>
+            <div class="dlb-title">🛰 이중 실통신 관제 · Kiwoom × Toss</div>
+            <div class="dlb-sub">x86 COM IPC + OAuth REST 라인 실시간 상태 · 조회 전용</div>
+        </div>
+        <span class="dlb-veto">🔒 liveArmed: <b>@(_liveArmed ? "TRUE" : "FALSE")</b> · 실 매수/매도 100% Veto</span>
+    </div>
+
+    @* ── 이중 피드 Dispatcher 병합 지표(Think-Beyond) ── *@
+    <div class="dlb-coal">
+        <span class="dlb-coal-k">⚡ Dispatcher 병합</span>
+        <span class="dlb-coal-i">마크 <b>@_marks.ToString("N0")</b></span>
+        <span class="dlb-coal-i">렌더 <b>@_renders.ToString("N0")</b></span>
+        <span class="dlb-coal-i">병합 <b class="up">@_coalesced.ToString("N0")</b></span>
+        <span class="dlb-coal-i">압축 <b>@CompressionText</b></span>
+        <span class="dlb-coal-note">이종 브로커 UI 폭풍을 프레임당 1렌더로 압축 — Stalling 격리</span>
+    </div>
+
+    @* ── 라인 상태 2카드 ── *@
+    <div class="dlb-lines">
+        @for (int i = 0; i < 2; i++)
+        {
+            var s = _lines[i];
+            <div class="dlb-line @HealthClass(s.Health)">
+                <div class="dlb-line-h">
+                    <span class="dlb-dot"></span>
+                    <span class="dlb-line-n">@(s.Line == MS2E.UI.Portable.Ports.Brokers.BrokerLine.Kiwoom ? "키움증권 · x86 COM" : "토스증권 · OAuth REST")</span>
+                    <span class="dlb-line-hb">@HealthLabel(s.Health)</span>
+                </div>
+                <div class="dlb-line-b">
+                    <div class="dlb-metric"><span>연결</span><b>@(s.Connected ? "● 연결됨" : "○ 미연결")</b></div>
+                    @if (s.HeartbeatAgeMs >= 0)
+                    {
+                        <div class="dlb-metric"><span>@(s.Line == MS2E.UI.Portable.Ports.Brokers.BrokerLine.Kiwoom ? "IPC RTT" : "최근 응답")</span><b>@s.HeartbeatAgeMs ms</b></div>
+                    }
+                    @if (s.TokenExpiresInSec >= 0)
+                    {
+                        <div class="dlb-metric"><span>토큰 만료</span><b class="@(s.TokenExpiresInSec < 60 ? "down" : "")">@s.TokenExpiresInSec s</b></div>
+                    }
+                    @if (s.Http429Count >= 0)
+                    {
+                        <div class="dlb-metric"><span>429 누적</span><b class="@(s.Http429Count > 0 ? "down" : "")">@s.Http429Count.ToString("N0")</b></div>
+                    }
+                    @if (s.ConsecutiveFailures >= 0)
+                    {
+                        <div class="dlb-metric"><span>연속 실패</span><b class="@(s.ConsecutiveFailures > 0 ? "down" : "")">@s.ConsecutiveFailures</b></div>
+                    }
+                </div>
+                <div class="dlb-line-d">@s.Detail</div>
+            </div>
+        }
+    </div>
+
+    @* ── 계좌 병렬 비교표 ── *@
+    <div class="dlb-panel-h">💼 평가자산 병렬 비교 <span class="dlb-tag">DUAL ACCOUNT</span></div>
+    <div class="dlb-tbl-wrap">
+        <table class="dlb-tbl">
+            <thead><tr><th>브로커</th><th class="r">총평가</th><th class="r">총손익</th><th class="r">예수금</th><th class="r">매수가능</th><th class="r">보유종목</th></tr></thead>
+            <tbody>
+                @for (int i = 0; i < 2; i++)
+                {
+                    var a = _accts[i];
+                    <tr>
+                        <td>@(a.Line == MS2E.UI.Portable.Ports.Brokers.BrokerLine.Kiwoom ? "키움증권" : "토스증권")</td>
+                        @if (a.HasData)
+                        {
+                            <td class="r">@Won(a.TotalEval)</td>
+                            <td class="r @PnlClass(a.TotalPnl)">@Won(a.TotalPnl)</td>
+                            <td class="r">@Won(a.Deposit)</td>
+                            <td class="r">@Won(a.BuyingPower)</td>
+                            <td class="r">@a.HoldingCount</td>
+                        }
+                        else
+                        {
+                            <td class="r sub" colspan="5">미동기화 — 자격증명 저장·실 조회 배선·물리 무장 후 로드(fail-closed·가짜 데이터 미표시)</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @* ── 토스 보유 종목(있으면) ── *@
+    @if (_tossHoldings.Count > 0)
+    {
+        <div class="dlb-panel-h">📄 토스 보유 종목 <span class="dlb-tag">@_tossHoldings.Count 종목</span></div>
+        <div class="dlb-tbl-wrap">
+            <table class="dlb-tbl">
+                <thead><tr><th>종목(해시)</th><th class="r">수량</th><th class="r">평균단가</th><th class="r">현재가</th><th class="r">평가손익</th></tr></thead>
+                <tbody>
+                    @foreach (var h in _tossHoldings)
+                    {
+                        <tr>
+                            <td class="mono">x@(h.SymbolHash.ToString("X8"))@(h.IsOverseas ? " 🌐" : "")</td>
+                            <td class="r">@h.Quantity</td>
+                            <td class="r">@Won(h.AvgPrice)</td>
+                            <td class="r">@Won(h.CurPrice)</td>
+                            <td class="r @PnlClass(h.UnrealizedPnl)">@Won(h.UnrealizedPnl)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<style>
+    .dlb{padding:20px 24px 44px;color:var(--txt,#dbe7e5)}
+    .dlb-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+    .dlb-title{font-weight:800;font-size:17px}
+    .dlb-sub{font-size:12px;color:var(--sub,#8ea3ad)}
+    .dlb-veto{margin-left:auto;font:700 11px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.04em;color:#6ee7b7;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.4);border-radius:999px;padding:7px 13px}
+    .dlb-veto b{color:#6ee7b7}
+    .dlb-coal{display:flex;align-items:center;gap:8px 18px;flex-wrap:wrap;padding:10px 14px;margin-bottom:16px;border-radius:12px;background:color-mix(in srgb,var(--accent,#14b8a6) 8%,transparent);border:1px solid color-mix(in srgb,var(--accent,#14b8a6) 30%,transparent);font-family:'Roboto Mono',Consolas,monospace;font-size:12px}
+    .dlb-coal-k{font-weight:800;color:var(--accent,#2dd4bf)}
+    .dlb-coal-i{color:var(--sub,#8ea3ad)}.dlb-coal-i b{color:var(--txt,#e6f2ef);font-variant-numeric:tabular-nums}
+    .dlb-coal-note{margin-left:auto;font-family:inherit;color:var(--sub,#8ea3ad);font-size:11px}
+    .dlb-lines{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+    .dlb-line{border:1px solid var(--line,#2a3550);border-radius:14px;padding:15px 16px;background:var(--card,#101a2e)}
+    .dlb-line-h{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+    .dlb-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+    .dlb-line-n{font-weight:800;font-size:13.5px}
+    .dlb-line-hb{margin-left:auto;font:700 10px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.06em;padding:4px 9px;border-radius:999px}
+    .dlb-line-b{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
+    .dlb-metric{display:flex;flex-direction:column;gap:2px}
+    .dlb-metric span{font-size:10.5px;color:var(--sub,#8ea3ad)}
+    .dlb-metric b{font-size:14px;font-variant-numeric:tabular-nums}
+    .dlb-line-d{font-size:11.5px;color:var(--sub,#8ea3ad);border-top:1px dashed var(--line,#2a3550);padding-top:8px}
+    /* 헬스 점등 */
+    .dlb-line.h-online .dlb-dot{background:#34d399;box-shadow:0 0 8px #34d399}
+    .dlb-line.h-online .dlb-line-hb{color:#6ee7b7;background:rgba(52,211,153,.14)}
+    .dlb-line.h-degraded .dlb-dot{background:#f59e0b;box-shadow:0 0 8px #f59e0b}
+    .dlb-line.h-degraded .dlb-line-hb{color:#fcd34d;background:rgba(245,158,11,.14)}
+    .dlb-line.h-safehold .dlb-dot{background:#f87171;box-shadow:0 0 8px #f87171}
+    .dlb-line.h-safehold .dlb-line-hb{color:#fca5a5;background:rgba(248,113,113,.14)}
+    .dlb-line.h-offline .dlb-dot{background:#5f7480}
+    .dlb-line.h-offline .dlb-line-hb{color:#8ea3ad;background:rgba(120,140,160,.12)}
+    .dlb-panel-h{font-weight:800;font-size:13.5px;margin:6px 0 10px;display:flex;align-items:center;gap:8px}
+    .dlb-tag{font:700 9px/1 'Roboto Mono',Consolas,monospace;letter-spacing:.08em;color:var(--sub,#8ea3ad);border:1px solid var(--line,#2a3550);border-radius:6px;padding:3px 6px}
+    .dlb-tbl-wrap{overflow-x:auto;border:1px solid var(--line,#2a3550);border-radius:12px;margin-bottom:20px}
+    .dlb-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+    .dlb-tbl th{text-align:left;color:var(--sub,#8ea3ad);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--line,#2a3550);background:color-mix(in srgb,var(--accent,#14b8a6) 5%,transparent)}
+    .dlb-tbl th.r{text-align:right}
+    .dlb-tbl td{padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--line,#2a3550) 60%,transparent);font-variant-numeric:tabular-nums}
+    .dlb-tbl td.r{text-align:right}
+    .dlb-tbl td.mono{font-family:'Roboto Mono',Consolas,monospace}
+    .dlb-tbl td.sub{color:var(--sub,#8ea3ad);text-align:left}
+    .up{color:var(--up,#e5484d)}       /* 한국 관례: 상승/이익 = 빨강 */
+    .down{color:var(--down,#2f6df6)}   /* 한국 관례: 하락/손실 = 파랑 */
+    @@media(max-width:820px){.dlb-lines{grid-template-columns:1fr}}
+</style>
+
+@code {
+    // 브로커 라인 인덱스: 0=키움, 1=토스 (코얼레서 broker id 와 일치).
+    private readonly MS2E.UI.Portable.Infrastructure.CrossBrokerDispatchCoalescer _coalescer = new(2);
+    private readonly MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[] _lines = new MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[2];
+    private readonly MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[] _lineBuf = new MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[2];  // 1회 할당 재사용(관리형 DTO — stackalloc 불가)
+    private readonly MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine[] _accts = new MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine[2];
+    private readonly List<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine> _tossHoldings = new();
+
+    private long _marks, _renders, _coalesced;
+    private bool _liveArmed;
+
+    private System.Threading.Timer? _pollTimer;   // 이종 피드 상태 폴(느림) → 코얼레서 Mark/SetHealth
+    private System.Threading.Timer? _pumpTimer;    // 프레임 경계 렌더 펌프(빠름) → TryDrain → 1렌더
+    private volatile bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        _liveArmed = Status.LiveArmed;   // 항상 false — 발주 무장 없음
+        Poll(null);                      // 초기 1회 수집
+        _pollTimer = new System.Threading.Timer(Poll, null, 700, 700);
+        _pumpTimer = new System.Threading.Timer(Pump, null, 33, 33);   // ~30fps 프레임 경계 펌프
+    }
+
+    // 이종 피드 스레드 모사: 상태를 읽어 변경분을 코얼레서에 Mark + 헬스 반영(δ=0 경로).
+    private void Poll(object? _)
+    {
+        if (_disposed) return;
+        try
+        {
+            int n = Status.GetLineStatus(_lineBuf);   // 배열→Span. 콜드 표시 경로(700ms) — δ=0 대상은 코얼레서 핫패스.
+            for (int i = 0; i < n && i < 2; i++)
+            {
+                var cur = _lineBuf[i];
+                var prev = _lines[i];
+                _lines[i] = cur;
+                // 변경 감지 → 이 브로커 라인 dirty 마크(코얼레싱 대상·δ=0)
+                if (!prev.Equals(cur)) _coalescer.Mark(i);
+                // 헬스 래치 반영: SafeHold 는 sticky 격리
+                var h = MapHealth(cur.Health);
+                if (h == MS2E.UI.Portable.Infrastructure.BrokerHealth.SafeHold) _coalescer.SafeHold(i);
+                else _coalescer.SetHealth(i, h);
+            }
+
+            Span<MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine> acc = stackalloc MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine[2];
+            int m = Status.GetAccounts(acc);
+            for (int i = 0; i < m && i < 2; i++) _accts[i] = acc[i];
+
+            RefreshTossHoldings();
+        }
+        catch { /* 폴 실패는 관제를 중단하지 않음(fail-closed·다음 주기 재시도) */ }
+    }
+
+    private void RefreshTossHoldings()
+    {
+        Span<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine> buf = stackalloc MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine[64];
+        int k = Status.GetHoldings(MS2E.UI.Portable.Ports.Brokers.BrokerLine.Toss, buf);
+        _tossHoldings.Clear();
+        for (int i = 0; i < k; i++) _tossHoldings.Add(buf[i]);
+    }
+
+    // 프레임 경계: dirty/헬스전이 병합분만 배수 → 있을 때만 1회 렌더(이종 폭풍을 프레임당 1렌더로 압축).
+    private void Pump(object? _)
+    {
+        if (_disposed) return;
+        Span<MS2E.UI.Portable.Infrastructure.BrokerFrame> frames = stackalloc MS2E.UI.Portable.Infrastructure.BrokerFrame[2];
+        int n = _coalescer.TryDrain(frames);
+        if (n > 0)
+        {
+            _marks = _coalescer.TotalMarks;
+            _renders = _coalescer.RenderTriggers;
+            _coalesced = _coalescer.Coalesced;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static MS2E.UI.Portable.Infrastructure.BrokerHealth MapHealth(MS2E.UI.Portable.Ports.Brokers.LineHealth h) => h switch
+    {
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Online   => MS2E.UI.Portable.Infrastructure.BrokerHealth.Online,
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Degraded => MS2E.UI.Portable.Infrastructure.BrokerHealth.Degraded,
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.SafeHold => MS2E.UI.Portable.Infrastructure.BrokerHealth.SafeHold,
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Offline  => MS2E.UI.Portable.Infrastructure.BrokerHealth.Offline,
+        _                                                   => MS2E.UI.Portable.Infrastructure.BrokerHealth.Degraded,
+    };
+
+    private static string HealthClass(MS2E.UI.Portable.Ports.Brokers.LineHealth h) => h switch
+    {
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Online   => "h-online",
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Degraded => "h-degraded",
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.SafeHold => "h-safehold",
+        _                                                   => "h-offline",
+    };
+
+    private static string HealthLabel(MS2E.UI.Portable.Ports.Brokers.LineHealth h) => h switch
+    {
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Online   => "ONLINE",
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Degraded => "DEGRADED",
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.SafeHold => "SAFE-HOLD",
+        MS2E.UI.Portable.Ports.Brokers.LineHealth.Connecting => "CONNECTING",
+        _                                                   => "OFFLINE",
+    };
+
+    private string CompressionText => _renders <= 0 ? "—" : $"{(_marks / (double)_renders):0.0}×";
+    private static string Won(decimal v) => v.ToString("#,##0");
+    private static string PnlClass(decimal v) => v >= 0 ? "up" : "down";   // 한국 관례: 이익 빨강 · 손실 파랑
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _pollTimer?.Dispose(); _pollTimer = null;
+        _pumpTimer?.Dispose(); _pumpTimer = null;
+    }
+}

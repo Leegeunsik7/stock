@@ -15,11 +15,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Strategy;   // Phase 94-D: 읽기 전용 결과 계약(0 Engine Ref UI 소비)
 
 namespace MS2E.Infrastructure
 {
     /// <summary>한 (short,long) 조합의 백테스트 점수.</summary>
-    public class OptCandidate
+    public class OptCandidate : IBacktestCandidate
     {
         public int ShortP { get; set; }
         public int LongP { get; set; }
@@ -32,7 +33,7 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>설정(Optimizer.Results)에 저장하는 경량 행 — EquityCurve/전체후보 제외.</summary>
-    public class OptRow
+    public class OptRow : IBacktestResultRow
     {
         public string Symbol { get; set; } = "";
         public string Name { get; set; } = "";
@@ -49,14 +50,17 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>밤사이 탐색 스냅샷(설정 JSON 1건).</summary>
-    public class OptSnapshot
+    public class OptSnapshot : IBacktestResultSnapshot
     {
         public string GeneratedAt { get; set; } = "";
         public List<OptRow> Rows { get; set; } = new();
+
+        // Phase 94-D: 읽기 전용 계약(공변) — List<OptRow> → IReadOnlyList<IBacktestResultRow>.
+        IReadOnlyList<IBacktestResultRow> IBacktestResultSnapshot.Rows => Rows;
     }
 
     /// <summary>한 종목의 격자탐색 결과(우승자 + 전체 후보).</summary>
-    public class OptResult
+    public class OptResult : IOptimizationReport
     {
         public string Symbol { get; set; } = "";
         public string Name { get; set; } = "";
@@ -65,6 +69,10 @@ namespace MS2E.Infrastructure
         public OptCandidate? Best { get; set; }
         public List<OptCandidate> Candidates { get; set; } = new();
         public int CandlesUsed { get; set; }
+
+        // Phase 94-D: 읽기 전용 계약(공변) — 콘크리트 후보/우승자를 인터페이스로 업캐스트.
+        IBacktestCandidate? IOptimizationReport.Best => Best;
+        IReadOnlyList<IBacktestCandidate> IOptimizationReport.Candidates => Candidates;
     }
 
     public static class StrategyOptimizer
