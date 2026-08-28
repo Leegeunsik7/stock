@@ -9,12 +9,17 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Strategy;   // Phase 94-E: 읽기 전용 Forge 결과 계약
 
 namespace MS2E.Infrastructure
 {
-    public sealed record ForgeCandidate(int Short, int Long, double OosMeanPct, double OosStdPct, double Score, int Trades, double FullReturnPct, bool Valid);
+    public sealed record ForgeCandidate(int Short, int Long, double OosMeanPct, double OosStdPct, double Score, int Trades, double FullReturnPct, bool Valid) : IForgeCandidate;
 
-    public sealed record ForgeResult(bool IsValid, IReadOnlyList<ForgeCandidate> Ranked, int Tested, int Folds, string Note);
+    public sealed record ForgeResult(bool IsValid, IReadOnlyList<ForgeCandidate> Ranked, int Tested, int Folds, string Note) : IForgeReport
+    {
+        // Phase 94-E: 공변 업캐스트 — IReadOnlyList<ForgeCandidate> → IReadOnlyList<IForgeCandidate>.
+        IReadOnlyList<IForgeCandidate> IForgeReport.Ranked => Ranked;
+    }
 
     public static class StrategyForge
     {

@@ -1,8 +1,13 @@
-@page "/forge"
-@inject IQuoteProvider Provider
-@inject SymbolContext SymCtx
-@inject LocalDatabase Db
+@* ============================================================================
+   ForgePage — Phase 94-E: 전략 단조소 (★0 Concrete Ref · Host→RCL 물리 이주)
+     레거시 IQuoteProvider/SymbolContext/LocalDatabase/StrategyForge/CartridgeService 직결을 전면 제거하고
+     IStrategyHubInfraPort(심볼 컨텍스트) + IStrategyForgePort(발굴·서명 카트리지 내보내기)만 소비.
+     라우팅 /forge 는 호스트 얇은 셸(ForgeHostPage)로 보존. ★liveArmed:false(순수 발굴·서명 — 발주 무접촉).
+     한국 관례색: OOS/수익 상승=빨강(up)·하락=파랑(down).
+   =========================================================================== *@
 @implements IDisposable
+@inject IStrategyHubInfraPort Infra
+@inject IStrategyForgePort Forge
 
 <div class="top">
     <div class="hello"><h1>🛠 전략 단조소 (Forge)</h1><p>MA 격자를 워크포워드 OOS로 평가해 <b>강건한 전략을 자가 발굴</b> → 서명된 카트리지로 포장 — 정보 제공이며 투자 권유 아님</p></div>
@@ -70,22 +75,19 @@ else if (_res is { IsValid: true })
     private string _sym = "", _msg = "", _cartName = "", _exportMsg = "";
     private int _folds = 4;
     private bool _busy;
-    private ForgeResult? _res;
+    private IForgeReport? _res;
     private readonly HashSet<(int s, int l)> _picked = new();
-    private const int AttestSeed = 7;
 
     protected override async Task OnInitializedAsync()
     {
-        if (SymCtx.HasSymbol) _sym = SymCtx.Symbol;
-        SymCtx.OnChange += OnSym;
+        if (Infra.HasSymbol) _sym = Infra.CurrentSymbol;
+        Infra.SymbolChanged += OnSym;
         if (!string.IsNullOrWhiteSpace(_sym)) await RunAsync();
     }
 
-    private void OnSym() { _sym = SymCtx.Symbol; InvokeAsync(RunAsync); }
+    private void OnSym() { _sym = Infra.CurrentSymbol; InvokeAsync(RunAsync); }
     private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") _ = RunAsync(); }
     private void Toggle((int s, int l) key, bool on) { if (on) _picked.Add(key); else _picked.Remove(key); }
-
-    private static Market Detect(string s) => s.Length == 6 && char.IsDigit(s[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
 
     private async Task RunAsync()
     {
@@ -96,9 +98,7 @@ else if (_res is { IsValid: true })
         _busy = true; StateHasChanged();
         try
         {
-            var candles = await Provider.GetHistoryAsync(sym, Detect(sym), DateTime.Now.AddYears(-2), DateTime.Now);
-            candles = candles.OrderBy(c => c.Date).ToList();
-            _res = StrategyForge.Run(candles, _folds);
+            _res = await Forge.ForgeAsync(sym, _folds);   // 어댑터가 시세 조회 + StrategyForge 실행(오프로드)
             if (!_res.IsValid) _msg = $"{sym}: {_res.Note}";
             if (string.IsNullOrWhiteSpace(_cartName)) _cartName = $"{sym} 강건 전략";
         }
@@ -106,20 +106,20 @@ else if (_res is { IsValid: true })
         finally { _busy = false; StateHasChanged(); }
     }
 
-    private void ExportCartridge()
+    private async Task ExportCartridge()
     {
         if (_res is null || _picked.Count == 0) return;
         try
         {
-            var strategies = _picked
-                .Select(k => CartridgeEngine.Attest($"MA {k.s}/{k.l}", k.s, k.l, AttestSeed))
-                .ToList();
-            var cart = CartridgeService.BuildSigned(Db, _cartName, $"Forge 발굴 · {_sym} · {_res.Folds}폴드 OOS", strategies);
-            var path = CartridgeService.ExportToFile(cart);
-            _exportMsg = $"✅ 서명·내보내기: {System.IO.Path.GetFileName(path)} (카트리지 화면에서 확인/교환)";
+            var picks = _picked.Select(k => new ForgePick(k.s, k.l)).ToList();
+            var file = await Forge.ExportCartridgeAsync(_cartName, $"Forge 발굴 · {_sym} · {_res.Folds}폴드 OOS", picks);
+            _exportMsg = string.IsNullOrEmpty(file)
+                ? "내보내기 실패(선택 없음 또는 서명 오류)."
+                : $"✅ 서명·내보내기: {file} (카트리지 화면에서 확인/교환)";
+            Infra.Notify("카트리지 내보내기", _exportMsg, StrategyNotifyLevel.Success);
         }
         catch (Exception ex) { _exportMsg = "내보내기 실패: " + ex.Message; }
     }
 
-    public void Dispose() => SymCtx.OnChange -= OnSym;
+    public void Dispose() => Infra.SymbolChanged -= OnSym;
 }

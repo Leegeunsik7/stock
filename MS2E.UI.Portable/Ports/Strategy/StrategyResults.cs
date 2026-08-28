@@ -54,4 +54,26 @@ namespace MS2E.UI.Portable.Ports.Strategy
         string GeneratedAt { get; }
         IReadOnlyList<IBacktestResultRow> Rows { get; }
     }
+
+    /// <summary>전략 단조소(Forge) 워크포워드 강건 후보(읽기 전용).</summary>
+    public interface IForgeCandidate
+    {
+        int    Short         { get; }
+        int    Long          { get; }
+        double OosMeanPct    { get; }
+        double OosStdPct     { get; }
+        double Score         { get; }
+        int    Trades        { get; }
+        double FullReturnPct { get; }
+    }
+
+    /// <summary>전략 단조소 발굴 리포트(읽기 전용).</summary>
+    public interface IForgeReport
+    {
+        bool    IsValid { get; }
+        IReadOnlyList<IForgeCandidate> Ranked { get; }
+        int     Tested  { get; }
+        int     Folds   { get; }
+        string  Note    { get; }
+    }
 }

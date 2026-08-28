@@ -39,6 +39,20 @@ namespace MS2E.UI.Portable.Ports.Strategy
         bool TryBind(string cartridgeId, int shortParam, int longParam, out string error);
     }
 
+    /// <summary>서명·내보내기 대상 전략 선택(순수 DTO).</summary>
+    public readonly record struct ForgePick(int Short, int Long);
+
+    /// <summary>전략 단조소(Forge) Port — MA 격자 워크포워드 OOS 발굴 + 서명 카트리지 내보내기.</summary>
+    public interface IStrategyForgePort
+    {
+        /// <summary>강건 전략 발굴(어댑터가 시세 내부 조회 + StrategyForge 실행·오프로드).</summary>
+        Task<IForgeReport> ForgeAsync(string symbol, int folds, int years = 2, CancellationToken ct = default);
+
+        /// <summary>선택 전략들을 서명된 카트리지 파일로 내보내기 → 파일명 반환(CartridgeService/DB 격리).</summary>
+        Task<string> ExportCartridgeAsync(string cartridgeName, string description,
+            IReadOnlyList<ForgePick> picks, CancellationToken ct = default);
+    }
+
     /// <summary>백테스트 연산 Port(고부하 — 백그라운드 오프로드·취소·스트리밍).</summary>
     public interface IBacktestExecutionPort
     {

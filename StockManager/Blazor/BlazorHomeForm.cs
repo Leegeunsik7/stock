@@ -888,6 +888,11 @@ namespace StockManager.Blazor
             // Phase 94-D — 전략/백테스트 엔진 Port(DIP): UI 는 IStrategyLabPort/IBacktestExecutionPort 만 알고 시세/DB/엔진은 어댑터가 격리(내부 fetch·오프로드).
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyLabPort, MS2E.Infrastructure.StrategyLabAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IBacktestExecutionPort, MS2E.Infrastructure.BacktestExecutionAdapter>();
+            // Phase 94-E — 전략 허브 인프라 파사드 Port(DIP·심층 의존성 해체): 시세이력 스트리밍(경계고정 BoundedQuoteWindow)·
+            //   설정/후보군 DB·비동기 알림·심볼컨텍스트를 어댑터가 격리(레거시 페이지의 LocalDatabase/IQuoteProvider/ToastService/SymbolContext 직결 제거 기반).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyHubInfraPort, MS2E.Infrastructure.StrategyHubInfraAdapter>();
+            // Phase 94-E — 전략 단조소 Port(DIP): ForgePage 이주 기반. StrategyForge 발굴 + 카트리지 서명·내보내기를 어댑터가 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyForgePort, MS2E.Infrastructure.StrategyForgeAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
