@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using MS2E.UI.Portable.Ports.Strategy;   // Phase 94-F: 복합 알림 읽기 전용 계약(도메인 구상 은닉)
 
 namespace MS2E.Infrastructure
 {
@@ -15,12 +16,24 @@ namespace MS2E.Infrastructure
     public enum CondOp { Gte, Lte }
     public enum RuleLogic { And, Or }
 
-    public class CompositeCondition
+    public class CompositeCondition : ICondMetricView
     {
         public CondMetric Metric { get; set; } = CondMetric.Price;
         public int Param { get; set; } = 20;        // MA/RSI 기간
         public CondOp Op { get; set; } = CondOp.Gte;
         public decimal Threshold { get; set; }
+
+        // Phase 94-F: 읽기 전용 계약(도메인 enum 미유입) — 라벨/서술 문자열로만 투사.
+        public string MetricLabel => Metric switch
+        {
+            CondMetric.Price => "현재가",
+            CondMetric.ChangePct => "등락률",
+            CondMetric.MaGapPct => $"MA{Param} 괴리",
+            CondMetric.Rsi => $"RSI{Param}",
+            CondMetric.VolumeSurgePct => "거래량 증가",
+            _ => ""
+        };
+        string ICondMetricView.Summary => Describe();
 
         public string Describe() => Metric switch
         {
@@ -34,7 +47,7 @@ namespace MS2E.Infrastructure
         private string OpKr => Op == CondOp.Gte ? "≥" : "≤";
     }
 
-    public class CompositeRule
+    public class CompositeRule : ICompositeRuleContract
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("N")[..6];
         public string Name { get; set; } = "새 규칙";
@@ -45,6 +58,9 @@ namespace MS2E.Infrastructure
         public bool Enabled { get; set; } = true;
         public int CooldownMin { get; set; } = 30;
         public DateTime? LastFired { get; set; }
+
+        // Phase 94-F: 공변 업캐스트 — List<CompositeCondition> → IReadOnlyList<ICondMetricView>.
+        IReadOnlyList<ICondMetricView> ICompositeRuleContract.Conditions => Conditions;
     }
 
     /// <summary>평가 입력: 시세 스냅샷 + 일봉 종가/거래량 시계열</summary>

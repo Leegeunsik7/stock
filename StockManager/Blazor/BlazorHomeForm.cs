@@ -893,6 +893,12 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyHubInfraPort, MS2E.Infrastructure.StrategyHubInfraAdapter>();
             // Phase 94-E — 전략 단조소 Port(DIP): ForgePage 이주 기반. StrategyForge 발굴 + 카트리지 서명·내보내기를 어댑터가 격리.
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyForgePort, MS2E.Infrastructure.StrategyForgeAdapter>();
+            // Phase 94-F — 옵티마이저 실행 + 복합 알림 Port(DIP): OptimizerPage 이주 기반. WalkForward/CompositeAlertEngine 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IOptimizerExecutionPort, MS2E.Infrastructure.OptimizerExecutionAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ICompositeAlertPort, MS2E.Infrastructure.CompositeAlertAdapter>();
+            // Phase 94-F — 시그널 저장소 + 서비스 Port(DIP): SignalPage 이주 기반. 원시 SQL/DataTable/DashboardService/SampleData/AlertCenter/BacktestEngine 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsRepositoryPort, MS2E.Infrastructure.SignalsRepositoryAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsServicePort, MS2E.Infrastructure.SignalsServiceAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

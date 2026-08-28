@@ -76,4 +76,31 @@ namespace MS2E.UI.Portable.Ports.Strategy
         int     Folds   { get; }
         string  Note    { get; }
     }
+
+    /// <summary>워크포워드 한 폴드(train→test)의 in/out 성과(읽기 전용).</summary>
+    public interface IWalkForwardFold
+    {
+        int     Index           { get; }
+        string  Label           { get; }
+        decimal InSampleReturn  { get; }
+        decimal OutSampleReturn { get; }
+        int     OosTradeCount   { get; }
+        bool    OosWin          { get; }
+    }
+
+    /// <summary>워크포워드(강건성) 검증 리포트(읽기 전용).</summary>
+    public interface IWalkForwardReport
+    {
+        bool    IsValid      { get; }
+        string  Note         { get; }
+        string  Verdict      { get; }
+        string  RecLabel     { get; }
+        int     FoldCount    { get; }
+        decimal AvgInSample  { get; }
+        decimal AvgOutSample { get; }
+        decimal OosWinRate   { get; }
+        decimal Efficiency   { get; }
+        decimal Degradation  { get; }
+        IReadOnlyList<IWalkForwardFold> Folds { get; }
+    }
 }

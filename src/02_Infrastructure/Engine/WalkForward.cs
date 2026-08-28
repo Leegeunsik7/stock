@@ -16,11 +16,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports.Strategy;   // Phase 94-F: 읽기 전용 워크포워드 결과 계약
 
 namespace MS2E.Infrastructure
 {
     /// <summary>한 폴드(train→test)의 in/out 성과.</summary>
-    public class WalkForwardFold
+    public class WalkForwardFold : IWalkForwardFold
     {
         public int Index { get; set; }
         public int ShortP { get; set; }
@@ -33,8 +34,11 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>한 종목의 Walk-Forward 결과(폴드 + 집계 + 강건성 판정).</summary>
-    public class WalkForwardResult
+    public class WalkForwardResult : IWalkForwardReport
     {
+        // Phase 94-F: 공변 업캐스트 — List<WalkForwardFold> → IReadOnlyList<IWalkForwardFold>.
+        IReadOnlyList<IWalkForwardFold> IWalkForwardReport.Folds => Folds;
+
         public string Symbol { get; set; } = "";
         public string Name { get; set; } = "";
         public bool IsValid { get; set; }

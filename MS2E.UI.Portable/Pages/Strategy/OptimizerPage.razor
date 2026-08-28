@@ -1,33 +1,32 @@
-@page "/optimizer"
-@inject IQuoteProvider Provider
-@inject LocalDatabase Db
-@inject SymbolContext Ctx
+@* ============================================================================
+   OptimizerPage — Phase 94-F: 오버나잇 전략 옵티마이저 (★0 Concrete Ref · Host→RCL 물리 이주)
+     레거시 IQuoteProvider/LocalDatabase/SymbolContext/ToastService/StrategyOptimizer/WalkForward/CompositeAlertEngine
+     직결을 전면 제거하고 IStrategyHubInfraPort(설정·심볼·알림) + IOptimizerExecutionPort(최적화·워크포워드·스윕) +
+     ICompositeAlertPort(추세필터 주입·도메인 은닉) + IStrategyLabPort(격자수)만 소비. 라우팅 /optimizer 는 호스트 셸로 보존.
+     ★한국 관례색: 수익률 상승=빨강(up)·하락=파랑(down). liveArmed:false(순수 발굴/검증 — 발주·DCA 무접촉).
+   =========================================================================== *@
 @implements IDisposable
-@inject ToastService Toasts
+@inject IStrategyHubInfraPort Infra
+@inject IOptimizerExecutionPort Opt
+@inject ICompositeAlertPort Alerts
+@inject IStrategyLabPort Lab
 @inject NavigationManager Nav
-@using System.Text.Json
 
-<CrossLinks Current="optimizer" />
 <div class="top">
     <div class="hello"><h1>🌙 오버나잇 전략 옵티마이저</h1><p>종목별 MA 골든/데드크로스 기간을 격자 전수 백테스트해 "그 종목에 맞았던" 값 발굴 (정보 제공용)</p></div>
     <input class="srch" style="width:150px" placeholder="종목코드 (예 005930)" @bind="_symbol" @bind:event="oninput" />
-    <select class="srch" style="width:130px;margin:0 8px" @bind="_market">
-        <option value="@Market.KRX_KOSPI">코스피</option>
-        <option value="@Market.KRX_KOSDAQ">코스닥</option>
-        <option value="@Market.US_NASDAQ">나스닥</option>
-        <option value="@Market.US_NYSE">뉴욕</option>
-        <option value="@Market.US_AMEX">아멕스</option>
+    <select class="srch" style="width:130px;margin:0 8px" @bind="_marketCode">
+        @foreach (var m in _markets) { <option value="@m.Code">@m.Label</option> }
     </select>
     <button class="addbtn" style="margin-right:16px" disabled="@_busy" @onclick="RunOneAsync">@(_busy?"분석 중…":"▶ 이 종목 분석")</button>
 </div>
 
 <div style="padding:0 28px 40px;max-width:1000px">
     <div style="background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:12px;color:var(--sub);margin-bottom:16px">
-        ℹ️ 격자 = 단기 {5·8·10·12} × 장기 {20·26·30·60} (단기&lt;장기 @(StrategyOptimizer.GridSize)조합). 점수=총수익률, 동점 시 MDD 작은 쪽.
+        ℹ️ 격자 = 단기 {5·8·10·12} × 장기 {20·26·30·60} (단기&lt;장기 @(_grid)조합). 점수=총수익률, 동점 시 MDD 작은 쪽.
         <b>과거 성과가 미래를 보장하지 않습니다(투자 권유 아님).</b> 무거래 조합은 후보에서 제외합니다.
     </div>
 
-    <!-- 백그라운드 자동 실행 설정 -->
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:18px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer">
@@ -42,24 +41,23 @@
         </div>
         <div style="color:var(--sub);font-size:11.5px;margin-top:8px">
             보유 주식(최대 25종목)을 18개월 일봉으로 분석합니다. 읽기전용 백테스트만 수행하며 <b>주문·DCA를 절대 건드리지 않습니다.</b>
-            앱이 켜져 있을 때 간격마다 1회 실행됩니다.
         </div>
     </div>
 
     @if (_oneMsg.Length > 0) { <div style="color:var(--down);padding:6px 2px 14px">@_oneMsg</div> }
 
-    @if (_one is { IsValid: true })
+    @if (_one is { IsValid: true } one && one.Best is not null)
     {
-        <div style="font-weight:700;margin:6px 0 10px">🎯 @_one.Name (@_one.Symbol) — 우승 @_one.Best!.Label</div>
+        <div style="font-weight:700;margin:6px 0 10px">🎯 @one.Name (@one.Symbol) — 우승 @one.Best.Label</div>
         <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
-            <div class="kpi @(_one.Best.TotalReturn>=0?"u":"d")"><div class="k-lab">총 수익률</div><div class="k-val">@_one.Best.TotalReturn.ToString("+0.0;-0.0")%</div></div>
-            <div class="kpi d"><div class="k-lab">최대 낙폭 (MDD)</div><div class="k-val">@_one.Best.MaxDrawdown.ToString("0.0")%</div></div>
-            <div class="kpi k"><div class="k-lab">승률 · 거래</div><div class="k-val">@_one.Best.WinRate.ToString("0")% · @_one.Best.TradeCount</div></div>
-            <div class="kpi k"><div class="k-lab">Sharpe</div><div class="k-val">@_one.Best.Sharpe.ToString("0.00")</div></div>
+            <div class="kpi @(one.Best.TotalReturn>=0?"u":"d")"><div class="k-lab">총 수익률</div><div class="k-val">@one.Best.TotalReturn.ToString("+0.0;-0.0")%</div></div>
+            <div class="kpi d"><div class="k-lab">최대 낙폭 (MDD)</div><div class="k-val">@one.Best.MaxDrawdown.ToString("0.0")%</div></div>
+            <div class="kpi k"><div class="k-lab">승률 · 거래</div><div class="k-val">@one.Best.WinRate.ToString("0")% · @one.Best.TradeCount</div></div>
+            <div class="kpi k"><div class="k-lab">Sharpe</div><div class="k-val">@one.Best.Sharpe.ToString("0.00")</div></div>
         </div>
         <div style="margin:2px 0 14px">
-            <button class="addbtn" @onclick="() => InjectComposite(_one)">🔔 복합 알림으로 추가</button>
-            <span style="color:var(--sub);font-size:11.5px;margin-left:10px">우승 장기선(MA@(_one.Best.LongP)) 복귀 시 알림 — 표준화된 추세 필터(정확한 교차 아님).</span>
+            <button class="addbtn" @onclick="() => InjectComposite(one)">🔔 복합 알림으로 추가</button>
+            <span style="color:var(--sub);font-size:11.5px;margin-left:10px">우승 장기선(MA@(one.Best.LongP)) 복귀 시 알림 — 표준화된 추세 필터(정확한 교차 아님).</span>
         </div>
 
         <div class="panel"><div class="panel-h">최적 조합 격자 <span class="tag">OPTIMIZER</span></div>
@@ -71,9 +69,9 @@
                     <th style="text-align:right;padding:8px 12px">거래</th><th style="text-align:right;padding:8px 12px">Sharpe</th>
                 </tr></thead>
                 <tbody>
-                @foreach (var c in _one.Candidates.OrderByDescending(x => x.TotalReturn))
+                @foreach (var c in one.Candidates.OrderByDescending(x => x.TotalReturn))
                 {
-                    bool win = c.ShortP == _one.Best.ShortP && c.LongP == _one.Best.LongP;
+                    bool win = c.ShortP == one.Best.ShortP && c.LongP == one.Best.LongP;
                     <tr style="border-top:1px solid var(--line);@(win?"background:color-mix(in srgb,var(--up) 10%,transparent);font-weight:700":"")">
                         <td style="padding:7px 12px">@(win?"🏆 ":"")@c.Label</td>
                         <td style="text-align:right;padding:7px 12px" class="@(c.TotalReturn>=0?"up":"down")">@c.TotalReturn.ToString("+0.0;-0.0")%</td>
@@ -87,26 +85,25 @@
             </table>
         </div>
         </div>
-        <div class="sub" style="font-size:11.5px;margin-bottom:18px">@_one.Note · 캔들 @(_one.CandlesUsed)개</div>
+        <div class="sub" style="font-size:11.5px;margin-bottom:18px">@one.Note · 캔들 @(one.CandlesUsed)개</div>
 
-        <!-- 강건성 검증 (Walk-Forward) -->
         <div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px">
             <div style="font-weight:700">🧪 강건성 검증 (Walk-Forward)</div>
             <button class="ghost" disabled="@_wfBusy" @onclick="RunWalkForwardAsync">@(_wfBusy?"검증 중…":"▶ 검증 실행")</button>
             <span style="color:var(--sub);font-size:11.5px">학습창에서 뽑은 값이 <b>다음 구간(OOS)</b>에서도 통하는지 — 과최적화를 거른다.</span>
         </div>
         @if (_wfMsg.Length > 0) { <div style="color:var(--down);padding:2px 0 16px">@_wfMsg</div> }
-        @if (_wf is { IsValid: true })
+        @if (_wf is { IsValid: true } wf)
         {
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-                <span style="background:color-mix(in srgb,@WfColor() 16%,transparent);border:1px solid @WfColor();color:@WfColor();font-weight:800;border-radius:8px;padding:3px 12px">@_wf.Verdict</span>
-                <span style="color:var(--sub);font-size:12px">추천 @_wf.RecLabel · @(_wf.FoldCount)개 OOS 창</span>
+                <span style="background:color-mix(in srgb,@WfColor() 16%,transparent);border:1px solid @WfColor();color:@WfColor();font-weight:800;border-radius:8px;padding:3px 12px">@wf.Verdict</span>
+                <span style="color:var(--sub);font-size:12px">추천 @wf.RecLabel · @(wf.FoldCount)개 OOS 창</span>
             </div>
             <div class="kpis" style="margin:0 0 14px;grid-template-columns:repeat(4,1fr)">
-                <div class="kpi @(_wf.AvgInSample>=0?"u":"d")"><div class="k-lab">평균 IS 수익(학습)</div><div class="k-val">@_wf.AvgInSample.ToString("+0.0;-0.0")%</div></div>
-                <div class="kpi @(_wf.AvgOutSample>=0?"u":"d")"><div class="k-lab">평균 OOS 수익(검증)</div><div class="k-val">@_wf.AvgOutSample.ToString("+0.0;-0.0")%</div></div>
-                <div class="kpi k"><div class="k-lab">OOS 승률</div><div class="k-val">@_wf.OosWinRate.ToString("0")%</div></div>
-                <div class="kpi k"><div class="k-lab">효율 (OOS/IS)</div><div class="k-val">@_wf.Efficiency.ToString("0")%</div></div>
+                <div class="kpi @(wf.AvgInSample>=0?"u":"d")"><div class="k-lab">평균 IS 수익(학습)</div><div class="k-val">@wf.AvgInSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="kpi @(wf.AvgOutSample>=0?"u":"d")"><div class="k-lab">평균 OOS 수익(검증)</div><div class="k-val">@wf.AvgOutSample.ToString("+0.0;-0.0")%</div></div>
+                <div class="kpi k"><div class="k-lab">OOS 승률</div><div class="k-val">@wf.OosWinRate.ToString("0")%</div></div>
+                <div class="kpi k"><div class="k-lab">효율 (OOS/IS)</div><div class="k-val">@wf.Efficiency.ToString("0")%</div></div>
             </div>
             <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:8px">
                 <table style="width:100%;border-collapse:collapse;font-size:12.5px">
@@ -116,7 +113,7 @@
                         <th style="text-align:right;padding:8px 12px">OOS 거래</th><th style="text-align:center;padding:8px 12px">판정</th>
                     </tr></thead>
                     <tbody>
-                    @foreach (var f in _wf.Folds)
+                    @foreach (var f in wf.Folds)
                     {
                         <tr style="border-top:1px solid var(--line)">
                             <td style="padding:7px 12px">#@(f.Index + 1)</td>
@@ -131,16 +128,15 @@
                 </table>
             </div>
             <div class="sub" style="font-size:11.5px;margin-bottom:24px">
-                과최적화 갭(IS−OOS) @_wf.Degradation.ToString("+0.0;-0.0")%p · 갭이 크고 OOS가 음(−)이면 그 우승값은 과거에만 맞은 것입니다.
+                과최적화 갭(IS−OOS) @wf.Degradation.ToString("+0.0;-0.0")%p · 갭이 크고 OOS가 음(−)이면 그 우승값은 과거에만 맞은 것입니다.
             </div>
         }
     }
 
-    <!-- 밤사이 백그라운드 스냅샷 -->
     <div style="font-weight:700;margin:8px 0 10px">📋 보유 종목 자동 분석 결과</div>
-    @if (_snap is { Rows.Count: > 0 })
+    @if (_snap is { Rows.Count: > 0 } snap)
     {
-        <div class="sub" style="font-size:12px;margin-bottom:8px">생성 @FmtTime(_snap.GeneratedAt) · @_snap.Rows.Count(r => r.IsValid)/@_snap.Rows.Count 종목 유효</div>
+        <div class="sub" style="font-size:12px;margin-bottom:8px">생성 @FmtTime(snap.GeneratedAt) · @snap.Rows.Count(r => r.IsValid)/@snap.Rows.Count 종목 유효</div>
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden">
             <table style="width:100%;border-collapse:collapse;font-size:12.5px">
                 <thead><tr style="background:color-mix(in srgb,var(--accent) 6%,transparent);color:var(--sub)">
@@ -149,7 +145,7 @@
                     <th style="text-align:right;padding:8px 12px">승률</th><th style="text-align:right;padding:8px 12px">거래</th><th style="padding:8px 12px"></th>
                 </tr></thead>
                 <tbody>
-                @foreach (var r in _snap.Rows.OrderByDescending(x => x.IsValid).ThenByDescending(x => x.TotalReturn))
+                @foreach (var r in snap.Rows.OrderByDescending(x => x.IsValid).ThenByDescending(x => x.TotalReturn))
                 {
                     <tr style="border-top:1px solid var(--line)">
                         <td style="padding:7px 12px"><b>@r.Name</b> <span style="color:var(--sub)">@r.Symbol</span></td>
@@ -174,67 +170,57 @@
 
 @code {
     private string _symbol = "";
-    private Market _market = Market.KRX_KOSPI;
+    private int _marketCode;
     private bool _busy, _enabled, _wfBusy;
-    private int _intervalHours = 24;
+    private int _intervalHours = 24, _grid;
     private string _oneMsg = "", _lastRunLabel = "", _wfMsg = "";
-    private OptResult? _one;
-    private OptSnapshot? _snap;
-    private List<Candle> _candles = new();   // 마지막 단일 분석 캔들(강건성 검증 재사용)
-    private WalkForwardResult? _wf;
+    private IOptimizationReport? _one;
+    private IBacktestResultSnapshot? _snap;
+    private IWalkForwardReport? _wf;
+    private IReadOnlyList<MarketOption> _markets = Array.Empty<MarketOption>();
 
     protected override void OnInitialized()
     {
-        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
-        Ctx.OnChange += OnSym;
-        _enabled = Db.GetSetting("Optimizer.Enabled") == "true";
-        if (int.TryParse(Db.GetSetting("Optimizer.IntervalHours"), out var h) && h > 0) _intervalHours = h;
-        LoadSnapshot();
+        _markets = Lab.GetMarkets();
+        if (_markets.Count > 0) _marketCode = _markets[0].Code;
+        _grid = Lab.GetCartridges().FirstOrDefault()?.GridSize ?? 13;
+
+        if (Infra.HasSymbol) { _symbol = Infra.CurrentSymbol; _marketCode = Infra.CurrentMarketCode; }
+        Infra.SymbolChanged += OnSym;
+
+        _enabled = Infra.GetSetting("Optimizer.Enabled") == "true";
+        if (int.TryParse(Infra.GetSetting("Optimizer.IntervalHours"), out var h) && h > 0) _intervalHours = h;
+        _snap = Opt.LoadLastSnapshot();
         UpdateLastRun();
     }
 
-    private void LoadSnapshot()
-    {
-        try
-        {
-            var j = Db.GetSetting("Optimizer.Results");
-            if (!string.IsNullOrWhiteSpace(j)) _snap = JsonSerializer.Deserialize<OptSnapshot>(j);
-        }
-        catch { _snap = null; }
-    }
-
     private void UpdateLastRun()
-    {
-        _lastRunLabel = DateTime.TryParse(Db.GetSetting("Optimizer.LastRun"), out var t)
-            ? $"마지막 실행 {t:MM-dd HH:mm}" : "아직 실행 안 됨";
-    }
+        => _lastRunLabel = DateTime.TryParse(Infra.GetSetting("Optimizer.LastRun"), out var t) ? $"마지막 실행 {t:MM-dd HH:mm}" : "아직 실행 안 됨";
 
     private void ToggleEnabled(ChangeEventArgs e)
     {
         _enabled = e.Value is true;
-        Db.SetSetting("Optimizer.Enabled", _enabled ? "true" : "false");
-        Toasts.Info(_enabled ? "밤사이 자동 분석 켜짐" : "자동 분석 꺼짐",
-            _enabled ? $"{_intervalHours}시간마다 보유 종목을 분석합니다." : "");
+        Infra.SetSetting("Optimizer.Enabled", _enabled ? "true" : "false");
+        Infra.Notify(_enabled ? "밤사이 자동 분석 켜짐" : "자동 분석 꺼짐",
+            _enabled ? $"{_intervalHours}시간마다 보유 종목을 분석합니다." : "", StrategyNotifyLevel.Info);
     }
 
-    private void SaveInterval() => Db.SetSetting("Optimizer.IntervalHours", _intervalHours.ToString());
+    private void SaveInterval() => Infra.SetSetting("Optimizer.IntervalHours", _intervalHours.ToString());
 
     private void Probe(string sym) { _symbol = sym; _ = RunOneAsync(); }
 
-    // 전역 활성 종목 변경 → 이 페이지를 새 종목으로 즉시 재실행
-    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunOneAsync); }
-    public void Dispose() => Ctx.OnChange -= OnSym;
+    private void OnSym() { _symbol = Infra.CurrentSymbol; _marketCode = Infra.CurrentMarketCode; InvokeAsync(RunOneAsync); }
+    public void Dispose() => Infra.SymbolChanged -= OnSym;
 
     private async Task RunOneAsync()
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _oneMsg = "종목코드를 입력하세요."; return; }
-        Ctx.Set(sym, _market);
+        Infra.SetSymbol(sym, _marketCode);
         _busy = true; _oneMsg = ""; _one = null; _wf = null; _wfMsg = ""; StateHasChanged();
         try
         {
-            _candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-18), DateTime.Now);
-            _one = StrategyOptimizer.Optimize(sym, sym, _candles, _market);
+            _one = await Opt.OptimizeAsync(sym, sym, _marketCode, 18);
             if (!_one.IsValid) { _oneMsg = $"분석 불가: {_one.Note}"; _one = null; }
         }
         catch (Exception ex) { _oneMsg = "오류: " + ex.Message; }
@@ -243,12 +229,12 @@
 
     private async Task RunWalkForwardAsync()
     {
-        if (_one == null || _candles.Count == 0) return;
+        if (_one is null) return;
         _wfBusy = true; _wfMsg = ""; _wf = null; StateHasChanged();
         try
         {
-            // 18개월 일봉(~370봉) 기준 train 120 / test 40 → 약 6 OOS 창
-            _wf = await Task.Run(() => WalkForward.Analyze(_one.Symbol, _one.Name, _candles, _market, 120, 40));
+            // 18개월 일봉(~370봉) 기준 train 120 / test 40 → 약 6 OOS 창. 어댑터가 시세 재조회·오프로드.
+            _wf = await Opt.WalkForwardAsync(_one.Symbol, _one.Name, _marketCode, 18, 120, 40);
             if (!_wf.IsValid) { _wfMsg = $"검증 불가: {_wf.Note}"; _wf = null; }
         }
         catch (Exception ex) { _wfMsg = "오류: " + ex.Message; }
@@ -260,49 +246,23 @@
         _busy = true; StateHasChanged();
         try
         {
-            var holdings = Db.GetAllHoldings()
-                .Where(h => h.Market != Market.CRYPTO && !string.IsNullOrWhiteSpace(h.Symbol))
-                .GroupBy(h => h.Symbol, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
-                .Take(25).ToList();
-            if (holdings.Count == 0) { Toasts.Warning("보유 종목 없음", "포트폴리오에 주식을 추가하세요."); return; }
-
-            var snap = new OptSnapshot { GeneratedAt = DateTime.Now.ToString("o") };
-            foreach (var h in holdings)
-            {
-                try
-                {
-                    var candles = await Provider.GetHistoryAsync(h.Symbol, h.Market, DateTime.Now.AddMonths(-18), DateTime.Now);
-                    var r = StrategyOptimizer.Optimize(h.Symbol, string.IsNullOrWhiteSpace(h.Name) ? h.Symbol : h.Name, candles, h.Market);
-                    snap.Rows.Add(StrategyOptimizer.ToRow(r));
-                }
-                catch (Exception ex) { Log.Warn($"[Optimizer/UI] {h.Symbol}: {ex.Message}"); }
-                StateHasChanged();
-            }
-            Db.SetSetting("Optimizer.Results", JsonSerializer.Serialize(snap));
-            Db.SetSetting("Optimizer.LastRun", DateTime.Now.ToString("o"));
-            _snap = snap; UpdateLastRun();
-            Toasts.Success("전체 분석 완료", $"{snap.Rows.Count(r => r.IsValid)}/{snap.Rows.Count}종목 유효");
+            var progress = new Progress<IBacktestResultRow>(_ => InvokeAsync(StateHasChanged));
+            _snap = await Opt.RunPortfolioSweepAsync(18, 25, progress);   // 어댑터가 내부 영속
+            UpdateLastRun();
+            int valid = _snap.Rows.Count(r => r.IsValid);
+            Infra.Notify(valid > 0 ? "전체 분석 완료" : "분석 결과 없음", $"{valid}/{_snap.Rows.Count}종목 유효", valid > 0 ? StrategyNotifyLevel.Success : StrategyNotifyLevel.Warning);
         }
-        catch (Exception ex) { Toasts.Error("실행 실패", ex.Message); }
+        catch (Exception ex) { Infra.Notify("실행 실패", ex.Message, StrategyNotifyLevel.Error); }
         finally { _busy = false; StateHasChanged(); }
     }
 
-    // 우승 장기선(MA long) 복귀 알림을 복합알림 규칙으로 추가 — 정확한 교차가 아닌 표준 추세 필터(정직 표기)
-    private void InjectComposite(OptResult r)
+    // 우승 장기선(MA long) 복귀 알림을 복합알림 규칙으로 추가 — 도메인 구상 타입은 어댑터가 조립(RCL 무유입).
+    private void InjectComposite(IOptimizationReport r)
     {
-        if (r.Best == null) return;
-        var rules = CompositeAlertEngine.Load(Db);
-        rules.Add(new CompositeRule
-        {
-            Name = $"🅔 {r.Name} MA{r.Best.ShortP}/{r.Best.LongP} 추세",
-            AssetKind = "stock",
-            Target = r.Symbol,
-            Logic = RuleLogic.And,
-            Conditions = new() { new CompositeCondition { Metric = CondMetric.MaGapPct, Param = r.Best.LongP, Op = CondOp.Gte, Threshold = 0 } }
-        });
-        CompositeAlertEngine.Save(Db, rules);
-        Toasts.Success("복합 알림 추가됨", $"{r.Name} MA{r.Best.LongP} 추세 필터 — 즉시 활성화",
-            new() { ToastButton.Of("복합 알림 보기", () => Nav.NavigateTo("/composite"), true) });
+        if (r.Best is null) return;
+        Alerts.InjectTrendAlert(r.Symbol, r.Name, r.Best.LongP);
+        Infra.Notify("복합 알림 추가됨", $"{r.Name} MA{r.Best.LongP} 추세 필터 — 즉시 활성화", StrategyNotifyLevel.Success);
+        Nav.NavigateTo("/composite");
     }
 
     private string WfColor() => _wf?.Verdict switch

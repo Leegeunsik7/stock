@@ -1,0 +1,265 @@
+@* ============================================================================
+   SignalPage — Phase 94-F: 시그널 엔진 (★0 Concrete Ref · Host→RCL 물리 이주)
+     레거시 원시 SQL(Db.Query/Execute)·DataTable/DataRow·DashboardService·SampleData·AlertCenter·BacktestEngine
+     직결을 전면 제거하고 ISignalsRepositoryPort(이력 CRUD·불변 스냅샷) + ISignalsServicePort(코인신호·스캔·백테스트)만 소비.
+     ★Think-Beyond 배선: 이력을 BoundedVirtualWindow 로 뷰포트 N행만 물성화·렌더(수만 건 DOM 폭발 방어). 라우팅 /signals 는 호스트 셸 보존.
+     ★한국 관례색: 매수=빨강(up)·매도=파랑(down). liveArmed:false(순수 조회/스캔/백테스트 — 발주 무접촉).
+   =========================================================================== *@
+@implements IDisposable
+@inject ISignalsServicePort Svc
+@inject ISignalsRepositoryPort Repo
+
+<div class="top"><div class="hello"><h1>⚡ 시그널 엔진</h1><p>@_ts</p></div>
+<button class="addbtn" style="background:var(--warn);margin:0 6px" disabled="@_scanning" @onclick="ScanStocksAsync">@(_scanning?"스캔 중…":"🔍 전체 스캔(주식)")</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="CleanupOld">🗑 30일 이전 정리</button>
+<button class="addbtn" style="margin:0 16px 0 6px" @onclick="Refresh">🔄 새로고침</button></div>
+
+@if (!string.IsNullOrEmpty(_scanMsg)) { <div style="padding:0 28px 10px;color:var(--sub);font-size:12.5px">@_scanMsg</div> }
+
+@* ===== 백테스팅 — 비용 모델 반영 ===== *@
+<div style="margin:0 28px 18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px">
+    <div style="font-weight:700;margin-bottom:12px">🔬 백테스팅 <small class="sub" style="font-weight:400">시드 100만 · 수수료(KR 0.015%/US $0.99)·매도세(KOSPI 0.18%/KOSDAQ 0.23%)·슬리피지 0.1% 반영</small></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+        <div><label class="flbl">전략</label>
+            <select class="fin" style="width:210px" @bind="_btStrategy">
+                @for (int i = 0; i < _strategyNames.Count; i++) { var ii = i; <option value="@ii">@_strategyNames[ii]</option> }
+            </select></div>
+        <div><label class="flbl">종목 (자유 입력 가능)</label>
+            <input class="fin" style="width:220px" list="btSymbols" @bind="_btSymbol" />
+            <datalist id="btSymbols">
+                @foreach (var s in _samples) { <option value="@(s.Symbol + " - " + s.Name)" /> }
+            </datalist></div>
+        <div><label class="flbl">기간(월)</label><input class="fin" type="number" min="1" max="60" style="width:80px" @bind="_btMonths" /></div>
+        <button class="addbtn" disabled="@_btBusy" @onclick="RunBacktestAsync">@(_btBusy?"실행 중…":"🚀 실행")</button>
+        @if (!string.IsNullOrEmpty(_btMsg)) { <b style="color:@_btMsgColor;font-size:13px">@_btMsg</b> }
+    </div>
+    @if (_bt != null && _bt.EquityCurve.Count > 0)
+    {
+        <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:420px">@((MarkupString)EquitySvg())</div>
+            <div style="flex:0 0 235px;background:var(--card-2);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.9">
+                시작 1,000,000 → 종료 <b class="num">@_bt.EquityCurve.Last().ToString("N0")</b><br/>
+                수익률 <b class="num @(_bt.TotalReturn>=0?"up":"down")">@Pct(_bt.TotalReturn)</b><br/>
+                MDD <span class="num">@_bt.MaxDrawdown.ToString("F2")%</span><br/>
+                거래 @_bt.TradeCount 회 · 승률 @_bt.WinRate.ToString("F1")%<br/>
+                Sharpe @_bt.Sharpe.ToString("F2")<br/>
+                <small class="sub">(수수료·세금·슬리피지 반영)</small>
+            </div>
+        </div>
+    }
+</div>
+
+@* ===== 코인 임박 신호 ===== *@
+<div style="padding:0 28px 8px"><b>⏳ 코인 임박 신호</b> <small class="sub">감시 코인 일봉 · 골든/데드크로스 · RSI · 신고가</small></div>
+<div style="padding:0 28px 20px">
+    @if (_coins.Count == 0) { <div style="padding:14px;color:var(--sub)">현재 포착된 신호가 없습니다.</div> }
+    @foreach (var s in _coins)
+    {
+        <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+            <div style="display:flex;align-items:center;gap:10px">
+                <span class="pill @(s.Side=="BUY"?"r":"b")" style="font-size:12px;padding:4px 10px">@s.Side</span>
+                <b style="font-size:13.5px">@s.Name</b>
+                <span style="color:var(--sub);font-size:12.5px">@s.Reason</span>
+            </div>
+            <div class="prog" style="margin-top:6px"><i style="width:@(s.Pct)%"></i></div>
+        </div>
+    }
+</div>
+
+@* ===== 시그널 이력 (DB · 경계 고정 가상 윈도우) ===== *@
+<div style="padding:0 28px 8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <b>⚡ 시그널 이력</b> <small class="sub">매수 시그널만 알림 발행 — 원본 비대칭 룰</small>
+    <span class="sub" style="font-size:11.5px;margin-left:auto">전체 @_total.ToString("N0")건 · 뷰포트 @_viewFirst.ToString("N0")–@(Math.Min(_total, _viewFirst + ViewCount)).ToString("N0") · 물성화 @_win.Loaded/@_win.Capacity (DOM 폭발 방어)</span>
+</div>
+<div style="overflow:auto;padding:0 28px 40px">
+    <table class="ctbl">
+        <thead><tr><th>시각</th><th>종목</th><th>이름</th><th>구분</th><th>전략</th><th>근거</th><th style="text-align:right">목표가</th><th style="text-align:right">손절가</th><th style="text-align:right">신뢰도</th></tr></thead>
+        <tbody>
+            @for (int i = _viewFirst; i < _viewFirst + ViewCount && i < _total; i++)
+            {
+                if (_win.TryGet(i, out var s) && s is not null)
+                {
+                    <tr @key="i">
+                        <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">@s.At.ToString("MM-dd HH:mm")</td>
+                        <td><b>@s.Symbol</b></td>
+                        <td style="font-size:12.5px">@s.Name</td>
+                        <td style="font-weight:700;color:@VerdictColor(s.Verdict)">@s.TypeLabel</td>
+                        <td style="font-size:12px">@s.Strategy</td>
+                        <td style="font-size:12px;color:var(--sub)">@s.Reason</td>
+                        <td class="num" style="text-align:right">@s.Target.ToString("N0")</td>
+                        <td class="num" style="text-align:right">@s.Stop.ToString("N0")</td>
+                        <td class="num" style="text-align:right">@s.Confidence.ToString("F1")%</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+    @if (_total == 0) { <div style="padding:30px;text-align:center;color:var(--sub)">시그널 이력이 없습니다. '🔍 전체 스캔'을 실행해 보세요.</div> }
+    else if (_total > ViewCount)
+    {
+        <div style="display:flex;justify-content:center;gap:8px;padding:14px">
+            <button class="ghost" disabled="@(_viewFirst == 0)" @onclick="PagePrev">← 이전</button>
+            <span class="sub" style="align-self:center;font-size:12px">@(_viewFirst / ViewCount + 1) / @((_total + ViewCount - 1) / ViewCount)</span>
+            <button class="ghost" disabled="@(_viewFirst + ViewCount >= _total)" @onclick="PageNext">다음 →</button>
+        </div>
+    }
+</div>
+
+@code {
+    private const int ViewCount = 60;   // 뷰포트 물성화·렌더 행수(DOM 상한)
+
+    private string _ts = "", _scanMsg = "";
+    private bool _scanning;
+    private System.Threading.CancellationTokenSource? _cts;
+
+    // 이력: 원본 리스트(어댑터가 최대 2000건 반환) → 경계 고정 가상 윈도우가 뷰포트만 물성화.
+    private IReadOnlyList<ISignalRecordSnapshot> _all = Array.Empty<ISignalRecordSnapshot>();
+    private readonly MS2E.UI.Portable.Infrastructure.BoundedVirtualWindow<ISignalRecordSnapshot> _win = new(capacity: 128, margin: 16);
+    private int _total, _viewFirst;
+
+    private IReadOnlyList<ICoinSignalView> _coins = Array.Empty<ICoinSignalView>();
+    private IReadOnlyList<string> _strategyNames = Array.Empty<string>();
+    private IReadOnlyList<ISampleSymbol> _samples = Array.Empty<ISampleSymbol>();
+
+    private int _btStrategy = 0, _btMonths = 12;
+    private string _btSymbol = "005930 - 삼성전자", _btMsg = "", _btMsgColor = "var(--ok)";
+    private bool _btBusy;
+    private IBacktestSummaryView? _bt;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _strategyNames = Svc.GetStrategyNames();
+        _samples = Svc.GetSampleSymbols();
+        ReloadHistory();
+        await Refresh();
+        _cts = new System.Threading.CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private async Task Loop(System.Threading.CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(30_000, ct); } catch { return; }
+            await Refresh(); await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task Refresh()
+    {
+        await Svc.RefreshCoinSignalsAsync();
+        _coins = Svc.GetCoinSignals();
+        ReloadHistory();
+        _ts = DateTime.Now.ToString("HH:mm:ss");
+    }
+
+    // 이력 재적재 — 어댑터가 원시 SQL/DataTable 을 격리, 불변 스냅샷 리스트만 수신.
+    private void ReloadHistory()
+    {
+        _all = Repo.GetRecent(2000);
+        _total = _all.Count;
+        if (_viewFirst >= _total) _viewFirst = 0;
+        _win.Reset();
+        EnsureView();
+    }
+
+    // 뷰포트 범위를 경계 고정 창에 보장(page-fault 시에만 in-memory 슬라이스 적재 — δ=0 히트).
+    private void EnsureView()
+        => _win.EnsureWindow(_viewFirst, ViewCount, _total, PageLoad);
+
+    private IReadOnlyList<ISignalRecordSnapshot> PageLoad(int start, int count)
+    {
+        int n = Math.Min(count, _total - start);
+        var page = new List<ISignalRecordSnapshot>(n);
+        for (int i = 0; i < n; i++) page.Add(_all[start + i]);
+        return page;
+    }
+
+    private void PagePrev() { _viewFirst = Math.Max(0, _viewFirst - ViewCount); EnsureView(); }
+    private void PageNext() { if (_viewFirst + ViewCount < _total) { _viewFirst += ViewCount; EnsureView(); } }
+
+    private async Task ScanStocksAsync()
+    {
+        _scanning = true; _scanMsg = "🔍 전체 스캔 중..."; StateHasChanged();
+        try
+        {
+            int found = await Svc.ScanStocksAsync(_cts?.Token ?? default);
+            ReloadHistory();
+            _scanMsg = $"✅ {found}건의 시그널 감지";
+        }
+        catch (Exception ex) { _scanMsg = "스캔 오류: " + ex.Message; }
+        finally { _scanning = false; StateHasChanged(); }
+    }
+
+    private void CleanupOld()
+    {
+        try { Repo.DeleteOlderThan(30); ReloadHistory(); _scanMsg = "🗑 30일 이전 시그널 정리 완료"; }
+        catch { }
+    }
+
+    private async Task RunBacktestAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_btSymbol)) { _btMsg = "종목 선택"; _btMsgColor = "var(--down)"; return; }
+        _btBusy = true; _btMsg = ""; _bt = null; StateHasChanged();
+        try
+        {
+            _bt = await Svc.BacktestAsync(_btSymbol, _btStrategy, _btMonths);
+            if (_bt is null) { _btMsg = "히스토리 부족"; _btMsgColor = "var(--down)"; }
+            else
+            {
+                _btMsg = $"💰 수익률 {Pct(_bt.TotalReturn)} · MDD {_bt.MaxDrawdown:F2}% · Sharpe {_bt.Sharpe:F2} · 승률 {_bt.WinRate:F1}%";
+                _btMsgColor = _bt.TotalReturn >= 0 ? "var(--ok)" : "var(--down)";
+            }
+        }
+        catch (Exception ex) { _btMsg = "실행 실패: " + ex.Message; _btMsgColor = "var(--down)"; }
+        finally { _btBusy = false; StateHasChanged(); }
+    }
+
+    private string EquitySvg()
+    {
+        if (_bt == null || _bt.EquityCurve.Count == 0) return "";
+        var curve = _bt.EquityCurve;
+        double w = 760, h = 280, padL = 64, padT = 14, padR = 14, padB = 26;
+        double plotW = w - padL - padR, plotH = h - padT - padB;
+        double maxV = (double)curve.Max(), minV = (double)curve.Min();
+        double range = maxV - minV; if (range == 0) range = 1;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox='0 0 {w} {h}' style='width:100%;height:280px;display:block'>");
+        for (int i = 0; i <= 4; i++)
+        {
+            double v = maxV - range * i / 4;
+            double y = padT + plotH * i / 4.0;
+            sb.Append($"<line x1='{padL}' y1='{y:F1}' x2='{padL + plotW:F1}' y2='{y:F1}' stroke='var(--line)'/>");
+            sb.Append($"<text x='4' y='{y + 4:F1}' fill='var(--sub)' font-size='10'>{v:N0}</text>");
+        }
+        var color = _bt.TotalReturn >= 0 ? "var(--up)" : "var(--down)";   // 한국 관례색
+        var pts = new System.Text.StringBuilder();
+        for (int i = 0; i < curve.Count; i++)
+        {
+            double x = padL + (curve.Count == 1 ? 0 : (double)i / (curve.Count - 1) * plotW);
+            double y = padT + (maxV - (double)curve[i]) / range * plotH;
+            pts.Append($"{x:F1},{y:F1} ");
+        }
+        sb.Append($"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='2'/>");
+        for (int i = 0; i <= 4; i++)
+        {
+            int idx = i * (curve.Count - 1) / 4;
+            double x = padL + (curve.Count == 1 ? 0 : (double)idx / (curve.Count - 1) * plotW);
+            sb.Append($"<text x='{x - 14:F1}' y='{padT + plotH + 16:F1}' fill='var(--sub)' font-size='10'>Day {idx}</text>");
+        }
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+
+    private static string VerdictColor(SignalVerdict v) => v switch
+    {
+        SignalVerdict.Buy  => "var(--up)",    // 한국 관례: 매수=빨강
+        SignalVerdict.Sell => "var(--down)",  // 매도=파랑
+        _                  => "var(--warn)"
+    };
+
+    private static string Pct(decimal v) => $"{(v >= 0 ? "+" : "")}{v:N2}%";
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}

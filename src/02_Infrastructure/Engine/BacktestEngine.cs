@@ -16,7 +16,7 @@ using System.Linq;
 
 namespace MS2E.Infrastructure
 {
-    public class BacktestSummary
+    public class BacktestSummary : MS2E.UI.Portable.Ports.Strategy.IBacktestSummaryView
     {
         public decimal TotalReturn { get; set; }
         public decimal MaxDrawdown { get; set; }
@@ -24,6 +24,9 @@ namespace MS2E.Infrastructure
         public int TradeCount { get; set; }
         public decimal Sharpe { get; set; }
         public List<decimal> EquityCurve { get; set; } = new();
+
+        // Phase 94-F: 읽기 전용 계약 — List<decimal> → IReadOnlyList<decimal>.
+        IReadOnlyList<decimal> MS2E.UI.Portable.Ports.Strategy.IBacktestSummaryView.EquityCurve => EquityCurve;
     }
 
     public static class BacktestEngine

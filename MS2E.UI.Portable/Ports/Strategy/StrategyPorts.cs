@@ -42,6 +42,22 @@ namespace MS2E.UI.Portable.Ports.Strategy
     /// <summary>서명·내보내기 대상 전략 선택(순수 DTO).</summary>
     public readonly record struct ForgePick(int Short, int Long);
 
+    /// <summary>옵티마이저 실행 Port — 격자 최적화 + 워크포워드 강건성 검증 + 포트폴리오 스윕(고부하 오프로드).</summary>
+    public interface IOptimizerExecutionPort
+    {
+        /// <summary>한 종목 격자 최적화(어댑터가 시세 내부 조회).</summary>
+        Task<IOptimizationReport> OptimizeAsync(string symbol, string name, int marketCode, int months, CancellationToken ct = default);
+
+        /// <summary>워크포워드 강건성 검증(어댑터가 시세 조회 + WalkForward 실행·오프로드).</summary>
+        Task<IWalkForwardReport> WalkForwardAsync(string symbol, string name, int marketCode, int months, int trainBars, int testBars, CancellationToken ct = default);
+
+        /// <summary>보유 종목 전수 스윕(종목별 완료분 스트리밍 + 최종 스냅샷). ★결과는 어댑터가 내부 영속(UI 무직렬화).</summary>
+        Task<IBacktestResultSnapshot> RunPortfolioSweepAsync(int months, int maxSymbols, IProgress<IBacktestResultRow>? progress = null, CancellationToken ct = default);
+
+        /// <summary>마지막 스윕 스냅샷 복원(어댑터가 영속 JSON 을 읽어 계약으로 반환). 없으면 null.</summary>
+        IBacktestResultSnapshot? LoadLastSnapshot();
+    }
+
     /// <summary>전략 단조소(Forge) Port — MA 격자 워크포워드 OOS 발굴 + 서명 카트리지 내보내기.</summary>
     public interface IStrategyForgePort
     {
