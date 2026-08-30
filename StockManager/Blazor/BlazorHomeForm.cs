@@ -899,6 +899,8 @@ namespace StockManager.Blazor
             // Phase 94-F — 시그널 저장소 + 서비스 Port(DIP): SignalPage 이주 기반. 원시 SQL/DataTable/DashboardService/SampleData/AlertCenter/BacktestEngine 격리.
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsRepositoryPort, MS2E.Infrastructure.SignalsRepositoryAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsServicePort, MS2E.Infrastructure.SignalsServiceAdapter>();
+            // v11.4.0 — 카나리 폭발 반경 격리 센티널(기본 disarmed·★물리 이중 키 없이는 무장 불가 → 발주 인가 0). 상위 발주 경로가 이 게이트 없이는 진행 못 하도록 배선 대상.
+            services.AddSingleton<MS2E.Infrastructure.CanaryHealthSentinel>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
