@@ -901,6 +901,8 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsServicePort, MS2E.Infrastructure.SignalsServiceAdapter>();
             // v11.4.0 — 카나리 폭발 반경 격리 센티널(기본 disarmed·★물리 이중 키 없이는 무장 불가 → 발주 인가 0). 상위 발주 경로가 이 게이트 없이는 진행 못 하도록 배선 대상.
             services.AddSingleton<MS2E.Infrastructure.CanaryHealthSentinel>();
+            // Phase 94-G — 알림 피드 Port(DIP): AlertPage/AlertHistoryPage 이주 기반. AlertCenter 정적 싱글턴 격리(싱글턴 = 이벤트 구독 1회).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.IAlertFeedPort, MS2E.Infrastructure.AlertFeedAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
@@ -1019,6 +1021,24 @@ namespace StockManager.Blazor
             services.AddSingleton<StockManager.Common.Account.StockEmailOtpService>();
             services.AddSingleton<StockManager.Common.Account.InstallTelemetryService>();
             services.AddSingleton<StockManager.Common.Account.SessionState>();
+
+            // v11.4.1 Think-Beyond — 온보딩 헬스 센티널: 부팅 시 환경(런타임/데이터디렉터리/DPAPI/x86 프록시) + ★이관
+            //   컴포넌트 Port DI 배선 + ★liveArmed:false 안전 자세를 결정론적으로 진단한다. fail-safe: 진단 자체가
+            //   부팅을 깨지 않도록 예외를 삼키고, Blocked 판정은 구체적 해결 힌트와 함께 로그로 투사한다(공유 primary
+            //   보호 — 하드킬 대신 정직 표출; 프로덕션 호스트는 Blocked 를 '안전 거부' 신호로 강제).
+            var onboardingSentinel = new MS2E.Infrastructure.OnboardingHealthSentinel();
+            services.AddSingleton(onboardingSentinel);
+            try
+            {
+                var probe = new MS2E.Infrastructure.DefaultOnboardingProbe(services, canaryArmedAtBoot: false);
+                var report = onboardingSentinel.Run(probe);
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Onboarding] readiness={report.Readiness} total={report.Total} failed={report.Failed} blocking={report.BlockingFailed} firstBlocker={report.FirstBlocker}");
+                if (report.Readiness == MS2E.Infrastructure.OnboardingReadiness.Blocked)
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Onboarding] ★BLOCKED — {MS2E.Infrastructure.OnboardingHealthSentinel.FixHint(report.FirstBlocker)}");
+            }
+            catch { /* 온보딩 진단은 부팅을 절대 깨지 않는다(fail-safe) */ }
 
             var sp = services.BuildServiceProvider();
             // 기동 시 — 관리자(GSLEE) 시드 보장 + 설치 PC 텔레메트리 1회 수집(실패해도 앱 기동 무영향).

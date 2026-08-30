@@ -1,6 +1,7 @@
-@page "/alerts"
-@inject LocalDatabase Db
+@* Phase 94-G: 순수 UI 이관 — @page 제거(호스트 AlertsHostPage.razor 가 /alerts 라우트 보존).
+   엔진 콘크리트(LocalDatabase·AlertCenter·AlertItem/AlertLevel) 무참조 — IAlertFeedPort + RCL 열거형만 사용. *@
 @implements IDisposable
+@inject IAlertFeedPort Feed
 
 <div class="top"><div class="hello"><h1>🔔 알림 센터</h1><p>실시간 알림 피드 · @(_items.Count)건</p></div>
 <button class="addbtn" @onclick="Reload" style="margin:0 16px">🔄 새로고침</button>
@@ -15,7 +16,7 @@
             <div style="flex:1">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
                     <b style="font-size:13px">@a.Title</b>
-                    <span class="pill @(a.Level==AlertLevel.Critical?"r":"b")" style="font-size:10px;padding:2px 6px">@LevelKr(a.Level)</span>
+                    <span class="pill @(a.Level==AlertSeverity.Critical?"r":"b")" style="font-size:10px;padding:2px 6px">@LevelKr(a.Level)</span>
                     <small class="sub">@a.Source · @a.Symbol</small>
                 </div>
                 <div style="color:var(--sub);font-size:12.5px">@a.Message</div>
@@ -27,22 +28,22 @@
 </div>
 
 @code {
-    private List<AlertItem> _items = new();
+    private List<IAlertRecord> _items = new();
 
     protected override void OnInitialized()
     {
         Reload();
-        AlertCenter.Instance.AlertRaised += OnNew;
+        Feed.AlertRaised += OnNew;
     }
 
-    private void OnNew(object? _, AlertItem a) { _items.Insert(0, a); if (_items.Count > 200) _items.RemoveAt(_items.Count - 1); InvokeAsync(StateHasChanged); }
-    private void Reload() { try { _items = AlertCenter.Instance.GetFromDb(200); } catch { } }
-    private void MarkAllRead() { try { AlertCenter.Instance.MarkAllRead(); Reload(); } catch { } }
+    private void OnNew(IAlertRecord a) { _items.Insert(0, a); if (_items.Count > 200) _items.RemoveAt(_items.Count - 1); InvokeAsync(StateHasChanged); }
+    private void Reload() { try { _items = Feed.GetRecent(200).ToList(); } catch { } }
+    private void MarkAllRead() { try { Feed.MarkAllRead(); Reload(); } catch { } }
 
-    private static string LevelColor(AlertLevel l) => l switch
-    { AlertLevel.Critical => "var(--down)", AlertLevel.Warning => "var(--warn)", _ => "var(--ok)" };
-    private static string LevelKr(AlertLevel l) => l switch
-    { AlertLevel.Critical => "중요", AlertLevel.Warning => "경고", _ => "정보" };
+    private static string LevelColor(AlertSeverity l) => l switch
+    { AlertSeverity.Critical => "var(--down)", AlertSeverity.Warning => "var(--warn)", _ => "var(--ok)" };
+    private static string LevelKr(AlertSeverity l) => l switch
+    { AlertSeverity.Critical => "중요", AlertSeverity.Warning => "경고", _ => "정보" };
 
-    public void Dispose() => AlertCenter.Instance.AlertRaised -= OnNew;
+    public void Dispose() => Feed.AlertRaised -= OnNew;
 }

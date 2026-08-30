@@ -1,5 +1,7 @@
-@page "/alert-history"
-@inject LocalDatabase Db
+@* Phase 94-G: 순수 UI 이관 — @page 제거(호스트 AlertHistoryHostPage.razor 가 /alert-history 라우트 보존).
+   엔진 콘크리트(LocalDatabase·AlertCenter·AlertItem/AlertLevel) 무참조 — IAlertFeedPort + RCL 열거형만 사용.
+   필터 드롭다운 문자열("Info"/"Warning"/… · "Price"/"News"/…)은 RCL 열거형 이름과 동일하므로 무변경 동작. *@
+@inject IAlertFeedPort Feed
 
 <div class="top"><div class="hello"><h1>📜 알림 이력</h1><p>검색·필터 · @(_filtered.Count)건</p></div>
 <button class="addbtn" @onclick="Load" style="margin:0 16px">🔄 새로고침</button></div>
@@ -21,7 +23,7 @@
             {
                 <tr style="@RowStyle(a)">
                     <td style="font-size:11.5px;color:var(--sub);white-space:nowrap">@a.Time.ToString("MM-dd HH:mm")</td>
-                    <td><span class="pill @(a.Level==AlertLevel.Critical?"r":"b")" style="font-size:10px">@a.Level</span></td>
+                    <td><span class="pill @(a.Level==AlertSeverity.Critical?"r":"b")" style="font-size:10px">@a.Level</span></td>
                     <td style="font-size:12px;color:var(--sub)">@a.Source</td>
                     <td style="font-size:12px">@a.Symbol</td>
                     <td style="font-size:12.5px"><b>@a.Title</b></td>
@@ -33,11 +35,11 @@
 </div>
 
 @code {
-    private List<AlertItem> _all = new();
+    private List<IAlertRecord> _all = new();
     private string _lvl = "", _src = "", _q = "";
     private bool _unreadOnly;
 
-    private List<AlertItem> _filtered => _all
+    private List<IAlertRecord> _filtered => _all
         .Where(a => (string.IsNullOrEmpty(_lvl) || a.Level.ToString() == _lvl)
                  && (string.IsNullOrEmpty(_src) || a.Source.ToString() == _src)
                  && (!_unreadOnly || !a.IsRead)
@@ -45,14 +47,14 @@
         .ToList();
 
     protected override void OnInitialized() => Load();
-    private void Load() { try { _all = AlertCenter.Instance.GetFromDb(500); } catch { } }
+    private void Load() { try { _all = Feed.GetRecent(500).ToList(); } catch { } }
 
     // 원본 AlertCenterForm 룰: 미읽음=굵게 · Critical=하락색 · Warning=경고색 (행 전체)
-    private static string RowStyle(AlertItem a)
+    private static string RowStyle(IAlertRecord a)
     {
         var s = a.IsRead ? "" : "font-weight:700;";
-        if (a.Level == AlertLevel.Critical) s += "color:var(--down);";
-        else if (a.Level == AlertLevel.Warning) s += "color:var(--warn);";
+        if (a.Level == AlertSeverity.Critical) s += "color:var(--down);";
+        else if (a.Level == AlertSeverity.Warning) s += "color:var(--warn);";
         return s;
     }
 }

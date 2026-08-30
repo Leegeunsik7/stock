@@ -43,8 +43,9 @@ namespace MS2E.Infrastructure
         public decimal YieldPct { get; set; }          // 배당수익률
     }
 
-    /// <summary>통합 알림 항목</summary>
-    public class AlertItem
+    /// <summary>통합 알림 항목. Phase 94-G: 순수 UI 피드 계약(IAlertRecord)을 공변 구현 — AlertPage/AlertHistoryPage 가
+    /// 엔진 타입 무참조로 렌더(어댑터가 List&lt;AlertItem&gt;→IReadOnlyList&lt;IAlertRecord&gt; 재투영 없이 노출).</summary>
+    public class AlertItem : MS2E.UI.Portable.Ports.Alerts.IAlertRecord
     {
         public DateTime Time { get; set; } = DateTime.Now;
         public AlertSource Source { get; set; }
@@ -54,6 +55,13 @@ namespace MS2E.Infrastructure
         public string Symbol { get; set; } = "";
         public bool IsRead { get; set; }
         public string ActionUrl { get; set; } = "";
+
+        // ── IAlertRecord 명시적 구현 — 엔진 열거형→RCL 열거형(정수값 정렬 상수 캐스팅, 무할당).
+        //    Time/Title/Message/Symbol/IsRead 는 동일 시그니처로 암시 구현(별도 멤버 불필요).
+        MS2E.UI.Portable.Ports.Alerts.AlertOrigin MS2E.UI.Portable.Ports.Alerts.IAlertRecord.Source
+            => (MS2E.UI.Portable.Ports.Alerts.AlertOrigin)(int)Source;
+        MS2E.UI.Portable.Ports.Alerts.AlertSeverity MS2E.UI.Portable.Ports.Alerts.IAlertRecord.Level
+            => (MS2E.UI.Portable.Ports.Alerts.AlertSeverity)(int)Level;
     }
 
     public enum AlertSource { Price, News, Signal, Dividend, System }
