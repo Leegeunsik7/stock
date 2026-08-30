@@ -901,8 +901,17 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsServicePort, MS2E.Infrastructure.SignalsServiceAdapter>();
             // v11.4.0 — 카나리 폭발 반경 격리 센티널(기본 disarmed·★물리 이중 키 없이는 무장 불가 → 발주 인가 0). 상위 발주 경로가 이 게이트 없이는 진행 못 하도록 배선 대상.
             services.AddSingleton<MS2E.Infrastructure.CanaryHealthSentinel>();
+            // v11.4.2 Think-Beyond — Stage 1 드라이런 이중 엔진: ①레이턴시 거버너(δ=0 락프리 — UI 패닉 방어) ②Zero-Leak Veto 인터락(O(1) fail-closed + 변조불가 감사). 인터락이 거버너 breach 를 소비(융합).
+            var canaryLatencyGovernor = new MS2E.Infrastructure.CanaryVetoLatencyGovernor();
+            var zeroLeakVetoInterlock = new MS2E.Infrastructure.ZeroLeakVetoInterlock(canaryLatencyGovernor);
+            services.AddSingleton(canaryLatencyGovernor);
+            services.AddSingleton(zeroLeakVetoInterlock);
             // Phase 94-G — 알림 피드 Port(DIP): AlertPage/AlertHistoryPage 이주 기반. AlertCenter 정적 싱글턴 격리(싱글턴 = 이벤트 구독 1회).
             services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.IAlertFeedPort, MS2E.Infrastructure.AlertFeedAdapter>();
+            // Phase 94-H — 복합 알림 규칙 CRUD Port(DIP): CompositeAlertsPage 이주 기반. CompositeAlertService 정적 싱글턴 + AiService 격리(가변 드래프트↔도메인 매핑·싱글턴 = Evaluated 구독 1회).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.ICompositeRuleCrudPort, MS2E.Infrastructure.CompositeRuleCrudAdapter>();
+            // Phase 94-H — 설정/관리자 위젯 Port(DIP): SettingsPage 이주 기반. LocalDatabase 설정/시크릿·BrokerHub·ApiKeyVault·LanStatusServer·AiService 격리(API 키는 마스킹 노출).
+            services.AddSingleton<MS2E.UI.Portable.Ports.IAdminSettingWidgetPort, MS2E.Infrastructure.AdminSettingWidgetAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

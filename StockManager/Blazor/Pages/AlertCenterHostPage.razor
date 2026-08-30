@@ -1,0 +1,9 @@
+@page "/alertcenter"
+@page "/alertcenter/{Tab}"
+@* Phase 94-H — 얇은 호스트 라우팅 셸: RCL 로 이주된 AlertHub 를 기존 /alertcenter[/{Tab}] 경로에 그대로 노출.
+   라우트 파라미터 Tab 을 그대로 전달(허브 탭 보존). 완전수식 참조(추가 @@using 불요). *@
+<MS2E.UI.Portable.Pages.Alerts.AlertHub Tab="@Tab" />
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

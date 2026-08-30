@@ -1,23 +1,22 @@
-@page "/composite"
-@inject AiService Ai
+@* Phase 94-H: 순수 UI 이관 — @page 제거(호스트 CompositeAlertsHostPage.razor 가 /composite 라우트 보존).
+   엔진 구상(CompositeAlertService·CompositeRule/CondMetric·AiService) 무참조 — ICompositeRuleCrudPort + 가변 드래프트만 사용. *@
 @implements IDisposable
+@inject ICompositeRuleCrudPort Crud
 
-@* 복합 알림 — Blazor 네이티브 규칙 편집기(레거시 WinForms 관리창 이식).
-   단일 소스 CompositeAlertService.Instance.Rules를 직접 편집하고 Persist(). *@
+@* 복합 알림 — 가변 규칙 편집기. RCL 드래프트(CompositeRuleDraft)를 편집하고 Crud.Save() 로 커밋. *@
 
 <div class="top"><div class="hello"><h1>🧠 복합 알림</h1>
-<p>규칙 @(_svc.Rules.Count)개 · 활성 @(_svc.Rules.Count(r=>r.Enabled))개 · 마지막 평가: @(_svc.LastRun==default?"없음":_svc.LastRun.ToString("HH:mm:ss"))</p></div>
+<p>규칙 @(Crud.RuleCount)개 · 활성 @(Crud.EnabledCount)개 · 마지막 평가: @(Crud.LastRun==default?"없음":Crud.LastRun.ToString("HH:mm:ss"))</p></div>
 <button class="addbtn" style="background:var(--up);margin:0 6px" @onclick="AddNew">➕ 규칙 추가</button>
-<button class="addbtn" @onclick='async ()=>{await _svc.EvaluateNowAsync();StateHasChanged();}' style="margin-right:16px">🔄 지금 평가</button></div>
+<button class="addbtn" @onclick='async ()=>{await Crud.EvaluateNowAsync();StateHasChanged();}' style="margin-right:16px">🔄 지금 평가</button></div>
 
-@* 자연어 → 규칙 (🅱) — LLM은 검증 가능한 규칙 JSON만 생성, 편집기에 채워 검토 후 저장 *@
+@* 자연어 → 규칙 (🅱) — LLM은 검증 가능한 규칙 초안만 생성, 편집기에 채워 검토 후 저장 *@
 <div style="margin:0 28px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    @* v4.62.0 Pitfall#1 — per-keystroke oninput 제거(IME 한글 조합 리셋 함정). 기본 @bind(onchange)는 blur/Enter 커밋이라
-       입력 중 재렌더가 없어 IME 안전 — 값은 'AI 규칙 생성' 버튼/Enter(OnNlKey) 시점에만 소비된다. *@
+    @* v4.62.0 Pitfall#1 — per-keystroke oninput 제거(IME 한글 조합 리셋 함정). 기본 @bind(onchange)는 blur/Enter 커밋. *@
     <input class="srch" style="flex:1;min-width:280px" placeholder="🤖 자연어로 규칙 만들기 (예: 비트코인 RSI 30 아래로 가고 거래량 2배 늘면 알림)"
            @bind="_nl" @onkeydown="OnNlKey" />
-    <button class="addbtn" style="background:var(--accent-2)" disabled="@(_aiBusy || !Ai.HasKey)" @onclick="CompileNl">@(_aiBusy?"생성 중…":"🤖 AI 규칙 생성")</button>
-    @if (!Ai.HasKey) { <span class="sub" style="font-size:12px">설정 마법사에서 Gemini 키 입력 시 사용 가능</span> }
+    <button class="addbtn" style="background:var(--accent-2)" disabled="@(_aiBusy || !Crud.AiHasKey)" @onclick="CompileNl">@(_aiBusy?"생성 중…":"🤖 AI 규칙 생성")</button>
+    @if (!Crud.AiHasKey) { <span class="sub" style="font-size:12px">설정 마법사에서 Gemini 키 입력 시 사용 가능</span> }
 </div>
 
 @if (_editing != null)
@@ -34,7 +33,7 @@
         <div style="display:flex;align-items:center;gap:10px;margin:14px 0 8px">
             <b style="font-size:13px">조건</b>
             <select class="fin" style="width:120px" @bind="_editing.Logic">
-                <option value="And">모두 충족(AND)</option><option value="Or">하나라도(OR)</option>
+                <option value="@RuleJoin.And">모두 충족(AND)</option><option value="@RuleJoin.Or">하나라도(OR)</option>
             </select>
             <button class="pill r" style="border:0;cursor:pointer;padding:4px 10px" @onclick="AddCond">+ 조건</button>
         </div>
@@ -43,18 +42,18 @@
         {
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
                 <select class="fin" style="width:170px" @bind="cond.Metric">
-                    <option value="@CondMetric.Price">현재가</option>
-                    <option value="@CondMetric.ChangePct">등락률(%)</option>
-                    <option value="@CondMetric.MaGapPct">MA 괴리(%)</option>
-                    <option value="@CondMetric.Rsi">RSI</option>
-                    <option value="@CondMetric.VolumeSurgePct">거래량 증가(%)</option>
+                    <option value="@RuleMetric.Price">현재가</option>
+                    <option value="@RuleMetric.ChangePct">등락률(%)</option>
+                    <option value="@RuleMetric.MaGapPct">MA 괴리(%)</option>
+                    <option value="@RuleMetric.Rsi">RSI</option>
+                    <option value="@RuleMetric.VolumeSurgePct">거래량 증가(%)</option>
                 </select>
-                @if (cond.Metric == CondMetric.MaGapPct || cond.Metric == CondMetric.Rsi)
+                @if (cond.Metric == RuleMetric.MaGapPct || cond.Metric == RuleMetric.Rsi)
                 {
                     <input class="fin" style="width:90px" type="number" min="1" @bind="cond.Param" title="기간" />
                 }
                 <select class="fin" style="width:80px" @bind="cond.Op">
-                    <option value="@CondOp.Gte">≥</option><option value="@CondOp.Lte">≤</option>
+                    <option value="@RuleCompareOp.Gte">≥</option><option value="@RuleCompareOp.Lte">≤</option>
                 </select>
                 <input class="fin" style="width:130px" type="number" step="0.01" @bind="cond.Threshold" title="임계값" />
                 <button class="pill b" style="border:0;cursor:pointer;padding:4px 9px" @onclick="() => _editing.Conditions.Remove(cond)">✕</button>
@@ -75,91 +74,77 @@
     <table class="ctbl">
         <thead><tr><th>사용</th><th>이름</th><th>대상</th><th>조건 요약</th><th>마지막 발생</th><th>쿨다운</th><th>관리</th></tr></thead>
         <tbody>
-            @foreach (var r in _svc.Rules)
+            @foreach (var r in Crud.ListRows())
             {
                 <tr>
-                    <td><button class="pill @(r.Enabled?"r":"b")" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Toggle(r)">@(r.Enabled?"✅ 사용":"⏸ 중지")</button></td>
+                    <td><button class="pill @(r.Enabled?"r":"b")" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Toggle(r.Id)">@(r.Enabled?"✅ 사용":"⏸ 중지")</button></td>
                     <td><b>@r.Name</b></td>
                     <td>@(r.AssetKind=="stock"?"📈":"🪙") @r.Target</td>
-                    <td style="font-size:12px;color:var(--sub)">@string.Join(r.Logic==RuleLogic.And?" AND ":" OR ", r.Conditions.Select(c=>c.Describe()))</td>
+                    <td style="font-size:12px;color:var(--sub)">@string.Join(r.IsAndLogic?" AND ":" OR ", r.ConditionSummaries)</td>
                     <td style="font-size:12px;color:var(--sub)">@(r.LastFired?.ToString("MM-dd HH:mm") ?? "-")</td>
                     <td style="font-size:12px;color:var(--sub)">@(r.CooldownMin)분</td>
                     <td>
-                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Edit(r)">편집</button>
-                        <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;margin-left:3px" @onclick="() => Delete(r)">삭제</button>
+                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px" @onclick="() => Edit(r.Id)">편집</button>
+                        <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;margin-left:3px" @onclick="() => Delete(r.Id)">삭제</button>
                     </td>
                 </tr>
             }
         </tbody>
     </table>
-    @if (_svc.Rules.Count == 0) { <div style="padding:40px;text-align:center;color:var(--sub)">'➕ 규칙 추가'로 복합 알림 규칙을 만드세요.</div> }
+    @if (Crud.RuleCount == 0) { <div style="padding:40px;text-align:center;color:var(--sub)">'➕ 규칙 추가'로 복합 알림 규칙을 만드세요.</div> }
 </div>
 
 @code {
-    private readonly CompositeAlertService _svc = CompositeAlertService.Instance;
-    private CompositeRule? _editing;
+    private CompositeRuleDraft? _editing;
     private bool _isNew;
     private string _msg = "";
     private string _nl = "";
     private bool _aiBusy;
 
-    protected override void OnInitialized() => _svc.Evaluated += Refresh;
+    protected override void OnInitialized() => Crud.Evaluated += Refresh;
 
     private async Task OnNlKey(KeyboardEventArgs e) { if (e.Key == "Enter") await CompileNl(); }
 
-    // 자연어 → 규칙 생성 → 편집기에 채움(저장은 사용자가 검토 후)
+    // 자연어 → 규칙 드래프트 생성 → 편집기에 채움(저장은 사용자가 검토 후)
     private async Task CompileNl()
     {
         if (_aiBusy || string.IsNullOrWhiteSpace(_nl)) return;
         _aiBusy = true; _msg = ""; StateHasChanged();
-        var (rule, err) = await Ai.CompileRuleAsync(_nl.Trim());
+        var (draft, err) = await Crud.CompileNaturalLanguageAsync(_nl.Trim());
         _aiBusy = false;
-        if (rule == null) { _msg = "🤖 " + err; return; }
-        _editing = rule; _isNew = true;
+        if (draft == null) { _msg = "🤖 " + err; return; }
+        _editing = draft; _isNew = true;
         _msg = "🤖 AI가 규칙 초안을 만들었습니다. 검토·수정 후 '저장'을 누르세요.";
     }
+
     private void Refresh() => InvokeAsync(StateHasChanged);
 
     private void AddNew()
     {
         _isNew = true; _msg = "";
-        _editing = new CompositeRule
-        {
-            Name = "새 규칙", AssetKind = "coin", Target = "KRW-BTC", Logic = RuleLogic.And,
-            Conditions = new() { new CompositeCondition { Metric = CondMetric.Rsi, Param = 14, Op = CondOp.Lte, Threshold = 30 } }
-        };
+        _editing = Crud.NewDraft();
     }
 
-    private void Edit(CompositeRule r) { _isNew = false; _msg = ""; _editing = Clone(r); }
+    private void Edit(string ruleId)
+    {
+        var d = Crud.EditDraft(ruleId);
+        if (d == null) return;
+        _isNew = false; _msg = ""; _editing = d;
+    }
 
-    private void AddCond() => _editing?.Conditions.Add(new CompositeCondition { Metric = CondMetric.Price, Op = CondOp.Gte });
+    private void AddCond() => _editing?.Conditions.Add(new CompositeConditionDraft { Metric = RuleMetric.Price, Op = RuleCompareOp.Gte });
 
     private void SaveEdit()
     {
         if (_editing == null) return;
         if (string.IsNullOrWhiteSpace(_editing.Name) || string.IsNullOrWhiteSpace(_editing.Target)) { _msg = "이름과 대상을 입력하세요."; return; }
         if (_editing.Conditions.Count == 0) { _msg = "조건을 1개 이상 추가하세요."; return; }
-
-        if (_isNew) _svc.Rules.Add(_editing);
-        else
-        {
-            var i = _svc.Rules.FindIndex(x => x.Id == _editing!.Id);
-            if (i >= 0) _svc.Rules[i] = _editing; else _svc.Rules.Add(_editing);
-        }
-        _svc.Persist();          // 저장 + Evaluated 이벤트로 UI 갱신
+        Crud.Save(_editing);   // 어댑터가 드래프트→도메인 매핑 + Persist
         _editing = null;
     }
 
-    private void Toggle(CompositeRule r) { r.Enabled = !r.Enabled; _svc.Persist(); }
-    private void Delete(CompositeRule r) { _svc.Rules.RemoveAll(x => x.Id == r.Id); _svc.Persist(); if (_editing?.Id == r.Id) _editing = null; }
+    private void Toggle(string ruleId) => Crud.Toggle(ruleId);
+    private void Delete(string ruleId) { Crud.Delete(ruleId); if (_editing?.Id == ruleId) _editing = null; }
 
-    private static CompositeRule Clone(CompositeRule r) => new()
-    {
-        Id = r.Id, Name = r.Name, AssetKind = r.AssetKind, Target = r.Target,
-        Logic = r.Logic, Enabled = r.Enabled, CooldownMin = r.CooldownMin, LastFired = r.LastFired,
-        Conditions = r.Conditions.Select(c => new CompositeCondition
-        { Metric = c.Metric, Param = c.Param, Op = c.Op, Threshold = c.Threshold }).ToList()
-    };
-
-    public void Dispose() => _svc.Evaluated -= Refresh;
+    public void Dispose() => Crud.Evaluated -= Refresh;
 }

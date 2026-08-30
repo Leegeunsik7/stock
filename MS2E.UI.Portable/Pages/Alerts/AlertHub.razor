@@ -1,5 +1,5 @@
-@page "/alertcenter"
-@page "/alertcenter/{Tab}"
+@* Phase 94-H: 순수 UI 이관 — @page 제거(호스트 AlertCenterHostPage.razor 가 /alertcenter[/{Tab}] 라우트 보존).
+   자식(AlertPage/AlertHistoryPage/CompositeAlertsPage)은 동일 RCL 네임스페이스, HubTabs 는 Components — 엔진 무참조. *@
 @inject NavigationManager Nav
 
 <HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
