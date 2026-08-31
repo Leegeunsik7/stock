@@ -8,20 +8,23 @@ window.dashboard = {
 };
 
 // Ctrl+K 명령 팔레트 단축키
-window.dashboard.initHotkeys = function (dotnetRef) {
+// Phase 94-L: token 인가(Think-Beyond) — initHotkeys 시 발급된 token 을 저장하고 모든 [JSInvokable] 콜백에 동봉한다.
+//   C# 측 JSInvokableTokenVerifier 가 이 token 을 O(1)로 검증 — 위조/파기 후 콜백은 fail-closed 로 거부된다.
+window.dashboard.initHotkeys = function (dotnetRef, token) {
   window._cmdRef = dotnetRef;                 // 검색바(kbar) 클릭 등에서 재사용
+  window._cmdToken = token;                    // 인가 토큰 저장(재발급 시 갱신)
   if (window._mksHotkey) return; window._mksHotkey = true;
   document.addEventListener('keydown', function (e) {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
-      dotnetRef.invokeMethodAsync('OpenPalette');
+      dotnetRef.invokeMethodAsync('OpenPalette', window._cmdToken || 0);
     } else if (e.key === 'Escape') {
-      dotnetRef.invokeMethodAsync('ClosePalette');
+      dotnetRef.invokeMethodAsync('ClosePalette', window._cmdToken || 0);
     }
   });
 };
 // 검색바 클릭 → Ctrl+K와 동일하게 명령 팔레트 열기 (기존 setFocus 미존재 버그 수정)
-window.dashboard.openPalette = function () { try { window._cmdRef && window._cmdRef.invokeMethodAsync('OpenPalette'); } catch (_) {} };
+window.dashboard.openPalette = function () { try { window._cmdRef && window._cmdRef.invokeMethodAsync('OpenPalette', window._cmdToken || 0); } catch (_) {} };
 window.dashboard.focusEl = function (el) { try { el && el.focus(); } catch (_) {} };
 
 // v4.63.0 — δ=0 미니 라인 차트. C#은 매 틱 스칼라 2개만 push(SVG <path> 문자열 KB 폭발 함정 제거).

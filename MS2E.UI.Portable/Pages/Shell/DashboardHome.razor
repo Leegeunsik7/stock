@@ -12,10 +12,10 @@
    ④ 다중 창 구조 대비 단일 WebView 터미널: 부동 WinForms 폼(9개 독립 창)이 소비하던
       GDI 핸들·WM 큐·STA 렌더 루프를 완전 해소. Blazor 디프(δ=0 구조 불변)로 갱신.
    ============================================================================ *@
-@page "/dashboard"
+@* Phase 94-L: 순수 UI 이관 — @page 제거(호스트 DashboardHomeHostPage 가 /dashboard 보존).
+   엔진 구상(IModuleBridge·DashboardService) 무참조 — IDashboardWidgetPort + NavigationManager(포터블)만 소비. *@
 @inject NavigationManager Nav
-@inject IModuleBridge Bridge
-@inject DashboardService Svc
+@inject IDashboardWidgetPort Widget
 
 <div class="top">
     <div class="hello">
@@ -37,23 +37,23 @@
 <div class="lc-kpi">
     <div class="lc-kp">
         <div class="lc-kl">총자산</div>
-        <div class="lc-kv num">₩@Svc.Total.ToString("N0")</div>
-        <div class="lc-ks @(Svc.Ret >= 0 ? "up" : "down")">@Svc.Ret.ToString("+0.0;-0.0;0.0")%</div>
+        <div class="lc-kv num">₩@Widget.Total.ToString("N0")</div>
+        <div class="lc-ks @(Widget.Ret >= 0 ? "up" : "down")">@Widget.Ret.ToString("+0.0;-0.0;0.0")%</div>
     </div>
     <div class="lc-kp">
         <div class="lc-kl">평가손익</div>
-        <div class="lc-kv num @(Svc.Pnl >= 0 ? "up" : "down")">@Svc.Pnl.ToString("+#,##0;-#,##0;0")</div>
-        <div class="lc-ks sub">누적 수익률 @(Svc.Ret.ToString("+0.0;-0.0"))%</div>
+        <div class="lc-kv num @(Widget.Pnl >= 0 ? "up" : "down")">@Widget.Pnl.ToString("+#,##0;-#,##0;0")</div>
+        <div class="lc-ks sub">누적 수익률 @(Widget.Ret.ToString("+0.0;-0.0"))%</div>
     </div>
     <div class="lc-kp">
         <div class="lc-kl">코인 평가</div>
-        <div class="lc-kv num">₩@Svc.CoinValue.ToString("N0")</div>
+        <div class="lc-kv num">₩@Widget.CoinValue.ToString("N0")</div>
         <div class="lc-ks sub">업비트 실시간</div>
     </div>
     <div class="lc-kp">
         <div class="lc-kl">모의 잔액</div>
-        <div class="lc-kv num">₩@((Svc.PaperCash + Svc.PaperPosVal).ToString("N0"))</div>
-        <div class="lc-ks @(Svc.PaperRet >= 0 ? "up" : "down")">@Svc.PaperRet.ToString("+0.0;-0.0;0.0")%</div>
+        <div class="lc-kv num">₩@((Widget.PaperCash + Widget.PaperPosVal).ToString("N0"))</div>
+        <div class="lc-ks @(Widget.PaperRet >= 0 ? "up" : "down")">@Widget.PaperRet.ToString("+0.0;-0.0;0.0")%</div>
     </div>
 </div>
 
@@ -91,7 +91,7 @@
     private void Go(Mod m)
     {
         if (m.Route is { } r) { Nav.NavigateTo(r); return; }
-        if (m.Key   is { } k) Bridge.Open(k);
+        if (m.Key   is { } k) Widget.OpenModule(k);
     }
 
     private record Section(string Label, Mod[] Cards);

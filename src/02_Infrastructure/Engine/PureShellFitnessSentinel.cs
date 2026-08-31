@@ -30,7 +30,7 @@ namespace MS2E.Infrastructure
         /// ★단조 감소 래칫 — 호스트에 잔류 허용되는 결합 UI 컴포넌트 최대 수. 이주가 진행되면 이 값을 낮춘다.
         /// 신규 결합 UI 유입 → 초과 → CI/부팅 거부(Pure Shell 회귀 방지). (v11.4.0 실측 기준 봉인.)
         /// </summary>
-        public const int RatchetCeiling = 67;   // v11.4.5 Phase 94-K 하향(74→67): NavMenu·ToastHost·SymbolBar·CrossLinks·AsOfBar·IndexTickerBar·MarketTicker RCL 이주. 이주 시마다 단조 감축.
+        public const int RatchetCeiling = 64;   // v11.4.6 Phase 94-L 하향(67→64): CommandPalette(JS콜백 8-dep)·MainLayout·DashboardHome RCL 이주. 이주 시마다 단조 감축.
 
         /// <summary>호스트 어셈블리를 스캔해 결합 UI 수를 집계·래칫 판정.</summary>
         public static ShellFitnessReport Scan(Assembly hostAssembly)

@@ -1,0 +1,104 @@
+@* CommandPalette — Phase 94-L: 순수 UI 이관. 명령 레지스트리(모듈/모의주문/알림/함수문법/매크로/테마)는 ICommandPalettePort
+   어댑터가 소유(엔진 8중 결합 흡수). JS(IJSRuntime·DotNetObjectReference) 는 포터블. ★핫키 콜백은 토큰 검증(위조 거부)·
+   DotNetObjectReference 는 등록/해제 추적(GCHandle 누수 방어) — IHotkeyBridgePort(Think-Beyond) 결선. *@
+@inject ICommandPalettePort Cmd
+@inject IHotkeyBridgePort Hotkey
+@inject IJSRuntime JS
+@implements IDisposable
+
+@if (_open)
+{
+    <div class="cmdk-mask" @onclick="Close">
+        <div class="cmdk" @onclick:stopPropagation="true">
+            <input @ref="_input" placeholder="명령 · 종목+기능(005930 RISK · AAPL TM 2024-03) · 모듈 이동 · BTC 100만 매수"
+                   value="@_query" @oninput="OnInput" @onkeydown="OnKey" />
+            <div class="cmdk-list">
+                @if (_filtered.Count == 0)
+                {
+                    <div class="cmdk-empty">결과 없음</div>
+                }
+                @for (int i = 0; i < _filtered.Count; i++)
+                {
+                    var idx = i; var c = _filtered[i];
+                    <div class="cmdk-item @(idx == _sel ? "sel" : "")" @onclick="() => Run(c)">
+                        <span class="ic">@c.Icon</span><span>@c.Label</span><span class="cat">@c.Cat</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _open;
+    private string _query = "";
+    private int _sel;
+    private ElementReference _input;
+    private DotNetObjectReference<CommandPalette>? _ref;
+    private bool _focusQueued;
+    private IReadOnlyList<ICommandView> _filtered = Array.Empty<ICommandView>();
+
+    protected override void OnInitialized() => Hotkey.OpenRequested += OnOpenRequested;
+
+    private void OnOpenRequested() => InvokeAsync(OpenInternal);   // 순수 C# 경로(신뢰) — 토큰 불요
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (first)
+        {
+            _ref = DotNetObjectReference.Create(this);
+            Hotkey.RegisterHandle();                                   // ★DotNetObjectReference 등록(누수 추적)
+            long token = Hotkey.IssueToken();                         // ★핫키 인가 토큰 발급
+            await JS.InvokeVoidAsync("dashboard.initHotkeys", _ref, token);
+        }
+        if (_focusQueued)
+        {
+            _focusQueued = false;
+            try { await JS.InvokeVoidAsync("dashboard.focusEl", _input); } catch { }
+        }
+    }
+
+    // ★JS→C# 핫키 콜백: 토큰 검증(위조/파기 → fail-closed 거부). 실 발주 코드 경로 0(팔레트 열기/닫기 UI 뿐).
+    [JSInvokable] public void OpenPalette(long token) { if (Hotkey.VerifyToken(token)) OpenInternal(); }
+    [JSInvokable] public void ClosePalette(long token) { if (Hotkey.VerifyToken(token)) CloseInternal(); }
+
+    private void OpenInternal()
+    {
+        _open = true; _query = ""; _sel = 0; _focusQueued = true;
+        Cmd.RefreshMacros();
+        _filtered = Cmd.Filter(_query);
+        StateHasChanged();
+    }
+    private void CloseInternal() { if (_open) { _open = false; StateHasChanged(); } }
+    private void Close() => CloseInternal();   // 마스크 클릭(C# 경로)
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? "";
+        _sel = 0;
+        _filtered = Cmd.Filter(_query);
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "ArrowDown") _sel = Math.Min(_sel + 1, Math.Max(0, _filtered.Count - 1));
+        else if (e.Key == "ArrowUp") _sel = Math.Max(_sel - 1, 0);
+        else if (e.Key == "Enter") { if (_sel < _filtered.Count) await Run(_filtered[_sel]); }
+        else if (e.Key == "Escape") CloseInternal();
+    }
+
+    private async Task Run(ICommandView c)
+    {
+        CloseInternal();
+        await Cmd.ExecuteAsync(c.Id);                       // 어댑터가 액션 실행(모듈/모의/알림/함수/테마)
+        try { await JS.InvokeVoidAsync("dashboard.setTheme", Cmd.CurrentTheme); } catch { }   // 테마 명령 동기(그 외 idempotent)
+    }
+
+    public void Dispose()
+    {
+        Hotkey.OpenRequested -= OnOpenRequested;
+        Hotkey.RevokeToken();     // ★파기 후 위조 콜백 거부
+        Hotkey.ReleaseHandle();   // ★핸들 카운트 해제(누수 검출 균형)
+        _ref?.Dispose();          // ★GCHandle 해제(0x00)
+    }
+}

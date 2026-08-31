@@ -1,10 +1,9 @@
 @inherits LayoutComponentBase
-@inject StockManager.Common.Account.SessionState Session
-@inject LocalDatabase Db
+@inject IMainShellNavigationPort Shell
 @inject NavigationManager Nav
 
-@* ★ [회원 로그인 게이트] 미인증 시 /login 으로. BlazorWebView 는 항상 인터랙티브라 레이아웃에서 직접 판독 가능(정적 SSR 트릭 불요).
-   --headless 모드엔 WebView 자체가 없고 단위테스트는 레이아웃을 렌더하지 않으므로 우회 불요. DB 설정 Auth:RequireLogin=false 로 해제 가능. *@
+@* Phase 94-L: 순수 UI 이관 — 로그인 게이트/설정은 IMainShellNavigationPort(SessionState·LocalDatabase 격리).
+   자식(NavMenu·MarketTicker·SymbolBar·AsOfBar·CommandPalette·ToastHost) 전량 RCL. NavigationManager 는 포터블. *@
 @if (_pass)
 {
     <div class="app-shell">
@@ -25,8 +24,8 @@
 
     protected override void OnInitialized()
     {
-        var require = !string.Equals(Db.GetSetting("Auth:RequireLogin"), "false", StringComparison.OrdinalIgnoreCase);
-        if (require && !Session.IsAuthenticated)
+        var require = !string.Equals(Shell.GetSetting("Auth:RequireLogin"), "false", StringComparison.OrdinalIgnoreCase);
+        if (require && !Shell.IsAuthenticated)
         {
             var path = new Uri(Nav.Uri).AbsolutePath.Trim('/');
             if (!string.Equals(path, "login", StringComparison.OrdinalIgnoreCase))

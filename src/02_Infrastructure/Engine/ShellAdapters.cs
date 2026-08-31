@@ -60,7 +60,10 @@ namespace MS2E.Infrastructure
     {
         private readonly LocalDatabase _db;
         private readonly CommandPaletteController _palette;
-        public MainShellNavigationAdapter(LocalDatabase db, CommandPaletteController palette) { _db = db; _palette = palette; }
+        private readonly StockManager.Common.Account.SessionState _session;
+        public MainShellNavigationAdapter(LocalDatabase db, CommandPaletteController palette, StockManager.Common.Account.SessionState session)
+        { _db = db; _palette = palette; _session = session; }
+        public bool IsAuthenticated => _session.IsAuthenticated;
 
         public int AlertUnreadCount
         {
@@ -73,10 +76,13 @@ namespace MS2E.Infrastructure
     }
 
     // ── 대시보드 위젯(IndexTickerBar·MarketTicker) ──────────────────────────────
+    internal sealed record WeeklyPointDto(string Label, decimal Value) : IWeeklyPointView;
+
     public sealed class DashboardWidgetAdapter : IDashboardWidgetPort
     {
         private readonly GlobalIndexService _idx;
         private readonly IQuoteProvider _provider;
+        private readonly DashboardService _dash;
 
         // MarketTicker 고정 감시목록(엔진 측 소유 — RCL 로 유입 안 함).
         private static readonly (string sym, Market mkt)[] _watch =
@@ -85,11 +91,31 @@ namespace MS2E.Infrastructure
             ("AAPL", Market.US_NASDAQ), ("NVDA", Market.US_NASDAQ), ("TSLA", Market.US_NASDAQ), ("MSFT", Market.US_NASDAQ),
         };
 
-        public DashboardWidgetAdapter(GlobalIndexService idx, IQuoteProvider provider)
+        public DashboardWidgetAdapter(GlobalIndexService idx, IQuoteProvider provider, DashboardService dash)
         {
-            _idx = idx; _provider = provider;
+            _idx = idx; _provider = provider; _dash = dash;
             _idx.OnRefreshed += () => IndicesRefreshed?.Invoke();
         }
+
+        // ── 대시보드 KPI(Dashboard·DashboardHome) ──
+        public Task LoadAsync() => _dash.LoadAsync();
+        public decimal Total => _dash.Total;
+        public decimal Ret => _dash.Ret;
+        public decimal Pnl => _dash.Pnl;
+        public decimal CoinValue => _dash.CoinValue;
+        public decimal AllocKrwStock => _dash.AllocKrwStock;
+        public decimal AllocUsdStock => _dash.AllocUsdStock;
+        public decimal AllocCoin => _dash.AllocCoin;
+        public decimal PaperCash => _dash.PaperCash;
+        public decimal PaperPosVal => _dash.PaperPosVal;
+        public decimal PaperPnl => _dash.PaperPnl;
+        public decimal PaperRet => _dash.PaperRet;
+        public bool WeeklySample => _dash.WeeklySample;
+        public string Theme { get => _dash.Theme; set => _dash.Theme = value; }
+        public IReadOnlyList<MS2E.UI.Portable.Ports.ICoinHoldingView> Coins => _dash.Coins;   // List<CoinRow> 공변
+        public IReadOnlyList<IWeeklyPointView> Weekly => _dash.Weekly.Select(w => (IWeeklyPointView)new WeeklyPointDto(w.Label, w.Value)).ToList();
+        public IReadOnlyList<MS2E.UI.Portable.Ports.Strategy.ICoinSignalView> Signals => _dash.Signals;   // List<SignalRow> 공변
+        public void OpenModule(string key) => ModuleBridge.Open(key);
 
         public IReadOnlyList<IIndexRowView> Indices => _idx.Indices;   // List<IndexRow> → IReadOnlyList<IIndexRowView>(공변)
         public event Action? IndicesRefreshed;

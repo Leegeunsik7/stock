@@ -942,6 +942,11 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IToastPort, MS2E.Infrastructure.ToastAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IMainShellNavigationPort, MS2E.Infrastructure.MainShellNavigationAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IDashboardWidgetPort, MS2E.Infrastructure.DashboardWidgetAdapter>();
+            // Phase 94-L — CommandPalette & MainLayout Port(DIP): 명령 레지스트리(scoped·Nav) + 핫키 브릿지/JS Interop 안전 센티널.
+            services.AddSingleton<MS2E.Infrastructure.DotNetObjectRefSentinel>();
+            services.AddSingleton<MS2E.Infrastructure.JSInvokableTokenVerifier>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IHotkeyBridgePort, MS2E.Infrastructure.HotkeyBridgeAdapter>();
+            services.AddScoped<MS2E.UI.Portable.Ports.Shell.ICommandPalettePort, MS2E.Infrastructure.CommandPaletteAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
