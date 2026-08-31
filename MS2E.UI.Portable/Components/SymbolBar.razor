@@ -1,20 +1,20 @@
-@* SymbolBar - 전역 활성 종목 바 (IA 개편, v3.29.0) *@
+@* SymbolBar - 전역 활성 종목 바. Phase 94-K: 순수 UI 이관 — ISymbolContextPort 만 소비(SymbolContext 무참조). *@
 @implements IDisposable
-@inject SymbolContext Ctx
+@inject ISymbolContextPort Sym
 @inject NavigationManager Nav
 
 <div class="symbar">
     <span class="sb-lbl">활성 종목</span>
     <input class="sb-in" placeholder="005930" @bind="_sym" @bind:event="oninput" @onkeydown="OnKey" />
     <select class="sb-in" style="width:104px" @bind="_mkt">
-        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
-        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+        <option value="@PfMarket.KRX_KOSPI">코스피</option><option value="@PfMarket.KRX_KOSDAQ">코스닥</option>
+        <option value="@PfMarket.US_NASDAQ">나스닥</option><option value="@PfMarket.US_NYSE">뉴욕</option><option value="@PfMarket.US_AMEX">아멕스</option>
     </select>
     <button class="sb-btn" @onclick="Apply">설정</button>
 
-    @if (Ctx.HasSymbol)
+    @if (Sym.HasSymbol)
     {
-        <span class="sb-cur">▶ @Ctx.Symbol</span>
+        <span class="sb-cur">▶ @Sym.Symbol</span>
         <span class="sb-links">연구로 이동:
             <a @onclick='() => Nav.NavigateTo("/lab/optimizer")'>옵티마이저</a>
             <a @onclick='() => Nav.NavigateTo("/lab/eventstudy")'>이벤트</a>
@@ -29,12 +29,12 @@
 
 @code {
     private string _sym = "";
-    private Market _mkt = Market.KRX_KOSPI;
+    private PfMarket _mkt = PfMarket.KRX_KOSPI;
 
     protected override void OnInitialized()
     {
-        if (Ctx.HasSymbol) { _sym = Ctx.Symbol; _mkt = Ctx.Market; }
-        Ctx.OnChange += OnCtx;
+        if (Sym.HasSymbol) { _sym = Sym.Symbol; _mkt = Sym.Market; }
+        Sym.OnChange += OnCtx;
     }
 
     private void OnCtx() => InvokeAsync(StateHasChanged);
@@ -42,12 +42,12 @@
     private void Apply()
     {
         if (string.IsNullOrWhiteSpace(_sym)) return;
-        Ctx.Set(_sym, _mkt);
+        Sym.Set(_sym, _mkt);
     }
 
     private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") Apply(); }
 
-    public void Dispose() => Ctx.OnChange -= OnCtx;
+    public void Dispose() => Sym.OnChange -= OnCtx;
 }
 
 <style>

@@ -175,6 +175,8 @@ namespace MS2E.UI.Portable.Ports.Portfolio
         DateTime? AsOf { get; }
         event Action? OnChange;
         IReadOnlyList<IAsOfHoldingView> Reconstruct();
+        void EnterAsOf(DateTime date);   // Phase 94-K: AsOfBar — 과거 시점 진입
+        void ReturnLive();               // Phase 94-K: AsOfBar — LIVE 복귀
     }
 
     /// <summary>⑤ JS 대화상자(IJSRuntime 격리·미가용 시 fail-open=true, 원본 폴백 보존).</summary>

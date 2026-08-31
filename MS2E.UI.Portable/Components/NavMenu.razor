@@ -1,14 +1,14 @@
+@* Phase 94-K: 순수 UI 이관 — IMainShellNavigationPort 만 소비(LocalDatabase·CommandPaletteController·SystemVersionProvider 무참조). *@
 @implements IDisposable
 @inject NavigationManager Nav
-@inject LocalDatabase Db
-@inject CommandPaletteController Palette
+@inject IMainShellNavigationPort Shell
 
 <aside class="side">
     <div class="brand">
         <div class="logo" style="font-size:12.5px;letter-spacing:-.3px">ANG</div>
-        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · @SystemVersionProvider.Version</div></div>
+        <div class="meta"><div class="t">Stock Suite</div><div class="v">MS2-E · @Shell.AppVersion</div></div>
     </div>
-    <div class="kbar" @onclick="() => Palette.RequestOpen()">
+    <div class="kbar" @onclick="() => Shell.RequestOpenPalette()">
         🔍 검색하거나 이동… <kbd>Ctrl K</kbd>
     </div>
 
@@ -171,14 +171,8 @@
 
     private void RefreshBadges()
     {
-        try
-        {
-            var dt = Db.Query("SELECT COUNT(*) AS c FROM Alerts WHERE IsRead=0");
-            _alertUnread = dt.Rows.Count > 0 ? Safe.Int(dt.Rows[0]["c"]) : 0;
-        }
-        catch { _alertUnread = 0; }
-        try { _fraudUnread = Db.GetUnreviewedFraudCount(); }
-        catch { _fraudUnread = 0; }
+        _alertUnread = Shell.AlertUnreadCount;   // 배지 카운트는 어댑터가 조회(원시 SQL·Safe 격리)
+        _fraudUnread = Shell.FraudUnreadCount;
     }
 
     private int BadgeFor(string groupId) =>

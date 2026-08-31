@@ -15,6 +15,7 @@ namespace MS2E.Infrastructure
     public sealed record IndexRow(
         string Symbol, string Name, string Flag, string Region,
         decimal Last, decimal PrevClose, string Currency)
+        : MS2E.UI.Portable.Ports.Shell.IIndexRowView   // Phase 94-K: Name/Last/ChgPct 공변
     {
         public decimal Chg    => Last - PrevClose;
         public decimal ChgPct => PrevClose > 0 ? (Last - PrevClose) / PrevClose * 100m : 0m;

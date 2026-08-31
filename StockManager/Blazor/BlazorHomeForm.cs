@@ -914,6 +914,11 @@ namespace StockManager.Blazor
             var multiDisarm = new MS2E.Infrastructure.MultiTelemetryDisarmInterlock(flightRecorder);
             services.AddSingleton(flightRecorder);
             services.AddSingleton(multiDisarm);
+            // v11.4.5 Think-Beyond — Stage 4 전액 승격 이중 엔진: ①Step-Up Tier 거버너(락프리 CAS·중복승격/오버슈트 불가) ②즉시 롤백 퍼저(0x00 소거·잔여권한 차단).
+            var rollbackPurger = new MS2E.Infrastructure.InstantRollbackPurger();
+            var tierGovernor = new MS2E.Infrastructure.StepUpTierGovernor(rollbackPurger);
+            services.AddSingleton(rollbackPurger);
+            services.AddSingleton(tierGovernor);
             // Phase 94-G — 알림 피드 Port(DIP): AlertPage/AlertHistoryPage 이주 기반. AlertCenter 정적 싱글턴 격리(싱글턴 = 이벤트 구독 1회).
             services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.IAlertFeedPort, MS2E.Infrastructure.AlertFeedAdapter>();
             // Phase 94-H — 복합 알림 규칙 CRUD Port(DIP): CompositeAlertsPage 이주 기반. CompositeAlertService 정적 싱글턴 + AiService 격리(가변 드래프트↔도메인 매핑·싱글턴 = Evaluated 구독 1회).
@@ -932,6 +937,11 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.ISymbolSearchPort, MS2E.Infrastructure.SymbolSearchAdapter>();
             services.AddScoped<MS2E.UI.Portable.Ports.Portfolio.IJsDialogPort, MS2E.Infrastructure.JsDialogAdapter>();
             services.AddScoped<MS2E.UI.Portable.Ports.Portfolio.IPortfolioBoardPort, MS2E.Infrastructure.PortfolioBoardAdapter>();
+            // Phase 94-K — Main Shell & Dashboard 위젯 Port(DIP): NavMenu·ToastHost·SymbolBar·CrossLinks·IndexTickerBar·MarketTicker 이주 기반.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.ISymbolContextPort, MS2E.Infrastructure.SymbolContextAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IToastPort, MS2E.Infrastructure.ToastAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IMainShellNavigationPort, MS2E.Infrastructure.MainShellNavigationAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IDashboardWidgetPort, MS2E.Infrastructure.DashboardWidgetAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

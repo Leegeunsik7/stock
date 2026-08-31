@@ -1,12 +1,13 @@
 @* CrossLinks - 횡이동 딥링크 바 (IA 개편 3단계, v3.32.0)
    분석 페이지에 두면 활성 종목 그대로 다른 연구 도구로 사이드바 없이 점프. *@
-@inject SymbolContext Ctx
+@* Phase 94-K: 순수 UI 이관 — ISymbolContextPort 만 소비(SymbolContext 무참조). *@
+@inject ISymbolContextPort Sym
 @inject NavigationManager Nav
 
-@if (Ctx.HasSymbol)
+@if (Sym.HasSymbol)
 {
     <div class="xlinks">
-        <span class="xl-sym">▶ @Ctx.Symbol 으로</span>
+        <span class="xl-sym">▶ @Sym.Symbol 으로</span>
         @foreach (var t in _tools)
         {
             @if (!string.Equals(t.Key, Current, StringComparison.OrdinalIgnoreCase))

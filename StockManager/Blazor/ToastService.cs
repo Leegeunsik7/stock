@@ -14,13 +14,14 @@ namespace StockManager.Blazor
 
     /// <summary>토스트 버튼 — 라벨 + 실행 델리게이트(Func&lt;Task&gt;). Primary면 강조 스타일.</summary>
     public record ToastButton(string Label, Func<Task> OnClick, bool Primary = false)
+        : MS2E.UI.Portable.Ports.Shell.IToastButtonView   // Phase 94-K: Label/Primary 공변
     {
         // 동기 액션 편의 오버로드: Toast.Button("승인", () => Approve())
         public static ToastButton Of(string label, Action onClick, bool primary = false)
             => new(label, () => { onClick(); return Task.CompletedTask; }, primary);
     }
 
-    public class ToastMessage
+    public class ToastMessage : MS2E.UI.Portable.Ports.Shell.IToastView   // Phase 94-K: ToastHost 공변
     {
         public Guid Id { get; } = Guid.NewGuid();
         public string Title { get; init; } = "";
@@ -28,6 +29,11 @@ namespace StockManager.Blazor
         public ToastLevel Level { get; init; } = ToastLevel.Info;
         public List<ToastButton> Buttons { get; init; } = new();
         public int TimeoutMs { get; init; } = 5000;   // 0 = 자동으로 닫지 않음(액션 대기형)
+
+        // Level(enum 정수정렬)·Buttons(List→IReadOnlyList 공변) 명시 구현. Id/Title/Message/TimeoutMs 는 암시.
+        MS2E.UI.Portable.Ports.Shell.ToastKind MS2E.UI.Portable.Ports.Shell.IToastView.Level
+            => (MS2E.UI.Portable.Ports.Shell.ToastKind)(int)Level;
+        IReadOnlyList<MS2E.UI.Portable.Ports.Shell.IToastButtonView> MS2E.UI.Portable.Ports.Shell.IToastView.Buttons => Buttons;
     }
 
     public class ToastService

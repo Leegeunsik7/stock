@@ -136,6 +136,8 @@ namespace MS2E.Infrastructure
         public bool IsLive => _ctx.IsLive;
         public DateTime? AsOf => _ctx.AsOf;
         public event Action? OnChange;
+        public void EnterAsOf(DateTime date) => _ctx.Set(date);   // Phase 94-K
+        public void ReturnLive() => _ctx.Live();                  // Phase 94-K
 
         public IReadOnlyList<IAsOfHoldingView> Reconstruct()
         {

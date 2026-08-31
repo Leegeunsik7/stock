@@ -1,8 +1,8 @@
-@* AsOfBar - 전역 시점(As-Of) 스크러버 바 (Season 6 #3). 활성 시 앰버로 "과거 시점 보기" 표시. *@
+@* AsOfBar - 전역 시점(As-Of) 스크러버 바. Phase 94-K: 순수 UI 이관 — ITimeTravelAsOfPort 만 소비(AsOfContext 무참조). *@
 @implements IDisposable
-@inject AsOfContext Ctx
+@inject ITimeTravelAsOfPort AsOf
 
-<div class="asofbar @(Ctx.IsLive ? "" : "active")">
+<div class="asofbar @(AsOf.IsLive ? "" : "active")">
     <span class="ao-lbl">🕰 시점</span>
     <input type="date" class="ao-in" @bind="_date" max="@DateTime.Today.ToString("yyyy-MM-dd")" />
     <button class="ao-btn" @onclick="Apply">적용</button>
@@ -12,14 +12,14 @@
         <a @onclick="() => Quick(6)">6M</a>
         <a @onclick="() => Quick(12)">1Y</a>
     </span>
-    @if (Ctx.IsLive)
+    @if (AsOf.IsLive)
     {
         <span class="ao-live">🟢 LIVE · 현재 시점</span>
     }
     else
     {
-        <span class="ao-asof">⏳ AS-OF @Ctx.AsOf!.Value.ToString("yyyy-MM-dd") · 터미널이 과거 시점을 표시 중</span>
-        <button class="ao-livebtn" @onclick="() => Ctx.Live()">🔴 LIVE 복귀</button>
+        <span class="ao-asof">⏳ AS-OF @AsOf.AsOf!.Value.ToString("yyyy-MM-dd") · 터미널이 과거 시점을 표시 중</span>
+        <button class="ao-livebtn" @onclick="() => AsOf.ReturnLive()">🔴 LIVE 복귀</button>
     }
 </div>
 
@@ -28,25 +28,25 @@
 
     protected override void OnInitialized()
     {
-        if (!Ctx.IsLive) _date = Ctx.AsOf!.Value;
-        Ctx.OnChange += OnCtx;
+        if (!AsOf.IsLive) _date = AsOf.AsOf!.Value;
+        AsOf.OnChange += OnCtx;
     }
 
     private void OnCtx() => InvokeAsync(StateHasChanged);
 
     private void Apply()
     {
-        if (_date.Date >= DateTime.Today) { Ctx.Live(); return; }   // 오늘/미래 = LIVE
-        Ctx.Set(_date);
+        if (_date.Date >= DateTime.Today) { AsOf.ReturnLive(); return; }   // 오늘/미래 = LIVE
+        AsOf.EnterAsOf(_date);
     }
 
     private void Quick(int months)
     {
         _date = DateTime.Today.AddMonths(-months);
-        Ctx.Set(_date);
+        AsOf.EnterAsOf(_date);
     }
 
-    public void Dispose() => Ctx.OnChange -= OnCtx;
+    public void Dispose() => AsOf.OnChange -= OnCtx;
 }
 
 <style>

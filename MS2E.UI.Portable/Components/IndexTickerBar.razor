@@ -4,8 +4,9 @@
    표시: 코스피·코스닥·나스닥·나스닥선물·다우·S&P·S&P선물(ES=F)·러셀2000선물(RTY=F). OnRefreshed → InvokeAsync(StateHasChanged).
    ※ 한국 야간/주간 선물(코스피200)은 무인증 피드 부재로 미표시(정직) — KIS futureoption 배선 시 합류 가능.
    ============================================================================ *@
+@* Phase 94-K: 순수 UI 이관 — IDashboardWidgetPort 만 소비(GlobalIndexService 무참조). *@
 @implements IDisposable
-@inject GlobalIndexService GlobIdx
+@inject IDashboardWidgetPort Widget
 
 <div class="idxbar">
     @foreach (var sym in _show)
@@ -30,23 +31,23 @@
 
     protected override void OnInitialized()
     {
-        GlobIdx.OnRefreshed += OnRefreshed;
-        _any = GlobIdx.Indices.Count > 0;
+        Widget.IndicesRefreshed += OnRefreshed;
+        _any = Widget.Indices.Count > 0;
     }
 
     private void OnRefreshed()
     {
-        _any = GlobIdx.Indices.Count > 0;
+        _any = Widget.Indices.Count > 0;
         InvokeAsync(StateHasChanged);   // 백그라운드 폴링 스레드 → UI 스레드 마샬링
     }
 
-    private IndexRow? Find(string sym)
+    private IIndexRowView? Find(string sym)
     {
-        foreach (var r in GlobIdx.Indices) if (r.Symbol == sym) return r;
+        foreach (var r in Widget.Indices) if (r.Symbol == sym) return r;
         return null;
     }
 
-    public void Dispose() => GlobIdx.OnRefreshed -= OnRefreshed;
+    public void Dispose() => Widget.IndicesRefreshed -= OnRefreshed;
 }
 
 <style>
