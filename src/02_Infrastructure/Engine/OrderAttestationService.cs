@@ -34,7 +34,8 @@ namespace MS2E.Infrastructure
         string  Field,        // "예수금(KRW)" 또는 종목코드
         decimal LocalValue,
         decimal BrokerValue,
-        decimal Delta);       // Local - Broker (부호 있음)
+        decimal Delta)        // Local - Broker (부호 있음)
+        : MS2E.UI.Portable.Ports.Trading.IMismatchView;   // Phase 94-N: 공변(Field/LocalValue/BrokerValue/Delta 암시)
 
     // ── 감사 로그 엔트리 ──────────────────────────────────────────────────────
 
@@ -43,7 +44,14 @@ namespace MS2E.Infrastructure
         bool                             Passed,
         IReadOnlyList<AttestationMismatch> Mismatches,
         string                           Signature,   // 수동 해제 서명; 자동 통과 시 ""
-        string                           Note);
+        string                           Note)
+        : MS2E.UI.Portable.Ports.Trading.IAttestationEntryView   // Phase 94-N: 공변(Timestamp/Passed/Signature/Note 암시)
+    {
+        public int MismatchCount => Mismatches.Count;
+        // IReadOnlyList<AttestationMismatch> → IReadOnlyList<IMismatchView> : 공변(명시적 — 동명 반환형 충돌 회피).
+        IReadOnlyList<MS2E.UI.Portable.Ports.Trading.IMismatchView>
+            MS2E.UI.Portable.Ports.Trading.IAttestationEntryView.Mismatches => Mismatches;
+    }
 
     // ── 핵심 서비스 ───────────────────────────────────────────────────────────
 

@@ -44,6 +44,10 @@ namespace MS2E.UI.Portable.Ports.Shell
         void Dismiss(Guid id);
         /// <summary>토스트 버튼 액션 실행(엔진 Func 를 RCL 로 노출하지 않고 인덱스로 위임).</summary>
         Task InvokeButtonAsync(Guid toastId, int buttonIndex);
+        // Phase 94-N: 버튼 없는 단순 토스트 표시(패널용).
+        void ShowSuccess(string title, string message);
+        void ShowWarning(string title, string message);
+        void ShowInfo(string title, string message);
     }
 
     // ── 메인 셸 내비게이션(NavMenu) ────────────────────────────────────────────

@@ -53,6 +53,10 @@ namespace MS2E.Infrastructure
             try { await t.Buttons[buttonIndex].OnClick(); }   // 엔진 Func 실행(RCL 로 노출 안 함)
             catch (Exception ex) { Log.Warn($"[Toast] 액션 실패: {ex.Message}"); }
         }
+
+        public void ShowSuccess(string title, string message) => _svc.Success(title, message);
+        public void ShowWarning(string title, string message) => _svc.Warning(title, message);
+        public void ShowInfo(string title, string message) => _svc.Info(title, message);
     }
 
     // ── 메인 셸 내비게이션(NavMenu) ────────────────────────────────────────────

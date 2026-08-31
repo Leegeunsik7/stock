@@ -959,6 +959,8 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IUserActivityPort, MS2E.Infrastructure.UserActivityAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.ILayoutPersistencePort, MS2E.Infrastructure.LayoutPersistenceAdapter>();
             services.AddScoped<MS2E.UI.Portable.Ports.Shell.IDashboardActionPort, MS2E.Infrastructure.DashboardActionAdapter>();
+            // Phase 94-N — 트레이딩 허브 Port(DIP): GatingPage·OrderReconcilePanel 이주 기반. OrderAttestationService 격리(정합 관제).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.ITradingHubPort, MS2E.Infrastructure.TradingHubAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

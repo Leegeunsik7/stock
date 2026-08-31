@@ -1,8 +1,9 @@
 @* OrderReconcilePanel — 비상 동결 해제 패널
    EmergencyFreeze 상태에서 브로커 잔고와 로컬 원장을 비교하고 서명으로 해제합니다.
    LiveTradingDashboard 오버레이 내에 임베드되어 사용됩니다. *@
-@inject OrderAttestationService Attestation
-@inject ToastService Toasts
+@* Phase 94-N: 순수 UI 이관 — ITradingHubPort(정합 관제) + IToastPort 만 소비(OrderAttestationService 무참조). *@
+@inject ITradingHubPort Trading
+@inject IToastPort Toasts
 
 @{
     var lastFreeze = GetLastFreezeEntry();
@@ -100,14 +101,12 @@
         _reconcileMsg = "";
         try
         {
-            var local  = new LocalState(_localCash,  ParseHoldings(_localHoldings));
-            var broker = new BrokerState(_brokerCash, ParseHoldings(_brokerHoldings));
-            var result = Attestation.Reconcile(local, broker);
+            var result = Trading.Reconcile(_localCash, ParseHoldings(_localHoldings), _brokerCash, ParseHoldings(_brokerHoldings));
             _reconcileOk  = result.Passed;
             _reconcileMsg = result.Passed
                 ? "정합 통과 — 미스매치 없음"
-                : $"미스매치 {result.Mismatches.Count}건 감지";
-            if (result.Passed) Toasts.Success("정합 통과", "로컬 원장 ↔ 브로커 잔고 일치 확인");
+                : $"미스매치 {result.MismatchCount}건 감지";
+            if (result.Passed) Toasts.ShowSuccess("정합 통과", "로컬 원장 ↔ 브로커 잔고 일치 확인");
         }
         catch (Exception ex) { _reconcileOk = false; _reconcileMsg = ex.Message; }
     }
@@ -118,16 +117,16 @@
         if (string.IsNullOrWhiteSpace(_signature)) { _releaseMsg = "서명을 입력하세요."; return; }
         try
         {
-            Attestation.ManualRelease(_signature.Trim(), _releaseNote);
+            Trading.ManualRelease(_signature.Trim(), _releaseNote);
             _signature = _releaseNote = "";
-            Toasts.Success("동결 해제", "수동 정합 서명 확인 — 실거래 게이트 정상화");
+            Toasts.ShowSuccess("동결 해제", "수동 정합 서명 확인 — 실거래 게이트 정상화");
         }
         catch (Exception ex) { _releaseMsg = $"해제 실패: {ex.Message}"; }
     }
 
-    private AttestationAuditEntry? GetLastFreezeEntry()
+    private IAttestationEntryView? GetLastFreezeEntry()
     {
-        foreach (var e in Attestation.AuditLog)
+        foreach (var e in Trading.AuditLog)
             if (!e.Passed) return e;
         return null;
     }
