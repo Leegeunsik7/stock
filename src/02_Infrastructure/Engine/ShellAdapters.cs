@@ -78,6 +78,45 @@ namespace MS2E.Infrastructure
     // ── 대시보드 위젯(IndexTickerBar·MarketTicker) ──────────────────────────────
     internal sealed record WeeklyPointDto(string Label, decimal Value) : IWeeklyPointView;
 
+    // ── Phase 94-M: 대시보드 심층(Activity·Layout·Paper) ────────────────────────
+    public sealed class UserActivityAdapter : IUserActivityPort
+    {
+        private readonly DashboardService _dash;
+        public UserActivityAdapter(DashboardService dash) => _dash = dash;
+        public IReadOnlyList<IActivityView> Recent => _dash.Activity;   // List<ActItem> → IReadOnlyList<IActivityView> 공변
+    }
+
+    public sealed class LayoutPersistenceAdapter : ILayoutPersistencePort
+    {
+        private readonly DashboardService _dash;
+        public LayoutPersistenceAdapter(DashboardService dash) => _dash = dash;
+        public IReadOnlyList<string> Load() => _dash.LoadLayout();
+        public void Save(IReadOnlyList<string> layout) => _dash.SaveLayout(layout);
+    }
+
+    /// <summary>모의주문+토스트-네비 어댑터(scoped — NavigationManager 결합). ★실 발주 아님(paper — liveArmed:false 무관).</summary>
+    public sealed class DashboardActionAdapter : IDashboardActionPort
+    {
+        private readonly DashboardService _dash;
+        private readonly ToastService _toasts;
+        private readonly Microsoft.AspNetCore.Components.NavigationManager _nav;
+        public DashboardActionAdapter(DashboardService dash, ToastService toasts, Microsoft.AspNetCore.Components.NavigationManager nav)
+        { _dash = dash; _toasts = toasts; _nav = nav; }
+
+        public async Task QuickPaperAsync(string market, decimal amount, bool isBuy)
+        {
+            var (ok, msg) = _dash.QuickPaper(market, amount, isBuy ? PaperSide.Buy : PaperSide.Sell);
+            await _dash.LoadAsync();
+            if (ok)
+                _toasts.Success("모의 주문 체결", msg + "\n(모의투자 — 실제 주문 아님)", new()
+                {
+                    new ToastButton("모의투자 보기", () => { _nav.NavigateTo("/paper"); return Task.CompletedTask; }, Primary: true)
+                });
+            else
+                _toasts.Warning("주문 실패", msg);
+        }
+    }
+
     public sealed class DashboardWidgetAdapter : IDashboardWidgetPort
     {
         private readonly GlobalIndexService _idx;

@@ -76,6 +76,29 @@ namespace MS2E.UI.Portable.Ports.Shell
         string ToggleTheme();                                  // 테마 토글 + 새 모드 반환(JS setTheme 용)
     }
 
+    // ── Phase 94-M: 대시보드 심층(Activity·Layout·Paper) ────────────────────────
+    /// <summary>사용자 활동 로그 1건(엔진 ActItem 추상).</summary>
+    public interface IActivityView { string Text { get; } string When { get; } }
+
+    /// <summary>사용자 활동 로그 Port(DashboardService.Activity 격리).</summary>
+    public interface IUserActivityPort
+    {
+        IReadOnlyList<IActivityView> Recent { get; }
+    }
+
+    /// <summary>UI 레이아웃 영속 Port(위젯 배치 저장/복원 — DashboardService.LoadLayout/SaveLayout 격리).</summary>
+    public interface ILayoutPersistencePort
+    {
+        IReadOnlyList<string> Load();
+        void Save(IReadOnlyList<string> layout);
+    }
+
+    /// <summary>대시보드 액션 Port(모의주문+토스트-네비 — scoped·NavigationManager 결합). ★실 발주 아님(paper).</summary>
+    public interface IDashboardActionPort
+    {
+        Task QuickPaperAsync(string market, decimal amount, bool isBuy);
+    }
+
     // ── Phase 94-L: 핫키 브릿지 + JS Interop 안전(Think-Beyond) ──────────────────
     public interface IHotkeyBridgePort
     {

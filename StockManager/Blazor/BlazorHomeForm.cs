@@ -901,6 +901,14 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.ISignalsServicePort, MS2E.Infrastructure.SignalsServiceAdapter>();
             // v11.4.0 — 카나리 폭발 반경 격리 센티널(기본 disarmed·★물리 이중 키 없이는 무장 불가 → 발주 인가 0). 상위 발주 경로가 이 게이트 없이는 진행 못 하도록 배선 대상.
             services.AddSingleton<MS2E.Infrastructure.CanaryHealthSentinel>();
+            // v11.5.0 — 하드웨어 킬스위치 브릿지(MS2E.Core) + Think-Beyond(스핀락 인터럽트·휘발성 메모리 퍼저). Killed 이벤트는 아래 sp 생성 후 CanaryHealthSentinel·Purger 에 결선.
+            var killPurger = new MS2E.Core.VolatileMemoryPurger();
+            var killBridge = new MS2E.Core.HardwareKillSwitchBridge();
+            var killSpin = new MS2E.Core.HardwareInterruptSpinLock(reason => killBridge.Signal(reason));
+            services.AddSingleton<MS2E.Core.IHardwareKillSwitchPort>(killBridge);
+            services.AddSingleton(killBridge);
+            services.AddSingleton(killPurger);
+            services.AddSingleton(killSpin);
             // v11.4.2 Think-Beyond — Stage 1 드라이런 이중 엔진: ①레이턴시 거버너(δ=0 락프리 — UI 패닉 방어) ②Zero-Leak Veto 인터락(O(1) fail-closed + 변조불가 감사). 인터락이 거버너 breach 를 소비(융합).
             var canaryLatencyGovernor = new MS2E.Infrastructure.CanaryVetoLatencyGovernor();
             var zeroLeakVetoInterlock = new MS2E.Infrastructure.ZeroLeakVetoInterlock(canaryLatencyGovernor);
@@ -947,6 +955,10 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.Infrastructure.JSInvokableTokenVerifier>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IHotkeyBridgePort, MS2E.Infrastructure.HotkeyBridgeAdapter>();
             services.AddScoped<MS2E.UI.Portable.Ports.Shell.ICommandPalettePort, MS2E.Infrastructure.CommandPaletteAdapter>();
+            // Phase 94-M — Dashboard 심층 Port(DIP): 활동로그·레이아웃 영속·모의주문(scoped·Nav).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IUserActivityPort, MS2E.Infrastructure.UserActivityAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.ILayoutPersistencePort, MS2E.Infrastructure.LayoutPersistenceAdapter>();
+            services.AddScoped<MS2E.UI.Portable.Ports.Shell.IDashboardActionPort, MS2E.Infrastructure.DashboardActionAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
@@ -1085,6 +1097,17 @@ namespace StockManager.Blazor
             catch { /* 온보딩 진단은 부팅을 절대 깨지 않는다(fail-safe) */ }
 
             var sp = services.BuildServiceProvider();
+            // v11.5.0 — ★하드웨어 킬스위치 결선: 격발 시 CanaryHealthSentinel 즉시 Kill(발주 인가 0·토큰 0x00) + API Secret 버퍼 전량 0x00 소거. sticky — 물리 이중 키 재무장 전까지 복구 불가.
+            try
+            {
+                var canaryForKill = sp.GetService<MS2E.Infrastructure.CanaryHealthSentinel>();
+                killBridge.Killed += _ =>
+                {
+                    try { canaryForKill?.Kill(MS2E.Infrastructure.CanaryKillReason.Manual); } catch { }
+                    try { killPurger.PurgeAll(); } catch { }
+                };
+            }
+            catch { /* 킬스위치 결선 실패가 부팅을 깨지 않는다(fail-safe) */ }
             // 기동 시 — 관리자(GSLEE) 시드 보장 + 설치 PC 텔레메트리 1회 수집(실패해도 앱 기동 무영향).
             try { sp.GetRequiredService<StockManager.Common.Account.MemberRegistryService>(); } catch { /* 시드 실패 무시 */ }
             try { sp.GetRequiredService<StockManager.Common.Account.InstallTelemetryService>().CaptureAndPersist(); } catch { /* 텔레메트리 실패 무시 */ }
