@@ -30,6 +30,7 @@ namespace StockManager.Blazor
         // ★IPortfolioSnapshot 추가 멤버(순수 UI 소비용 — 콘크리트 Holding/Currency 노출 없이 파생 제공).
         public int HoldingCount => Used.Count;
         public bool[] UsdMask { get; set; } = Array.Empty<bool>();   // 종목별 USD 여부(통화노출)
+        public string[] Symbols => Used.Select(u => u.Symbol).ToArray();   // Phase 94-I: 종목 코드(리밸런싱 타겟 키·Weights 정렬)
 
         /// <summary>보유·환율·수익률을 1회 수집해 컨텍스트로 빌드(허브 공용 로더, DRY).</summary>
         public static async Task<PortfolioData> LoadAsync(IQuoteProvider provider, LocalDatabase db, FxConverter fx, int days)

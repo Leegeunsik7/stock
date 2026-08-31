@@ -24,6 +24,8 @@ namespace StockManager.Tests
             public double[] Weights { get; set; } = { 0.6, 0.4 };
             public int HoldingCount { get; set; } = 2;
             public bool[] UsdMask { get; set; } = { false, true };
+            public double Total { get; set; } = 1_000_000d;                 // Phase 94-I
+            public string[] Symbols { get; set; } = { "005930", "AAPL" };   // Phase 94-I
         }
 
         [Fact]

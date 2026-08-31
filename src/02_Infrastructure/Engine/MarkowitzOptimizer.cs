@@ -17,10 +17,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MS2E.UI.Portable.Ports;   // Phase 94-I — IMpoResultView/IFrontierPointView 읽기 전용 계약 구현
 
 namespace MS2E.Infrastructure
 {
-    public class FrontierPoint
+    public class FrontierPoint : IFrontierPointView   // VolPct/RetPct 암시 구현
     {
         public double VolPct { get; set; }
         public double RetPct { get; set; }
@@ -28,7 +29,7 @@ namespace MS2E.Infrastructure
         public double[] Weights { get; set; } = Array.Empty<double>();
     }
 
-    public class MpoResult
+    public class MpoResult : IMpoResultView   // Phase 94-I: RebalancePage 가 도메인 무참조로 소비
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
@@ -39,6 +40,9 @@ namespace MS2E.Infrastructure
         public double VolPct { get; set; }          // 연환산
         public double Sharpe { get; set; }
         public List<FrontierPoint> Frontier { get; set; } = new();
+
+        // 명시적 공변 구현 — List<FrontierPoint> → IReadOnlyList<IFrontierPointView>(사본 0, IReadOnlyList<out T>).
+        IReadOnlyList<IFrontierPointView> IMpoResultView.Frontier => Frontier;
     }
 
     public static class MarkowitzOptimizer

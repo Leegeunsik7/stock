@@ -12,7 +12,8 @@ using System.Threading.Tasks;
 
 namespace StockManager.Blazor
 {
-    public record CoinRow(string Name, string Market, decimal Price, decimal ChangeRate, double[] Spark);
+    public record CoinRow(string Name, string Market, decimal Price, decimal ChangeRate, double[] Spark)
+        : MS2E.UI.Portable.Ports.ICoinHoldingView;   // Phase 94-I: TotalAssetPage 가 도메인 무참조로 소비(Name/Price/ChangeRate/Spark 위치 속성 일치)
     public record ActItem(string Text, string When);
     // Phase 94-F: 코인 임박 신호 읽기 전용 계약(SignalPage RCL 이주 — Side/Name/Reason/Pct 그대로 충족).
     public record SignalRow(string Side, string Name, string Reason, int Pct) : MS2E.UI.Portable.Ports.Strategy.ICoinSignalView;

@@ -906,12 +906,19 @@ namespace StockManager.Blazor
             var zeroLeakVetoInterlock = new MS2E.Infrastructure.ZeroLeakVetoInterlock(canaryLatencyGovernor);
             services.AddSingleton(canaryLatencyGovernor);
             services.AddSingleton(zeroLeakVetoInterlock);
+            // v11.4.3 Think-Beyond — Stage 2 Micro-Arming 이중 엔진: ①원자적 마이크로캡 누산기(락프리 CAS·동시 발주 cap 초과 race 봉쇄) ②변조불가 토큰 소거기(0x00·재참조 차단).
+            services.AddSingleton<MS2E.Infrastructure.AtomicMicroCapAccumulator>();
+            services.AddSingleton<MS2E.Infrastructure.TamperProofTokenZeroizer>();
             // Phase 94-G — 알림 피드 Port(DIP): AlertPage/AlertHistoryPage 이주 기반. AlertCenter 정적 싱글턴 격리(싱글턴 = 이벤트 구독 1회).
             services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.IAlertFeedPort, MS2E.Infrastructure.AlertFeedAdapter>();
             // Phase 94-H — 복합 알림 규칙 CRUD Port(DIP): CompositeAlertsPage 이주 기반. CompositeAlertService 정적 싱글턴 + AiService 격리(가변 드래프트↔도메인 매핑·싱글턴 = Evaluated 구독 1회).
             services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.ICompositeRuleCrudPort, MS2E.Infrastructure.CompositeRuleCrudAdapter>();
             // Phase 94-H — 설정/관리자 위젯 Port(DIP): SettingsPage 이주 기반. LocalDatabase 설정/시크릿·BrokerHub·ApiKeyVault·LanStatusServer·AiService 격리(API 키는 마스킹 노출).
             services.AddSingleton<MS2E.UI.Portable.Ports.IAdminSettingWidgetPort, MS2E.Infrastructure.AdminSettingWidgetAdapter>();
+            // Phase 94-I — 계좌 요약 Port(DIP): TotalAssetPage 이주 기반. DashboardService 싱글턴 격리(Coins 공변 반환).
+            services.AddSingleton<MS2E.UI.Portable.Ports.IAccountSummaryPort, MS2E.Infrastructure.AccountSummaryAdapter>();
+            // Phase 94-I — 포트폴리오 허브 Port(DIP): RebalancePage 이주 기반. MarkowitzOptimizer + LocalDatabase(타겟 저장) 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.IPortfolioHubPort, MS2E.Infrastructure.PortfolioHubAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

@@ -1,5 +1,6 @@
-@* /assets 라우트는 PortfolioHub가 소유 — 이 페이지는 허브의 '총자산' 탭(자식)으로 강등 *@
-@inject DashboardService Svc
+@* Phase 94-I: 순수 UI 이관 — /assets 라우트는 PortfolioHub가 소유(이 페이지는 허브 '총자산' 탭 자식·@page 없음).
+   엔진 구상(DashboardService) 무참조 — IAccountSummaryPort + ICoinHoldingView 만 소비. *@
+@inject IAccountSummaryPort Svc
 @implements IDisposable
 @using System.Threading
 

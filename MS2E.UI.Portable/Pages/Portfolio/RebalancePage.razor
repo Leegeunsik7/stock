@@ -1,6 +1,7 @@
 @* ⚖️ MPT 리밸런싱 — PortfolioHub의 탭(자식). 데이터는 허브에서 캐스케이딩(자체 수집 X). *@
-@* 목표변동성·종목상한은 탭-로컬 컨트롤이며, 변경 시 캐스케이드된 R로 즉시(동기) 재계산. *@
-@inject LocalDatabase Db
+@* Phase 94-I: 순수 UI 이관 — 엔진 구상(LocalDatabase·MarkowitzOptimizer·PortfolioData) 무참조.
+   캐스케이드는 IPortfolioSnapshot(허브가 PortfolioData 를 내리면 할당가능성으로 공급) · 최적화/저장은 IPortfolioHubPort. *@
+@inject IPortfolioHubPort Hub
 
 <div class="hubbar">
     <div class="hubbar-t">⚖️ MPT 리밸런싱 옵티마이저 <span class="sub">목표 변동성에 맞춘 타겟 비중 역산 (정보 제공용)</span></div>
@@ -68,11 +69,11 @@
 </div>
 
 @code {
-    [CascadingParameter] public PortfolioData? Data { get; set; }
+    [CascadingParameter] public IPortfolioSnapshot? Data { get; set; }
 
     private int _targetVol = 15, _maxW = 40;
     private string _msg = "", _savedMsg = "";
-    private MpoResult? _res;
+    private IMpoResultView? _res;
     private double[] _curW = Array.Empty<double>();
     private double _total, _curVol;
 
@@ -80,11 +81,9 @@
     private void SaveTarget()
     {
         if (Data is null || _res is not { IsValid: true }) return;
-        var dict = new Dictionary<string, double>();
-        for (int i = 0; i < Data.Used.Count && i < _res.Weights.Length; i++)
-            dict[Data.Used[i].Symbol] = _res.Weights[i];
-        Db.SetSetting("Rebalance.Target", System.Text.Json.JsonSerializer.Serialize(dict));
-        _savedMsg = $"✅ 타겟 저장({dict.Count}종목) — 드리프트 알림 기준";
+        Hub.SaveRebalanceTarget(Data.Symbols, _res.Weights);   // 어댑터가 종목코드↔비중 JSON 직렬화·DB 기입
+        int n = Math.Min(Data.Symbols.Length, _res.Weights.Length);
+        _savedMsg = $"✅ 타겟 저장({n}종목) — 드리프트 알림 기준";
     }
 
     // 캐스케이드된 데이터가 갱신될 때(허브 로드/새로고침) 동기 재계산. 자체 수집 없음.
@@ -97,7 +96,7 @@
 
         _curW = Data.Weights;
         _total = Data.Total;
-        _res = MarkowitzOptimizer.Optimize(Data.R, Data.Names, _targetVol, Math.Clamp(_maxW, 10, 100) / 100.0);
+        _res = Hub.Optimize(Data, _targetVol, _maxW);   // 어댑터가 MarkowitzOptimizer 로 위임(도메인 결과는 IMpoResultView 로 투사)
         if (!_res.IsValid) { _msg = _res.Note; _res = null; return; }
         _curVol = CurrentVol(Data.R, _curW);
         _msg = "";
