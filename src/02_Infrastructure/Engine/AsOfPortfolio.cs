@@ -14,7 +14,8 @@ namespace MS2E.Infrastructure
 {
     public sealed record AsOfTx(string Symbol, TransactionType Type, decimal Quantity, decimal Price, DateTime ExecutedAt);
 
-    public sealed record AsOfHolding(string Symbol, decimal Quantity, decimal AvgCost, decimal CostBasis);
+    public sealed record AsOfHolding(string Symbol, decimal Quantity, decimal AvgCost, decimal CostBasis)
+        : MS2E.UI.Portable.Ports.Portfolio.IAsOfHoldingView;   // Phase 94-J: 공변 구현(전 멤버 위치속성 일치)
 
     public static class AsOfPortfolio
     {

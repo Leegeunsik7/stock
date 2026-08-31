@@ -43,16 +43,16 @@
     @* v4.65.0 — SymbolPicker 자동완성: 이름/코드 입력 → 드롭다운 선택 → 카테고리 미니모달 *@
     <div style="position:relative;display:inline-block;min-width:220px">
         <SymbolPicker OnPick="OnSymbolPicked" Placeholder="종목 검색 (삼성, NVDA, 005930…)" />
-        @if (_pendingSym.HasValue)
+        @if (_pendingSym is not null)
         {
             <div style="position:absolute;top:calc(100% + 4px);left:0;z-index:50;min-width:230px;
                         background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
                         box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px">
                 <div style="margin-bottom:10px;line-height:1.5">
-                    <b style="font-size:13px">@_pendingSym.Value.Name</b>
-                    <span style="color:var(--sub);font-size:11px;margin-left:5px;font-family:monospace">@_pendingSym.Value.Code</span>
+                    <b style="font-size:13px">@_pendingSym.Name</b>
+                    <span style="color:var(--sub);font-size:11px;margin-left:5px;font-family:monospace">@_pendingSym.Code</span>
                     <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
-                                 background:var(--card-2);color:var(--sub);margin-left:4px">@_pendingSym.Value.MarketLabel</span>
+                                 background:var(--card-2);color:var(--sub);margin-left:4px">@_pendingSym.MarketLabel</span>
                     <div style="color:var(--sub);font-size:11px;margin-top:3px">추가할 카테고리를 선택하세요</div>
                 </div>
                 @foreach (var g in _groups)
@@ -223,7 +223,7 @@
     private int _intervalSec = 1;   // v4.68.0 — 기본 1초(최고속); 사용자가 드롭다운으로 조절 가능
     private string _status = "준비됨", _statusColor = "var(--ok)";
     private bool _scanning;
-    private SymbolEntry? _pendingSym;   // v4.65.0 — 종목 선택 후 카테고리 대기
+    private ISymbolEntryView? _pendingSym;   // v4.65.0 — 종목 선택 후 카테고리 대기 (Phase 94-J: RCL 뷰)
 
     // 알림 규칙 폼
     private bool _showAlertForm;
@@ -382,15 +382,15 @@
 
     // ===== 종목 추가/삭제 — v4.65.0: SymbolPicker 자동완성 + 카테고리 선택 미니모달 =====
     // SymbolPicker.OnPick → _pendingSym 대기 → 카테고리 버튼 클릭 → AddPendingToGroup
-    private void OnSymbolPicked(SymbolEntry e) { _pendingSym = e; }
+    private void OnSymbolPicked(ISymbolEntryView e) { _pendingSym = e; }
     private void CancelPending() { _pendingSym = null; }
 
     private async Task AddPendingToGroup(string group)
     {
         if (_pendingSym is null) return;
-        var sym = _pendingSym.Value;
+        var sym = _pendingSym;
         _pendingSym = null;
-        WatchlistStore.AddSymbol(Db, group, sym.Code, sym.Name, sym.Market);
+        WatchlistStore.AddSymbol(Db, group, sym.Code, sym.Name, (Market)(int)sym.Market);
         if (_group == group) await ReloadGroupAsync();
     }
 

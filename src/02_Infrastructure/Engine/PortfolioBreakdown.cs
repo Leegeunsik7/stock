@@ -12,7 +12,11 @@ namespace MS2E.Infrastructure
 
     public readonly record struct CategoryAgg(
         AssetClass Class, string Label, decimal ValueKrw, decimal CostKrw, int Count)
+        : MS2E.UI.Portable.Ports.Portfolio.ICategoryView   // Phase 94-J: 공변 구현
     {
+        // 엔진 AssetClass → RCL PfAssetClass(정수정렬). Label/Count/ValueKrw/PnlKrw/ReturnPct/WeightPct 는 암시 구현.
+        MS2E.UI.Portable.Ports.Portfolio.PfAssetClass MS2E.UI.Portable.Ports.Portfolio.ICategoryView.Class
+            => (MS2E.UI.Portable.Ports.Portfolio.PfAssetClass)(int)Class;
         public decimal PnlKrw    => ValueKrw - CostKrw;
         public decimal ReturnPct => CostKrw > 0 ? PnlKrw / CostKrw * 100m : 0m;
         public decimal WeightPct(decimal totalValueKrw) => totalValueKrw > 0 ? ValueKrw / totalValueKrw * 100m : 0m;

@@ -909,6 +909,11 @@ namespace StockManager.Blazor
             // v11.4.3 Think-Beyond — Stage 2 Micro-Arming 이중 엔진: ①원자적 마이크로캡 누산기(락프리 CAS·동시 발주 cap 초과 race 봉쇄) ②변조불가 토큰 소거기(0x00·재참조 차단).
             services.AddSingleton<MS2E.Infrastructure.AtomicMicroCapAccumulator>();
             services.AddSingleton<MS2E.Infrastructure.TamperProofTokenZeroizer>();
+            // v11.4.4 Think-Beyond — Stage 3 실시간 안전 이중 엔진: ①Flight Recorder+메모리 퍼저 ②다중 텔레메트리 Disarm 인터락(단일 long 비트마스크·0ms 원자·경합 지연 불가).
+            var flightRecorder = new MS2E.Infrastructure.AnomalyFlightRecorder();
+            var multiDisarm = new MS2E.Infrastructure.MultiTelemetryDisarmInterlock(flightRecorder);
+            services.AddSingleton(flightRecorder);
+            services.AddSingleton(multiDisarm);
             // Phase 94-G — 알림 피드 Port(DIP): AlertPage/AlertHistoryPage 이주 기반. AlertCenter 정적 싱글턴 격리(싱글턴 = 이벤트 구독 1회).
             services.AddSingleton<MS2E.UI.Portable.Ports.Alerts.IAlertFeedPort, MS2E.Infrastructure.AlertFeedAdapter>();
             // Phase 94-H — 복합 알림 규칙 CRUD Port(DIP): CompositeAlertsPage 이주 기반. CompositeAlertService 정적 싱글턴 + AiService 격리(가변 드래프트↔도메인 매핑·싱글턴 = Evaluated 구독 1회).
@@ -919,6 +924,14 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.IAccountSummaryPort, MS2E.Infrastructure.AccountSummaryAdapter>();
             // Phase 94-I — 포트폴리오 허브 Port(DIP): RebalancePage 이주 기반. MarkowitzOptimizer + LocalDatabase(타겟 저장) 격리.
             services.AddSingleton<MS2E.UI.Portable.Ports.IPortfolioHubPort, MS2E.Infrastructure.PortfolioHubAdapter>();
+            // Phase 94-J — PortfolioPage 6중 심층 결합 해체: 5대 명명 Port + 심볼검색 + stateful 프리젠터.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.ITransactionCrudPort, MS2E.Infrastructure.TransactionCrudAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.IQuoteStreamPort, MS2E.Infrastructure.QuoteStreamAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.IFxRatePort, MS2E.Infrastructure.FxRateAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.ITimeTravelAsOfPort, MS2E.Infrastructure.TimeTravelAsOfAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Portfolio.ISymbolSearchPort, MS2E.Infrastructure.SymbolSearchAdapter>();
+            services.AddScoped<MS2E.UI.Portable.Ports.Portfolio.IJsDialogPort, MS2E.Infrastructure.JsDialogAdapter>();
+            services.AddScoped<MS2E.UI.Portable.Ports.Portfolio.IPortfolioBoardPort, MS2E.Infrastructure.PortfolioBoardAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

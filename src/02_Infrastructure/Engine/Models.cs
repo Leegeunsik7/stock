@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using MS2E.UI.Portable.Ports.Portfolio;   // Phase 94-J — IHoldingView/IQuoteTickView 공변 구현
 
 namespace MS2E.Infrastructure
 {
@@ -34,7 +35,7 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>실시간 시세 데이터 (Tick)</summary>
-    public class Quote : INotifyPropertyChanged
+    public class Quote : INotifyPropertyChanged, IQuoteTickView   // Phase 94-J: Price/ChangeRate/Session 암시 구현
     {
         public string Symbol { get; set; } = "";      // AAPL, 005930 등
         public string Name { get; set; } = "";        // Apple Inc., 삼성전자
@@ -91,13 +92,17 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>보유 종목 (포트폴리오 항목)</summary>
-    public class Holding
+    public class Holding : IHoldingView
     {
         public int Id { get; set; }
         public string Symbol { get; set; } = "";
         public string Name { get; set; } = "";
         public Market Market { get; set; }
         public Currency Currency { get; set; }
+
+        // Phase 94-J: IHoldingView 공변 구현 — 엔진 enum→RCL enum(정수정렬). 나머지 멤버는 동일 시그니처로 암시 구현.
+        PfMarket IHoldingView.Market => (PfMarket)(int)Market;
+        PfCurrency IHoldingView.Currency => (PfCurrency)(int)Currency;
 
         public decimal Quantity { get; set; }         // 보유 수량 (코인 소수점 지원 — v4.30.0 int→decimal)
         public decimal AvgPrice { get; set; }         // 평균 매입가

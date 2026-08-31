@@ -1,0 +1,813 @@
+@* Phase 94-J: 순수 UI 이관 — /portfolio 라우트는 PortfolioHub 소유(이 페이지는 허브 '보유·배분' 탭 자식·@page 없음).
+   엔진 구상(LocalDatabase·IQuoteProvider·UpbitProvider·FxConverter·AsOfContext·IJSRuntime + ~9 정적엔진 + 15 도메인타입) 무참조.
+   데이터+계산은 IPortfolioBoardPort(프리젠터)가 흡수 · 트랜잭션/AsOf/JS 는 전용 포트 · 폼은 RCL 드래프트. *@
+@inject IPortfolioBoardPort Board
+@inject ITransactionCrudPort Tx
+@inject ITimeTravelAsOfPort AsOf
+@inject IJsDialogPort Dialog
+@implements IDisposable
+@using System.Threading
+
+<div class="top"><div class="hello"><h1>💼 포트폴리오</h1><p>보유 종목 손익 · 갱신 @Board.Timestamp @if (_pollSec > 0 && AsOf.IsLive) { <span class="livepulse">● LIVE @(_pollSec)초</span> }</p></div>
+<button class="addbtn" style="background:var(--up);margin:0 4px" @onclick="() => Open(FormMode.Buy)">➕ 매수 기록</button>
+<button class="addbtn" style="background:var(--down)" @onclick="() => Open(FormMode.Sell)">➖ 매도 기록</button>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin:0 4px" @onclick="() => Open(FormMode.Correct)">@((_showForm && _mode==FormMode.Correct)?"✕ 닫기":"✎ 직접 등록")</button>
+<label class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin:0 4px;display:inline-flex;align-items:center;gap:6px;cursor:default" title="실시간 자동 새로고침 주기">⚡ 자동
+    <select class="srch" style="width:72px" @bind="_pollSec" @bind:after="OnPollChanged">
+        <option value="0">끄기</option><option value="3">3초</option><option value="5">5초</option><option value="10">10초</option><option value="30">30초</option>
+    </select>
+</label>
+<button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line);margin-right:16px" @onclick="LoadAllAsync">🔄 새로고침</button></div>
+
+@if (_showForm)
+{
+    <div @onfocusin="() => _formEditing = true" @onfocusout="() => _formEditing = false"
+         style="margin:0 28px 18px;background:var(--card);border:1.5px solid @(_mode==FormMode.Buy?"var(--up)":_mode==FormMode.Sell?"var(--down)":"var(--line)");border-radius:var(--radius);padding:18px">
+        <div style="display:flex;gap:6px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+            <button class="pill @(_mode==FormMode.Buy?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Buy)">📈 매수</button>
+            <button class="pill @(_mode==FormMode.Sell?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Sell)">📉 매도</button>
+            <button class="pill @(_mode==FormMode.Correct?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SwitchMode(FormMode.Correct)">✎ 직접보정</button>
+            @if (_editId > 0 && _mode == FormMode.Correct) { <span class="tag">보유 수정 중</span> }
+            <span style="margin-left:auto;color:var(--sub);font-size:12px">@(_mode==FormMode.Correct ? "보유 합계를 직접 보정" : "거래 기록 → 평단 자동 병합(가중평균)")</span>
+        </div>
+        <div style="margin-bottom:12px">
+            <label class="flbl">🔎 종목·코인 검색 (이름으로 찾기 — 주식·비트코인 모두)</label>
+            <SymbolPicker OnPick="ApplyPick" Placeholder="삼성전자, 비트코인, 005930, AAPL …" />
+        </div>
+        @if (_mode != FormMode.Correct)
+        {
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:end">
+                <div><label class="flbl">종목코드 *</label><input class="fin" @bind="_tf.Symbol" @bind:after="OnSymbolEdited" placeholder="005930 / AAPL" /></div>
+                <div><label class="flbl">종목명(선택)</label><input class="fin" @bind="_tf.Name" /></div>
+                <div><label class="flbl">거래일시</label><input class="fin" type="datetime-local" value="@ExecAtText" @onchange="OnExecAtChanged" /></div>
+                <div><label class="flbl">수량 *</label><input class="fin" inputmode="decimal" value="@TxQtyText" @onchange="OnTxQtyChanged" placeholder="2.555 (코인 소수점)" /></div>
+                <div><label class="flbl">단가 *</label><input class="fin" inputmode="decimal" value="@TxPriceText" @onchange="OnTxPriceChanged" placeholder="97,299,615" /></div>
+                <div><label class="flbl">수수료</label><input class="fin" type="number" step="any" @bind="_tf.Commission" @bind:after="MarkFeesDirty" /></div>
+                <div><label class="flbl">세금</label><input class="fin" type="number" step="any" @bind="_tf.Tax" @bind:after="MarkFeesDirty" /></div>
+                <div><label class="flbl">증권사</label><input class="fin" list="brokerList" @bind="_tf.Broker" @bind:after="OnBrokerChanged" />
+                    <datalist id="brokerList">@foreach (var b in Board.Brokers) { <option value="@b" /> }</datalist></div>
+                <div style="grid-column:span 2"><label class="flbl">메모</label><input class="fin" @bind="_tf.Memo" /></div>
+            </div>
+            @if (_txType == PfTxType.Buy && _tf.Qty > 0 && _tf.Price > 0 && FindHolding(_tf.Symbol) is { } _eh)
+            {
+                var _nq = _eh.Quantity + _tf.Qty;
+                var _na = _nq > 0 ? (_eh.Quantity * _eh.AvgPrice + _tf.Qty * _tf.Price) / _nq : 0m;
+                <div style="margin-top:12px;padding:9px 13px;border-radius:9px;background:color-mix(in srgb,var(--up) 12%,transparent);border:1px solid var(--up);font-size:12.5px">
+                    📊 <b>추가매수 병합 미리보기</b> — 기존 @FmtQty(_eh.Quantity) · 평단 @Money(_eh.AvgPrice, _eh.Currency)
+                    → 매수 후 <b style="color:var(--ink)">@FmtQty(_nq) · 평단 @Money(_na, _eh.Currency)</b> <span style="color:var(--sub)">(가중평균 자동 계산)</span>
+                </div>
+            }
+            <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <b style="color:@(_txType==PfTxType.Buy?"var(--up)":"var(--down)")">총 금액: @TxTotal.ToString("N0")원</b>
+                <button class="addbtn" @onclick="SaveTx">✅ 저장</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="CloseForm">취소</button>
+                @if (!string.IsNullOrEmpty(_txMsg)) { <span style="color:var(--sub)">@_txMsg</span> }
+            </div>
+            <div style="margin-top:8px;color:var(--sub);font-size:12px">저장 시 전체 거래 이력으로 평균단가·수량이 자동 재계산됩니다 (이동평균법 · 전량 매도 시 평단 0). <b>같은 종목을 추가 매수하면 평단이 가중평균으로 자동 병합</b>됩니다.</div>
+            <div style="margin-top:4px;color:var(--sub);font-size:12px">💡 증권사를 고르면 수수료·세금이 자동 추정 입력됩니다 (직접 수정 가능 · 약정·이벤트·환율로 실제와 다를 수 있는 추정치). 코인은 거래세 없음.</div>
+        }
+        else
+        {
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:end">
+                <div><label class="flbl">종목코드</label><input class="fin" @bind="_f.Symbol" @bind:after="OnFormSymbolEdited" placeholder="005930" /></div>
+                <div><label class="flbl">종목명</label><input class="fin" @bind="_f.Name" placeholder="삼성전자" /></div>
+                <div><label class="flbl">시장</label>
+                    <select class="fin" @bind="_f.Market">
+                        @foreach (var m in Enum.GetValues<PfMarket>()) { <option value="@m">@m</option> }
+                    </select></div>
+                <div><label class="flbl">통화</label>
+                    <select class="fin" @bind="_f.Currency">
+                        <option value="@PfCurrency.KRW">KRW</option><option value="@PfCurrency.USD">USD</option>
+                    </select></div>
+                <div><label class="flbl">수량</label><input class="fin" inputmode="decimal" value="@FormQtyText" @onchange="OnFormQtyChanged" placeholder="2.555 (코인 소수점 가능)" /></div>
+                <div><label class="flbl">평균단가</label><input class="fin" inputmode="decimal" value="@FormAvgText" @onchange="OnFormAvgChanged" placeholder="20,000,000" /></div>
+                <div><label class="flbl">증권사</label><input class="fin" list="brokerListF" @bind="_f.Broker" @bind:after="OnFormBrokerChanged" />
+                    <datalist id="brokerListF">@foreach (var b in Board.Brokers) { <option value="@b" /> }</datalist></div>
+                <div><label class="flbl">수수료(누적)</label><input class="fin" type="number" step="any" @bind="_f.Commission" /></div>
+                <div><label class="flbl">세금(누적)</label><input class="fin" type="number" step="any" @bind="_f.Tax" /></div>
+            </div>
+            @if (_f.AvgPrice > 0 || _f.Quantity > 0)
+            {
+                <div style="margin-top:10px;color:var(--sub);font-size:13px">
+                    평균단가 <b style="color:var(--ink)">@_f.AvgPrice.ToString("N0")원</b>
+                    · 수량 <b style="color:var(--ink)">@FmtQty(_f.Quantity)</b>
+                    · 매입금액 <b style="color:var(--ink)">@((_f.AvgPrice * _f.Quantity).ToString("N0"))원</b>
+                </div>
+            }
+            <div style="margin-top:14px;display:flex;gap:10px">
+                <button class="addbtn" @onclick="Save">@(_editId>0?"수정 저장":"등록")</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="ResetForm">초기화</button>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick="CloseForm">닫기</button>
+                @if (!string.IsNullOrEmpty(_formMsg)) { <span style="align-self:center;color:var(--sub)">@_formMsg</span> }
+            </div>
+            <div style="margin-top:8px;color:var(--sub);font-size:12px">ℹ️ '직접보정'은 보유 <b>합계</b>(수량·평단·증권사·누적 수수료/세금)를 직접 덮어씁니다. 개별 거래로 남기고 평단을 자동 병합하려면 위 <b>📈 매수 / 📉 매도</b> 모드를 쓰세요.</div>
+        }
+    </div>
+}
+
+@if (AsOf.IsLive)
+{
+<div class="kpis">
+    <div class="kpi">
+        <div class="k-lab">총 평가 (KRW)</div>
+        <div class="k-val">₩@Board.TotalValue.ToString("N0")</div>
+        <div class="k-row"><span class="delta @(Board.TotalRet>=0?"pos":"neg")">@Board.TotalRet.ToString("+0.0;-0.0")%</span><span class="sub" style="font-size:11px">실시간 환산</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">평가손익</div>
+        <div class="k-val @(Board.TotalPnl>=0?"up":"down")">@Board.TotalPnl.ToString("+#,##0;-#,##0;0")</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">미실현 손익</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">수익률</div>
+        <div class="k-val @(Board.TotalRet>=0?"up":"down")">@Board.TotalRet.ToString("+0.0;-0.0")%</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">원가 대비</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">오늘 등락</div>
+        <div class="k-val @(Board.TodayPct>=0?"up":"down")">@Board.TodayPct.ToString("+0.0;-0.0")%</div>
+        <div class="k-row"><span class="@(Board.TodayPnl>=0?"up":"down")" style="font-size:11px">@Board.TodayPnl.ToString("+#,##0;-#,##0;0")원</span><span class="sub" style="font-size:11px">전일 대비</span></div>
+    </div>
+    <div class="kpi">
+        <div class="k-lab">보유 종목</div>
+        <div class="k-val">@Board.HoldingCount</div>
+        <div class="k-row"><span class="sub" style="font-size:11px">종목수</span></div>
+    </div>
+</div>
+
+<div style="padding:0 28px 16px">
+    <div style="font-size:12.5px;color:var(--sub);margin-bottom:8px">📊 자산군 구성 — 국내주식 · 해외주식 · 코인 (KRW 환산)</div>
+    <div class="catgrid">
+        @foreach (var c in Board.Categories)
+        {
+            <div class="catcard @CatClass(c.Class)">
+                <div class="cat-h">
+                    <span class="cat-ic">@CatIcon(c.Class)</span>
+                    <span class="cat-lab">@c.Label</span>
+                    <span class="cat-cnt">@c.Count 종목</span>
+                </div>
+                <div class="cat-val">₩@c.ValueKrw.ToString("N0")</div>
+                <div class="cat-row">
+                    <span class="@(c.PnlKrw>=0?"up":"down")">@c.PnlKrw.ToString("+#,##0;-#,##0;0") (@c.ReturnPct.ToString("+0.0;-0.0")%)</span>
+                    <span class="cat-wt">비중 @c.WeightPct(Board.TotalValue).ToString("0.0")%</span>
+                </div>
+                <div class="cat-bar"><div class="cat-bar-fill" style="width:@WeightWidth(c)"></div></div>
+            </div>
+        }
+    </div>
+</div>
+}
+
+@if (!string.IsNullOrEmpty(_flash))
+{
+    <div style="margin:0 28px 14px;padding:10px 14px;border-radius:10px;background:color-mix(in srgb,var(--up) 14%,transparent);border:1px solid var(--up);font-size:13px;display:flex;align-items:center;gap:8px">
+        <span>@_flash</span>
+        <button class="addbtn" style="margin-left:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);padding:3px 10px" @onclick="() => _flash = string.Empty">확인</button>
+    </div>
+}
+
+@if (_lastDeleted is { } _ld)
+{
+    <div style="margin:0 28px 14px;padding:10px 14px;border-radius:10px;background:color-mix(in srgb,var(--warn) 16%,transparent);border:1px solid var(--warn);font-size:13px;display:flex;align-items:center;gap:10px">
+        <span>🗑 '<b>@_ld.Name</b>' (@_ld.Symbol) 삭제됨 — 되돌릴 수 있습니다.</span>
+        <button class="addbtn" style="margin-left:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);padding:3px 12px" @onclick="() => Restore(_ld)">↩️ 실행취소</button>
+        <button class="addbtn" style="background:var(--card);color:var(--sub);border:1px solid var(--line);padding:3px 10px" @onclick="() => _lastDeleted = null">✕</button>
+    </div>
+}
+
+@if (AsOf.IsLive)
+{
+<div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap">
+    @foreach (var (key, label) in _tabDefs)
+    {
+        <button class="pill @(key==_tab?"r":"b")" style="padding:6px 14px;cursor:pointer;border:0;font-size:12.5px" @onclick="() => SwitchTab(key)">@label</button>
+    }
+</div>
+}
+
+@if (_tab == "hold")
+{
+@if (!AsOf.IsLive)
+{
+<div style="padding:0 28px 40px">
+  <div style="background:color-mix(in srgb,var(--warn) 14%,transparent);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:14px">⏳ <b>AS-OF @AsOf.AsOf!.Value.ToString("yyyy-MM-dd")</b> · 거래내역으로 재구성한 <b>그 시점의 보유 포지션</b>입니다(현재가·평가액 아님). 상단 시점 바에서 LIVE 복귀.</div>
+  <div class="panel">
+    <div class="panel-h">📦 그 시점 보유 <span class="tag">AS-OF</span></div>
+    <div style="overflow:auto;max-height:calc(100vh - 380px)">
+    <table class="ctbl dense">
+        <thead><tr><th>종목</th><th style="text-align:right">수량</th><th style="text-align:right">평균단가(당시)</th><th style="text-align:right">매입원가</th></tr></thead>
+        <tbody>
+            @foreach (var a in _asof)
+            {
+                <tr>
+                    <td><b>@a.Symbol</b></td>
+                    <td class="num" style="text-align:right">@FmtQty(a.Quantity)</td>
+                    <td class="num" style="text-align:right">@a.AvgCost.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@a.CostBasis.ToString("N0")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+    @if (_asof.Count == 0) { <div style="padding:34px;color:var(--sub);text-align:center">해당 시점에 보유 포지션이 없습니다.</div> }
+  </div>
+</div>
+}
+else
+{
+<div style="padding:0 28px 40px">
+  <div class="panel">
+    <div class="panel-h">📊 보유 종목 <span class="sub" style="font-weight:400">· @ViewCount/@Board.HoldingCount 종목</span><span class="tag">HOLDINGS</span></div>
+    <div style="display:flex;gap:6px;padding:8px 14px 4px;flex-wrap:wrap">
+        @foreach (var (k, lbl) in _holdFilters)
+        {
+            <button class="pill @(k==_holdFilter?"r":"b")" style="border:0;cursor:pointer;padding:5px 12px;font-size:12px" @onclick="() => _holdFilter = k">@lbl <span style="opacity:.7">@Board.FilterCount(k)</span></button>
+        }
+    </div>
+    <div style="display:flex;gap:8px;padding:2px 14px 8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:12px;color:var(--sub)">↕ 정렬</span>
+        <select class="srch" style="width:auto;min-width:118px" @bind="_sortKey" @bind:after="OnSortChanged">
+            <option value="val">평가금</option>
+            <option value="ret">총수익률</option>
+            <option value="day">일간 수익률</option>
+            <option value="name">가나다순</option>
+            <option value="custom">직접설정</option>
+        </select>
+        @if (_sortKey == "custom")
+        {
+            <span style="font-size:11.5px;color:var(--sub)">관리 열의 ▲▼ 로 순서를 지정하세요 (저장됨)</span>
+        }
+        else
+        {
+            <button class="pill b" style="border:0;cursor:pointer;padding:5px 11px;font-size:12px" @onclick="() => { _sortDesc = !_sortDesc; }">
+                @(_sortKey == "name" ? (_sortDesc ? "역순 ᐯ" : "가나다 ᐱ") : (_sortDesc ? "높은순 ᐯ" : "낮은순 ᐱ"))
+            </button>
+        }
+        @if (Board.Deleted.Count > 0)
+        {
+            <button class="pill @(_showDeleted ? "r" : "b")" style="border:0;cursor:pointer;padding:5px 11px;font-size:12px;margin-left:auto" title="소프트 삭제된 종목 — 복원 가능" @onclick="() => _showDeleted = !_showDeleted">🗑 삭제된 종목 (@Board.Deleted.Count)</button>
+        }
+    </div>
+    @if (_showDeleted && Board.Deleted.Count > 0)
+    {
+        <div style="margin:0 0 12px;background:var(--card);border:1px dashed var(--line);border-radius:var(--radius);padding:12px">
+            <div style="font-size:12.5px;color:var(--sub);margin-bottom:8px">🗑 삭제된 종목 — <b>복원</b>으로 되살리거나 <b>영구삭제</b>로 완전히 제거합니다.</div>
+            <table class="ctbl dense">
+                <thead><tr><th>종목</th><th>시장</th><th style="text-align:right">수량</th><th style="text-align:right">평균단가</th><th style="text-align:center;width:172px">복원 / 영구삭제</th></tr></thead>
+                <tbody>
+                    @foreach (var h in Board.Deleted)
+                    {
+                        <tr>
+                            <td><b>@h.Name</b><br/><small class="sub">@h.Symbol</small></td>
+                            <td><small class="sub">@h.Market@(h.Currency == PfCurrency.USD ? " · USD" : "")</small></td>
+                            <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
+                            <td class="num" style="text-align:right">@Money(h.AvgPrice, h.Currency)</td>
+                            <td style="text-align:center;white-space:nowrap">
+                                <button class="pill b" style="border:0;cursor:pointer;padding:3px 10px;font-size:11px" @onclick="() => Restore(h)">↩️ 복원</button>
+                                <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => HardDelete(h)">영구삭제</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    <div style="overflow:auto;max-height:calc(100vh - 392px)">
+    <table class="ctbl dense">
+        <thead><tr>
+            <th>종목</th><th>시장</th><th style="text-align:right">수량</th>
+            <th style="text-align:right">평균단가</th><th style="text-align:right">현재가</th>
+            <th style="text-align:right">평가액(₩)</th><th style="text-align:right">손익(₩)</th><th style="text-align:right">수익률</th><th style="text-align:right">일간</th>
+            <th style="text-align:center;width:108px">추세 30D</th><th style="text-align:center;width:185px">관리</th>
+        </tr></thead>
+        <tbody>
+            @foreach (var h in Board.ViewHoldings(_holdFilter, _sortKey, _sortDesc))
+            {
+                var fxr = h.Currency == PfCurrency.USD ? Board.UsdKrw : 1m;
+                var pnl = (h.CurrentPrice - h.AvgPrice) * h.Quantity * fxr;
+                var ret = h.AvgPrice > 0 ? (h.CurrentPrice - h.AvgPrice) / h.AvgPrice * 100m : 0m;
+                var hasDay = Board.TryGetDayPct(h.Symbol, out var day);
+                var sess = Board.SessionOf(h.Symbol);
+                <tr>
+                    <td><b>@h.Name</b><br/><small class="sub">@h.Symbol</small></td>
+                    <td><small class="sub">@h.Market@(h.Currency == PfCurrency.USD ? " · USD" : "")</small></td>
+                    <td class="num" style="text-align:right">@FmtQty(h.Quantity)</td>
+                    <td class="num" style="text-align:right">@Money(h.AvgPrice, h.Currency)</td>
+                    <td class="num" style="text-align:right"><span @key="@(h.Symbol + h.CurrentPrice)" class="tickcell @TickClass(h)">@Money(h.CurrentPrice, h.Currency)</span>@if (SessLabel(sess) is { Length: > 0 } sl) { <span style="font-size:9.5px;padding:1px 4px;border-radius:4px;background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn);margin-left:4px" title="장 마감 후 시간외/애프터 세션 시세">@sl</span> }</td>
+                    <td class="num" style="text-align:right">@((h.CurrentPrice * h.Quantity * fxr).ToString("N0"))</td>
+                    <td class="num @(pnl>=0?"up":"down")" style="text-align:right">@pnl.ToString("+#,##0;-#,##0;0")</td>
+                    <td class="num @(ret>=0?"up":"down")" style="text-align:right">@ret.ToString("+0.0;-0.0")%</td>
+                    <td class="num @(hasDay ? (day>=0?"up":"down") : "")" style="text-align:right">@(hasDay ? day.ToString("+0.0;-0.0")+"%" : "–")</td>
+                    <td style="text-align:center">@SparkSvg(h.Symbol)</td>
+                    <td style="text-align:center;white-space:nowrap">
+                        @if (_sortKey == "custom")
+                        {
+                            <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px" title="위로" @onclick="() => MoveCustom(h, -1)">ᐱ</button>
+                            <button class="pill b" style="border:0;cursor:pointer;padding:3px 6px;font-size:11px;margin-left:2px" title="아래로" @onclick="() => MoveCustom(h, 1)">ᐯ</button>
+                        }
+                        <button class="pill" style="border:0;cursor:pointer;padding:3px 7px;font-size:11px;margin-left:3px;background:color-mix(in srgb,var(--up) 20%,transparent);color:var(--up)" title="이 종목 추가 매수(평단 자동 병합)" @onclick="() => AddBuy(h)">➕매수</button>
+                        <button class="pill b" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Edit(h)">수정</button>
+                        <button class="pill r" style="border:0;cursor:pointer;padding:3px 8px;font-size:11px;margin-left:3px" @onclick="() => Delete(h)">삭제</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+    @if (Board.HoldingCount == 0) { <div style="padding:40px;color:var(--sub);text-align:center">보유 종목이 없습니다. '➕ 매수 기록' 또는 '✎ 직접 등록'으로 시작하세요.</div> }
+    else if (ViewCount == 0) { <div style="padding:32px;color:var(--sub);text-align:center">이 분류에 보유 종목이 없습니다. '전체'를 선택하세요.</div> }
+  </div>
+</div>
+}
+}
+else if (_tab == "tx")
+{
+<div style="overflow:auto;padding:0 28px 40px">
+    <table class="ctbl">
+        <thead><tr><th>일시</th><th>종목</th><th>구분</th><th style="text-align:right">수량</th><th style="text-align:right">단가</th><th style="text-align:right">금액</th><th style="text-align:right">수수료</th><th style="text-align:right">세금</th><th>증권사</th><th style="text-align:center">관리</th></tr></thead>
+        <tbody>
+            @foreach (var t in _txs)
+            {
+                <tr>
+                    <td style="font-size:12px;color:var(--sub);white-space:nowrap">@t.At.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td><b>@t.Sym</b></td>
+                    <td><span class="pill @(t.Type==PfTxType.Buy?"r":"b")" style="font-size:11px">@t.Type</span></td>
+                    <td class="num" style="text-align:right">@FmtQty(t.Qty)</td>
+                    <td class="num" style="text-align:right">@t.Price.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@((t.Qty * t.Price).ToString("N0"))</td>
+                    <td class="num sub" style="text-align:right">@t.Comm.ToString("N0")</td>
+                    <td class="num sub" style="text-align:right">@t.Tax.ToString("N0")</td>
+                    <td class="sub" style="font-size:12px">@t.Broker</td>
+                    <td style="text-align:center"><button class="addbtn" style="background:var(--down);padding:3px 10px;font-size:12px" @onclick="() => DeleteTx(t)">🗑 삭제</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (_txs.Count == 0) { <div style="padding:40px;color:var(--sub);text-align:center">거래 이력이 없습니다.</div> }
+    else { <div style="margin-top:8px;color:var(--sub);font-size:12px">💡 거래를 삭제하면 그 종목의 평균단가·수량이 즉시 재계산됩니다.@if (_txs.Count >= 1000) { <b style="color:var(--warn)"> · 최근 1000건만 표시됩니다.</b>}</div> }
+</div>
+}
+else if (_tab == "tax")
+{
+<div style="padding:0 28px 40px">
+    <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+        💡 해외주식 양도소득세 시뮬레이션 (연 250만원 공제 · 22% 세율) — 각 보유 종목을 '지금 전량 매도' 가정.<br/>
+        평가이익 내림차순으로 위 행의 이익이 공제를 먼저 소진합니다 (행 간 누적 — 원본 룰).
+    </div>
+    <table class="ctbl">
+        <thead><tr><th>종목</th><th style="text-align:right">수량</th><th style="text-align:right">평단</th><th style="text-align:right">현재가</th><th style="text-align:right">평가손익</th><th style="text-align:right">예상세액</th><th style="text-align:right">세후 (KRW)</th><th>추천</th></tr></thead>
+        <tbody>
+            @foreach (var r in Board.TaxRows())
+            {
+                <tr>
+                    <td><b>@r.Symbol</b> <small class="sub">@r.Name</small></td>
+                    <td class="num" style="text-align:right">@FmtQty(r.Quantity)</td>
+                    <td class="num" style="text-align:right">@Money(r.AvgPrice, r.Currency)</td>
+                    <td class="num" style="text-align:right">@Money(r.CurrentPrice, r.Currency)</td>
+                    <td class="num" style="text-align:right">@r.UnrealizedGain.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@r.TaxIfSoldNow.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@r.NetProceeds.ToString("N0")</td>
+                    <td style="font-size:12px;color:var(--sub)">@r.Recommendation</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    @if (Board.HoldingCount == 0) { <div style="padding:40px;color:var(--sub);text-align:center">보유 종목이 없습니다.</div> }
+</div>
+}
+else if (_tab == "div")
+{
+<div style="padding:0 28px 40px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <b style="color:var(--warn)">💸 향후 60일간 배당 일정</b>
+        <button class="addbtn" style="background:var(--card);color:var(--ink);border:1px solid var(--line)" @onclick="LoadDividends">🔄 새로고침</button>
+    </div>
+    <table class="ctbl">
+        <thead><tr><th>배당락일</th><th>종목</th><th>종목명</th><th style="text-align:right">주당배당금</th><th style="text-align:right">보유수량</th><th style="text-align:right">예상배당</th><th>지급일</th><th style="text-align:right">수익률</th></tr></thead>
+        <tbody>
+            @if (Board.Dividends.Count == 0)
+            {
+                <tr><td colspan="8" style="color:var(--sub);text-align:center;padding:24px">배당 일정 없음 (수동 추가하거나 KIS 연동 필요)</td></tr>
+            }
+            @foreach (var d in Board.Dividends)
+            {
+                <tr>
+                    <td>@d.ExDate.ToString("yyyy-MM-dd")</td>
+                    <td><b>@d.Symbol</b></td>
+                    <td>@d.Name</td>
+                    <td class="num" style="text-align:right">@Money(d.DividendPerShare, d.Currency)</td>
+                    <td class="num" style="text-align:right">@d.HeldQuantity.ToString("N0")</td>
+                    <td class="num" style="text-align:right">@Money(d.ExpectedDividend, d.Currency)</td>
+                    <td>@d.PayDate.ToString("yyyy-MM-dd")</td>
+                    <td class="num" style="text-align:right">@d.YieldPct.ToString("F2")%</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+}
+else if (_tab == "corr")
+{
+<div style="padding:0 28px 40px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <b style="color:var(--accent)">🔗 보유 종목 상관관계 매트릭스 (최근 90일)</b>
+        <button class="addbtn" disabled="@_corrBusy" @onclick="CalcCorrAsync">@(_corrBusy?"계산 중…":"📊 계산")</button>
+        @if (!string.IsNullOrEmpty(_corrMsg)) { <span style="color:var(--sub)">@_corrMsg</span> }
+    </div>
+    @if (_corr == null)
+    {
+        <div style="padding:40px;color:var(--sub);text-align:center">"📊 계산" 버튼을 눌러주세요. (최소 2종목 보유 필요)</div>
+    }
+    else
+    {
+        <div style="overflow:auto">
+        <table style="border-collapse:collapse">
+            <tr><th></th>@foreach (var s in _corrSyms) { <th style="padding:6px 8px;font-size:11px;color:var(--sub)">@s</th> }</tr>
+            @for (int i = 0; i < _corrSyms.Count; i++)
+            {
+                var ii = i;
+                <tr>
+                    <th style="padding:6px 8px;font-size:11px;color:var(--sub);text-align:right">@_corrSyms[ii]</th>
+                    @for (int j = 0; j < _corrSyms.Count; j++)
+                    {
+                        var v = _corr[ii, j];
+                        <td class="num" style="background:@CorrColor(v);color:#fff;padding:10px 12px;text-align:center;font-size:11.5px;border:1px solid var(--bg)">@v.ToString("F2")</td>
+                    }
+                </tr>
+            }
+        </table>
+        </div>
+        <div style="margin-top:10px;color:var(--sub);font-size:12px">강한 양(+0.7↑) 빨강 · 중간 양(+0.3↑) 주황 · 무상관(±0.3) 회색 · 중간 음(−0.7↑) 하늘 · 강한 음 파랑</div>
+    }
+</div>
+}
+
+@code {
+    private enum FormMode { Buy, Sell, Correct }
+    private bool _showForm, _formEditing;
+    private FormMode _mode = FormMode.Buy;
+    private int _editId;
+    private string _formMsg = "", _txMsg = "", _flash = "";
+    private IHoldingView? _lastDeleted;
+    private bool _showDeleted;
+    private int _pollSec = 5;
+    private CancellationTokenSource? _cts;
+
+    // 로컬 통화 포맷(엔진 Formatter.Money 미러).
+    private static string Money(decimal v, PfCurrency c) => c == PfCurrency.KRW ? $"{v:N0}원" : $"${v:N2}";
+    private static string FmtQty(decimal q) => q == decimal.Truncate(q) ? q.ToString("N0") : q.ToString("0.########");
+
+    // ----- 필터/정렬 -----
+    private string _holdFilter = "all";
+    private readonly (string k, string lbl)[] _holdFilters =
+        { ("all", "전체"), ("dom", "🇰🇷 국내주식"), ("for", "🇺🇸 해외주식"), ("crypto", "₿ 코인") };
+    private string _sortKey = "val";
+    private bool _sortDesc = true;
+    private void OnSortChanged() => _sortDesc = _sortKey != "name";
+    private int ViewCount => Board.ViewHoldings(_holdFilter, _sortKey, _sortDesc).Count;
+
+    private static string SessLabel(string s) => s switch { "AFTER" => "시간외", "PRE" => "프리", "POST" => "애프터", _ => "" };
+
+    private string TickClass(IHoldingView h) =>
+        Board.TryGetPrevPrice(h.Symbol, out var prev) && prev > 0
+            ? (h.CurrentPrice > prev ? "tick-up" : h.CurrentPrice < prev ? "tick-down" : "")
+            : "";
+
+    private void MoveCustom(IHoldingView h, int dir)
+    {
+        var view = Board.ViewHoldings(_holdFilter, _sortKey, _sortDesc).Select(x => x.Symbol).ToList();
+        Board.MoveCustom(h.Symbol, dir, view);
+    }
+
+    private static string CatIcon(PfAssetClass c) => c switch
+    { PfAssetClass.DomesticStock => "🇰🇷", PfAssetClass.ForeignStock => "🇺🇸", PfAssetClass.Crypto => "₿", _ => "•" };
+    private static string CatClass(PfAssetClass c) => c switch
+    { PfAssetClass.DomesticStock => "c-dom", PfAssetClass.ForeignStock => "c-for", PfAssetClass.Crypto => "c-cry", _ => "" };
+    private string WeightWidth(ICategoryView c)
+    {
+        var w = Math.Max(0m, Math.Min(100m, c.WeightPct(Board.TotalValue)));
+        return w.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    }
+
+    private string _tab = "hold";
+    private readonly (string key, string label)[] _tabDefs = {
+        ("hold","📊 보유 종목"), ("tx","📝 거래 이력"), ("tax","💰 세금 시뮬"),
+        ("div","💸 배당 캘린더"), ("corr","🔗 상관관계") };
+
+    // ----- 폼 드래프트 -----
+    private HoldingDraft _f = new();
+    private TxDraft _tf = new();
+    private PfTxType _txType = PfTxType.Buy;
+    private decimal TxTotal => _tf.Qty * _tf.Price + _tf.Commission + _tf.Tax;
+
+    private void ApplyPickToForm(ISymbolEntryView e)
+    {
+        _editId = 0;
+        _f.Symbol = e.Code; _f.Name = e.Name; _f.Market = e.Market; _f.Currency = e.Currency; _f.Picked = true;
+        _fLastBroker = (_f.Broker ?? "").Trim();
+        _formMsg = $"'{e.Name}' 선택됨 — 신규 등록으로 전환. 수량·평균단가를 입력하세요.";
+    }
+    private void OnFormSymbolEdited() => _f.Picked = false;
+    private void ApplyPickToTx(ISymbolEntryView e)
+    {
+        _tf.Symbol = e.Code; _tf.Name = e.Name; _tf.Market = e.Market; _tf.Currency = e.Currency; _tf.Picked = true;
+        AutoFillFees();
+    }
+    private void OnSymbolEdited()
+    {
+        if (_tf.Picked) _tf.Name = "";
+        _tf.Picked = false;
+        AutoFillFees();
+    }
+
+    private string ExecAtText =>
+        (_tf.ExecutedAt == default ? DateTime.Now : _tf.ExecutedAt).ToString("yyyy-MM-ddTHH:mm");
+    private void OnExecAtChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var dt)) _tf.ExecutedAt = dt;
+    }
+
+    private static decimal ParseMoney(object? v)
+    {
+        var raw = v?.ToString() ?? "";
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var ch in raw) if (char.IsDigit(ch) || ch == '.' || ch == '-') sb.Append(ch);
+        return decimal.TryParse(sb.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var d) && d >= 0 ? d : 0m;
+    }
+    private static string MoneyText(decimal v) =>
+        v == 0 ? "" : v.ToString("#,##0.########", System.Globalization.CultureInfo.InvariantCulture);
+    private static string QtyText(decimal q) =>
+        q == 0 ? "" : q.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string TxPriceText => MoneyText(_tf.Price);
+    private void OnTxPriceChanged(ChangeEventArgs e) { _tf.Price = ParseMoney(e.Value); AutoFillFees(); }
+    private string FormAvgText => MoneyText(_f.AvgPrice);
+    private void OnFormAvgChanged(ChangeEventArgs e) { _f.AvgPrice = ParseMoney(e.Value); }
+    private string TxQtyText => QtyText(_tf.Qty);
+    private void OnTxQtyChanged(ChangeEventArgs e) { _tf.Qty = ParseMoney(e.Value); AutoFillFees(); }
+    private string FormQtyText => QtyText(_f.Quantity);
+    private void OnFormQtyChanged(ChangeEventArgs e) { _f.Quantity = ParseMoney(e.Value); }
+
+    private bool _feesDirty;
+    private string _lastBroker = "";
+    private void MarkFeesDirty() => _feesDirty = true;
+    private void OnBrokerChanged()
+    {
+        var b = (_tf.Broker ?? "").Trim();
+        if (b == _lastBroker) return;
+        _lastBroker = b; _feesDirty = false; AutoFillFees();
+    }
+    private void AutoFillFees()
+    {
+        if (string.IsNullOrWhiteSpace(_tf.Broker) || _feesDirty) return;
+        var mkt = _tf.Picked ? _tf.Market : InferMarket(_tf.Symbol);
+        var (c, t) = Board.EstimateFees(_tf.Broker, mkt, _txType, _tf.Qty, _tf.Price);
+        _tf.Commission = c; _tf.Tax = t;
+    }
+    private static PfMarket InferMarket(string symbol) =>
+        symbol.StartsWith("KRW-", StringComparison.OrdinalIgnoreCase) ? PfMarket.CRYPTO
+        : (symbol.Length == 6 && char.IsDigit(symbol[0])) ? PfMarket.KRX_KOSPI : PfMarket.US_NASDAQ;
+
+    // ----- 거래 이력 -----
+    private List<ITxRowView> _txs = new();
+
+    private async Task DeleteTx(ITxRowView t)
+    {
+        bool ok = await Dialog.ConfirmAsync($"이 거래를 삭제할까요?\n{t.Sym} · {t.Type} · {FmtQty(t.Qty)} @ {t.Price:N0}\n→ 해당 종목 평단·수량이 재계산됩니다.");
+        if (!ok) return;
+        try
+        {
+            Tx.Delete(t.Id, t.Sym);
+            _flash = $"🗑 거래 삭제됨 — '{t.Sym}' {t.Type} {FmtQty(t.Qty)} @ {t.Price:N0}. 평단·수량 재계산 완료.";
+        }
+        catch (Exception ex) { _flash = "거래 삭제 실패: " + ex.Message; }
+        await LoadAllAsync();
+    }
+
+    // ----- 상관관계 -----
+    private decimal[,]? _corr;
+    private List<string> _corrSyms = new();
+    private bool _corrBusy;
+    private string _corrMsg = "";
+
+    // ----- AS-OF -----
+    private List<IAsOfHoldingView> _asof = new();
+    private void LoadAsOf() => _asof = AsOf.Reconstruct().ToList();
+    private void OnAsOf() { if (!AsOf.IsLive) _tab = "hold"; LoadAsOf(); InvokeAsync(StateHasChanged); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Board.LoadCustomOrder();
+        await LoadAllAsync();
+        LoadAsOf();
+        AsOf.OnChange += OnAsOf;
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private void RestartPoll()
+    {
+        _cts?.Cancel(); _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+    private async Task OnPollChanged()
+    {
+        RestartPoll();
+        if (_pollSec > 0 && AsOf.IsLive && _tab == "hold") { await Board.LoadAsync(persist: false); StateHasChanged(); }
+    }
+
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            int sec = _pollSec > 0 ? _pollSec : 15;
+            try { await Task.Delay(sec * 1000, ct); } catch { return; }
+            if (ct.IsCancellationRequested) return;
+            if (_pollSec <= 0 || !AsOf.IsLive || _tab != "hold" || (_showForm && _formEditing)) continue;
+            await Board.LoadAsync(persist: false);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void SwitchTab(string key)
+    {
+        _tab = key; _flash = "";
+        if (key == "tx") LoadTransactions();
+        else if (key == "div") _ = LoadDividends();
+    }
+
+    private async Task LoadAllAsync()
+    {
+        await Board.LoadAsync();
+        LoadTransactions();
+        _ = Board.LoadSparksAsync(() => InvokeAsync(StateHasChanged));
+    }
+
+    private MarkupString SparkSvg(string sym)
+    {
+        var d = Board.Spark(sym);
+        if (d.Length < 2) return (MarkupString)"";
+        double w = 100, h = 26, mn = d.Min(), mx = d.Max(); var r = (mx - mn) == 0 ? 1 : (mx - mn);
+        var pts = string.Join(" ", d.Select((v, i) => $"{(i / (double)(d.Length - 1) * w):F1},{(h - (v - mn) / r * h):F1}"));
+        var color = d[^1] >= d[0] ? "var(--up)" : "var(--down)";
+        return (MarkupString)$"<svg class='spark' viewBox='0 0 {w} {h}' preserveAspectRatio='none' style='width:100px;height:26px;vertical-align:middle'><polyline points='{pts}' fill='none' stroke='{color}' stroke-width='1.6'/></svg>";
+    }
+
+    private void LoadTransactions() => _txs = Tx.Recent(1000).ToList();
+    private async Task LoadDividends() { await Board.LoadDividendsAsync(); StateHasChanged(); }
+
+    private async Task CalcCorrAsync()
+    {
+        _corrBusy = true; _corrMsg = ""; StateHasChanged();
+        var res = await Board.CalcCorrelationAsync();
+        _corrSyms = res.Symbols.ToList(); _corr = res.Matrix; _corrMsg = res.Message;
+        _corrBusy = false;
+    }
+
+    private static string CorrColor(decimal v) =>
+        v >= 0.7m ? "#dc3232" : v >= 0.3m ? "#c88250" : v >= -0.3m ? "#646464" : v >= -0.7m ? "#5082c8" : "#325adc";
+
+    // ===== 폼 열기/전환 =====
+    private void Open(FormMode m)
+    {
+        if (m == FormMode.Correct && _showForm && _mode == FormMode.Correct) { CloseForm(); return; }
+        _showForm = true; _mode = m; _flash = "";
+        if (m == FormMode.Correct) { ResetForm(); }
+        else
+        {
+            _txType = m == FormMode.Buy ? PfTxType.Buy : PfTxType.Sell;
+            _editId = 0; _tf = new() { Type = _txType }; _feesDirty = false; _lastBroker = ""; _txMsg = "";
+        }
+    }
+    private void CloseForm() { _showForm = false; _editId = 0; _flash = ""; }
+
+    private void SwitchMode(FormMode m)
+    {
+        if (m == _mode) return;
+        string sym, name, broker; PfMarket mk; PfCurrency cur; bool picked;
+        if (_mode == FormMode.Correct)
+        { sym = _f.Symbol; name = _f.Name; mk = _f.Market; cur = _f.Currency; broker = _f.Broker; picked = _f.Picked; }
+        else
+        { sym = _tf.Symbol; name = _tf.Name; mk = _tf.Market; cur = _tf.Currency; broker = _tf.Broker; picked = _tf.Picked; }
+
+        _mode = m; _flash = "";
+        if (m == FormMode.Correct)
+        {
+            _editId = 0;
+            _f = new() { Symbol = sym, Name = name, Market = mk, Currency = cur, Broker = broker };
+            _fLastBroker = (broker ?? "").Trim();
+            _formMsg = "직접보정 — 보유 합계(수량·평단)를 직접 입력/덮어씁니다.";
+        }
+        else
+        {
+            _txType = m == FormMode.Buy ? PfTxType.Buy : PfTxType.Sell;
+            _editId = 0;
+            _tf = new() { Symbol = sym, Name = name, Market = mk, Currency = cur, Broker = broker, Picked = picked, ExecutedAt = DateTime.Now, Type = _txType };
+            _feesDirty = false; _lastBroker = (broker ?? "").Trim(); _txMsg = "";
+        }
+    }
+
+    private void ApplyPick(ISymbolEntryView e)
+    {
+        if (_mode == FormMode.Correct) ApplyPickToForm(e);
+        else ApplyPickToTx(e);
+    }
+
+    private async Task SaveTx()
+    {
+        if (string.IsNullOrWhiteSpace(_tf.Symbol)) { _txMsg = "종목코드를 입력하세요."; return; }
+        if (_tf.Qty == 0 || _tf.Price == 0) { _txMsg = "수량과 단가를 입력하세요."; return; }
+        _tf.Type = _txType;
+        try { Tx.Add(_tf); }
+        catch (Exception ex) { _txMsg = "저장 실패: " + ex.Message; return; }
+
+        string nm = string.IsNullOrWhiteSpace(_tf.Name) ? _tf.Symbol : _tf.Name;
+        var (hExists, hQty, txCnt, storedQ) = Tx.Diagnose(_tf.Symbol.Trim());
+        if (!hExists || hQty <= 0)
+            _flash = $"⚠️ '{nm}' 거래 저장됐으나 보유 미생성 — 코드 [{_tf.Symbol.Trim()}] · 입력 {_tf.Qty} · DB저장값 {storedQ} · 거래 {txCnt}건 · 보유행 {(hExists ? $"있음(수량 {hQty})" : "없음")}. 이 문구를 캡처해 주세요.";
+        else
+            _flash = $"✅ '{nm}' {(_txType == PfTxType.Buy ? "매수" : "매도")} 저장됨 — 보유수량 {hQty} ({_tf.Symbol.Trim()}).";
+        _showForm = false; _tf = new(); _feesDirty = false; _lastBroker = ""; _txMsg = "";
+        try { await Board.LoadAsync(); LoadTransactions(); } catch { }
+    }
+
+    private void ResetForm() { _f = new(); _editId = 0; _formMsg = ""; _fLastBroker = ""; }
+
+    private void Edit(IHoldingView h)
+    {
+        _editId = h.Id; _mode = FormMode.Correct;
+        _f = Board.ToDraft(h);
+        _fLastBroker = (h.BrokerAccount ?? "").Trim();
+        _showForm = true; _formMsg = ""; _flash = ""; _tab = "hold";
+    }
+
+    private string _fLastBroker = "";
+    private void OnFormBrokerChanged()
+    {
+        var b = (_f.Broker ?? "").Trim();
+        if (b == _fLastBroker) return;
+        _fLastBroker = b;
+        if (string.IsNullOrWhiteSpace(b)) return;
+        var (c, _) = Board.EstimateFees(b, _f.Market, PfTxType.Buy, _f.Quantity, _f.AvgPrice);
+        _f.Commission = c;
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(_f.Symbol) || _f.Quantity <= 0) { _formMsg = "종목코드와 수량을 입력하세요."; return; }
+        bool edited = _editId > 0;
+        _f.Id = _editId;
+        try { await Board.SaveHoldingAsync(_f, edited); }
+        catch (Exception ex) { _formMsg = "저장 실패: " + ex.Message; return; }
+        _flash = $"✅ '{(string.IsNullOrWhiteSpace(_f.Name) ? _f.Symbol : _f.Name)}' {(edited ? "수정" : "등록")}되었습니다.";
+        ResetForm(); _showForm = false;
+    }
+
+    private async Task Delete(IHoldingView h)
+    {
+        _flash = "";
+        try { await Board.DeleteHoldingAsync(h.Symbol, h.BrokerAccount); _lastDeleted = h; }
+        catch (Exception ex) { _flash = "삭제 실패: " + ex.Message; }
+    }
+    private async Task Restore(IHoldingView h)
+    {
+        _flash = "";
+        try
+        {
+            await Board.RestoreHoldingAsync(h.Symbol, h.BrokerAccount);
+            if (_lastDeleted is { } ld && ld.Symbol == h.Symbol && ld.BrokerAccount == h.BrokerAccount) _lastDeleted = null;
+            _flash = $"↩️ '{h.Name}' 복원되었습니다.";
+        }
+        catch (Exception ex) { _flash = "복원 실패: " + ex.Message; }
+    }
+    private async Task HardDelete(IHoldingView h)
+    {
+        bool ok = await Dialog.ConfirmAsync($"'{h.Name}'({h.Symbol})을(를) 영구 삭제할까요?\n이 작업은 되돌릴 수 없습니다.");
+        if (!ok) return;
+        try
+        {
+            await Board.HardDeleteHoldingAsync(h.Symbol, h.BrokerAccount);
+            if (_lastDeleted is { } ld && ld.Symbol == h.Symbol && ld.BrokerAccount == h.BrokerAccount) _lastDeleted = null;
+            _flash = $"🗑 '{h.Name}' 영구 삭제되었습니다.";
+        }
+        catch (Exception ex) { _flash = "영구 삭제 실패: " + ex.Message; }
+    }
+
+    private void AddBuy(IHoldingView h)
+    {
+        _showForm = true; _mode = FormMode.Buy; _txType = PfTxType.Buy; _editId = 0; _flash = ""; _tab = "hold";
+        _tf = new() { Symbol = h.Symbol, Name = h.Name, Market = h.Market, Currency = h.Currency,
+                      Broker = h.BrokerAccount, Picked = true, ExecutedAt = DateTime.Now, Type = PfTxType.Buy };
+        _feesDirty = false; _lastBroker = (h.BrokerAccount ?? "").Trim(); _txMsg = "";
+    }
+
+    private IHoldingView? FindHolding(string? symbol)
+    {
+        var s = (symbol ?? "").Trim();
+        return s.Length == 0 ? null : Board.Holdings.FirstOrDefault(x => string.Equals(x.Symbol, s, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public void Dispose() { AsOf.OnChange -= OnAsOf; _cts?.Cancel(); _cts?.Dispose(); }
+}

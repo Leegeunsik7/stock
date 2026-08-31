@@ -13,13 +13,17 @@ using System.Linq;
 namespace MS2E.Infrastructure
 {
     /// <summary>검색 결과 1건 — 코드·이름·시장·통화. 폼에 그대로 자동 채워진다.</summary>
-    public readonly struct SymbolEntry
+    public readonly struct SymbolEntry : MS2E.UI.Portable.Ports.Portfolio.ISymbolEntryView   // Phase 94-J: 공변 구현
     {
         public string   Code     { get; }
         public string   Name     { get; }
         public Market    Market   { get; }
         public Currency  Currency { get; }
         public bool      IsCrypto { get; }
+        MS2E.UI.Portable.Ports.Portfolio.PfMarket MS2E.UI.Portable.Ports.Portfolio.ISymbolEntryView.Market
+            => (MS2E.UI.Portable.Ports.Portfolio.PfMarket)(int)Market;
+        MS2E.UI.Portable.Ports.Portfolio.PfCurrency MS2E.UI.Portable.Ports.Portfolio.ISymbolEntryView.Currency
+            => (MS2E.UI.Portable.Ports.Portfolio.PfCurrency)(int)Currency;
 
         public SymbolEntry(string code, string name, Market market, Currency currency, bool isCrypto = false)
         {
