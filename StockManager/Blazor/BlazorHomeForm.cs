@@ -961,6 +961,21 @@ namespace StockManager.Blazor
             services.AddScoped<MS2E.UI.Portable.Ports.Shell.IDashboardActionPort, MS2E.Infrastructure.DashboardActionAdapter>();
             // Phase 94-N — 트레이딩 허브 Port(DIP): GatingPage·OrderReconcilePanel 이주 기반. OrderAttestationService 격리(정합 관제).
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.ITradingHubPort, MS2E.Infrastructure.TradingHubAdapter>();
+            // Phase 94-O — 코인 실시간 스트림 Port(DIP): CoinPage 이주 기반. 4거래소+환율+보유 병합 격리(모의 전용).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Realtime.ICryptoStreamPort, MS2E.Infrastructure.CryptoStreamAdapter>();
+            // Phase 94-O — 실시간 시세/워치리스트 Port(DIP): RealtimePage 이주 기반. IQuoteProvider·WatchlistStore·ExtremeScanner 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Realtime.IRealtimeBrokerPort, MS2E.Infrastructure.RealtimeBrokerAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Realtime.IWatchlistPort, MS2E.Infrastructure.WatchlistAdapter>();
+            // Phase 94-O — StrategyHub 잔여 자식 compute Port(DIP): Sizer/EventStudy/Miner 이주 기반.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IPositionSizerPort, MS2E.Infrastructure.PositionSizerAdapter>();
+            // ★EventStudy/Miner 는 회로별 상태(저장규칙 캐시·발굴 풀) 보유 → scoped 필수(교차 회로 격리).
+            services.AddScoped<MS2E.UI.Portable.Ports.Strategy.IEventStudyPort, MS2E.Infrastructure.EventStudyAdapter>();
+            services.AddScoped<MS2E.UI.Portable.Ports.Strategy.IHypothesisMinerPort, MS2E.Infrastructure.HypothesisMinerAdapter>();
+            // Phase 94-O — IntelHub Port(DIP): AI/Advisor/Debate/Journal 이주 기반. ★컴플라이언스 게이트는 세션 sticky 락→싱글턴 필수.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IAiAssistantPort, MS2E.Infrastructure.AiAssistantAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IComplianceGatePort, MS2E.Infrastructure.ComplianceGateAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IJournalPort, MS2E.Infrastructure.JournalAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IDebatePort, MS2E.Infrastructure.DebateAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);

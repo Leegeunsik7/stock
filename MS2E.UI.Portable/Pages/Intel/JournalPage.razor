@@ -1,6 +1,6 @@
-@page "/journal"
-@inject LocalDatabase Db
-@inject AiService Ai
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(JournalHostPage). 저널/AI 포트만 소비(CausalJournal·AiService 무참조). *@
+@inject IJournalPort Journal
+@inject IAiAssistantPort Ai
 
 <div class="top">
     <div class="hello"><h1>🧭 인과 추적 저널</h1><p>거래·시그널·알림·뉴스를 한 타임라인으로 — "왜 움직였나"를 LLM이 사후 복기 (정보 제공용)</p></div>
@@ -86,28 +86,25 @@
     private int _rangeDays = 30;
     private string _symbol = "", _model = "gemini-2.0-flash";
     private DateTime? _annotating;
-    private List<JournalDay> _days = new();
+    private IReadOnlyList<IJournalDayView> _days = Array.Empty<IJournalDayView>();
 
     protected override void OnInitialized() => Reload();
 
     private void Reload()
     {
-        var to = DateTime.Now;
-        var from = to.AddDays(-Math.Max(1, _rangeDays));
-        var sym = string.IsNullOrWhiteSpace(_symbol) ? null : _symbol.Trim();
-        var events = CausalJournal.BuildTimeline(Db, from, to, sym);
-        _days = CausalJournal.GroupByDay(Db, events);
+        // 타임라인 조립(4소스)은 어댑터가 내재화.
+        _days = Journal.BuildTimeline(_rangeDays, _symbol);
         StateHasChanged();
     }
 
-    private async Task ExplainAsync(JournalDay day)
+    private async Task ExplainAsync(IJournalDayView day)
     {
         if (!Ai.HasKey || _annotating == day.Date) return;
         _annotating = day.Date; StateHasChanged();
         try
         {
-            var ctx = CausalJournal.BuildDayContext(Db, day);
-            day.Annotation = await Ai.ExplainDayAsync(ctx, _model);
+            // 그날 문맥 조립 + LLM 인과 복기는 어댑터가 내재화.
+            day.Annotation = await Journal.ExplainDayAsync(day, _model);
         }
         catch (Exception ex) { day.Annotation = "복기 오류: " + ex.Message; }
         finally { _annotating = null; StateHasChanged(); }

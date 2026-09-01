@@ -1,5 +1,5 @@
-@page "/ai"
-@inject AiService Ai
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(AIHostPage). IAiAssistantPort 만 소비(AiService 무참조). *@
+@inject IAiAssistantPort Ai
 
 <div class="top"><div class="hello"><h1>🧠 AI 분석</h1><p>Gemini 기반 종목 분석</p></div></div>
 
@@ -7,7 +7,7 @@
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
         <input class="srch" style="width:160px" placeholder="종목코드 (005930)" @bind="_symbol" />
         <select class="srch" @bind="_market">
-            @foreach (var m in Enum.GetValues<Market>()) { <option value="@m">@m</option> }
+            @foreach (var m in Enum.GetValues<PfMarket>()) { <option value="@m">@m</option> }
         </select>
         <select class="srch" @bind="_model">
             <option value="gemini-2.0-flash">gemini-2.0-flash (기본)</option>

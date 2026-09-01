@@ -18,7 +18,7 @@ using System.Linq;
 
 namespace MS2E.Infrastructure
 {
-    public class HorizonStat
+    public class HorizonStat : MS2E.UI.Portable.Ports.Strategy.IEventStatView   // Phase 94-O: 공변(전 멤버 암시·EdgePct 계산)
     {
         public int Days { get; set; }
         public int N { get; set; }
@@ -31,7 +31,7 @@ namespace MS2E.Infrastructure
         public decimal EdgePct => MeanPct - BaselineMeanPct;
     }
 
-    public class EventStudyResult
+    public class EventStudyResult : MS2E.UI.Portable.Ports.Strategy.IEventStudyResultView   // Phase 94-O: 공변
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
@@ -39,6 +39,11 @@ namespace MS2E.Infrastructure
         public int Scanned { get; set; }
         public List<string> RecentDates { get; set; } = new();   // 최근 발생일 표본(최대 8)
         public List<HorizonStat> Stats { get; set; } = new();
+
+        // 동명 반환형 충돌(List → IReadOnlyList) 회피: 명시적 공변 구현.
+        IReadOnlyList<string> MS2E.UI.Portable.Ports.Strategy.IEventStudyResultView.RecentDates => RecentDates;
+        IReadOnlyList<MS2E.UI.Portable.Ports.Strategy.IEventStatView>
+            MS2E.UI.Portable.Ports.Strategy.IEventStudyResultView.Stats => Stats;
     }
 
     public static class EventStudy

@@ -24,7 +24,7 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>강세/약세 판정별 적중 기록(승률 가중에 주입).</summary>
-    public class BullBearRecord
+    public class BullBearRecord : MS2E.UI.Portable.Ports.Intel.IBullBearRecordView   // Phase 94-O: 공변(BullishN/BearishN/HitPct 암시)
     {
         public int BullishN { get; set; }
         public int BullishHit { get; set; }

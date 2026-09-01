@@ -16,7 +16,7 @@ using System.Linq;
 
 namespace MS2E.Infrastructure
 {
-    public class SizeResult
+    public class SizeResult : MS2E.UI.Portable.Ports.Strategy.ISizeResultView   // Phase 94-O: 공변(전 멤버 암시)
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";

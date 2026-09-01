@@ -1,18 +1,16 @@
-@page "/miner"
-@inject IQuoteProvider Provider
-@inject LocalDatabase Db
-@inject SymbolContext Ctx
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(MinerHostPage). 발굴 compute + 심볼 인프라 + 토스트 포트만 소비(엔진/복합규칙 무참조). *@
+@inject IHypothesisMinerPort Miner
+@inject IStrategyHubInfraPort Infra
+@inject IToastPort Toasts
 @implements IDisposable
-@inject ToastService Toasts
-@inject NavigationManager Nav
 
 <CrossLinks Current="miner" />
 <div class="top">
     <div class="hello"><h1>🧬 자동 가설 발굴 (유전자 풀)</h1><p>조건 조합을 자동 생성해 train/OOS로 검증 — 보류표본에서도 살아남는 패턴만 발굴 (정보 제공용)</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
     <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
-        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
-        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+        <option value="@PfMarket.KRX_KOSPI">코스피</option><option value="@PfMarket.KRX_KOSDAQ">코스닥</option>
+        <option value="@PfMarket.US_NASDAQ">나스닥</option><option value="@PfMarket.US_NYSE">뉴욕</option><option value="@PfMarket.US_AMEX">아멕스</option>
     </select>
     <select class="srch" style="width:80px" @bind="_months"><option value="36">3년</option><option value="60">5년</option></select>
     <select class="srch" style="width:90px;margin-left:8px" @bind="_horizon"><option value="5">+5일</option><option value="10">+10일</option><option value="20">+20일</option></select>
@@ -75,49 +73,42 @@
 
 @code {
     private string _symbol = "", _msg = "";
-    private Market _market = Market.KRX_KOSPI;
+    private PfMarket _market = PfMarket.KRX_KOSPI;
     private int _months = 36, _horizon = 10;
     private bool _busy;
-    private MiningResult? _res;
+    private IMiningResultView? _res;
 
     protected override void OnInitialized()
     {
-        if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
-        Ctx.OnChange += OnSym;
+        if (Infra.HasSymbol) { _symbol = Infra.CurrentSymbol; _market = (PfMarket)Infra.CurrentMarketCode; }
+        Infra.SymbolChanged += OnSym;
     }
 
-    private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
-    public void Dispose() => Ctx.OnChange -= OnSym;
+    private void OnSym() { _symbol = Infra.CurrentSymbol; _market = (PfMarket)Infra.CurrentMarketCode; InvokeAsync(RunAsync); }
+    public void Dispose() => Infra.SymbolChanged -= OnSym;
 
     private async Task RunAsync()
     {
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
         if (string.IsNullOrWhiteSpace(sym)) { _msg = "종목코드를 입력하세요."; _res = null; return; }
-        Ctx.Set(sym, _market);
+        Infra.SetSymbol(sym, (int)_market);
         _busy = true; _msg = ""; _res = null; StateHasChanged();
         try
         {
-            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-Math.Max(12, _months)), DateTime.Now);
-            _res = HypothesisMiner.Mine(candles, _horizon);
-            if (!_res.IsValid) { _msg = _res.Note; _res = null; }
+            // 시세 fetch + HypothesisMiner.Mine 은 어댑터가 내재화(발굴 풀은 채택용으로 어댑터가 캐시).
+            var res = await Miner.MineAsync(sym, _market, _months, _horizon);
+            if (res.IsValid) _res = res;
+            else { _msg = res.Note; _res = null; }
         }
         catch (Exception ex) { _msg = "오류: " + ex.Message; }
         finally { _busy = false; StateHasChanged(); }
     }
 
-    private void Adopt(Hypothesis h)
+    private void Adopt(IHypothesisView h)
     {
+        // 채택(가설 index → 복합규칙 저장)은 어댑터가 내재화. 반환 메시지를 토스트로 표시.
         var sym = (_symbol ?? "").Trim().Split(' ')[0];
-        var rules = CompositeAlertEngine.Load(Db);
-        rules.Add(new CompositeRule
-        {
-            Name = $"🧬 {h.Label} ({sym})",
-            AssetKind = "stock", Target = sym, Logic = h.Rule.Logic,
-            Conditions = h.Rule.Conditions.Select(c => new CompositeCondition
-            { Metric = c.Metric, Param = c.Param, Op = c.Op, Threshold = c.Threshold }).ToList()
-        });
-        CompositeAlertEngine.Save(Db, rules);
-        Toasts.Success("복합 알림 채택됨", $"{h.Label} → {sym} (OOS 엣지 {h.OosEdgePct:+0.0;-0.0}%p)",
-            new() { ToastButton.Of("복합 알림 보기", () => Nav.NavigateTo("/composite"), true) });
+        var (title, message) = Miner.Adopt(int.Parse(h.Id), sym);
+        Toasts.ShowSuccess(title, message);
     }
 }

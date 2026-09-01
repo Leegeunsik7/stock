@@ -1,8 +1,7 @@
-@page "/advisor"
-@inject AiService Ai
-@inject FxConverter Fx
-@inject LocalDatabase Db
-@inject ComplianceGate Compliance
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(AdvisorHostPage). AI/컴플라이언스/환율 포트만 소비(엔진 무참조). *@
+@inject IAiAssistantPort Ai
+@inject IFxRatePort Fx
+@inject IComplianceGatePort Compliance
 
 <div class="top">
     <div class="hello"><h1>🤖 AI 투자 비서</h1><p>내 포트폴리오·시그널·거래 데이터 기반 자연어 질의 (환율 @_usdKrw.ToString("N0"))</p></div>
@@ -20,7 +19,7 @@
             <div style="font-size:40px">🛑</div>
             <div style="font-size:18px;font-weight:800;color:var(--down,#e34d4d)">컴플라이언스 보호 — 세션 잠금</div>
             <div style="font-size:13.5px;color:var(--ink);line-height:1.75;max-width:560px">
-                @ComplianceGate.RefusalNotice
+                @Compliance.RefusalNotice
             </div>
             <div style="font-size:12px;color:var(--sub);line-height:1.7;max-width:560px">
                 본 서비스는 자본시장법상 <b>투자자문업·투자일임업 인가</b>를 받지 않았습니다. 확정 수익 보장,
@@ -106,7 +105,7 @@
 <style>.ck input{width:16px;height:16px}</style>
 
 @code {
-    private record Msg(string Role, string Text, System.Collections.Generic.List<string>? Sources = null);
+    private record Msg(string Role, string Text, System.Collections.Generic.IReadOnlyList<string>? Sources = null);
     private readonly System.Collections.Generic.List<Msg> _chat = new();
     private readonly string[] _suggest =
     {
@@ -121,8 +120,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _briefEnabled = Db.GetSetting("Brief.Enabled") == "true";
-        if (int.TryParse(Db.GetSetting("Brief.Hour"), out var h)) _briefHour = Math.Clamp(h, 0, 23);
+        _briefEnabled = Ai.GetBriefEnabled();
+        _briefHour = Ai.GetBriefHour();
         try { _usdKrw = await Fx.GetUsdKrwAsync(); } catch { }
     }
 
@@ -138,10 +137,9 @@
         // ★Mission B — 컴플라이언스 방화벽: 결정론 의도 분류 → Admit. 비정상 의도(확정수익 보장·유사투자자문·탈옥)
         //   또는 이미 잠긴 세션이면 LLM 호출 '자체'를 차단(드롭)하고 고정 고지문만 발화한다. LLM 원본은 화면에 절대
         //   도달하지 못한다(fail-closed). Admit 이 비정상 의도에 sticky 락을 걸면 오버레이가 점등되어 세션을 봉인.
-        var intent = ComplianceClassifier.Classify(qt);
-        if (!Compliance.Admit(intent))
+        if (!Compliance.AdmitQuestion(qt))
         {
-            _chat.Add(new Msg("ai", ComplianceGate.RefusalNotice));
+            _chat.Add(new Msg("ai", Compliance.RefusalNotice));
             StateHasChanged();
             return;   // LLM 미호출 — 위험 발화 원천 차단
         }
@@ -163,7 +161,7 @@
     {
         if (_busy || Compliance.IsLocked) return;   // 세션 잠금 시 브리핑 발화도 차단(오버레이가 화면을 덮음)
         _busy = true; StateHasChanged();
-        var text = await Ai.MorningBriefAsync(_usdKrw, pushTelegram: false);
+        var text = await Ai.MorningBriefAsync(_usdKrw);
         _chat.Add(new Msg("ai", "🌅 아침 브리핑\n" + text));
         _busy = false;
     }
@@ -171,11 +169,11 @@
     private void OnBriefToggle(ChangeEventArgs e)
     {
         _briefEnabled = e.Value is bool b && b;
-        Db.SetSetting("Brief.Enabled", _briefEnabled ? "true" : "false");
+        Ai.SetBriefEnabled(_briefEnabled);
     }
 
     private void OnBriefHour(ChangeEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var h)) { _briefHour = Math.Clamp(h, 0, 23); Db.SetSetting("Brief.Hour", _briefHour.ToString()); }
+        if (int.TryParse(e.Value?.ToString(), out var h)) { _briefHour = Math.Clamp(h, 0, 23); Ai.SetBriefHour(_briefHour); }
     }
 }

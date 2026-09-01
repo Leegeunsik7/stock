@@ -35,12 +35,14 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>실시간 시세 데이터 (Tick)</summary>
-    public class Quote : INotifyPropertyChanged, IQuoteTickView   // Phase 94-J: Price/ChangeRate/Session 암시 구현
+    public class Quote : INotifyPropertyChanged, IQuoteTickView,
+                         MS2E.UI.Portable.Ports.Realtime.IRealtimeQuoteView   // Phase 94-J/O: 공변(Symbol/Name/Price/PreviousClose/ChangeRate/Volume 암시)
     {
         public string Symbol { get; set; } = "";      // AAPL, 005930 등
         public string Name { get; set; } = "";        // Apple Inc., 삼성전자
         public Market Market { get; set; }
         public Currency Currency { get; set; }
+        public bool IsKrw => Currency == Currency.KRW;   // Phase 94-O: 통화 표기(₩ vs $)
 
         private decimal _price;
         public decimal Price
@@ -81,7 +83,7 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>일봉 캔들 (OHLCV)</summary>
-    public class Candle
+    public class Candle : MS2E.UI.Portable.Ports.Realtime.ICandleView   // Phase 94-O: 공변(전 멤버 암시)
     {
         public DateTime Date { get; set; }
         public decimal Open { get; set; }

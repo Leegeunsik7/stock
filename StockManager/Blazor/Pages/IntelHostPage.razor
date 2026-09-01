@@ -1,0 +1,8 @@
+@page "/intel"
+@page "/intel/{Tab}"
+@* Phase 94-O — 얇은 호스트 라우팅 셸: RCL 로 이주된 IntelHub(인텔 허브: 비서/분석/토론/저널)를 /intel·/intel/{Tab} 에 노출. *@
+<MS2E.UI.Portable.Pages.Intel.IntelHub Tab="@Tab" />
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

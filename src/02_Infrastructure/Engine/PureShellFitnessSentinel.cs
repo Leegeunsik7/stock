@@ -30,8 +30,8 @@ namespace MS2E.Infrastructure
         /// ★단조 감소 래칫 — 호스트에 잔류 허용되는 결합 UI 컴포넌트 최대 수. 이주가 진행되면 이 값을 낮춘다.
         /// 신규 결합 UI 유입 → 초과 → CI/부팅 거부(Pure Shell 회귀 방지). (v11.4.0 실측 기준 봉인.)
         /// </summary>
-        public const int RatchetCeiling = 61;   // v11.5.1 Phase 94-N 하향(63→61): Trading Hub(GatingPage·OrderReconcilePanel — 주문 증적/정합 관제) RCL 이주. 이주 시마다 단조 감축.
-        // ※잔여 61 중 4개(LiveHub/StrategyHub/ValidateHub/IntelHub)는 NavigationManager 만 주입하나 호스트 자식 페이지(CoinPage/RealtimePage/…)를 렌더 → 자식 트리 선(先)이주 없이는 RCL 역참조 불가(구조적 봉쇄). ≤55 도달은 자식 페이지 다수 선이주 필요(별건 로드맵).
+        public const int RatchetCeiling = 49;   // v11.6.0 Phase 94-O 대폭 하향(61→49): 3대 허브 완전 해방 — LiveHub(CoinPage/RealtimePage)·StrategyHub(EventStudy/Miner/Sizer)·IntelHub(AI/Advisor/Debate/Journal) 자식 트리 선이주 후 허브 RCL 이주. 이주 시마다 단조 감축.
+        // ※잔여 49 중 ValidateHub(Calibrator/Forecast/Twin=raw-SQL DEEP·Replay)는 원시 SQL/DataRow 마샬링 다수 → 페이지별 리포지토리 Port 선행 필요(별건 로드맵). 그 외 잔여는 개별 深결합 페이지.
 
         /// <summary>호스트 어셈블리를 스캔해 결합 UI 수를 집계·래칫 판정.</summary>
         public static ShellFitnessReport Scan(Assembly hostAssembly)

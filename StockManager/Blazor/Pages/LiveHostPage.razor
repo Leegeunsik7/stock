@@ -1,0 +1,8 @@
+@page "/live"
+@page "/live/{Tab}"
+@* Phase 94-O — 얇은 호스트 라우팅 셸: RCL 로 이주된 LiveHub(실시간 허브: 주식/코인 탭)를 /live·/live/{Tab} 에 노출. *@
+<MS2E.UI.Portable.Pages.Realtime.LiveHub Tab="@Tab" />
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

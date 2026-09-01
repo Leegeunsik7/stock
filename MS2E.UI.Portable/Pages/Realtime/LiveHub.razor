@@ -1,5 +1,4 @@
-@page "/live"
-@page "/live/{Tab}"
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(LiveHostPage)이 소유. NavigationManager(포터블)만 사용, 자식 CoinPage/RealtimePage 는 RCL. *@
 @inject NavigationManager Nav
 
 <HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />

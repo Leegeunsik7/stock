@@ -1,0 +1,8 @@
+@page "/lab"
+@page "/lab/{Tab}"
+@* Phase 94-O — 얇은 호스트 라우팅 셸: RCL 로 이주된 StrategyHub(전략 랩: 시그널/옵티마이저/이벤트스터디/가설발굴/사이저)를 /lab·/lab/{Tab} 에 노출. *@
+<MS2E.UI.Portable.Pages.Strategy.StrategyHub Tab="@Tab" />
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

@@ -23,7 +23,7 @@ namespace MS2E.Infrastructure
 {
     public enum JournalKind { Transaction, Signal, Alert, News, Dividend }
 
-    public class JournalEvent
+    public class JournalEvent : MS2E.UI.Portable.Ports.Intel.IJournalEventView   // Phase 94-O: 공변(When/Icon/KindLabel/Title/Detail 암시)
     {
         public DateTime When { get; set; }
         public JournalKind Kind { get; set; }
@@ -53,12 +53,16 @@ namespace MS2E.Infrastructure
         };
     }
 
-    public class JournalDay
+    public class JournalDay : MS2E.UI.Portable.Ports.Intel.IJournalDayView   // Phase 94-O: 공변(Date/EquityChangePct/Annotation 암시)
     {
         public DateTime Date { get; set; }
         public List<JournalEvent> Events { get; set; } = new();
         public decimal? EquityChangePct { get; set; }   // 그날 총자산 전일 대비(%) — 없으면 null
         public string Annotation { get; set; } = "";     // LLM 인과 주석(페이지에서 채움)
+
+        // List<JournalEvent> → IReadOnlyList<IJournalEventView> : 명시적 공변(동명 반환형 충돌 회피).
+        IReadOnlyList<MS2E.UI.Portable.Ports.Intel.IJournalEventView>
+            MS2E.UI.Portable.Ports.Intel.IJournalDayView.Events => Events;
     }
 
     public static class CausalJournal

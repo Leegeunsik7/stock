@@ -81,7 +81,7 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>52주 신고가/신저가 스캔 결과</summary>
-    public class ExtremeEvent
+    public class ExtremeEvent : MS2E.UI.Portable.Ports.Realtime.IExtremeEventView   // Phase 94-O: 공변(전 멤버 암시)
     {
         public string Symbol { get; set; } = "";
         public string Name { get; set; } = "";

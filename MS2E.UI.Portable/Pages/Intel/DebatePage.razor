@@ -1,19 +1,16 @@
-@page "/debate"
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(DebateHostPage). 토론/AI/심볼 포트만 소비(DebateService·DebateLog·엔진 무참조). *@
 @implements IDisposable
-@inject AiService Ai
-@inject IQuoteProvider Provider
-@inject LocalDatabase Db
-@inject SymbolContext Ctx
-@inject NavigationManager Nav
-@using System.Data
+@inject IDebatePort Debate
+@inject IAiAssistantPort Ai
+@inject ISymbolContextPort Ctx
 
 <CrossLinks Current="" />
 <div class="top">
     <div class="hello"><h1>🗣 멀티에이전트 토론</h1><p>강세론자·약세론자 AI가 결정론 데이터로 토론하고 심판이 승률 가중으로 판정 (정보 제공용)</p></div>
     <input class="srch" style="width:140px" placeholder="종목코드 (005930)" @bind="_symbol" @bind:event="oninput" />
     <select class="srch" style="width:120px;margin:0 8px" @bind="_market">
-        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
-        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+        <option value="@PfMarket.KRX_KOSPI">코스피</option><option value="@PfMarket.KRX_KOSDAQ">코스닥</option>
+        <option value="@PfMarket.US_NASDAQ">나스닥</option><option value="@PfMarket.US_NYSE">뉴욕</option><option value="@PfMarket.US_AMEX">아멕스</option>
     </select>
     <button class="addbtn" style="margin-right:16px" disabled="@_busy" @onclick="RunAsync">@(_busy?"토론 중…":"⚔ 토론 시작")</button>
 </div>
@@ -59,18 +56,18 @@
 
 @code {
     private string _symbol = "", _err = "", _model = "gemini-2.0-flash";
-    private Market _market = Market.KRX_KOSPI;
+    private PfMarket _market = PfMarket.KRX_KOSPI;
     private bool _busy;
-    private DebateResult? _res;
-    private BullBearRecord _rec = new();
+    private IDebateResultView? _res;
+    private IBullBearRecordView _rec = default!;
     private int _pending;
 
     protected override void OnInitialized()
     {
         if (Ctx.HasSymbol) { _symbol = Ctx.Symbol; _market = Ctx.Market; }
         Ctx.OnChange += OnSym;
-        _pending = DebateLog.PendingCount(Db);
-        _rec = DebateLog.Stats(Db);
+        _pending = Debate.PendingCount();
+        _rec = Debate.Stats();
     }
 
     private void OnSym() { _symbol = Ctx.Symbol; _market = Ctx.Market; InvokeAsync(RunAsync); }
@@ -86,21 +83,12 @@
         _busy = true; _err = ""; _res = null; StateHasChanged();
         try
         {
-            var candles = await Provider.GetHistoryAsync(sym, _market, DateTime.Now.AddMonths(-6), DateTime.Now);
-            if (candles.Count < 21) { _err = "히스토리가 부족합니다(시세 제공자 확인)."; return; }
-            _rec = DebateLog.Stats(Db);
-            _res = await DebateService.RunAsync(Ai, sym, candles, _rec, _model);
-            if (!_res.Ok) { _err = _res.Error; _res = null; return; }
-
-            // 판정 기록(10일 후 정산) → 승률 채점 누적
-            DebateLog.Record(Db, new LiveDebate
-            {
-                IssuedAt = DateTime.Now.ToString("o"),
-                ResolveAt = DateTime.Now.AddDays(14).ToString("o"),
-                Symbol = sym, Market = (int)_market, Stance = _res.Stance,
-                BasePrice = (double)candles[^1].Close
-            });
-            _pending = DebateLog.PendingCount(Db);
+            // 시세 fetch + 3에이전트 토론 + 판정 기록은 어댑터가 내재화.
+            var res = await Debate.RunAsync(sym, _market, _model);
+            if (!res.Ok) { _err = res.Error; _res = null; return; }
+            _res = res;
+            _pending = Debate.PendingCount();
+            _rec = Debate.Stats();
         }
         catch (Exception ex) { _err = "오류: " + ex.Message; }
         finally { _busy = false; StateHasChanged(); }
@@ -108,14 +96,7 @@
 
     private async Task ResolveAsync()
     {
-        var due = DebateLog.Load(Db).Where(d => !d.Resolved && DateTime.TryParse(d.ResolveAt, out var ra) && ra <= DateTime.Now).ToList();
-        var px = new Dictionary<(string, int), decimal>();
-        foreach (var grp in due.GroupBy(d => (d.Symbol, d.Market)))
-        {
-            try { var q = await Provider.GetQuotesAsync(new[] { grp.Key.Symbol }, (Market)grp.Key.Market); var pr = q.FirstOrDefault()?.Price ?? 0m; if (pr > 0) px[(grp.Key.Symbol, grp.Key.Market)] = pr; }
-            catch { }
-        }
-        DebateLog.ResolveDue(Db, (s, m) => px.TryGetValue((s, (int)m), out var p) ? p : 0m, DateTime.Now);
-        _pending = DebateLog.PendingCount(Db); _rec = DebateLog.Stats(Db); StateHasChanged();
+        await Debate.ResolveAsync();   // Load + 시세 fetch + ResolveDue 는 어댑터가 내재화.
+        _pending = Debate.PendingCount(); _rec = Debate.Stats(); StateHasChanged();
     }
 }

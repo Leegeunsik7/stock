@@ -1,11 +1,10 @@
-@page "/realtime"
-@inject IQuoteProvider Provider
-@inject LocalDatabase Db
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(RealtimeHostPage)이 소유. 시세/워치리스트/AsOf/JS 포트만 소비(엔진 무참조). *@
+@inject IRealtimeBrokerPort Broker
+@inject IWatchlistPort Watch
 @inject IJSRuntime JS
-@inject AsOfContext AsOfCtx
+@inject ITimeTravelAsOfPort AsOfCtx
 @implements IDisposable
 @using System.Threading
-@using System.Data
 
 <style>
     @@keyframes flashU { from { background: color-mix(in srgb, var(--up) 30%, transparent); } to { background: transparent; } }
@@ -30,7 +29,7 @@
         var gg = g;
         <span style="display:inline-flex;align-items:center">
             <button class="pill @(g==_group?"r":"b")" style="border:0;cursor:pointer;padding:6px 14px;font-size:12.5px" @onclick="() => SetGroup(gg)">@g</button>
-            @if (!WatchlistStore.IsBuiltIn(g))   @* 커스텀 카테고리만 삭제 가능(빌트인 보존) *@
+            @if (!Watch.IsBuiltIn(g))   @* 커스텀 카테고리만 삭제 가능(빌트인 보존) *@
             {
                 <button title="카테고리 삭제" style="border:0;background:transparent;cursor:pointer;color:var(--sub);margin-left:-4px;font-size:11px"
                         @onclick="() => RemoveCategoryAsync(gg)">✕</button>
@@ -208,14 +207,14 @@
 
 @code {
     // ===== 워치리스트 그룹 — v4.64.0: 빌트인 + 사용자 커스텀(WatchlistStore, DB 영속) =====
-    private List<string> _groups = new(WatchlistStore.BuiltInCategories);   // OnInitialized 에서 커스텀 병합
+    private List<string> _groups = new();   // OnInitialized 에서 Watch.LoadCategories() 로 채움
     private string _group = "⭐ 즐겨찾기";
     private string _newCat = "";
     private List<(string sym, string name)> _watch = new();
     // HTML5 네이티브 DnD 재정렬 상태(외부 라이브러리 없음 — Dashboard 패턴 계승)
     private string? _drag, _dragOver;
 
-    private readonly Dictionary<string, Quote> _quotes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IRealtimeQuoteView> _quotes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, decimal> _prev = new(StringComparer.OrdinalIgnoreCase);     // 플래시용 직전 가격
     private readonly Dictionary<string, int> _flashVer = new(StringComparer.OrdinalIgnoreCase);     // 행 재생성 키(애니메이션 재생)
     private readonly Dictionary<string, string> _flashAnim = new(StringComparer.OrdinalIgnoreCase); // flashU/flashD
@@ -231,8 +230,8 @@
     private int _arCond, _arChannel;
     private decimal _arTarget;
 
-    private (string sym, string name, Market mkt) _sel = ("", "—", Market.KRX_KOSPI);
-    private List<Candle> _candles = new();
+    private (string sym, string name, PfMarket mkt) _sel = ("", "—", PfMarket.KRX_KOSPI);
+    private List<ICandleView> _candles = new();
     private bool _loadingChart;
     private CancellationTokenSource? _cts;
 
@@ -248,7 +247,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _groups = WatchlistStore.LoadCategories(Db);   // 빌트인 + 영속된 커스텀 카테고리
+        _groups = Watch.LoadCategories().ToList();   // 빌트인 + 영속된 커스텀 카테고리
         await ReloadGroupAsync();
         await SelectFirstAsync();
         RestartLoop();
@@ -294,31 +293,13 @@
     // v4.64.0 — WatchlistStore 경유(SortOrder 순). 빈 그룹: 빌트인은 큐레이션 시드 폴백, 커스텀은 진짜 비움(사용자 캔버스).
     private async Task ReloadGroupAsync()
     {
-        _watch = WatchlistStore.LoadSymbols(Db, _group);
-        if (_watch.Count == 0 && WatchlistStore.IsBuiltIn(_group))
-            foreach (var (s, n) in DefaultsFor(_group).Take(12)) _watch.Add((s, n));
+        _watch = Watch.LoadSymbols(_group).Select(w => (w.Sym, w.Name)).ToList();
+        if (_watch.Count == 0 && Watch.IsBuiltIn(_group))
+            foreach (var d in Watch.DefaultsFor(_group).Take(12)) _watch.Add((d.Sym, d.Name));
         await RefreshAsync();
     }
 
-    // 그룹별 큐레이션 종목(빈 그룹 폴백). DB Watchlist에 직접 추가하면 그 목록이 우선.
-    //  ※ '피지컬'을 'AI'보다 먼저 검사(둘 다 "AI" 포함하므로 순서 중요).
-    private static (string sym, string name)[] DefaultsFor(string group)
-    {
-        if (group.Contains("반도체")) return new[] {
-            ("005930","삼성전자"),("000660","SK하이닉스"),("042700","한미반도체"),("NVDA","NVIDIA"),("AMD","AMD"),
-            ("TSM","TSMC"),("INTC","Intel"),("AVGO","Broadcom"),("MU","Micron"),("ASML","ASML") };
-        if (group.Contains("2차전지")) return new[] {
-            ("373220","LG에너지솔루션"),("006400","삼성SDI"),("051910","LG화학"),("247540","에코프로비엠"),
-            ("086520","에코프로"),("066970","엘앤에프"),("TSLA","Tesla"),("ALB","Albemarle") };
-        if (group.Contains("피지컬")) return new[] {           // 피지컬 AI(로보틱스/하드웨어) — AI 검사보다 먼저
-            ("454910","두산로보틱스"),("277810","레인보우로보틱스"),("108490","로보티즈"),
-            ("TSLA","Tesla"),("NVDA","NVIDIA"),("ISRG","Intuitive Surgical"),("ABB","ABB") };
-        if (group.Contains("AI")) return new[] {
-            ("NVDA","NVIDIA"),("MSFT","Microsoft"),("GOOGL","Alphabet"),("META","Meta"),("PLTR","Palantir"),
-            ("AMD","AMD"),("035420","NAVER"),("035720","카카오") };
-        if (group.Contains("미국")) return SampleData.USTop.Select(x => (x.sym, x.name)).ToArray();
-        return SampleData.KoreanTop.Select(x => (x.sym, x.name)).ToArray();
-    }
+    // ★그룹별 큐레이션 시드(빈 그룹 폴백)는 SampleData 격리를 위해 WatchlistAdapter.DefaultsFor 로 이관됨.
 
     private async Task RefreshNowAsync() => await RefreshAsync();
 
@@ -330,7 +311,7 @@
         {
             try
             {
-                var qs = await Provider.GetQuotesAsync(grp.Select(x => x.sym), grp.Key);
+                var qs = await Broker.GetQuotesAsync(grp.Select(x => x.sym), grp.Key);
                 foreach (var q in qs)
                 {
                     // 가격 변동 감지 → 플래시 (원본: 등락률 부호로 색 결정, 800ms)
@@ -354,7 +335,7 @@
 
     private async Task SelectFirstAsync()
     {
-        if (_watch.Count == 0) { _sel = ("", "—", Market.KRX_KOSPI); _candles = new(); return; }
+        if (_watch.Count == 0) { _sel = ("", "—", PfMarket.KRX_KOSPI); _candles = new(); return; }
         var f = _watch[0];
         await SelectAsync(f.sym, NameOf(f), DetectMarket(f.sym));
     }
@@ -368,10 +349,11 @@
         return s;
     }
 
-    private static string PriceText(Quote? q) => q != null ? Formatter.Money(q.Price, q.Currency) : "-";
-    private static string DiffText(Quote? q, decimal diff) => q != null ? $"{(diff >= 0 ? "▲" : "▼")} {Math.Abs(diff):N0}" : "-";
-    private static string RateText(Quote? q, decimal rate) => q != null ? rate.ToString("+0.00;-0.00") + "%" : "-";
-    private static string VolText(Quote? q) => q != null ? q.Volume.ToString("N0") : "-";
+    // Formatter.Money 룰 이관: KRW → "{v:N0}원", 그 외 → "${v:N2}"
+    private static string PriceText(IRealtimeQuoteView? q) => q != null ? (q.IsKrw ? $"{q.Price:N0}원" : $"${q.Price:N2}") : "-";
+    private static string DiffText(IRealtimeQuoteView? q, decimal diff) => q != null ? $"{(diff >= 0 ? "▲" : "▼")} {Math.Abs(diff):N0}" : "-";
+    private static string RateText(IRealtimeQuoteView? q, decimal rate) => q != null ? rate.ToString("+0.00;-0.00") + "%" : "-";
+    private static string VolText(IRealtimeQuoteView? q) => q != null ? q.Volume.ToString("N0") : "-";
 
     private string NameOf((string sym, string name) w)
     {
@@ -390,13 +372,13 @@
         if (_pendingSym is null) return;
         var sym = _pendingSym;
         _pendingSym = null;
-        WatchlistStore.AddSymbol(Db, group, sym.Code, sym.Name, (Market)(int)sym.Market);
+        Watch.AddSymbol(group, sym.Code, sym.Name, sym.Market);
         if (_group == group) await ReloadGroupAsync();
     }
 
     private async Task DeleteSymbolAsync(string sym)
     {
-        WatchlistStore.RemoveSymbol(Db, _group, sym);
+        Watch.RemoveSymbol(_group, sym);
         await ReloadGroupAsync();
     }
 
@@ -406,9 +388,9 @@
     private async Task AddCategoryAsync()
     {
         var name = _newCat.Trim();
-        if (WatchlistStore.AddCategory(Db, name))
+        if (Watch.AddCategory(name))
         {
-            _groups = WatchlistStore.LoadCategories(Db);
+            _groups = Watch.LoadCategories().ToList();
             _group = name; _newCat = "";
             await ReloadGroupAsync();
             await SelectFirstAsync();
@@ -418,8 +400,8 @@
 
     private async Task RemoveCategoryAsync(string cat)
     {
-        if (!WatchlistStore.RemoveCategory(Db, cat)) return;   // 빌트인은 삭제 불가
-        _groups = WatchlistStore.LoadCategories(Db);
+        if (!Watch.RemoveCategory(cat)) return;   // 빌트인은 삭제 불가
+        _groups = Watch.LoadCategories().ToList();
         if (_group == cat) _group = _groups.Count > 0 ? _groups[0] : "⭐ 즐겨찾기";
         await ReloadGroupAsync();
         await SelectFirstAsync();
@@ -449,8 +431,8 @@
     // 현재 _watch 순서를 DB 에 영속: 모든 행 upsert(시드→영속 승격) 후 SortOrder 0..n-1 일괄 기입.
     private void PersistWatchOrder()
     {
-        foreach (var w in _watch) WatchlistStore.AddSymbol(Db, _group, w.sym, w.name, DetectMarket(w.sym));
-        WatchlistStore.Reorder(Db, _group, _watch.Select(x => x.sym).ToList());
+        foreach (var w in _watch) Watch.AddSymbol(_group, w.sym, w.name, DetectMarket(w.sym));
+        Watch.Reorder(_group, _watch.Select(x => x.sym).ToList());
     }
 
     // ===== 52주 신고/신저가 스캔 (원본: SampleData 전체 · 종가 기준 · 이벤트당 Warning 알림) =====
@@ -461,14 +443,8 @@
         StateHasChanged();
         try
         {
-            var events = await ExtremeScanner.ScanAsync(Provider, SampleData.All(), _cts?.Token ?? default);
-            foreach (var ev in events)
-            {
-                AlertCenter.Instance.RaisePrice(ev.Symbol,
-                    $"{(ev.IsHigh ? "📈 52주 신고가" : "📉 52주 신저가")} · {ev.Name}",
-                    $"현재 {ev.CurrentPrice:N0} · 기존 {ev.Extreme52:N0} (Δ {Formatter.Pct(ev.ChangePct)})",
-                    AlertLevel.Warning);
-            }
+            // 스캔 + 이벤트별 알림 발생은 어댑터가 내재화(SampleData/ExtremeScanner/AlertCenter 격리). 반환=탐지 이벤트.
+            var events = await Broker.Scan52Async(_cts?.Token ?? default);
             _status = $"✅ 52주 스캔 완료: 신고가 {events.Count(x => x.IsHigh)} · 신저가 {events.Count(x => !x.IsHigh)}";
             _statusColor = "var(--ok)";
         }
@@ -487,43 +463,27 @@
     private void SaveAlertRule()
     {
         if (string.IsNullOrWhiteSpace(_arSym)) { _arMsg = "종목코드를 입력하세요."; return; }
-        var cond = _arCond switch
-        {
-            0 => AlertCondition.PriceAbove,
-            1 => AlertCondition.PriceBelow,
-            2 => AlertCondition.ChangeRateAbove,
-            _ => AlertCondition.ChangeRateBelow
-        };
-        var ch = _arChannel switch { 1 => AlertChannel.Telegram, 2 => AlertChannel.All, _ => AlertChannel.Desktop };
         try
         {
-            Db.Execute(@"INSERT INTO AlertRules(Symbol,Condition,TargetValue,IsActive,IsTriggered,CreatedAt,Channel)
-                         VALUES(@s,@c,@t,1,0,@d,@ch)",
-                new()
-                {
-                    ["@s"] = _arSym.Trim().ToUpperInvariant(),
-                    ["@c"] = (int)cond,
-                    ["@t"] = (double)_arTarget,
-                    ["@d"] = DateTime.Now.ToString("o"),
-                    ["@ch"] = (int)ch
-                });
+            // 조건/채널 매핑 + INSERT 는 어댑터가 내재화(원본 룰 보존·IsActive=1/IsTriggered=0).
+            Watch.AddAlertRule(_arSym, _arCond, _arTarget, _arChannel);
             _arMsg = $"✅ 등록됨 — 백그라운드 엔진이 평가하며, 발동 시 자동 해제됩니다(one-shot).";
         }
         catch (Exception ex) { _arMsg = "등록 실패: " + ex.Message; }
     }
 
     // 원본 DetectMarket 룰: 6자리 + 숫자 시작 → KRX, 아니면 NASDAQ
-    private static Market DetectMarket(string symbol) =>
-        symbol.Length == 6 && char.IsDigit(symbol[0]) ? Market.KRX_KOSPI : Market.US_NASDAQ;
+    private static PfMarket DetectMarket(string symbol) =>
+        symbol.Length == 6 && char.IsDigit(symbol[0]) ? PfMarket.KRX_KOSPI : PfMarket.US_NASDAQ;
 
-    private async Task SelectAsync(string sym, string name, Market mkt)
+    private async Task SelectAsync(string sym, string name, PfMarket mkt)
     {
         _sel = (sym, name, mkt);
         await LoadChartAsync();
     }
 
     // ⚠️ 원본 룰: 기간 변경/종목 선택 = 데이터 재로드 + 줌 리셋 (지표 변경은 이 경로를 타지 않음)
-    private List<Candle> _candlesAll = new();   // 전체 히스토리(슬라이스 전 원본)
+    private List<ICandleView> _candlesAll = new();   // 전체 히스토리(슬라이스 전 원본)
 
     private async Task LoadChartAsync()
     {
@@ -531,8 +491,8 @@
         _loadingChart = true; StateHasChanged();
         try
         {
-            _candlesAll = await Provider.GetHistoryAsync(_sel.sym, _sel.mkt,
-                DateTime.Now.AddMonths(-_periods[_periodIdx].months), DateTime.Now);
+            _candlesAll = (await Broker.GetHistoryAsync(_sel.sym, _sel.mkt,
+                DateTime.Now.AddMonths(-_periods[_periodIdx].months), DateTime.Now)).ToList();
         }
         catch { _candlesAll = new(); }
         ApplyAsOf();
@@ -564,12 +524,12 @@
         _titleColor = rate > 0 ? "var(--up)" : rate < 0 ? "var(--down)" : "var(--sub)";
     }
 
-    private static string MarketLabel(Market m) => m switch
+    private static string MarketLabel(PfMarket m) => m switch
     {
-        Market.KRX_KOSPI => "KOSPI",
-        Market.KRX_KOSDAQ => "KOSDAQ",
-        Market.US_NYSE => "NYSE",
-        Market.US_NASDAQ => "NASDAQ",
+        PfMarket.KRX_KOSPI => "KOSPI",
+        PfMarket.KRX_KOSDAQ => "KOSDAQ",
+        PfMarket.US_NYSE => "NYSE",
+        PfMarket.US_NASDAQ => "NASDAQ",
         _ => m.ToString()
     };
 
@@ -588,12 +548,12 @@
         _visibleCount = Math.Max(20, Math.Min(_candles.Count, _visibleCount + delta));
     }
 
-    private List<Candle> Visible
+    private List<ICandleView> Visible
     {
         get
         {
             var take = Math.Min(_visibleCount, _candles.Count);
-            return take <= 0 ? new List<Candle>() : _candles.GetRange(_candles.Count - take, take);
+            return take <= 0 ? new List<ICandleView>() : _candles.GetRange(_candles.Count - take, take);
         }
     }
 
@@ -660,7 +620,7 @@
         return sb.ToString();
     }
 
-    private void AppendMa(System.Text.StringBuilder sb, List<Candle> visible, int offset, int period, string color,
+    private void AppendMa(System.Text.StringBuilder sb, List<ICandleView> visible, int offset, int period, string color,
         double padL, double padT, double slot, double plotH, decimal minP, double range)
     {
         if (_candles.Count < period) return;   // 원본 가드
@@ -870,7 +830,7 @@
             open = (double)c.Open, high = (double)c.High, low = (double)c.Low, close = (double)c.Close,
             volume = (double)c.Volume
         }).ToArray();
-        bool dark = Db.GetSetting("UI.Theme") != "light";   // 기본 dark
+        bool dark = Watch.IsDarkTheme();   // 기본 dark
         bool ok;
         try { ok = await JS.InvokeAsync<bool>("tvchart.render", "tvchart", data, dark); }
         catch { ok = false; }

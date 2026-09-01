@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace MS2E.Infrastructure
 {
-    public class DebateResult
+    public class DebateResult : MS2E.UI.Portable.Ports.Intel.IDebateResultView   // Phase 94-O: 공변(전 멤버 암시·StanceLabel 계산)
     {
         public bool Ok { get; set; }
         public string Error { get; set; } = "";

@@ -1,16 +1,14 @@
-@page "/coins"
-@inject DashboardService Svc
-@inject BithumbProvider Bithumb
-@inject FxConverter Fx
+@* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(CoinHostPage)이 소유. ICryptoStreamPort 만 소비(엔진/거래소 provider 무참조). *@
+@inject ICryptoStreamPort Crypto
 @implements IDisposable
 @using System.Threading
 
 <div class="top">
     <div class="hello"><h1>🪙 코인 실시간</h1><p>업비트 · 빗썸 · 바이낸스 김프 · 환율 @_usdKrw.ToString("N0") · @_ts</p></div>
     <div class="badges">
-        <span class="dot"><i></i>업비트 @(_upbit.Count)종</span>
-        <span class="dot" style="@(_bithumb.Count==0?"opacity:.4":"")"><i style="background:var(--warn)"></i>빗썸 @(_bithumb.Count)종</span>
-        <span class="dot" style="@(_bn.Count==0?"opacity:.4":"")"><i style="background:var(--accent-2)"></i>바낸 @(_bn.Count)종</span>
+        <span class="dot"><i></i>업비트 @(_upbitCount)종</span>
+        <span class="dot" style="@(_bithumbCount==0?"opacity:.4":"")"><i style="background:var(--warn)"></i>빗썸 @(_bithumbCount)종</span>
+        <span class="dot" style="@(_bnCount==0?"opacity:.4":"")"><i style="background:var(--accent-2)"></i>바낸 @(_bnCount)종</span>
     </div>
     <button class="addbtn" @onclick="RefreshAsync" style="margin:0 16px">🔄 새로고침</button>
 </div>
@@ -78,20 +76,15 @@
 
 @code {
     private readonly string[] _tabs = { "전체", "업비트", "빗썸", "보유중" };
-    private List<CryptoTick> _upbit = new();
-    private List<BithumbTick> _bithumb = new();
-    private Dictionary<string, BinanceTick> _bn = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, decimal> _held = new();
-    private Dictionary<string, string> _nameMap = new(StringComparer.OrdinalIgnoreCase);
-    private List<string> _krwMarkets = new();
-    private readonly UpbitProvider _upbitProv = new();
-    private readonly BinanceProvider _binance = new();
+    private IReadOnlyList<ICoinQuoteView> _quotes = Array.Empty<ICoinQuoteView>();
+    private IReadOnlyDictionary<string, decimal> _held = new Dictionary<string, decimal>();
     private decimal _usdKrw = 1380m;   // 환율 실패 시 직전 캐시값 유지 (원본 룰)
+    private int _upbitCount, _bithumbCount, _bnCount, _allSymbols;
     private string _tab = "전체", _q = "", _sort = "val";
     private string _toast = "", _ts = "";
-    private int _allSymbols;
     private CancellationTokenSource? _cts;
 
+    // 표시용 행(포터블 스냅샷 기반 파생 — 차익/김프는 원시값 계산).
     private record CoinRow(string Symbol, string Name, decimal UpbitPx, decimal BithumbPx,
         decimal Diff, decimal Change, decimal TradeVal, decimal Held,
         decimal BnUsdt, decimal Kimchi, bool HasKimchi);
@@ -100,36 +93,24 @@
     {
         get
         {
-            var uMap = new Dictionary<string, CryptoTick>(StringComparer.OrdinalIgnoreCase);
-            foreach (var u in _upbit) uMap[u.Market.Replace("KRW-", "")] = u;
-            var bMap = new Dictionary<string, BithumbTick>(StringComparer.OrdinalIgnoreCase);
-            foreach (var b in _bithumb) bMap[b.Symbol] = b;
-
-            IEnumerable<string> symbols = _tab switch
+            IEnumerable<ICoinQuoteView> src = _tab switch
             {
-                "업비트" => uMap.Keys,
-                "빗썸" => bMap.Keys,
-                "보유중" => _held.Where(h => h.Value > 0).Select(h => h.Key.Replace("KRW-", "")),
-                _ => uMap.Keys.Union(bMap.Keys, StringComparer.OrdinalIgnoreCase)
+                "업비트" => _quotes.Where(q => q.UpbitPx > 0),
+                "빗썸" => _quotes.Where(q => q.BithumbPx > 0),
+                "보유중" => _quotes.Where(q => _held.TryGetValue("KRW-" + q.Symbol, out var h) && h > 0),
+                _ => _quotes
             };
 
-            var rows = symbols.Select(sym =>
+            var rows = src.Select(q =>
             {
-                uMap.TryGetValue(sym, out var u);
-                bMap.TryGetValue(sym, out var b);
-                decimal up = u?.Price ?? 0, bp = b?.Price ?? 0;
+                decimal up = q.UpbitPx, bp = q.BithumbPx;
                 decimal diff = up > 0 && bp > 0 ? (up - bp) / bp * 100m : 0m;
-                decimal change = u != null ? u.ChangeRate * 100m : (b?.ChangeRate ?? 0m);
-                decimal tradeVal = Math.Max(u?.AccTradePrice24h ?? 0m, b?.TradeValueKrw ?? 0m);
-                _held.TryGetValue("KRW-" + sym, out var held);
-                var name = u?.KoreanName is { Length: > 0 } kn ? kn
-                         : (_nameMap.TryGetValue(sym, out var nm) && nm.Length > 0 ? nm : sym);
-                // 김치 프리미엄 — 원본 룰: (업비트가 − 바낸가×환율)/공정가×100, 세 값 모두 >0일 때만, 아니면 "-"
-                decimal bnUsdt = _bn.TryGetValue(sym + "USDT", out var bt) ? bt.Price : 0m;
-                decimal fair = bnUsdt > 0 && _usdKrw > 0 ? bnUsdt * _usdKrw : 0m;
+                _held.TryGetValue("KRW-" + q.Symbol, out var held);
+                // 김치 프리미엄 — 원본 룰: (업비트가 − 바낸가×환율)/공정가×100, 세 값 모두 >0일 때만.
+                decimal fair = q.BnUsdt > 0 && _usdKrw > 0 ? q.BnUsdt * _usdKrw : 0m;
                 bool hasK = up > 0 && fair > 0;
                 decimal kimchi = hasK ? (up - fair) / fair * 100m : 0m;
-                return new CoinRow(sym, name, up, bp, diff, change, tradeVal, held, bnUsdt, kimchi, hasK);
+                return new CoinRow(q.Symbol, q.Name, up, bp, diff, q.Change, q.TradeVal, held, q.BnUsdt, kimchi, hasK);
             });
 
             if (!string.IsNullOrWhiteSpace(_q))
@@ -164,49 +145,19 @@
 
     private async Task RefreshAsync()
     {
-        // 환율 + 바이낸스 USDT (김프 교차계산용) — 실패 시 직전 값 유지
-        try { _usdKrw = await Fx.GetUsdKrwAsync(); } catch { }
-        try { var bn = await _binance.GetAllUsdt24hAsync(); if (bn.Count > 0) _bn = bn; } catch { }
-
-        // 빗썸: 전체 종목(인증 불필요, 안정적) — 기준 데이터
-        try { _bithumb = await Bithumb.GetAllTickersAsync(); } catch { }
-
-        // 업비트: 실제 KRW 마켓 목록으로 조회(잘못된 마켓 섞임 방지). 마켓 목록은 1회만 로드 후 캐싱.
-        try
-        {
-            if (_krwMarkets.Count == 0)
-            {
-                var markets = await _upbitProv.GetMarketsAsync();
-                if (markets.Count > 0)
-                {
-                    _nameMap = markets.ToDictionary(m => m.Market.Replace("KRW-", ""), m => m.KoreanName, StringComparer.OrdinalIgnoreCase);
-                    _krwMarkets = markets.Select(m => m.Market).ToList();
-                }
-            }
-            if (_krwMarkets.Count > 0)
-            {
-                var ticks = new List<CryptoTick>();
-                for (int i = 0; i < _krwMarkets.Count; i += 100)
-                    ticks.AddRange(await _upbitProv.GetTickersAsync(_krwMarkets.Skip(i).Take(100)));
-                _upbit = ticks;
-            }
-        }
-        catch { }
-
-        try
-        {
-            var state = Svc.GetCryptoState();
-            _held = state.Holdings.Where(kv => kv.Value.Qty > 0).ToDictionary(k => k.Key, v => v.Value.Qty);
-        }
-        catch { }
-
-        _allSymbols = _upbit.Select(u => u.Market.Replace("KRW-", ""))
-            .Union(_bithumb.Select(b => b.Symbol), StringComparer.OrdinalIgnoreCase).Count();
+        var board = await Crypto.LoadBoardAsync(_cts?.Token ?? default);
+        _quotes = board.Quotes;
+        _held = board.Held;
+        _usdKrw = board.UsdKrw;
+        _upbitCount = board.UpbitCount;
+        _bithumbCount = board.BithumbCount;
+        _bnCount = board.BinanceCount;
+        _allSymbols = board.AllSymbols;
         _ts = DateTime.Now.ToString("HH:mm:ss");
     }
 
-    private void QuickBuy(string sym) { var (_, msg) = Svc.QuickPaper("KRW-" + sym, 100_000m, PaperSide.Buy); _toast = msg; }
-    private void QuickSell(string sym) { var (_, msg) = Svc.QuickPaper("KRW-" + sym, 100_000m, PaperSide.Sell); _toast = msg; }
+    private void QuickBuy(string sym) { var (_, msg) = Crypto.QuickPaper("KRW-" + sym, 100_000m, isBuy: true); _toast = msg; }
+    private void QuickSell(string sym) { var (_, msg) = Crypto.QuickPaper("KRW-" + sym, 100_000m, isBuy: false); _toast = msg; }
 
     private static string DiffColor(decimal d) => d > 0 ? "color:var(--up)" : d < 0 ? "color:var(--down)" : "color:var(--sub)";
 
