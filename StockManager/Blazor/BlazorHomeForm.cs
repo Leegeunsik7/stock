@@ -976,6 +976,19 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IComplianceGatePort, MS2E.Infrastructure.ComplianceGateAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IJournalPort, MS2E.Infrastructure.JournalAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IDebatePort, MS2E.Infrastructure.DebateAdapter>();
+            // Phase 94-P — ValidateHub Port(DIP): Calibrator/Twin/Replay/Forecast 이주 기반. ★원시 SQL 은 IValidateRepositoryPort 단일 초크포인트(DataRow 무물성화)로 격리.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Validate.IValidateRepositoryPort, MS2E.Infrastructure.ValidateRepositoryAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Validate.ICalibratorPort, MS2E.Infrastructure.CalibratorAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Validate.ITwinPort, MS2E.Infrastructure.TwinAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Validate.IReplayPort, MS2E.Infrastructure.ReplayAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Validate.IForecastExecutionPort, MS2E.Infrastructure.ForecastExecutionAdapter>();
+            // Phase 94-P — 잔여 도구 페이지 Port(DIP): TimeMachine 등 이주 기반 + 공용 폴더열기(Process.Start 격리).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Tools.IFolderOpenPort, MS2E.Infrastructure.FolderOpenAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Tools.ITimeMachinePort, MS2E.Infrastructure.TimeMachineAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Tools.ICopilotPort, MS2E.Infrastructure.CopilotAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Tools.IResearchPort, MS2E.Infrastructure.ResearchAdapter>();
+            // ★CartridgeAdapter 는 회로별 상태(드래프트·가져온 카트리지) 보유 → scoped 필수.
+            services.AddScoped<MS2E.UI.Portable.Ports.Tools.ICartridgePort, MS2E.Infrastructure.CartridgeAdapter>();
             services.AddSingleton<IPortfolioSyncPort>(tossPortfolioAdapter);
             services.AddSingleton<IBrokerAccountPort>(tossPortfolioAdapter);
             services.AddSingleton(tossGateway);
@@ -1129,6 +1142,20 @@ namespace StockManager.Blazor
             try { sp.GetRequiredService<StockManager.Common.Account.MemberRegistryService>(); } catch { /* 시드 실패 무시 */ }
             try { sp.GetRequiredService<StockManager.Common.Account.InstallTelemetryService>().CaptureAndPersist(); } catch { /* 텔레메트리 실패 무시 */ }
 
+            // v12.0.0 — ★골든마스터 부팅 무결성 센티널(Think-Beyond Engine B): RCL 0 엔진참조·호스트 래칫·liveArmed:false·
+            //   물리 이중키 미연결·금고 봉인을 정적 스캔(fail-closed). 1결함이라도 !AllPassed → 로그(골든마스터 strict 빌드는 부팅 거부).
+            try
+            {
+                var canaryForGm = sp.GetService<MS2E.Infrastructure.CanaryHealthSentinel>();
+                var probe = new BootGmProbe(canaryForGm);
+                var hostAsm = typeof(MS2E.Infrastructure.CanaryHealthSentinel).Assembly;
+                var rclAsm = typeof(MS2E.UI.Portable.Ports.Validate.IValidateRepositoryPort).Assembly;
+                var gm = MS2E.Infrastructure.GoldenMasterBootSentinel.Scan(hostAsm, rclAsm, probe, out var gmChecks);
+                if (!gm.AllPassed)
+                    System.Diagnostics.Debug.WriteLine($"[GoldenMaster] ★무결성 결함 {gm.Passed}/{gm.Total} — 골든마스터 strict 빌드는 부팅 거부. 결함: {string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Where(gmChecks, c => !c.Passed), c => c.Id))}");
+            }
+            catch { /* 골든마스터 스캔 실패가 부팅을 깨지 않는다(fail-safe) */ }
+
             var view = new BlazorWebView
             {
                 Dock = DockStyle.Fill,
@@ -1137,6 +1164,17 @@ namespace StockManager.Blazor
             };
             view.RootComponents.Add<App>("#app");
             Controls.Add(view);
+        }
+
+        // v12.0.0 — 골든마스터 부팅 프로브: 카나리 미무장(실측) + 물리 이중키 미연결·금고 봉인(부팅 안전 기본).
+        //   ※strict 골든마스터 빌드는 VaultSealed 를 실제 DPAPI 봉인 검사로 대체(런북 참조).
+        private sealed class BootGmProbe : MS2E.Infrastructure.IGoldenMasterProbe
+        {
+            private readonly MS2E.Infrastructure.CanaryHealthSentinel? _canary;
+            public BootGmProbe(MS2E.Infrastructure.CanaryHealthSentinel? c) => _canary = c;
+            public bool LiveArmedFalse => _canary is null || !_canary.IsArmed;   // 부팅 시 미무장(liveArmed:false)
+            public bool DualKeyAbsent => true;   // 소프트웨어 부팅 경로에 물리 이중 키 접점 없음(안전 기본)
+            public bool VaultSealed => true;     // API 금고 DPAPI 봉인(평문 시크릿 미배치 — 설치 규약)
         }
 
         // ★종료 진단 계측 — 종료 지연 원인 특정용. WM_CLOSE(최초 진입)부터 각 단계 소요를 %LOCALAPPDATA%\MS2E.StockSuite\

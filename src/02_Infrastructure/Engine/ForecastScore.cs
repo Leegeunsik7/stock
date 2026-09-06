@@ -27,7 +27,7 @@ namespace MS2E.Infrastructure
         public bool InBand => RealizedPct >= LowPct && RealizedPct <= HighPct;
     }
 
-    public class KindScore
+    public class KindScore : MS2E.UI.Portable.Ports.Validate.IForecastKindScoreView   // Phase 94-P: 공변(전 멤버 암시)
     {
         public string Kind { get; set; } = "";
         public int HorizonDays { get; set; }
@@ -41,12 +41,15 @@ namespace MS2E.Infrastructure
         public string Verdict { get; set; } = "";
     }
 
-    public class ForecastScoreReport
+    public class ForecastScoreReport : MS2E.UI.Portable.Ports.Validate.IForecastScoreView   // Phase 94-P: 공변
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
         public int Resolved { get; set; }
         public List<KindScore> Scores { get; set; } = new();
+
+        IReadOnlyList<MS2E.UI.Portable.Ports.Validate.IForecastKindScoreView>
+            MS2E.UI.Portable.Ports.Validate.IForecastScoreView.Scores => Scores;   // 명시적 공변(동명 반환형)
     }
 
     public static class ForecastScore

@@ -24,12 +24,18 @@ namespace MS2E.Infrastructure
     public sealed record ResearchFinding(
         string Symbol, string Name, int Short, int Long,
         double OosMeanPct, double OosStdPct, double Score, int Trades, double FullReturnPct,
-        bool HasCone, double ProjExpPct, double ProjP5Pct, double ProjP95Pct, double ProbLossPct, double GoalHitPct);
+        bool HasCone, double ProjExpPct, double ProjP5Pct, double ProjP95Pct, double ProbLossPct, double GoalHitPct)
+        : MS2E.UI.Portable.Ports.Tools.IResearchFindingView;   // Phase 94-P: 공변(Symbol/Name/Short/Long/OosMean/OosStd/Score/Trades/HasCone/ProjExp/ProbLoss/GoalHit 암시)
 
     // 하룻밤 전체 결과(영속화 + /research 표시)
     public sealed record ResearchBrief(
         string GeneratedIso, int Scanned, int Found, double GoalPct, string CartridgeFile,
-        IReadOnlyList<ResearchFinding> Findings, IReadOnlyList<string> Proposals, string Headline, string Note);
+        IReadOnlyList<ResearchFinding> Findings, IReadOnlyList<string> Proposals, string Headline, string Note)
+        : MS2E.UI.Portable.Ports.Tools.IResearchBriefView   // Phase 94-P: 공변(Proposals[동일형]·GeneratedIso/Scanned/Found/GoalPct/CartridgeFile/Headline 암시)
+    {
+        IReadOnlyList<MS2E.UI.Portable.Ports.Tools.IResearchFindingView>
+            MS2E.UI.Portable.Ports.Tools.IResearchBriefView.Findings => Findings;   // 명시적 공변(동명 반환형)
+    }
 
     public static class NightlyResearch
     {

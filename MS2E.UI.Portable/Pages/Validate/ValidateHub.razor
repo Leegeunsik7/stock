@@ -1,5 +1,4 @@
-@page "/validate"
-@page "/validate/{Tab}"
+@* Phase 94-P: 순수 UI 이관 — @page 는 호스트 shim(ValidateHostPage)이 소유. NavigationManager(포터블)만 사용, 자식 4종은 RCL. *@
 @inject NavigationManager Nav
 
 <HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />

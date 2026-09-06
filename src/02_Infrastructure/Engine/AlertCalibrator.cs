@@ -21,7 +21,7 @@ namespace MS2E.Infrastructure
 {
     public record AlertRecord(DateTime When, string Category, string Symbol);
 
-    public class AlertGrade
+    public class AlertGrade : MS2E.UI.Portable.Ports.Validate.IAlertGradeView   // Phase 94-P: 공변(전 멤버 암시)
     {
         public string Category { get; set; } = "";
         public int Count { get; set; }
@@ -33,7 +33,7 @@ namespace MS2E.Infrastructure
         public string Recommendation { get; set; } = "";
     }
 
-    public class CalibrationReport
+    public class CalibrationReport : MS2E.UI.Portable.Ports.Validate.ICalibrationReportView   // Phase 94-P: 공변
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
@@ -43,6 +43,9 @@ namespace MS2E.Infrastructure
         public double MoveThresholdPct { get; set; }
         public double OverallHitRatePct { get; set; }
         public List<AlertGrade> Grades { get; set; } = new();
+
+        IReadOnlyList<MS2E.UI.Portable.Ports.Validate.IAlertGradeView>
+            MS2E.UI.Portable.Ports.Validate.ICalibrationReportView.Grades => Grades;   // 명시적 공변(동명 반환형)
     }
 
     public static class AlertCalibrator

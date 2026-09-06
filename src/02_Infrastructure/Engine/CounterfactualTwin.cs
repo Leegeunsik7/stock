@@ -21,7 +21,7 @@ using System.Linq;
 
 namespace MS2E.Infrastructure
 {
-    public class TwinReport
+    public class TwinReport : MS2E.UI.Portable.Ports.Validate.ITwinReportView   // Phase 94-P: 공변(GapVs* 계산 포함)
     {
         public bool IsValid { get; set; }
         public string Note { get; set; } = "";
@@ -40,9 +40,13 @@ namespace MS2E.Infrastructure
 
         public List<TwinPoint> Curve { get; set; } = new();   // 정규화(시작 100): hold·signal
         public string Verdict { get; set; } = "";
+
+        IReadOnlyList<MS2E.UI.Portable.Ports.Validate.ITwinPointView>
+            MS2E.UI.Portable.Ports.Validate.ITwinReportView.Curve => Curve;   // 명시적 공변(동명 반환형)
     }
 
-    public record TwinPoint(string Date, decimal Hold, decimal Signal);
+    public record TwinPoint(string Date, decimal Hold, decimal Signal)
+        : MS2E.UI.Portable.Ports.Validate.ITwinPointView;   // Phase 94-P: 공변(Hold/Signal 암시)
 
     public static class CounterfactualTwin
     {

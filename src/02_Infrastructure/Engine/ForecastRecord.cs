@@ -34,7 +34,10 @@ namespace MS2E.Infrastructure
         DateTime? EvaluatedAt,
         double?  AbsoluteError,     // |PredictedValue - ActualValue|
         string   Note
-    );
+    ) : MS2E.UI.Portable.Ports.Validate.IForecastRecordView   // Phase 94-P: 공변(Symbol/CreatedAt/TargetDate/PredictedValue/ActualValue/AbsoluteError 암시)
+    {
+        int MS2E.UI.Portable.Ports.Validate.IForecastRecordView.EngineType => (int)EngineType;   // enum→int 명시
+    }
 
     // ── 엔진별 통계 ────────────────────────────────────────────────────────────
     public sealed record EngineStatistics(
@@ -46,7 +49,10 @@ namespace MS2E.Infrastructure
         double RMSE,         // sqrt(mean((predicted − actual)²))
         double MeanBias,     // mean(predicted − actual) — 양수 = 낙관 편향
         double CoveragePct   // % actual ∈ [ConfidenceLow, ConfidenceHigh]
-    );
+    ) : MS2E.UI.Portable.Ports.Validate.IEngineStatView   // Phase 94-P: 공변(TotalCount/EvaluatedCount/HitRatePct/MAE/RMSE/MeanBias/CoveragePct 암시)
+    {
+        int MS2E.UI.Portable.Ports.Validate.IEngineStatView.EngineType => (int)EngineType;   // enum→int 명시
+    }
 
     // ── 전체 요약 ──────────────────────────────────────────────────────────────
     public sealed record VaultSummary(
@@ -56,5 +62,9 @@ namespace MS2E.Infrastructure
         double OverallHitRatePct,
         double OverallMAE,
         IReadOnlyList<EngineStatistics> ByEngine
-    );
+    ) : MS2E.UI.Portable.Ports.Validate.IVaultSummaryView   // Phase 94-P: 공변(TotalForecasts/PendingCount/OverallHitRatePct/OverallMAE 암시)
+    {
+        IReadOnlyList<MS2E.UI.Portable.Ports.Validate.IEngineStatView>
+            MS2E.UI.Portable.Ports.Validate.IVaultSummaryView.ByEngine => ByEngine;   // 명시적 공변(동명 반환형)
+    }
 }

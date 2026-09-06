@@ -1,5 +1,5 @@
-@page "/cartridges"
-@inject LocalDatabase Db
+@* Phase 94-P: 순수 UI 이관 — @page 는 호스트 shim(CartridgesHostPage). ICartridgePort 만 소비(CartridgeService/Engine·Process.Start 무참조). *@
+@inject ICartridgePort Cartridge
 
 <div class="top">
     <div class="hello"><h1>🧩 전략 카트리지</h1><p>매크로·전략을 서명된 카트리지로 교환 — 중앙 서버 없이 <b>서명 + 결정론 백테스트 증명서</b>로 무신뢰 검증</p></div>
@@ -33,14 +33,15 @@
                     <table class="ctbl dense" style="margin-bottom:8px">
                         <thead><tr><th>전략</th><th style="text-align:right">수익률</th><th style="text-align:right">MDD</th><th style="text-align:right">거래</th><th></th></tr></thead>
                         <tbody>
-                            @foreach (var s in _drafts)
+                            @for (int i = 0; i < _drafts.Count; i++)
                             {
+                                var idx = i; var s = _drafts[i];
                                 <tr>
                                     <td>@s.Name <small class="sub">seed @s.Seed</small></td>
                                     <td class="num" style="text-align:right">@s.AttestTotalReturnPct.ToString("+0.0;-0.0")%</td>
                                     <td class="num" style="text-align:right">@s.AttestMaxDrawdownPct.ToString("0.0")%</td>
                                     <td class="num" style="text-align:right">@s.AttestTrades</td>
-                                    <td style="text-align:center"><button class="pill r" style="border:0;cursor:pointer;padding:2px 7px;font-size:11px" @onclick="() => _drafts.Remove(s)">✕</button></td>
+                                    <td style="text-align:center"><button class="pill r" style="border:0;cursor:pointer;padding:2px 7px;font-size:11px" @onclick="() => RemoveDraft(idx)">✕</button></td>
                                 </tr>
                             }
                         </tbody>
@@ -83,7 +84,7 @@
                             <tbody>
                                 @foreach (var s in _cart.Strategies)
                                 {
-                                    var okv = CartridgeEngine.VerifyStrategy(s);
+                                    var okv = s.Reproduced;
                                     <tr>
                                         <td>@s.Name</td>
                                         <td class="num" style="text-align:right">@s.AttestTotalReturnPct.ToString("+0.0;-0.0")%</td>
@@ -94,9 +95,9 @@
                             </tbody>
                         </table>
                     }
-                    @if (_cart.Macros.Count > 0)
+                    @if (_cart.MacroCount > 0)
                     {
-                        <div class="sub" style="font-size:11.5px;margin-bottom:6px">매크로 @(_cart.Macros.Count)개: @string.Join(", ", _cart.Macros.Select(m => m.Alias))</div>
+                        <div class="sub" style="font-size:11.5px;margin-bottom:6px">매크로 @(_cart.MacroCount)개: @string.Join(", ", _cart.MacroAliases)</div>
                         <button class="addbtn" disabled="@(!_verdict.SignatureOk)" @onclick="ApplyMacros">⬇ 매크로 적용</button>
                         @if (!_verdict.SignatureOk) { <span class="sub" style="font-size:11px;margin-left:8px">서명 검증 실패 — 적용 차단</span> }
                     }
@@ -115,70 +116,59 @@
     // export draft
     private string _name = "", _desc = "", _exportMsg = "";
     private int _short = 5, _long = 20, _seed = 7;
-    private readonly List<CartStrategy> _drafts = new();
+    private IReadOnlyList<ICartStrategyView> _drafts = Array.Empty<ICartStrategyView>();
     private int _macroCount;
     // import
-    private List<string> _files = new();
+    private IReadOnlyList<string> _files = Array.Empty<string>();
     private string _sel = "", _impMsg = "";
-    private Cartridge? _cart;
-    private CartridgeVerdict? _verdict;
+    private ICartridgeInfoView? _cart;
+    private ICartridgeVerdictView? _verdict;
 
     protected override void OnInitialized()
     {
-        _pub = CartridgeService.EnsureIdentity(Db);
-        _author = CartridgeService.Author(Db);
-        _macroCount = CartridgeService.Macros(Db).Count;
+        _pub = Cartridge.EnsureIdentity();
+        _author = Cartridge.Author();
+        _macroCount = Cartridge.MacroCount();
+        _drafts = Cartridge.Drafts;
         RefreshFiles();
     }
 
     private void AddStrategy()
     {
-        _exportMsg = "";
-        if (_short < 1 || _long <= _short) { _exportMsg = "⚠️ 단기<장기, 단기≥1 이어야 합니다."; return; }
-        _drafts.Add(CartridgeEngine.Attest($"MA {_short}/{_long}", _short, _long, _seed));
+        // 서명 증명서 부착(CartridgeEngine.Attest)은 어댑터가 내재화. 반환=오류 메시지("" 성공).
+        _exportMsg = Cartridge.AddDraft(_short, _long, _seed);
+        _drafts = Cartridge.Drafts;
     }
+
+    private void RemoveDraft(int index) { Cartridge.RemoveDraft(index); _drafts = Cartridge.Drafts; }
 
     private void Export()
     {
-        _exportMsg = "";
-        if (_drafts.Count == 0 && _macroCount == 0) { _exportMsg = "⚠️ 전략 또는 매크로가 하나 이상 필요합니다."; return; }
-        try
-        {
-            var cart = CartridgeService.BuildSigned(Db, _name, _desc, _drafts.ToList());
-            var path = CartridgeService.ExportToFile(cart);
-            _drafts.Clear();
-            RefreshFiles();
-            _exportMsg = $"✅ 서명·내보내기 완료: {System.IO.Path.GetFileName(path)}";
-        }
-        catch (Exception ex) { _exportMsg = "내보내기 실패: " + ex.Message; }
+        // 서명·내보내기(BuildSigned/ExportToFile)는 어댑터가 내재화.
+        _exportMsg = Cartridge.Export(_name, _desc);
+        _drafts = Cartridge.Drafts;
+        RefreshFiles();
     }
 
-    private void RefreshFiles() => _files = CartridgeService.ListFiles();
+    private void RefreshFiles() => _files = Cartridge.ListFiles();
 
     private void Select()
     {
         _cart = null; _verdict = null; _impMsg = "";
         if (string.IsNullOrEmpty(_sel)) return;
-        if (!CartridgeService.TryImport(_sel, out _cart, out var err) || _cart is null) { _impMsg = "❌ " + err; return; }
-        _verdict = CartridgeEngine.Verify(_cart);
+        var (cart, verdict, err) = Cartridge.Import(_sel);   // TryImport + Verify + 전략 재현 검증은 어댑터 내재화.
+        if (cart is null) { _impMsg = err; return; }
+        _cart = cart; _verdict = verdict;
     }
 
     private void ApplyMacros()
     {
         if (_cart is null || _verdict is null || !_verdict.SignatureOk) return;
-        var existing = CartridgeService.MacroMap(Db);
-        int over = _cart.Macros.Count(m => existing.ContainsKey(m.Alias));
-        CartridgeService.ApplyMacros(Db, _cart.Macros);
-        _macroCount = CartridgeService.Macros(Db).Count;
-        _msg = $"✅ 매크로 {_cart.Macros.Count}개 적용" + (over > 0 ? $" (기존 {over}개 덮어씀)" : "")
-             + " — Ctrl+K에서 alias로 사용. 매크로는 읽기전용 내비게이션만 수행합니다.";
+        _msg = Cartridge.ApplyMacros();   // MacroMap/ApplyMacros 는 어댑터 내재화.
+        _macroCount = Cartridge.MacroCount();
     }
 
-    private void OpenFolder()
-    {
-        try { System.IO.Directory.CreateDirectory(CartridgeService.Dir); System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = CartridgeService.Dir, UseShellExecute = true }); }
-        catch (Exception ex) { _msg = "폴더 열기 실패: " + ex.Message; }
-    }
+    private void OpenFolder() => Cartridge.OpenFolder();   // CreateDirectory + Process.Start 는 어댑터 내재화.
 
     private static string Trunc(string s) => string.IsNullOrEmpty(s) ? "—" : (s.Length > 24 ? s[..24] + "…" : s);
 }

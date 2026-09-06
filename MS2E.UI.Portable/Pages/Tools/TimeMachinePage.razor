@@ -1,15 +1,15 @@
-@page "/timemachine"
+@* Phase 94-P: 순수 UI 이관 — @page 는 호스트 shim(TimeMachineHostPage). ITimeMachinePort + ISymbolContextPort 만 소비. *@
 @implements IDisposable
-@inject IQuoteProvider Provider
-@inject SymbolContext Ctx
+@inject ITimeMachinePort TimeMachine
+@inject ISymbolContextPort Ctx
 
 <CrossLinks Current="" />
 <div class="top">
     <div class="hello"><h1>🕰 타임머신 샌드박스</h1><p>"그 시점에 터미널은 뭐라 했을까?" — 시점 고정(무누수) 재현 + 빨리감기 채점 (정보 제공용)</p></div>
     <input class="srch" style="width:130px" placeholder="종목코드" @bind="_symbol" @bind:event="oninput" />
     <select class="srch" style="width:110px;margin:0 8px" @bind="_market">
-        <option value="@Market.KRX_KOSPI">코스피</option><option value="@Market.KRX_KOSDAQ">코스닥</option>
-        <option value="@Market.US_NASDAQ">나스닥</option><option value="@Market.US_NYSE">뉴욕</option><option value="@Market.US_AMEX">아멕스</option>
+        <option value="@PfMarket.KRX_KOSPI">코스피</option><option value="@PfMarket.KRX_KOSDAQ">코스닥</option>
+        <option value="@PfMarket.US_NASDAQ">나스닥</option><option value="@PfMarket.US_NYSE">뉴욕</option><option value="@PfMarket.US_AMEX">아멕스</option>
     </select>
     <input class="srch" style="width:140px" type="date" @bind="_asOf" />
     <select class="srch" style="width:90px;margin-left:8px" @bind="_horizon"><option value="5">+5봉</option><option value="10">+10봉</option><option value="20">+20봉</option></select>
@@ -53,11 +53,11 @@
 
 @code {
     private string _symbol = "", _msg = "";
-    private Market _market = Market.KRX_KOSPI;
+    private PfMarket _market = PfMarket.KRX_KOSPI;
     private DateTime _asOf = DateTime.Today.AddMonths(-6);
     private int _horizon = 10;
     private bool _busy;
-    private TimeMachineResult? _res;
+    private ITimeMachineResultView? _res;
 
     protected override void OnInitialized()
     {
@@ -75,10 +75,10 @@
         _busy = true; _msg = ""; _res = null; StateHasChanged();
         try
         {
-            // as-of 이전 충분한 히스토리 + 이후 채점용 미래 확보 위해 넓게 수집
-            var candles = await Provider.GetHistoryAsync(sym, _market, _asOf.AddYears(-3), DateTime.Now);
-            _res = TimeMachine.Replay(candles, _asOf, _market, _horizon, sym);
-            if (!_res.Valid) { _msg = _res.Note; _res = null; }
+            // 넓은 히스토리 수집 + TimeMachine.Replay 는 어댑터가 내재화(look-ahead 금지 슬라이스 보존).
+            var res = await TimeMachine.ReplayAsync(sym, _market, _asOf, _horizon);
+            if (res.Valid) _res = res;
+            else { _msg = res.Note; _res = null; }
         }
         catch (Exception ex) { _msg = "오류: " + ex.Message; }
         finally { _busy = false; StateHasChanged(); }

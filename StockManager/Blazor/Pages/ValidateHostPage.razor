@@ -1,0 +1,8 @@
+@page "/validate"
+@page "/validate/{Tab}"
+@* Phase 94-P — 얇은 호스트 라우팅 셸: RCL 로 이주된 ValidateHub(검증 랩: 트윈/예측/캘리브레이터/리플레이)를 /validate·/validate/{Tab} 에 노출. *@
+<MS2E.UI.Portable.Pages.Validate.ValidateHub Tab="@Tab" />
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+}

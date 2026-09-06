@@ -1,6 +1,5 @@
-@page "/copilot"
-@inject LocalDatabase Db
-@using System.Text.Json
+@* Phase 94-P: 순수 UI 이관 — @page 는 호스트 shim(CopilotHostPage). ICopilotPort 만 소비(CopilotStore/Engine·JSON·설정 무참조). *@
+@inject ICopilotPort Copilot
 
 <div class="top">
     <div class="hello"><h1>🧑‍✈️ 퀀트 코파일럿</h1><p>목표를 정하면 백그라운드가 포트 상태를 지속 평가해 행동을 제안 (제안만 · 자동 주문 없음)</p></div>
@@ -41,13 +40,14 @@
         <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:16px">
             <table style="width:100%;border-collapse:collapse;font-size:12.5px">
                 <tbody>
-                @foreach (var p in _policies)
+                @for (int i = 0; i < _policies.Count; i++)
                 {
+                    var idx = i; var p = _policies[i];
                     <tr style="border-top:1px solid var(--line)">
-                        <td style="padding:8px 12px"><input type="checkbox" checked="@p.Enabled" @onchange="e => Toggle(p, e)" /></td>
+                        <td style="padding:8px 12px"><input type="checkbox" checked="@p.Enabled" @onchange="e => Toggle(idx, e)" /></td>
                         <td style="padding:8px 12px;font-weight:600">@p.Name</td>
                         <td style="padding:8px 12px;color:var(--sub)">@KindKr(p.Kind)</td>
-                        <td style="text-align:right;padding:8px 12px"><button class="ghost" style="padding:3px 9px;font-size:11.5px" @onclick="() => Remove(p)">삭제</button></td>
+                        <td style="text-align:right;padding:8px 12px"><button class="ghost" style="padding:3px 9px;font-size:11.5px" @onclick="() => Remove(idx)">삭제</button></td>
                     </tr>
                 }
                 </tbody>
@@ -60,7 +60,7 @@
     @if (_evaluated)
     {
         <div style="margin-top:12px">
-            @if (!_ctx.Valid) { <div style="color:var(--sub)">총자산 스냅샷이 부족합니다(3일+). 며칠 운영하면 채워집니다.</div> }
+            @if (_ctx is null || !_ctx.Valid) { <div style="color:var(--sub)">총자산 스냅샷이 부족합니다(3일+). 며칠 운영하면 채워집니다.</div> }
             else
             {
                 <div class="sub" style="font-size:12px;margin-bottom:8px">현재 상태 — 변동성 @_ctx.PortfolioVolPct.ToString("0.0")% · 낙폭 @_ctx.DrawdownPct.ToString("0.0")% · 레짐 @_ctx.Regime</div>
@@ -81,53 +81,45 @@
 </div>
 
 @code {
-    private List<CopilotPolicy> _policies = new();
+    private IReadOnlyList<ICopilotPolicyView> _policies = Array.Empty<ICopilotPolicyView>();
     private bool _enabled, _evaluated;
     private string _nl = "", _kind = "VolTarget", _msg = "";
     private double _thr = 15;
-    private CopilotEngine.Ctx _ctx = new();
-    private List<CopilotProposal> _proposals = new();
+    private ICopilotCtxView? _ctx;
+    private IReadOnlyList<ICopilotProposalView> _proposals = Array.Empty<ICopilotProposalView>();
 
     protected override void OnInitialized()
     {
-        _enabled = Db.GetSetting("Copilot.Enabled") == "true";
-        _policies = CopilotStore.Load(Db);
+        _enabled = Copilot.GetEnabled();
+        _policies = Copilot.GetPolicies();
     }
 
-    private void ToggleEnabled(ChangeEventArgs e) { _enabled = e.Value is true; Db.SetSetting("Copilot.Enabled", _enabled ? "true" : "false"); }
+    private void ToggleEnabled(ChangeEventArgs e) { _enabled = e.Value is true; Copilot.SetEnabled(_enabled); }
     private void OnKey(KeyboardEventArgs e) { if (e.Key == "Enter") AddFromNl(); }
 
     private void AddFromNl()
     {
-        var p = CopilotEngine.ParseGoal(_nl);
-        if (p == null) { _msg = "인식 실패 — '변동성/낙폭/레짐' 키워드 + 숫자로."; return; }
-        _policies.Add(p); CopilotStore.Save(Db, _policies); _nl = ""; _msg = $"추가됨: {p.Name}";
+        _msg = Copilot.AddFromNl(_nl);
+        _policies = Copilot.GetPolicies();
+        if (!_msg.StartsWith("인식 실패")) _nl = "";
     }
 
     private void AddManual()
     {
-        var kind = Enum.TryParse<PolicyKind>(_kind, out var k) ? k : PolicyKind.VolTarget;
-        var name = kind switch { PolicyKind.VolTarget => $"변동성 {_thr:0}% 이하", PolicyKind.MaxDrawdown => $"낙폭 -{_thr:0}% 방어", _ => "레짐 변화 가드" };
-        _policies.Add(new CopilotPolicy { Kind = kind, Threshold = _thr, Name = name });
-        CopilotStore.Save(Db, _policies); _msg = $"추가됨: {name}";
+        _msg = Copilot.AddManual(_kind, _thr);
+        _policies = Copilot.GetPolicies();
     }
 
-    private void Toggle(CopilotPolicy p, ChangeEventArgs e) { p.Enabled = e.Value is true; CopilotStore.Save(Db, _policies); }
-    private void Remove(CopilotPolicy p) { _policies.Remove(p); CopilotStore.Save(Db, _policies); }
+    private void Toggle(int index, ChangeEventArgs e) { Copilot.TogglePolicy(index, e.Value is true); _policies = Copilot.GetPolicies(); }
+    private void Remove(int index) { Copilot.RemovePolicy(index); _policies = Copilot.GetPolicies(); }
 
     private void EvaluateNow()
     {
         _evaluated = true;
-        try
-        {
-            var j = Db.GetSetting("Dashboard.Snapshots");
-            var snaps = string.IsNullOrWhiteSpace(j) ? null : JsonSerializer.Deserialize<Dictionary<string, decimal>>(j);
-            var equity = snaps?.OrderBy(k => k.Key, StringComparer.Ordinal).Select(k => k.Value).ToList() ?? new();
-            _ctx = CopilotEngine.BuildCtx(equity);
-            _proposals = CopilotEngine.Evaluate(_policies, _ctx);
-        }
-        catch { _ctx = new(); _proposals = new(); }
+        var (ctx, proposals) = Copilot.Evaluate();   // 스냅샷 판독·BuildCtx·Evaluate 는 어댑터 내재화.
+        _ctx = ctx; _proposals = proposals;
     }
 
-    private static string KindKr(PolicyKind k) => k switch { PolicyKind.VolTarget => "변동성 목표", PolicyKind.MaxDrawdown => "낙폭 방어", _ => "레짐 가드" };
+    // 뷰는 int Kind 노출: VolTarget=0·MaxDrawdown=1·RegimeGuard=2.
+    private static string KindKr(int k) => k switch { 0 => "변동성 목표", 1 => "낙폭 방어", _ => "레짐 가드" };
 }

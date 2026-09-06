@@ -14,8 +14,10 @@ using System.Text.Json;
 
 namespace MS2E.Infrastructure
 {
-    public record EquityPoint(string Date, decimal Total);
+    public record EquityPoint(string Date, decimal Total)
+        : MS2E.UI.Portable.Ports.Validate.IEquityPointView;   // Phase 94-P: 공변(Date/Total 암시)
 
+    // ※SignalReview 는 public 필드(프로퍼티 아님)라 인터페이스 공변 불가 → ReplayAdapter 가 뷰 레코드로 래핑.
     public class SignalReview
     {
         public DateTime At;

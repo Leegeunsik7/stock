@@ -1,8 +1,5 @@
-@page "/research"
-@inject IQuoteProvider Provider
-@inject LocalDatabase Db
-@using MS2E.Core
-@using MS2E.Infrastructure
+@* Phase 94-P: 순수 UI 이관 — @page 는 호스트 shim(ResearchHostPage). IResearchPort 만 소비(NightlyResearch/엔진/설정 무참조). *@
+@inject IResearchPort Research
 @implements IDisposable
 
 <style>
@@ -124,31 +121,25 @@ else if (!_running)
     private int _hour = 5;
     private double _goal = 10;
     private string _msg = "";
-    private ResearchBrief? _brief;
-    private List<ResearchBrief> _history = new();
+    private IResearchBriefView? _brief;
+    private IReadOnlyList<IResearchBriefView> _history = Array.Empty<IResearchBriefView>();
 
     protected override void OnInitialized()
     {
-        _enabled = Db.GetSetting("Research.Enabled") == "true";
-        _telegram = Db.GetSetting("Research.Telegram") == "true";
-        _hour = int.TryParse(Db.GetSetting("Research.Hour"), out var h) ? Math.Clamp(h, 0, 23) : 5;
-        _goal = double.TryParse(Db.GetSetting("Research.GoalPct"), out var g) && g != 0 ? g : 10;
+        (_enabled, _telegram, _hour, _goal) = Research.LoadSettings();
         Load();
     }
 
     private void Load()
     {
-        _brief = NightlyResearch.LoadLatest(Db);
-        _history = NightlyResearch.LoadHistory(Db);
+        _brief = Research.LoadLatest();
+        _history = Research.LoadHistory();
     }
 
     private void SaveToggles()
     {
         _hour = Math.Clamp(_hour, 0, 23);
-        Db.SetSetting("Research.Enabled", _enabled ? "true" : "false");
-        Db.SetSetting("Research.Telegram", _telegram ? "true" : "false");
-        Db.SetSetting("Research.Hour", _hour.ToString());
-        Db.SetSetting("Research.GoalPct", _goal.ToString("0.###"));
+        Research.SaveSettings(_enabled, _telegram, _hour, _goal);
     }
 
     private System.Threading.CancellationTokenSource? _cts;
@@ -156,12 +147,12 @@ else if (!_running)
     private async Task RunNow()
     {
         if (_running) return;
-        if (NightlyResearch.IsRunning) { _msg = "이미 야간 연구가 진행 중입니다(스케줄러 또는 직전 실행). 잠시 후 다시 시도하세요."; return; }
+        if (Research.IsRunning) { _msg = "이미 야간 연구가 진행 중입니다(스케줄러 또는 직전 실행). 잠시 후 다시 시도하세요."; return; }
         _running = true; _msg = "보유 종목을 스캔하며 전략을 발굴·투영하는 중입니다… (종목 수에 따라 수십 초 소요)";
         _cts?.Cancel(); _cts?.Dispose(); _cts = new();
         try
         {
-            var b = await NightlyResearch.RunAsync(Db, Provider, _goal, ct: _cts.Token);
+            var b = await Research.RunAsync(_goal, _cts.Token);
             if (b == null) { _msg = "이미 야간 연구가 진행 중입니다. 잠시 후 다시 시도하세요."; }
             else
             {

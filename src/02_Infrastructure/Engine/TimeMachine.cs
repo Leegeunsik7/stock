@@ -11,7 +11,7 @@ using System.Linq;
 
 namespace MS2E.Infrastructure
 {
-    public class TimeMachineResult
+    public class TimeMachineResult : MS2E.UI.Portable.Ports.Tools.ITimeMachineResultView   // Phase 94-P: 공변(전 멤버 암시·StanceLabel 계산)
     {
         public bool Valid { get; set; }
         public string Note { get; set; } = "";

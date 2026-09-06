@@ -10,6 +10,7 @@
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Data;
 using System.IO;
 using System.Linq;
@@ -314,6 +315,29 @@ CREATE INDEX IF NOT EXISTS IX_FraudAlerts_Unreviewed ON FraudAlerts(IsReviewed, 
                 if (v == null || v == DBNull.Value) return default;
                 return (T)Convert.ChangeType(v, typeof(T));
             }, sql, pars);
+
+        // ── Phase 94-P Think-Beyond(Engine A) 결선: 리더→레코드 '직접' 투사(DataTable/DataRow 물성화 0·LOH 무타격) ──
+        //   ZeroAllocRowStreamMapper 를 SqliteDataReader 위에 얹어 대용량 검증/예측 조회의 DataRow 가비지를 제거한다.
+        public List<T> QueryProject<T>(string sql, MS2E.Core.RowProjector<T> proj, Dictionary<string, object>? pars = null)
+            => WithRetry(cmd =>
+            {
+                using var rdr = cmd.ExecuteReader();
+                return MS2E.Core.ZeroAllocRowStreamMapper.MapAll(new SqliteRowCursor(rdr), proj);
+            }, sql, pars);
+
+        /// <summary>SqliteDataReader 를 IRowCursor 로 감싸 방어 변환(Safe 동형: SQLite 동적타입 → try/catch 기본값).</summary>
+        private sealed class SqliteRowCursor : MS2E.Core.IRowCursor
+        {
+            private readonly SqliteDataReader _r;
+            public SqliteRowCursor(SqliteDataReader r) => _r = r;
+            public bool Read() => _r.Read();
+            public bool IsNull(int col) => _r.IsDBNull(col);
+            public long Int64(int col)   { var v = _r.GetValue(col); if (v is null || v == DBNull.Value) return 0;   try { return Convert.ToInt64(v, CultureInfo.InvariantCulture); }   catch { return 0; } }
+            public double Double(int col) { var v = _r.GetValue(col); if (v is null || v == DBNull.Value) return 0;   try { return Convert.ToDouble(v, CultureInfo.InvariantCulture); }  catch { return 0; } }
+            public decimal Decimal(int col){ var v = _r.GetValue(col); if (v is null || v == DBNull.Value) return 0m;  try { return Convert.ToDecimal(v, CultureInfo.InvariantCulture); } catch { return 0m; } }
+            public string Str(int col)   { var v = _r.GetValue(col); return v is null || v == DBNull.Value ? "" : v.ToString() ?? ""; }
+            public DateTime Time(int col){ var v = _r.GetValue(col); if (v is null || v == DBNull.Value) return DateTime.Now; try { return Convert.ToDateTime(v, CultureInfo.InvariantCulture); } catch { return DateTime.Now; } }
+        }
 
         // ===== Holdings =====
         public void SaveHolding(Holding h)
