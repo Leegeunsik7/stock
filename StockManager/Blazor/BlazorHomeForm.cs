@@ -904,11 +904,23 @@ namespace StockManager.Blazor
             // v11.5.0 — 하드웨어 킬스위치 브릿지(MS2E.Core) + Think-Beyond(스핀락 인터럽트·휘발성 메모리 퍼저). Killed 이벤트는 아래 sp 생성 후 CanaryHealthSentinel·Purger 에 결선.
             var killPurger = new MS2E.Core.VolatileMemoryPurger();
             var killBridge = new MS2E.Core.HardwareKillSwitchBridge();
-            var killSpin = new MS2E.Core.HardwareInterruptSpinLock(reason => killBridge.Signal(reason));
+            // v12.0.2 Think-Beyond — ★하드웨어 펄스 안티탬퍼 가드(MS2E.Core): 물리 접점 바운스(채터)·전기 노이즈·위조(재생/역행)
+            //   신호를 단조 토큰 + 디바운스 창으로 걸러 킬스위치 오격발/증폭을 봉쇄. Accept∧Tamper=격발(fail-closed 안전측 Disarm),
+            //   Debounced=억제. 디바운스 창 = Stopwatch 틱 5ms(200Hz — 접점 채터 흡수). 격발 sticky → 정당 킬 유실 0(첫 펄스 항상 Accept).
+            var pulseGuard = new MS2E.Core.HardwarePulseGuard(System.Diagnostics.Stopwatch.Frequency / 200);
+            long hwPulseSeq = 0;
+            var killSpin = new MS2E.Core.HardwareInterruptSpinLock(reason =>
+            {
+                long seq = System.Threading.Interlocked.Increment(ref hwPulseSeq);   // 원자 단조 펄스 토큰(재생/역행 = 위조 판정)
+                if (pulseGuard.ShouldFire(seq, System.Diagnostics.Stopwatch.GetTimestamp(), out var verdict))
+                    killBridge.Signal(reason);   // 정당 물리 동작 또는 위조(fail-closed) → 킬. 접점 바운스(Debounced)는 억제.
+                System.Diagnostics.Debug.WriteLine($"[PulseGuard] seq={seq} reason={reason} verdict={verdict}");   // Release 에선 [Conditional] 로 제거(δ=0 유지)
+            });
             services.AddSingleton<MS2E.Core.IHardwareKillSwitchPort>(killBridge);
             services.AddSingleton(killBridge);
             services.AddSingleton(killPurger);
             services.AddSingleton(killSpin);
+            services.AddSingleton(pulseGuard);
             // v11.4.2 Think-Beyond — Stage 1 드라이런 이중 엔진: ①레이턴시 거버너(δ=0 락프리 — UI 패닉 방어) ②Zero-Leak Veto 인터락(O(1) fail-closed + 변조불가 감사). 인터락이 거버너 breach 를 소비(융합).
             var canaryLatencyGovernor = new MS2E.Infrastructure.CanaryVetoLatencyGovernor();
             var zeroLeakVetoInterlock = new MS2E.Infrastructure.ZeroLeakVetoInterlock(canaryLatencyGovernor);
