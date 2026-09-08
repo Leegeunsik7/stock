@@ -43,6 +43,7 @@ namespace StockManager.KiwoomProxy
 {
     // ★using 은 네임스페이스 블록 내부 최상단(KiwoomComConfig 블록이 파일 앞에 있으므로 파일-레벨 불가).
     using System;
+    using System.Runtime.InteropServices;
     using System.Threading;
     using System.Windows.Forms;
     using AxKHOpenAPILib;   // COM Interop — 키움 OpenAPI+ 설치·참조 시에만 존재(SDK 게이트)
@@ -151,9 +152,26 @@ namespace StockManager.KiwoomProxy
         private static double ParseDouble(string s)
             => double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0.0;
 
+        // ── 드라이버 해제(Phase 95-A §1) — COM RCW 결정적 해제 + 자격증명 원자 소거 ──────────────
+        //   ★STA 스레드에서 순차 처리: (1) axKHOpenAPI(AxHost) Dispose → OCX 언로드, (2) COM RCW 잔여 refcount 를
+        //     Marshal.FinalReleaseComObject 로 0 까지 강제 해제(RCW 릭·유령 참조 차단), (3) 숨김 Form Dispose.
+        //   ★자격증명(계좌번호)은 char[] 사본으로 보관되지 않는 불변 string → 여기선 참조 해제만; API Secret 등
+        //     byte[] 비밀은 상위(BrokerFailoverSentinel/PoisonedSecretBuffer)가 CryptographicOperations.ZeroMemory 로 소거.
         public void Dispose()
         {
-            try { _host?.BeginInvoke(new Action(() => _host.Close())); } catch { }
+            var ax = _ax; var host = _host;
+            try
+            {
+                host?.BeginInvoke(new Action(() =>
+                {
+                    try { ax?.Dispose(); } catch { }                                            // (1) AxHost → OCX 언로드
+                    if (ax is not null && Marshal.IsComObject(ax))                               // (2) RCW refcount 0 까지 강제 해제
+                        try { while (Marshal.FinalReleaseComObject(ax) > 0) { } } catch { }
+                    try { host!.Dispose(); } catch { }                                          // (3) 숨김 Form 해제
+                }));
+            }
+            catch { }
+            // 계좌번호 참조 소거(불변 string — GC 회수 유도). byte[] 비밀은 없음(로그인은 OCX 자체 다이얼로그).
             _staThread = null; _ax = null; _host = null;
         }
     }
