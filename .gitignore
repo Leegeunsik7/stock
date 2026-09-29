@@ -44,6 +44,14 @@ credentials.json
 # MCP Playwright 세션 아티팩트(임시)
 .playwright-mcp/
 
+# === AI 도구 캐시/인덱스(소스 아님 — GUI diff 오검출 원인이 됐던 실측 사례: src/graphify-out/ 372파일
+#     +15,207줄이 "신규 삽입"으로 잡혀 커밋 직전까지 감) ===
+graphify-out/
+.serena/
+
+# 머신 종속 MCP 설정(절대경로 포함 — 저장소 공유 시 타 머신에서 깨짐)
+.mcp.json
+
 # 세션 외부 유입 이미지 아티팩트(StockSuite 무관)
 kernel_arena.png
 swarm_standby.png
