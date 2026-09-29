@@ -29,6 +29,18 @@ coverage*.json
 *.tmp
 Thumbs.db
 
+# === 자격증명 / 시크릿 (GitHub 원격 연결 전 필수) ===
+appsettings.Local.json
+appsettings.Production.json
+appsettings.*.local.json
+secrets.json
+*.pfx
+*.p12
+.env
+.env.*
+*.pat
+credentials.json
+
 # MCP Playwright 세션 아티팩트(임시)
 .playwright-mcp/
 

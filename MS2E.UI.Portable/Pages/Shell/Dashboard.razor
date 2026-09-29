@@ -1,12 +1,16 @@
 @* Phase 94-M: 순수 UI 이관 — @page 제거(호스트 DashboardHostPage 가 "/" 보존).
    엔진 구상(DashboardService·ToastService·GlobalIndexService·ModuleBridge·PaperSide) 무참조 —
    IDashboardWidgetPort(KPI/지수/테마/모듈) + IUserActivityPort(활동) + ILayoutPersistencePort(레이아웃) + IDashboardActionPort(모의주문). *@
+@using MS2E.UI.Portable.Pages.Shell.Widgets
+@using MS2E.UI.Portable.Infrastructure
 @inject IDashboardWidgetPort Widget
 @inject IUserActivityPort Activity
 @inject ILayoutPersistencePort Layout
 @inject IDashboardActionPort Action
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject StateAwareRenderGovernor RenderGov
+@inject WidgetLifecycleMemoryGuard MemoryGuard
 @implements IDisposable
 
 <div class="top">
@@ -80,8 +84,12 @@
                 <button class="x" title="제거" @onclick="() => Remove(k)">✕</button>
             </div>
             <div class="wb">
-                @switch (k)
-                {
+                @* v12.8.0 감사 — 위젯 개별 격리: 한 위젯의 렌더링/초기화 예외가 대시보드 전체를 무너뜨리지 않도록
+                   ErrorBoundary 로 카드 단위 격리(Safe Fallback UI). @key="k" 로 위젯 교체 시 경계도 함께 재생성. *@
+                <ErrorBoundary @key="k">
+                    <ChildContent>
+                        @switch (k)
+                        {
                     case "coins":
                         @foreach (var c in Widget.Coins)
                         {
@@ -193,7 +201,26 @@
                             <div class="sub" style="text-align:right;color:var(--sub);font-size:10.5px;margin-top:6px">Yahoo Finance · 60초 자동 갱신</div>
                         }
                         break;
-                }
+
+                    case "ai":
+                        <AiRecommendationWidget @ref="_aiWidgetRef" />
+                        break;
+
+                    case "risk":
+                        <RiskInterlockStatusWidget />
+                        break;
+
+                    case "forensic":
+                        <ForensicAuditStreamViewer />
+                        break;
+                        }
+                    </ChildContent>
+                    <ErrorContent Context="ex">
+                        <div class="sub" style="color:var(--warn);padding:10px 0">
+                            ⚠ '@TitleOf(k)' 위젯 렌더링 오류 — 다른 위젯은 정상 동작합니다. (@ex.GetType().Name)
+                        </div>
+                    </ErrorContent>
+                </ErrorBoundary>
             </div>
         </div>
     }
@@ -221,7 +248,7 @@
 
 @code {
     private List<string> _layout = new();
-    private readonly string[] _all = { "coins", "pie", "weekly", "paper", "imminent", "activity", "indices" };
+    private readonly string[] _all = { "coins", "pie", "weekly", "paper", "imminent", "activity", "indices", "ai", "risk", "forensic" };
     private bool _gallery;
     private string _theme = "light";
 
@@ -239,7 +266,16 @@
         await Widget.LoadAsync();
     }
 
-    private void OnIdxRefreshed() => InvokeAsync(StateHasChanged);
+    // v12.8.0 감사 — StateAwareRenderGovernor(v10.1.0, 등록·ForceFreeze 결속까지는 돼있었으나 어떤 컴포넌트도
+    //   ShouldRender 를 호출하지 않아 실질적으로 미가동 상태였음(실측 확인)). 지수 60초 자동 갱신 이벤트를 이 게이트로
+    //   통과시켜 — 동결/고부하 시 렌더 코얼레싱이 실제로 작동하도록 결속한다(정상 상태는 무제한 그대로 통과).
+    private long _lastRenderMicros;
+    private void OnIdxRefreshed()
+    {
+        // ★Int128 경유 — 장시간 구동 시 raw ticks×1e6 오버플로 안전(다른 tick→µs 변환부와 동일 관례).
+        long nowMicros = (long)((System.Int128)System.Diagnostics.Stopwatch.GetTimestamp() * 1_000_000 / System.Diagnostics.Stopwatch.Frequency);
+        if (RenderGov.ShouldRender(ref _lastRenderMicros, nowMicros)) InvokeAsync(StateHasChanged);
+    }
 
     protected override async Task OnAfterRenderAsync(bool first)
     {
@@ -276,7 +312,16 @@
         return r.Last.ToString("0.00");
     }
 
-    private void Remove(string k) { _layout.Remove(k); Layout.Save(_layout); }
+    private AiRecommendationWidget? _aiWidgetRef;
+
+    // v12.8.0 Think Beyond B — 위젯 핫스왑(제거) 시 폐기 예정 인스턴스를 약한 참조로 등록(WidgetLifecycleMemoryGuard).
+    // 강한 참조를 보유하지 않으므로 이 등록 자체가 누수 원인이 되지 않는다. 실제 회수 검증은 진단 도구(테스트) 책임.
+    private void Remove(string k)
+    {
+        if (k == "ai" && _aiWidgetRef is not null) { MemoryGuard.Track(_aiWidgetRef); _aiWidgetRef = null; }
+        _layout.Remove(k);
+        Layout.Save(_layout);
+    }
     private void Add(string k) { if (!_layout.Contains(k)) { _layout.Add(k); Layout.Save(_layout); } _gallery = false; }
 
     private async Task ToggleTheme()
@@ -298,9 +343,10 @@
     {
         "coins" => "🪙 코인 실시간", "pie" => "🧮 자산 구성", "weekly" => "📊 주간 수익률",
         "paper" => "🧪 모의투자 계좌", "imminent" => "⏳ 임박 신호", "activity" => "📡 최근 활동",
-        "indices" => "🌍 글로벌 지수", _ => k
+        "indices" => "🌍 글로벌 지수", "ai" => "🤖 AI 추천 코파일럿", "risk" => "🛡️ 리스크 서킷 브레이커",
+        "forensic" => "🗃️ 포렌식 감사 스트림", _ => k
     };
-    private string ColOf(string k) => k switch { "weekly" => "col8", "indices" => "col8", _ => "col4" };
+    private string ColOf(string k) => k switch { "weekly" => "col8", "indices" => "col8", "ai" => "col8", "forensic" => "col8", _ => "col4" };
 
     private MarkupString Spark(double[] d, string color)
     {

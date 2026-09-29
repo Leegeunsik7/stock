@@ -1,12 +1,20 @@
 @* Phase 94-O: 순수 UI 이관 — @page 는 호스트 shim(LiveHostPage)이 소유. NavigationManager(포터블)만 사용, 자식 CoinPage/RealtimePage 는 RCL. *@
+@* Step 2/7 메뉴 감사: Dashboard(Step 1)와 동일하게 ErrorBoundary 결속 — 탭 전환 시 예외가 전체 회로를 무너뜨리지 않도록 격리. *@
 @inject NavigationManager Nav
 
 <HubTabs Items="_tabs" Active="@Cur" OnSelect="Sel" />
-@switch (Cur)
-{
-    case "coin": <CoinPage /> break;
-    default: <RealtimePage /> break;
-}
+<ErrorBoundary @key="Cur">
+    <ChildContent>
+        @switch (Cur)
+        {
+            case "coin": <CoinPage /> break;
+            default: <RealtimePage /> break;
+        }
+    </ChildContent>
+    <ErrorContent>
+        <div style="padding:40px;text-align:center;color:var(--sub)">⚠️ 실시간 화면 로드 중 오류가 발생했습니다. 탭을 다시 선택해 주세요.</div>
+    </ErrorContent>
+</ErrorBoundary>
 
 @code {
     [Parameter] public string? Tab { get; set; }

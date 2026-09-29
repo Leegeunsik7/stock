@@ -5,6 +5,7 @@
 @inject ITransactionCrudPort Tx
 @inject ITimeTravelAsOfPort AsOf
 @inject IJsDialogPort Dialog
+@inject IToastPort Toast
 @implements IDisposable
 @using System.Threading
 
@@ -615,7 +616,7 @@ else if (_tab == "corr")
     private async Task OnPollChanged()
     {
         RestartPoll();
-        if (_pollSec > 0 && AsOf.IsLive && _tab == "hold") { await Board.LoadAsync(persist: false); StateHasChanged(); }
+        if (_pollSec > 0 && AsOf.IsLive && _tab == "hold") { await RefreshBoardSafeAsync(); StateHasChanged(); }
     }
 
     private async Task Loop(CancellationToken ct)
@@ -626,9 +627,17 @@ else if (_tab == "corr")
             try { await Task.Delay(sec * 1000, ct); } catch { return; }
             if (ct.IsCancellationRequested) return;
             if (_pollSec <= 0 || !AsOf.IsLive || _tab != "hold" || (_showForm && _formEditing)) continue;
-            await Board.LoadAsync(persist: false);
+            await RefreshBoardSafeAsync();
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    // v12.9.0 감사 — Board.LoadAsync() 예외가 무방비였음(실측 확인): 시세 단절/브로커 지연 시 폴링 루프(fire-and-forget
+    // Task)가 관측되지 않은 예외로 영구 정지 + 사용자 피드백 0. Fail-closed(직전 보유 데이터 유지) + 토스트로 수정.
+    private async Task RefreshBoardSafeAsync()
+    {
+        try { await Board.LoadAsync(persist: false); }
+        catch (Exception ex) { Toast.ShowWarning("포트폴리오 갱신 실패", "직전 데이터 유지 — " + ex.Message); }
     }
 
     private void SwitchTab(string key)

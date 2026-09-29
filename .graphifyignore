@@ -1,0 +1,24 @@
+# === 빌드 산출물 (compiled/generated, reproducible from source) ===
+[Bb]in/
+[Oo]bj/
+dist/
+publish/
+installer/Output/
+[Tt]est[Rr]esults/
+*.trx
+*.dll
+*.pdb
+
+# === 외부 의존성 / 벤더 바이너리 (third-party, not authored here) ===
+installer/MicrosoftEdgeWebview2Setup.exe
+StockManager/wwwroot/lib/
+
+# === 도구 캐시 (tool-generated, re-derivable) ===
+.serena/cache/
+.claude/.headroom_wrap_*.json
+.claude/.headroom_wrap_*.lock
+.claude/worktrees/
+.vs/
+
+# === graphify 자체 산출물 ===
+graphify-out/

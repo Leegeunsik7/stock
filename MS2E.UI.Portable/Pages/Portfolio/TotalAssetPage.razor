@@ -1,11 +1,12 @@
 @* Phase 94-I: 순수 UI 이관 — /assets 라우트는 PortfolioHub가 소유(이 페이지는 허브 '총자산' 탭 자식·@page 없음).
    엔진 구상(DashboardService) 무참조 — IAccountSummaryPort + ICoinHoldingView 만 소비. *@
 @inject IAccountSummaryPort Svc
+@inject IToastPort Toast
 @implements IDisposable
 @using System.Threading
 
 <div class="top"><div class="hello"><h1>🧮 총자산</h1><p>전체 자산 구성 · @_ts</p></div>
-<button class="addbtn" @onclick="LoadAsync" style="margin:0 16px">🔄 새로고침</button></div>
+<button class="addbtn" @onclick="RefreshSafeAsync" style="margin:0 16px">🔄 새로고침</button></div>
 
 <div class="kpis" style="margin:0 28px 16px">
     <div class="kpi g"><div class="k-lab">총자산</div><div class="k-val">@Svc.Total.ToString("N0")</div><div class="sub">실시간 합산</div></div>
@@ -52,7 +53,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
+        await RefreshSafeAsync();
         _cts = new CancellationTokenSource();
         _ = Loop(_cts.Token);
     }
@@ -62,12 +63,18 @@
         while (!ct.IsCancellationRequested)
         {
             try { await Task.Delay(60_000, ct); } catch { return; }
-            await LoadAsync();
+            await RefreshSafeAsync();
             await InvokeAsync(StateHasChanged);
         }
     }
 
-    private async Task LoadAsync() { await Svc.LoadAsync(); _ts = DateTime.Now.ToString("HH:mm:ss"); }
+    // v12.9.0 감사 — Svc.LoadAsync() 예외가 무방비였음(실측 확인): 시세 단절/브로커 지연 시 폴링 루프(fire-and-forget
+    // Task)가 관측되지 않은 예외로 영구 정지 + 사용자 피드백 0. Fail-closed(직전 데이터 유지) + 토스트로 수정.
+    private async Task RefreshSafeAsync()
+    {
+        try { await Svc.LoadAsync(); _ts = DateTime.Now.ToString("HH:mm:ss"); }
+        catch (Exception ex) { Toast.ShowWarning("총자산 갱신 실패", "직전 데이터 유지 — " + ex.Message); }
+    }
 
     private decimal Tot => Svc.AllocKrwStock + Svc.AllocUsdStock + Svc.AllocCoin;
     private string Pct(decimal v) => Tot > 0 ? (v / Tot * 100m).ToString("0.0") : "0.0";

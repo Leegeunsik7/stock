@@ -10,7 +10,7 @@
         <span class="dot" style="@(_bithumbCount==0?"opacity:.4":"")"><i style="background:var(--warn)"></i>빗썸 @(_bithumbCount)종</span>
         <span class="dot" style="@(_bnCount==0?"opacity:.4":"")"><i style="background:var(--accent-2)"></i>바낸 @(_bnCount)종</span>
     </div>
-    <button class="addbtn" @onclick="RefreshAsync" style="margin:0 16px">🔄 새로고침</button>
+    <button class="addbtn" @onclick="RefreshSafeAsync" style="margin:0 16px">🔄 새로고침</button>
 </div>
 
 <div style="display:flex;gap:8px;padding:0 28px 14px;flex-wrap:wrap;align-items:center">
@@ -128,7 +128,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await RefreshAsync();
+        await RefreshSafeAsync();
         _cts = new CancellationTokenSource();
         _ = LoopAsync(_cts.Token);
     }
@@ -138,9 +138,16 @@
         while (!ct.IsCancellationRequested)
         {
             try { await Task.Delay(15_000, ct); } catch { return; }
-            await RefreshAsync();
+            await RefreshSafeAsync();
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    // ★어댑터 병합 로직(개별 거래소 호출 밖)이 던질 수 있는 예외로부터 회로/폴링 루프를 보호(fail-closed: 직전 데이터 유지).
+    private async Task RefreshSafeAsync()
+    {
+        try { await RefreshAsync(); }
+        catch { _toast = "⚠️ 코인 시세 갱신 실패 · 직전 데이터 유지"; }
     }
 
     private async Task RefreshAsync()

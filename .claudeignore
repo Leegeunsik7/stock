@@ -1,0 +1,13 @@
+# Build & Binary Artifacts
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/publish/
+**/release/
+
+# Test Results & Logs & Zips
+*.log
+*.trx
+*.zip
+*.tsbuildinfo

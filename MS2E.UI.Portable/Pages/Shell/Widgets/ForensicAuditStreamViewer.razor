@@ -1,0 +1,77 @@
+@* v12.12.0 [Step 6/7] 포렌식 감사 & 비행 기록 장치 뷰어 — IForensicAuditViewPort만 주입(엔진 무참조).
+   Think Beyond A: MmfFlightRecorder(100,000 슬롯 링, 이미 실배선이나 UI는 최근 100건 고정 헥스덤프만 노출했음)를
+     Blazor <Virtualize> 로 결속 — 스크롤 시 보이는 행만 DOM 생성(DOM 노드 폭발 차단). 엔진 스냅샷 자체는 δ=0,
+     Blazor 컴포넌트 경계로의 Span 직접 전달은 ref struct 제약상 불가하여 1회 콜드 변환만 발생(정직 명기).
+   Think Beyond B: ZeroAllocForensicAuditStream(v12.2.0, DI 미등록이었음 — 이번에 최초 결속) SHA-256 체인 무결성
+     실시간 시각 검증 — 손상 감지 시 적색(#E53935) 경고, 정상 시 청색(#1E88E5). *@
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@inject IForensicAuditViewPort Forensic
+@implements IDisposable
+
+<div class="fa-viewer">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        @if (!Forensic.ChainAvailable)
+        {
+            <span style="background:#9E9E9E;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">체인 미결속</span>
+        }
+        else if (_chainOk)
+        {
+            <span style="background:#1E88E5;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">✅ 체인 무결성 확보</span>
+        }
+        else
+        {
+            <span style="background:#E53935;color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px">🚨 체인 손상 감지</span>
+        }
+        <span style="font-size:11px;color:var(--sub)">체인 시퀀스 @Forensic.ChainWriteHead.ToString("N0")</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--sub)">
+            링 용량 @Forensic.RingCapacity.ToString("N0") · 누적 기록 @Forensic.TotalRecorded.ToString("N0")
+            @(Forensic.RingSealed ? " · 봉인됨" : "")
+        </span>
+        <button class="ghost" style="font-size:11px" @onclick="RefreshAsync" disabled="@_loading">@(_loading ? "로드 중…" : "🔄 새로고침")</button>
+    </div>
+
+    <div style="height:260px;overflow-y:auto;margin-top:8px;border:1px solid var(--line,#eee);border-radius:6px;font-family:var(--mono,monospace);font-size:11px">
+        @if (_rows.Count == 0)
+        {
+            <div class="sub" style="padding:10px">기록 없음.</div>
+        }
+        else
+        {
+            <Virtualize Items="_rows" Context="row" ItemSize="20">
+                <div style="display:flex;gap:12px;padding:2px 8px;border-bottom:1px solid var(--line,#f5f5f5)">
+                    <span style="color:var(--sub);width:80px">#@row.Sequence</span>
+                    <span style="width:140px">@row.EventKind</span>
+                    <span style="color:var(--sub)">arg0=@row.Detail0 arg1=@row.Detail1</span>
+                </div>
+            </Virtualize>
+        }
+    </div>
+    <div class="sub" style="font-size:10px;margin-top:4px">최근 @_rows.Count.ToString("N0")건 스냅샷(수동 조회, 자동 고빈도 폴링 없음) — 스크롤 시 화면에 보이는 행만 DOM 생성</div>
+</div>
+
+@code {
+    private const int MaxRows = 5000;   // 콜드 조회 상한(100,000 슬롯 전체가 아닌 최근 구간) — 과도한 1회 할당 방지
+    private List<IForensicLogRowView> _rows = new();
+    private bool _chainOk = true;
+    private bool _loading;
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
+
+    private async Task RefreshAsync()
+    {
+        _loading = true;
+        try
+        {
+            // 콜드 경로(수동 조회) — 핫패스 δ=0 요구 대상 아님. Task.Run 으로 UI 스레드 블로킹 방지(대용량 스냅샷 변환).
+            var (rows, chainOk) = await Task.Run(() => (Forensic.SnapshotRecent(MaxRows), Forensic.VerifyChainIntegrity()));
+            if (_disposed) return;   // 컴포넌트 폐기 후 완료된 결과는 버림(파기 UI 상태 변조 방지)
+            _rows = new List<IForensicLogRowView>(rows);   // Virtualize 는 ICollection<T> 필요(IReadOnlyList 불충분)
+            _chainOk = chainOk;
+        }
+        catch { /* 조회 실패는 직전 스냅샷 유지(fail-closed) */ }
+        finally { _loading = false; }
+    }
+
+    public void Dispose() => _disposed = true;
+}

@@ -7,6 +7,12 @@
     <Compile Include="..\src\02_Infrastructure\**\*.cs" />
   </ItemGroup>
 
+  <!-- v12.2.0 — ZeroAllocForensicAuditStream 의 internal 위변조 주입 테스트 seam(__AdversarialCorruptForTest) 노출.
+       MS2E.UI.Portable.csproj 의 기존 InternalsVisibleTo(StockManager.Tests) 관례를 그대로 미러링. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="StockManager.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>

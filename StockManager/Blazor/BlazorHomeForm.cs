@@ -361,6 +361,10 @@ namespace StockManager.Blazor
             HostEnvironmentDriftSentinel?  driftRef = null;         // v10.1.0 Ops — ★호스트 환경 드리프트 시 무장 하향
             MicroCapitalCanaryGovernor?    canaryRef = null;        // v10.1.0 Ops — 카나리 슬리피지 강등 시 무장 tighten
             OperatorDuressPanicSwitch?     panicRef = null;         // v10.1.0 Ops — 패닉 격발 시 무장 tighten
+            // v12.14.0-GM — ★DI 등록·텔레메트리(RingTelemetry) 소비까지 됐으나 무장 술어엔 미결속이었던 드먼트 갭 교정
+            //   (Step 7/7 식 전수 스캔으로 발견): 릴리스 봉인 미검증/불일치(AttestationBlocking) → 무장 하드 차단.
+            //   Release.ExpectedMasterSeal 미설정(기본값) 상태에서도 SealValid=false 이므로 기본이 곧 fail-closed.
+            ReleaseArtifactSha256Attestor? releaseAttestorRef = null;
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
@@ -386,7 +390,8 @@ namespace StockManager.Blazor
                                 || (signoffRef?.SignoffBlocking ?? false)          // v10.1.0 Ops — 사전 점화 서명 미달/리스 만료 → 무장 하드 차단
                                 || (driftRef?.DriftBlocking ?? false)              // v10.1.0 Ops — ★호스트 환경 드리프트 → 무장 하향
                                 || (canaryRef?.CanaryBlocking ?? false)            // v10.1.0 Ops — 카나리 슬리피지 강등 → 무장 tighten
-                                || (panicRef?.PanicBlocking ?? false));            // v10.1.0 Ops — 운용자 패닉 격발 → 무장 tighten
+                                || (panicRef?.PanicBlocking ?? false)              // v10.1.0 Ops — 운용자 패닉 격발 → 무장 tighten
+                                || (releaseAttestorRef?.AttestationBlocking ?? false));   // v12.14.0-GM — 릴리스 봉인 미검증/불일치 → 무장 하드 차단
             // ★v10.1.0 디스패처 무장 술어 = 드라이런 스코프(가상 미러 급전·barrier RouteNow 가 broker 를 물리 차단) ∨ 실전 무장.
             //   드라이런 'armed' 는 오직 미러로만 도달 — 실 브로커 소켓 0비트(liveArmed:false 불변·barrier=DryRun→미러, =Live→게이트웨이).
             Func<bool> armedPredicate = () => { try { return (scopeBarrierRef?.DryRunActive ?? false) || liveArmed(); } catch { return false; } };
@@ -787,6 +792,7 @@ namespace StockManager.Blazor
                 attestation:   cfg.GetBool("Sla.FuseArmed", false) ? attestation : null);          // ★ForceFreeze 옵트인(기본 tighten-only)
             var releaseAttestor = new ReleaseArtifactSha256Attestor(
                 expectedSealHex: cfg.GetString("Release.ExpectedMasterSeal", ""), audit: ignAudit);
+            releaseAttestorRef = releaseAttestor;   // v12.14.0-GM — 무장 술어 blockWhile 결속(위 armedPredicate)
             // v10.1.0 Ops — 사전 점화 서명 + 카나리 거버너 + ★Think-Beyond 드리프트 센티널 + 패닉 스위치.
             //   ★liveArmed:false: 전부 순수 채점/판정 — IBroker·소켓·onSend 참조 0. 전 blockWhile tighten-only(무장 부여 불가).
             //     서명 미달/드리프트/카나리 강등/패닉 → 무장 하향. 카나리 캡은 LiveBroker 경로에서만·강등 시 드라이런으로 물러섬.
@@ -856,6 +862,10 @@ namespace StockManager.Blazor
             services.AddSingleton(uiPortRegistry);
             services.AddSingleton(uiRenderGovernor);
             services.AddSingleton(uiEventBroker);
+            // v12.8.0 — Dashboard 감사: StateAwareRenderGovernor(위) 는 이번에 Dashboard.razor 의 지수 자동갱신
+            //   렌더 경로에 최초로 결속(이전엔 등록·ForceFreeze 결속뿐 실질 미가동이었음 — 실측 확인).
+            //   WidgetLifecycleMemoryGuard(신규, Think Beyond B) — 위젯 핫스왑 시 GC 회수 검증용 진단 가드.
+            services.AddSingleton(new MS2E.UI.Portable.Infrastructure.WidgetLifecycleMemoryGuard());
             // v10.2.0 Toss — 토스증권 조회 전용 포트폴리오 동기화 + 실시간 시세 게이트웨이(★read-only·liveArmed:false —
             //   발주 경로 무접촉·RejectOrderAttempt 하드 veto). 실 배선: tokenProvider=TossTokenService.CurrentAccessToken,
             //   accountFetch=HttpClient GET 계좌 엔드포인트(미구성 시 미인증→미동기화·fail-closed).
@@ -962,6 +972,56 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IToastPort, MS2E.Infrastructure.ToastAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IMainShellNavigationPort, MS2E.Infrastructure.MainShellNavigationAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IDashboardWidgetPort, MS2E.Infrastructure.DashboardWidgetAdapter>();
+            // v12.6.0 — Main Dashboard AI Co-Pilot Feed: IAiRecommendationPort(v12.4.0, 기존엔 미등록이었음)를 최초로
+            //   DI 결속 + 신규 IOrderPrefillPort(Advisory-Only 프리필 브리지) + IDashboardAiFeedPort(보유종목→SIMD
+            //   Top-N→추천 합성, IPortfolioBoardPort(scoped) 의존이라 동일하게 scoped 등록).
+            services.AddSingleton<MS2E.Core.AiModelFallbackCircuitBreaker>();
+            // v12.7.0 — RollingWinRateCalibrationEngine(적중률 감쇠)·RegimeAwareDynamicFactorWeightingEngine(국면 적응
+            //   가중치)를 싱글턴 등록 — AiRecommendationAdapter/DashboardAiFeedAdapter 의 옵션 생성자 인자로 DI 가
+            //   자동 주입(미등록이면 null 기본값 그대로 v12.4~12.6 동작 보존).
+            services.AddSingleton<MS2E.Core.RollingWinRateCalibrationEngine>(_ => new MS2E.Core.RollingWinRateCalibrationEngine(1024));
+            services.AddSingleton<MS2E.Core.RegimeAwareDynamicFactorWeightingEngine>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Intel.IAiRecommendationPort, MS2E.Infrastructure.AiRecommendationAdapter>();
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IOrderPrefillPort, MS2E.Infrastructure.OrderPrefillAdapter>();
+            services.AddSingleton<MS2E.Infrastructure.AiMicrostructureDivergenceGuard>();
+            // v12.13.0 [Step 7/7] 감사 — 65개 Port 인터페이스 전수 DI 스캔 결과 IOrderBookPort(v12.3.0)만 유일하게
+            //   미등록으로 확인(실측·유일 결함). 기본 감시 심볼(005930)로 최초 결속 — 아직 실 호가 피드가 이
+            //   OrderBookDepthMatrixCoalescer 에 Publish 하지 않아 HasData=false 로 정직 렌더된다(가짜 데이터 없음).
+            //   동시에 DashboardAiFeedAdapter 의 imbalanceLookup(v12.6.0 부터 항상 null 이었음)을 이 Port 에 연결해
+            //   AI-Microstructure Divergence 가드(v12.6.0)가 처음으로 실제 Port 경로를 통해 신호를 받게 한다.
+            services.AddSingleton<MS2E.Core.OrderBookDepthMatrixCoalescer>(_ => new MS2E.Core.OrderBookDepthMatrixCoalescer(depth: 10, capacityPow2: 64));
+            services.AddSingleton<MS2E.UI.Portable.Ports.Realtime.IOrderBookPort>(sp =>
+                new MS2E.Infrastructure.OrderBookAdapter("005930", sp.GetRequiredService<MS2E.Core.OrderBookDepthMatrixCoalescer>()));
+            services.AddScoped<MS2E.UI.Portable.Ports.Intel.IDashboardAiFeedPort>(sp =>
+                new MS2E.Infrastructure.DashboardAiFeedAdapter(
+                    sp.GetRequiredService<MS2E.UI.Portable.Ports.Portfolio.IPortfolioBoardPort>(),
+                    sp.GetRequiredService<MS2E.UI.Portable.Ports.Intel.IAiRecommendationPort>(),
+                    sp.GetRequiredService<MS2E.UI.Portable.Ports.Shell.IOrderPrefillPort>(),
+                    sp.GetRequiredService<MS2E.Infrastructure.AiMicrostructureDivergenceGuard>(),
+                    imbalanceLookup: symbol =>
+                    {
+                        var ob = sp.GetRequiredService<MS2E.UI.Portable.Ports.Realtime.IOrderBookPort>().Snapshot();
+                        return ob.HasData && ob.Symbol == symbol ? ob.ImbalanceRatio : (decimal?)null;
+                    },
+                    regimeWeighting: sp.GetRequiredService<MS2E.Core.RegimeAwareDynamicFactorWeightingEngine>()));
+            // v12.11.0 [Step 5/7] 감사 — DynamicRiskInterlock(v12.2.0)은 엔진·테스트만 완성되고 DI 등록 자체가
+            //   없었음(실측 확인) — 이번에 최초 결속. MultiTelemetryDisarmInterlock(위 multiDisarm, v11.4.4)은
+            //   DI엔 있었으나 소비하는 UI 가 전무했음 — RiskInterlockStatusWidget 이 최초 소비자.
+            //   ProxyLivenessProbe(v12.0.4, x86 프록시 하트비트용 엔진)를 하드웨어 펄스 생존성 신호로 재사용
+            //   (Think Beyond B — 신규 엔진 미제작). ★정직 명기: 아직 실제 하드웨어 펄스 소스가 .Beat() 를 호출하지
+            //   않아 Probe 는 '미시작=보수적 생존' 상태로 항상 정상 표시된다(가짜 배선 없음 — 실 배선은 후속 과제).
+            services.AddSingleton<MS2E.Infrastructure.RiskOrderPurgeRecorder>();
+            services.AddSingleton<MS2E.Infrastructure.DynamicRiskInterlock>();
+            services.AddSingleton<MS2E.Core.StreamingParametricVarCalculator>(_ => new MS2E.Core.StreamingParametricVarCalculator(64));
+            services.AddScoped<MS2E.UI.Portable.Ports.Portfolio.IDynamicRiskPort, MS2E.Infrastructure.DynamicRiskAdapter>();
+            services.AddSingleton<MS2E.Core.ProxyLivenessProbe>(_ => new MS2E.Core.ProxyLivenessProbe(System.Diagnostics.Stopwatch.Frequency * 30));   // 30초 무신호=유실
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IRiskInterlockStatusPort, MS2E.Infrastructure.RiskInterlockStatusAdapter>();
+            // v12.12.0 [Step 6/7] 감사 — ZeroAllocForensicAuditStream(v12.2.0, DI 등록 자체가 없었음 — 실측 확인)을
+            //   최초 등록. 등록 즉시 DynamicRiskAdapter(위, 옵션 인자)에도 자동 결선되어 리스크 위반 이벤트가
+            //   드디어 실제 체인에 기록되기 시작한다. MmfFlightRecorder(blackbox, 위 92행에서 이미 실배선)를
+            //   Virtualize 대용량 뷰어에 최초 결속(기존 TelemetryMonitor 는 최근 100건 고정 헥스덤프만 노출했음).
+            services.AddSingleton<MS2E.Core.ZeroAllocForensicAuditStream>(_ => new MS2E.Core.ZeroAllocForensicAuditStream(8192));
+            services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IForensicAuditViewPort, MS2E.Infrastructure.ForensicAuditViewAdapter>();
             // Phase 94-L — CommandPalette & MainLayout Port(DIP): 명령 레지스트리(scoped·Nav) + 핫키 브릿지/JS Interop 안전 센티널.
             services.AddSingleton<MS2E.Infrastructure.DotNetObjectRefSentinel>();
             services.AddSingleton<MS2E.Infrastructure.JSInvokableTokenVerifier>();

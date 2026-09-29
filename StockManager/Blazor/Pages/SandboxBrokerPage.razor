@@ -1,6 +1,7 @@
 @page "/broker/sandbox"
 @inject LocalDatabase Db
 @inject ToastService Toasts
+@inject MS2E.UI.Portable.Ports.Shell.IOrderPrefillPort Prefill
 @implements IDisposable
 
 <div class="top">
@@ -259,6 +260,15 @@
         _paper    = new PaperBroker(Db);
         _simClock = DateTime.Now;
         RebuildBroker();
+
+        // v12.6.0 — AI 추천 카드 "주문 연동"(Advisory-Only) 프리필: 종목코드/지정가 숫자만 반영, 발주 인가와 무관.
+        var pre = Prefill.Current;
+        if (pre.HasValue)
+        {
+            _sym = pre.Symbol;
+            _limitPrice = pre.TargetPrice;
+            _kind = PaperKind.Limit;
+        }
     }
 
     private void RebuildBroker()
@@ -297,9 +307,15 @@
         _broker?.Tick(_simClock, (_, _) => _currentPrice);
     }
 
+    // v12.10.0 [Step 4/7] 감사 — UI 레이어 선제 검증(초크포인트 1) + ShadowBroker.Place 자체 검증(초크포인트 2,
+    // 이번에 신설)의 이중 방어 사슬. UI 단독으로는 우회 가능(HTML min/max 는 강제 아님)하므로 브로커 레이어 검증이
+    // 최종 권위 — 여기는 사용자에게 즉시 피드백을 주는 fail-fast 보조 계층일 뿐이다.
     private void PlaceOrder()
     {
         if (_broker == null || string.IsNullOrWhiteSpace(_sym)) return;
+        if (_qty <= 0) { _placeMsg = "거부 — 수량이 올바르지 않습니다."; StateHasChanged(); return; }
+        if (_kind == PaperKind.Limit && _limitPrice <= 0) { _placeMsg = "거부 — 지정가를 입력하세요."; StateHasChanged(); return; }
+        if (_kind == PaperKind.Market && _currentPrice <= 0) { _placeMsg = "거부 — 현재가를 확인할 수 없습니다."; StateHasChanged(); return; }
         var sym = _sym.Trim().ToUpperInvariant();
         var (ok, msg) = _broker.Place(
             PaperAsset.Stock, sym, sym,

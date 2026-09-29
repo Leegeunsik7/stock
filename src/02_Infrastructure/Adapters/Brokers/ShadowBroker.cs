@@ -103,6 +103,14 @@ namespace MS2E.Infrastructure
             if (qty <= 0)
                 return (false, "수량이 올바르지 않습니다.");
 
+            // v12.10.0 [Step 4/7] 감사 — 노이즈 활성 경로(기본값)가 _inner.Place(PaperBroker, 104/122행)와 달리
+            // 가격 검증을 누락했음(실측 확인): currentPrice·limitPrice 가 둘 다 0/음수여도 그대로 접수되어
+            // refPrice=0 체결이 큐에 삽입될 수 있었다. Fail-Closed 초크포인트 — 발주 전 사출 차단.
+            if (kind == PaperKind.Market && currentPrice <= 0)
+                return (false, "현재가를 확인할 수 없습니다.");
+            if (kind == PaperKind.Limit && limitPrice <= 0)
+                return (false, "지정가를 입력하세요.");
+
             // 레짐 신호 → 노이즈 계수
             var    sig  = _regime();
             double volR = Math.Clamp(sig?.VolRatio ?? 1.0, 0.5, 10.0);

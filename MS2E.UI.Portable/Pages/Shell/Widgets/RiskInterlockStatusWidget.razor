@@ -1,0 +1,93 @@
+@* v12.11.0 [Step 5/7] Risk Control & Circuit Breaker 관제 위젯 — IRiskInterlockStatusPort만 주입(엔진 무참조).
+   MultiTelemetryDisarmInterlock/DynamicRiskInterlock 은 이번 감사 전까지 UI 소비가 전혀 없었다(실측 확인) —
+   이 위젯이 최초 노출 지점. 순수 관측 전용(liveArmed:false) — 재무장/설정 변경 컨트롤 없음. *@
+@using System.Threading
+@inject IRiskInterlockStatusPort Risk
+@implements IDisposable
+
+<div class="ri-status">
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+        @if (_status.AnyDisarmed)
+        {
+            <span style="background:#E53935;color:#fff;font-size:12px;font-weight:700;border-radius:6px;padding:4px 10px">🚨 DISARMED</span>
+            <span style="font-size:12px;color:var(--sub)">@_status.DisarmSummary</span>
+        }
+        else
+        {
+            <span style="background:#1E88E5;color:#fff;font-size:12px;font-weight:700;border-radius:6px;padding:4px 10px">✅ NORMAL</span>
+            <span style="font-size:12px;color:var(--sub)">모든 서킷 브레이커 정상</span>
+        }
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:12px">
+        <div class="row" style="justify-content:space-between">
+            <span class="sub">지연/429/슬리피지</span>
+            <span class="@(_status.TelemetryDisarmed ? "up" : "down")">@(_status.TelemetryDisarmed ? "격발" : "정상")</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+            <span class="sub">낙폭/일일손실/VaR</span>
+            <span class="@(_status.RiskDisarmed ? "up" : "down")">@(_status.RiskDisarmed ? "격발" : "정상")</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+            <span class="sub">낙폭</span>
+            <span>@_status.DrawdownPct.ToString("0.00")%</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+            <span class="sub">일일손실</span>
+            <span>@_status.DailyLossPct.ToString("0.00")%</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+            <span class="sub">하드웨어 펄스</span>
+            <span class="@(_status.HardwarePulseSilent ? "up" : "down")">@(_status.HardwarePulseSilent ? "유실" : "생존")</span>
+        </div>
+    </div>
+    <div class="sub" style="font-size:10.5px;margin-top:8px">순수 관측 전용 — 재무장은 물리 이중 키로만 가능(liveArmed:false)</div>
+</div>
+
+@code {
+    private sealed class StatusSnapshot
+    {
+        public bool AnyDisarmed, TelemetryDisarmed, RiskDisarmed, HardwarePulseSilent;
+        public decimal DrawdownPct, DailyLossPct;
+        public string DisarmSummary = "";
+    }
+
+    private StatusSnapshot _status = new();
+    private CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+        _cts = new CancellationTokenSource();
+        _ = Loop(_cts.Token);
+    }
+
+    private void Refresh()
+    {
+        _status = new StatusSnapshot
+        {
+            AnyDisarmed = Risk.AnyDisarmed,
+            TelemetryDisarmed = Risk.TelemetryDisarmed,
+            RiskDisarmed = Risk.RiskDisarmed,
+            HardwarePulseSilent = Risk.HardwarePulseSilent,
+            DrawdownPct = Risk.DrawdownPct,
+            DailyLossPct = Risk.DailyLossPct,
+            DisarmSummary = Risk.DisarmSummary,
+        };
+    }
+
+    // 안전 상태 카드는 사용자 상호작용과 무관하게 항상 최신이어야 하므로 경량 폴링(2초) — Step 1~4 에서 검증된
+    // CTS+Loop+try/catch 안전 패턴 재사용. Risk 는 순수 값 읽기라 실패 가능성이 사실상 없으나 방어적으로 감쌈.
+    private async Task Loop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(2000, ct); } catch { return; }
+            if (ct.IsCancellationRequested) return;
+            try { Refresh(); } catch { /* 상태 카드 갱신 실패는 직전 값 유지(fail-closed) */ }
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose() { _cts?.Cancel(); _cts?.Dispose(); }
+}
