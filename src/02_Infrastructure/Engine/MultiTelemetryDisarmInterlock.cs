@@ -38,33 +38,53 @@ namespace MS2E.Infrastructure
     public sealed class AnomalyFlightRecorder
     {
         private readonly long[] _pending;    // 인가 대기 주문 명목 버퍼(소거 대상)
-        private long _captured;
+        private long _captured;              // 1 = Disarm 격발(이후 스테이징 거부)
+        private long _published;             // 1 = _frozen 기록 완료(읽기 측 게이트)
         private long _seq;
         private FlightSnapshot _frozen = new(false, TelemetrySource.Latency, 0, 0);
 
         public AnomalyFlightRecorder(int pendingSlots = 64)
             => _pending = new long[pendingSlots > 0 ? pendingSlots : 64];
 
-        /// <summary>발주 인가 전 대기 주문을 스테이징(무장 상태). Disarm 시 전량 소거된다.</summary>
-        public void StagePending(int slot, long notionalRaw)
+        /// <summary>발주 인가 전 대기 주문을 스테이징(무장 상태). 반환 false = 이미 Disarm 되어 거부됨.
+        /// [Phase 1 감사 교정] 이전엔 Disarm(소거) 이후 늦게 도착한 스테이징이 버퍼를 다시 채워 "사출할 데이터 자체가 없다"는
+        /// 보증을 깼다. 이제 격발 후엔 거부하고, 쓰기와 격발이 경합하면 쓰기 직후 격발 여부를 재확인해 자기 슬롯을 다시 0 으로
+        /// 되돌린다(Exchange 는 전체 펜스 — 쓰기와 격발 플래그 읽기의 재배열 불가). 격발은 플래그를 먼저 세운 뒤 소거하므로,
+        /// 어떤 인터리빙에서도 최종 버퍼는 0.</summary>
+        [MS2E.Core.ZeroAllocHotPath]
+        public bool StagePending(int slot, long notionalRaw)
         {
-            if ((uint)slot < (uint)_pending.Length) Volatile.Write(ref _pending[slot], notionalRaw);
+            if ((uint)slot >= (uint)_pending.Length) return false;
+            if (Volatile.Read(ref _captured) != 0) return false;
+            Interlocked.Exchange(ref _pending[slot], notionalRaw);
+            if (Volatile.Read(ref _captured) != 0)
+            {
+                Interlocked.Exchange(ref _pending[slot], 0);
+                return false;
+            }
             Interlocked.Increment(ref _seq);
+            return true;
         }
 
         /// <summary>
         /// ★Disarm 격발 동시 처리: 최초 1회 스냅샷 고정(불변) + 대기 주문 버퍼 0x00 소거. 멱등(첫 격발만 스냅샷).
+        /// 스냅샷은 기록 완료 후에 _published 로 발행 — 이전엔 HasCaptured=true 를 먼저 보여 준 뒤 _frozen(다필드 struct)을 써서
+        /// 읽기 측이 반쯤 쓰인(torn) 스냅샷을 볼 수 있었다.
         /// </summary>
+        [MS2E.Core.ZeroAllocHotPath]
         public void CaptureAndPurge(TelemetrySource source, long value)
         {
             if (Interlocked.Exchange(ref _captured, 1) == 0)
+            {
                 _frozen = new FlightSnapshot(true, source, value, Volatile.Read(ref _seq));
+                Volatile.Write(ref _published, 1);
+            }
             // 대기 주문 버퍼 전량 0x00 — 비동기 잔여 사출 차단(메모리 덤프·재참조 방어).
             CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(_pending.AsSpan()));
         }
 
-        public bool HasCaptured => Volatile.Read(ref _captured) == 1;
-        public FlightSnapshot Frozen => _frozen;
+        public bool HasCaptured => Volatile.Read(ref _published) == 1;
+        public FlightSnapshot Frozen => Volatile.Read(ref _published) == 1 ? _frozen : default;
 
         /// <summary>대기 버퍼가 전부 0 인지(소거 실증).</summary>
         public bool PendingBufferIsZero
@@ -74,9 +94,10 @@ namespace MS2E.Infrastructure
 
         public void Reset()
         {
-            Interlocked.Exchange(ref _captured, 0);
-            _frozen = new(false, TelemetrySource.Latency, 0, 0);
             CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(_pending.AsSpan()));
+            Volatile.Write(ref _published, 0);
+            _frozen = new(false, TelemetrySource.Latency, 0, 0);
+            Interlocked.Exchange(ref _captured, 0);   // 마지막에 해제 — 정리 완료 전 스테이징 재개 방지
         }
     }
 
@@ -106,6 +127,7 @@ namespace MS2E.Infrastructure
         /// 텔레메트리 표본 1건. value 가 소스 문턱을 넘으면 ★단일 Interlocked.Or 로 breach 비트 + Disarm 래치를 0ms 원자
         /// 격발하고 Flight Recorder 를 격발(스냅샷+소거). 다중 소스 동시 호출에도 지연 0(각자 독립 원자 OR). breach 시 true.
         /// </summary>
+        [MS2E.Core.ZeroAllocHotPath]
         public bool Note(TelemetrySource source, long value)
         {
             int i = (int)source;

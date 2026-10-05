@@ -1,17 +1,18 @@
 # Current Project Status
 
-- **Active Milestone**: v12.14.0-GM Production Golden Master 봉인 & 배포 패키징 자동화
-- **Build Status**: Release 0/0(Default+WebOnly), 2,880/2,880 테스트 Pass(+13 신규), infra-scan OK(coupling 0), RatchetCeiling coupled=40 불변
-- **Updated At**: 2026-09-29 05:45
+- **Active Milestone**: [보호 지정가 · 추천 A] 시장가 → 참조가 기반 보호 지정가 변환 · 1~3호가 깊이 가드 · 호가 단위 정렬(방향 A) · 극한 슬리피지 Disarm(방향 B) (v12.14.1-GM)
+- **Build Status**: 사중 빌드 Release 0/0(WebOnly → sln Default+PrimesBench+x86 KiwoomProxy), 전체 3,201 — 3회 중 2회 100% · 1회 무관 플레이키(MmfIpcFabricTests.Spsc · 미수정 파일 · 단독 30/30), infra-scan coupling 0
+- **Updated At**: 2026-10-05 18:20
 
 ## Completed Deliverables
-- **AssemblySealGenerator**(신규) — 기존 ReleasePackager(genesis-봉인 SHA-256) 위에 배포 대상(Host win-x64+KiwoomProxy win-x86) 아티팩트 해석만 얹는 조립기. 암호 로직 중복 0.
-- **드먼트 배선 발견·교정**: `ReleaseArtifactSha256Attestor`(v10.1.0, DI등록·텔레메트리 소비까지 됐으나 무장 술어 미결속)를 BlazorHomeForm.cs의 liveArmed blockWhile에 결속 — 릴리스 봉인 미검증/불일치 시 실전 무장 하드 차단(0ms).
-- **ColdBootPohRingIntegritySentinel**(Think Beyond, 독자설계) — δ=0 FNV-1a 체크섬으로 POH 링 메모리 무결성 + 물리 이중키 콜드부팅 상태 결합 판정(기존 GoldenMasterBootSentinel이 다루지 않던 축).
-- **release-package.ps1**(신규 CI 패키징 파이프라인) — WebOnly검증빌드→Default빌드→전체테스트→infra-scan→RatchetCeiling→liveArmed 소스가드→SHA-256+zip. 실측 검증(release-v10.1.0-GM.zip, 38 아티팩트, 7.4MB).
-  - ★버그 2건 자체 발견·교정: 한글 .ps1 BOM 누락(PS5.1 CP949 파싱실패) / `Get-ChildItem -Include` 최상위·재귀 시 `\*` 접미 필요 여부가 반대(상위=필요, 재귀=금지) — 1차 실행 0건 오발행을 실측으로 잡음.
-- GoldenMasterSealTests.cs — 13개 신규(전체 2,880 100% Pass).
+- [실결함] 피드 연동 후에도 시장가는 PaperKind.Market 그대로 브로커 송출(라우터는 참조가 존재만 확인) → IOrderRouteGate 가 송출 형태(OrderAdmission) 반환 · OrderDrainWorker 는 승인값으로 송출 — 송출 Kind 항상 지정가
+- ProtectiveLimitOrderConverter: 매수 상한 = 참조가×(1+offset) 내림 정렬 · 매도 하한 ×(1−offset) 올림 정렬 · 가격제한폭(기준가 ±30%) 보호 방향 클램프/이상치 거부 · Int128 포화 · offset ≤ 라우터 한도 강제
+- 방향 A KrxTickAligner: QPrice raw 7구간 테이블(기존 KrxTickLadder 전 구간 동치 · 격자 유효성 · δ=0 — ReadOnlySpan 프로퍼티 배열 패턴의 호출당 144B 할당 실측 후 정적 배열로)
+- DepthBook(IDepthSink): 1~3호가·보호선 이내 잔량 — 시장가 Ok/축소/거부 · 깊이 미상·만료 시장가 거부(Router.MarketRequiresDepth 기본 true) · 대사 DepthRejected/DepthReduced/SlippageRejected
+- 방향 B ExtremeSlippageDisarmInterlock: 체결가 ↔ 판정 참조가 불리 괴리 200bps 초과 → sticky Disarm(ExtremeSlippage 비트 · 이중키 재무장) · BlazorHomeForm 전량 결선
+- ProtectiveLimitConverterTests.cs 20건(교정 끔 Red 12건) · RouterFeedAdapterTests 2건 의미 갱신
 
 ## 정직 스코핑
-- genesis-봉인 manifest.sig(masterSeal)는 CausalAuditVault 제네시스 헤드가 필요해 PowerShell 단독 재현 불가(package-release.ps1과 동일 제약) — 원시 SHA-256 리스트로 자동화, genesis 결합은 앱/테스트 계층 호출로 별도 생성.
-- Next: 신규 지시 대기.
+- 지시서의 StockManager/Engines 부재(신설) · ★Toss/키움 어느 쪽도 L2 호가를 파싱하지 않아 DepthBook 생산자 0 → 현재 시장가는 실전 경로에서 전량 거부(옵트아웃 키 존재)
+- 가격제한폭 클램프는 기준가 주입(MarketDataSpikeInterlock.SetReference) 시에만 — 현 호출자 0 · 지정가 주문은 깊이 축소 미적용(대기 허용)
+- Next: MmfIpcFabric 플레이키 Triage 칩 생성 · 신규 지시 대기(누적 미커밋)

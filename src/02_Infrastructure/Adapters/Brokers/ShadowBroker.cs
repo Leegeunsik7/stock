@@ -40,7 +40,8 @@ namespace MS2E.Infrastructure
 
     public sealed class ShadowOrder
     {
-        public string     Id               { get; } = Guid.NewGuid().ToString("N")[..8];
+        // [Phase 1 감사] 8자리 hex(32비트)는 생일 충돌(~1만 건에 약 1%) 시 Cancel 의 RemoveAll 이 타 주문까지 제거 → 128비트 전체.
+        public string     Id               { get; } = Guid.NewGuid().ToString("N");
         public DateTime   ExecuteAt        { get; init; }
         public PaperAsset Asset            { get; init; }
         public string     Symbol           { get; init; } = "";
@@ -65,6 +66,9 @@ namespace MS2E.Infrastructure
         private readonly Random                    _rng;
         private readonly List<ShadowOrder>         _queue = new();
         private readonly OrderAttestationService?  _gating;
+        // [Phase 1 감사] 섀도 ID → 이관된 내부(PaperBroker) 주문 ID. 이관 후 섀도 ID 로 취소하면 내부 브로커가 모르는
+        // ID 라 조용히 무시되어 "취소한 지정가가 나중에 체결"되던 결함 교정용. 내부 주문이 대기를 벗어나면 Tick 에서 정리.
+        private readonly Dictionary<string, string> _forwardedLimitIds = new(StringComparer.Ordinal);
         private DateTime                           _simClock;
 
         public string Name   => $"Shadow({_inner.Name})";
@@ -111,9 +115,13 @@ namespace MS2E.Infrastructure
             if (kind == PaperKind.Limit && limitPrice <= 0)
                 return (false, "지정가를 입력하세요.");
 
-            // 레짐 신호 → 노이즈 계수
+            // 레짐 신호 → 노이즈 계수. [Phase 1 감사] Math.Clamp(NaN)=NaN 이라 NaN 신호가 (decimal)/(int) 변환에서
+            // OverflowException 으로 Place 밖까지 누출됐다 — 비유한 신호는 센서 이상으로 보고 발주 거부(fail-closed).
             var    sig  = _regime();
-            double volR = Math.Clamp(sig?.VolRatio ?? 1.0, 0.5, 10.0);
+            double rawVol = sig?.VolRatio ?? 1.0;
+            if (!double.IsFinite(rawVol))
+                return (false, "레짐 신호가 비정상입니다 — 주문을 접수하지 않습니다.");
+            double volR = Math.Clamp(rawVol, 0.5, 10.0);
 
             // 지연 = BaseDelayMs + rand × (MaxDelayMs - BaseDelayMs) × min(volR, 3)
             double volMult    = Math.Min(volR, 3.0);
@@ -128,7 +136,14 @@ namespace MS2E.Infrastructure
             decimal refPrice     = kind == PaperKind.Market
                 ? (currentPrice > 0 ? currentPrice : limitPrice)
                 : limitPrice;
-            decimal slippedPrice = refPrice * (decimal)(1.0 + slippagePct * sideSign);
+            // [Phase 1 감사] 샌드박스 슬리피지 입력은 상한이 없어 매도 체결가 계수(1 - slip)가 0 이하가 될 수 있었다 —
+            // 이전엔 "접수"로 반환한 뒤 Tick 에서 PaperBroker 가 조용히 거절. 접수 시점에 거부해야 사용자 피드백이 정직하다.
+            double priceFactor = 1.0 + slippagePct * sideSign;
+            if (!double.IsFinite(priceFactor) || priceFactor <= 0.0)
+                return (false, "슬리피지 설정이 비정상입니다 — 체결가가 0 이하가 됩니다.");
+            decimal slippedPrice;
+            try { slippedPrice = refPrice * (decimal)priceFactor; }
+            catch (OverflowException) { return (false, "슬리피지 설정이 비정상입니다 — 체결가 계산 범위 초과."); }
 
             var order = new ShadowOrder
             {
@@ -156,7 +171,13 @@ namespace MS2E.Infrastructure
         public void Cancel(string orderId)
         {
             int removed = _queue.RemoveAll(o => o.Id == orderId);
-            if (removed == 0) _inner.Cancel(orderId);
+            if (removed > 0) return;
+            if (_forwardedLimitIds.Remove(orderId, out var innerId))
+            {
+                _inner.Cancel(innerId);   // 이관된 지정가 → 내부 브로커 자신의 ID 로 취소
+                return;
+            }
+            _inner.Cancel(orderId);       // 호출측이 내부 브로커 ID 를 직접 넘기는 기존 계약 보존
         }
 
         // ── 보유 수량: 내부 브로커 위임 ──────────────────────────────────────
@@ -194,6 +215,9 @@ namespace MS2E.Infrastructure
                     decimal curP = priceOf(o.Asset, o.Symbol);
                     (ok, msg) = _inner.Place(o.Asset, o.Symbol, o.Name,
                         o.Side, PaperKind.Limit, o.Qty, o.LimitPrice, curP);
+                    // PaperBroker.Place 는 성공 시 새 주문을 Orders[0] 에 삽입한다(동기·단일 스레드 계약) — 그 ID 를 기억.
+                    if (ok && _inner is PaperBroker paper && paper.Account.Orders.Count > 0)
+                        _forwardedLimitIds[o.Id] = paper.Account.Orders[0].Id;
                 }
 
                 events.Add(new ShadowFillEvent(
@@ -203,12 +227,26 @@ namespace MS2E.Infrastructure
             }
 
             // inner PaperBroker의 지정가 처리
-            if (_inner is PaperBroker pb) pb.ProcessLimits(priceOf);
+            if (_inner is PaperBroker pb)
+            {
+                pb.ProcessLimits(priceOf);
+                PruneSettledForwardedIds(pb);
+            }
 
             return events;
         }
 
         // ── 내부 헬퍼 ─────────────────────────────────────────────────────────
+
+        /// <summary>체결/취소/거절로 대기를 벗어난 내부 주문의 ID 매핑 제거(장시간 세션 무한 증가 방지 — 콜드 경로).</summary>
+        private void PruneSettledForwardedIds(PaperBroker pb)
+        {
+            if (_forwardedLimitIds.Count == 0) return;
+            var pending = new HashSet<string>(
+                pb.Account.Orders.Where(x => x.Status == PaperStatus.Pending).Select(x => x.Id), StringComparer.Ordinal);
+            foreach (var shadowId in _forwardedLimitIds.Where(kv => !pending.Contains(kv.Value)).Select(kv => kv.Key).ToList())
+                _forwardedLimitIds.Remove(shadowId);
+        }
 
         private void InsertByExecuteAt(ShadowOrder order)
         {

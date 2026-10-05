@@ -141,6 +141,7 @@ namespace MS2E.Infrastructure
         /// ★C#3: 랩(구식) 라이터가 최신 슬롯을 덮어쓰지 않도록 한 바퀴 이상 밀린 클레임은 드롭(DroppedLapped).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        [MS2E.Core.ZeroAllocHotPath]
         public void Record(FlightEventKind kind, long symbolCode, long arg0, long arg1, long arg2 = 0L, int sourceCode = 0)
         {
             Interlocked.Increment(ref _inFlight);

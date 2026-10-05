@@ -7,6 +7,15 @@
 //  · 슬라이스 수량 배열: ArrayPool<decimal> 임대 → RunAlgoAsync finally 반납.
 //  · VWAP 가중치: stackalloc double[] (슬라이스 ≤64) 또는 ArrayPool.
 //  · KSE 장 중 U자형 거래량 프로파일 10버킷 (9:00~15:30 근사).
+//
+//  [알고 집행 하드닝] 교정(수정 전 실측):
+//   ① VWAP 오버필 — 슬라이스마다 Math.Max(1, floor(raw)) 로 최소 1주를 강제해, 총수량 < 슬라이스 수(예: 5주/10슬라이스)면
+//      슬라이스 합이 총수량을 넘었다(10주 발주 = 모 주문의 2배 체결 위험). → 누적 반올림 배분(Σ = TotalQty 정확 · 음수 0 · 0 슬라이스 허용).
+//   ② Cancel 이 "이후 슬라이스"만 멈추고 이미 하위 브로커에 나간 자식 주문(미체결 지정가)은 그대로 방치 → 자식 ID 추적 + 일괄 취소.
+//   ③ 슬라이스 대기 종료 직후 도착한 취소를 확인하지 않고 발주 — 취소 뒤 조각 1건이 새어 나감 → 발주 직전 재확인.
+//   ④ Slices ≤0(튜너 오출력)·Duration ≤0·qty ≤0 에서 0 나눗셈 예외/음수 간격 → 거부(fail-closed).
+//   ⑤ CreateLinkedTokenSource 미처분(핸들 누수) · GATING FREEZE 외 예외 시 State 가 Running 으로 고착 → finally 처분 · Frozen 판정.
+//   ※ FilledQty 는 "하위 브로커 접수 수량"이다(IBroker 계약에 체결 통보가 없음) — 실 체결 대사는 ExecutionMatrixTracker(MS2E.Core) 몫.
 // ============================================================================
 using System;
 using System.Buffers;
@@ -70,11 +79,14 @@ namespace MS2E.Infrastructure
 
         // ── IBroker.Place ─────────────────────────────────────────────────────
 
+        public const int MaxSlices = 10_000;
+
         public (bool ok, string msg) Place(
             PaperAsset asset, string symbol, string name,
             PaperSide  side,  PaperKind kind,
             decimal    qty,   decimal limitPrice, decimal currentPrice)
         {
+            if (qty <= 0m) return (false, "[ALGO] 수량이 0 이하입니다.");   // [④] fail-closed
             // 임계치 미만은 즉시 통과
             if (qty < DefaultConfig.MinQty)
                 return _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
@@ -88,6 +100,9 @@ namespace MS2E.Infrastructure
             tuner?.Calibrate();
             int      effectiveSlices   = tuner?.CurrentSlices   ?? DefaultConfig.Slices;
             TimeSpan effectiveDuration = tuner?.CurrentDuration ?? DefaultConfig.Duration;
+            // [④] 튜너/설정 오출력 방어 — 0 나눗셈·음수 간격·과대 분할 대신 거부(발주 0).
+            if (effectiveSlices < 1 || effectiveSlices > MaxSlices) return (false, $"[ALGO] 슬라이스 수 비정상({effectiveSlices}) — 집행 거부");
+            if (effectiveDuration <= TimeSpan.Zero) return (false, "[ALGO] 집행 시간창 비정상 — 집행 거부");
 
             long algoId = Interlocked.Increment(ref _nextAlgoId);
 
@@ -133,10 +148,23 @@ namespace MS2E.Infrastructure
                 && long.TryParse(orderId.AsSpan(5), out long id)
                 && _active.TryGetValue(id, out var pair))
             {
-                pair.Cts.Cancel();
+                try { pair.Cts.Cancel(); } catch (ObjectDisposedException) { }
+                CancelChildren(pair.Exec);   // [②] 이미 나간 자식 주문 일괄 취소(루프의 취소 경로와 멱등 공유)
                 return;
             }
             _inner.Cancel(orderId);
+        }
+
+        // 모 주문별 발주된 자식 주문 ID(하위 브로커 반환값). 취소 시 전량 inner.Cancel.
+        private readonly ConcurrentDictionary<long, ConcurrentQueue<string>> _children = new();
+
+        private void CancelChildren(AlgoExecution exec)
+        {
+            if (!_children.TryGetValue(exec.AlgoId, out var q)) return;
+            while (q.TryDequeue(out var childId))
+            {
+                try { _inner.Cancel(childId); } catch { /* 하위 취소 실패가 나머지 취소를 막지 않음 */ }
+            }
         }
 
         public decimal HeldQty(PaperAsset asset, string symbol)
@@ -157,21 +185,23 @@ namespace MS2E.Infrastructure
                 for (int i = 0; i < slices && !ct.IsCancellationRequested && !frozen; i++)
                 {
                     await _delay(intervalMs, ct);
+                    ct.ThrowIfCancellationRequested();   // [③] 대기 종료 직후 도착한 취소 — 이 조각은 발주하지 않음
 
                     decimal qty = rented[i];
                     if (qty <= 0m) continue;
 
                     try
                     {
-                        var (ok, _) = _inner.Place(
+                        var (ok, childId) = _inner.Place(
                             exec.Order.Asset, exec.Order.Symbol, exec.Order.Name,
                             exec.Order.Side,  exec.Order.Kind,
                             qty,              exec.Order.LimitPrice, 0m);
 
                         if (ok)
                         {
+                            if (!string.IsNullOrEmpty(childId)) _children.GetOrAdd(exec.AlgoId, static _ => new ConcurrentQueue<string>()).Enqueue(childId);
                             exec.ChildrenFired++;
-                            exec.FilledQty += qty;
+                            exec.FilledQty += qty;   // 접수 수량(체결 통보 없는 IBroker 계약) — 헤더 주석 참조
                             SliceFired?.Invoke(exec);
                         }
                     }
@@ -183,17 +213,26 @@ namespace MS2E.Infrastructure
                     }
                 }
 
+                // [②] 마지막 조각 발주와 취소가 경합해 루프가 정상 종료된 경우 — 그 사이 큐에 들어간 자식도 취소
+                ct.ThrowIfCancellationRequested();
                 if (exec.State == AlgoState.Running)
                     exec.State = AlgoState.Completed;
             }
             catch (OperationCanceledException)
             {
                 exec.State = AlgoState.Cancelled;
+                CancelChildren(exec);   // [②] 이미 나간 미체결 조각 원자 일괄 취소
+            }
+            catch (Exception)
+            {
+                exec.State = AlgoState.Frozen;   // [⑤] 미상 하위 예외 — Running 고착 대신 동결(이후 조각 0) + 자식 취소
+                CancelChildren(exec);
             }
             finally
             {
                 ArrayPool<decimal>.Shared.Return(rented, clearArray: true);
-                _active.TryRemove(exec.AlgoId, out _);
+                if (_active.TryRemove(exec.AlgoId, out var pair)) pair.Cts.Dispose();   // [⑤] 링크 CTS 처분
+                _children.TryRemove(exec.AlgoId, out _);
                 AlgoCompleted?.Invoke(exec);
             }
         }
@@ -204,6 +243,7 @@ namespace MS2E.Infrastructure
         public static void ComputeTwap(AlgoOrder order, Span<decimal> qtys)
         {
             int     n        = order.Slices;
+            if (n < 1) throw new ArgumentOutOfRangeException(nameof(order), "Slices ≥ 1");
             decimal perSlice = Math.Floor(order.TotalQty / n);
             decimal rem      = order.TotalQty - perSlice * n;
 
@@ -217,6 +257,7 @@ namespace MS2E.Infrastructure
         public static void ComputeVwap(AlgoOrder order, Span<decimal> qtys)
         {
             int n = order.Slices;
+            if (n < 1) throw new ArgumentOutOfRangeException(nameof(order), "Slices ≥ 1");
 
             double[]? rented = null;
             Span<double> weights = n <= StackAllocMax
@@ -227,14 +268,19 @@ namespace MS2E.Infrastructure
             {
                 InterpolateIntradayWeights(weights);
 
-                decimal remaining = order.TotalQty;
-                for (int i = 0; i < n - 1; i++)
+                // [①] 누적 반올림 배분 — target_i = floor(Total × Σw_0..i), slice_i = target_i − target_{i−1}.
+                //   누적 목표가 단조 증가하므로 슬라이스는 음수가 될 수 없고, 마지막 목표 = Total 이라 Σslice = Total 정확(오버필 0).
+                //   거래량이 적은 구간은 0 슬라이스(실행 루프가 건너뜀) — 최소 1주 강제로 총량을 넘기던 결함 제거.
+                decimal total = order.TotalQty, prevTarget = 0m;
+                double cum = 0.0;
+                for (int i = 0; i < n; i++)
                 {
-                    decimal raw = order.TotalQty * (decimal)weights[i];
-                    qtys[i]    = Math.Max(1m, Math.Floor(raw));
-                    remaining -= qtys[i];
+                    cum += weights[i];
+                    decimal target = i == n - 1 ? total : Math.Min(total, Math.Floor(total * (decimal)Math.Min(cum, 1.0)));
+                    if (target < prevTarget) target = prevTarget;
+                    qtys[i] = target - prevTarget;
+                    prevTarget = target;
                 }
-                qtys[n - 1] = Math.Max(1m, remaining);
             }
             finally
             {

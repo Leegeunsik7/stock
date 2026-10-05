@@ -696,3 +696,29 @@ WinForms 진입점      → Launcher.cs
 ---
 
 *코드가 권위. 이 문서는 재진입 네비게이션 보조. 특정 모듈 상세는 해당 파일 상단 주석 블록을 최우선 참조.*
+
+---
+
+## 16. v12.14.1-GM 누적 하드닝 로그 (2026-09-30 ~ 10-05)
+
+### 16.1 보호 지정가 변환 · 호가 깊이 가드 (§1.24 대응)
+- **실결함 교정**: 피드 연동 후에도 시장가가 `PaperKind.Market` 그대로 브로커 송출 → `IOrderRouteGate.TryAdmit(in p, out OrderAdmission)` 가 송출 형태를 반환하고 `OrderDrainWorker` 는 승인값으로만 송출(송출 Kind 항상 지정가).
+- `StockManager/Engines/ProtectiveLimitOrderConverter.cs` — 매수 상한 = 참조가×(1+offset) 내림 정렬 · 매도 하한 ×(1−offset) 올림 정렬 · 가격제한폭(기준가 ±30%) 보호 방향 클램프/이상치 거부 · Int128 포화 · offset ≤ 라우터 슬리피지 한도 강제(기본 30bps).
+- `KrxTickAligner`(같은 파일) — QPrice raw 7구간 표, 기존 `KrxTickLadder` 와 전 구간 동치. ★`static ReadOnlySpan<long> X => new long[]{…}` 가 이 빌드에서 호출당 144B 할당(δ=0 테스트 실측) → 정적 readonly 배열로 고정.
+- `StockManager/Engines/OrderbookDepthGuard.cs` — `DepthBook`(IDepthSink · 1~3호가 · 보호선 이내 잔량 · Ok/Reduced/Insufficient/Missing/Stale) + `ExtremeSlippageDisarmInterlock`(체결가 ↔ 판정 참조가 불리 괴리 200bps 초과 → sticky Disarm · `ArmingInterlockSource.ExtremeSlippage` · 물리 이중키 재무장).
+- 대사 로그 신규 종류: `DepthRejected` · `DepthReduced` · `SlippageRejected` · `ExtremeSlippage`.
+
+### 16.2 운영 주의(필독)
+- **L2 호가 피드 생산자 0**: Toss 게이트웨이는 seq/symbol/price/qty 만, 키움 `TickPayload` 는 현재가·거래량만 파싱 → `DepthBook` 이 비어 있어 `Router.MarketRequiresDepth=true`(기본)이면 **실전 경로 시장가 전량 거부**. 시장가 허용 = L2 피드 결선 또는 `Router.MarketRequiresDepth=false`(보호 지정가만 적용 · 깊이 검사 생략).
+- **기준가 미주입**: 가격제한폭 클램프는 `MarketDataSpikeInterlock.SetReference` 주입 시에만 동작 — 현재 호출자 0.
+- 지정가는 깊이 축소 미적용(가격이 보호선 · 대기 허용). 체결량 0 통보는 거부·접수·취소확인 구분 불가(프록시 프로토콜 한계) → 캐스케이드 취소 슬롯만 해제, 나머지 TTL(120s) 회수 + 무장 차단.
+- 실전 무장 후보 조건(집계 비트): 부팅 무결성 + 외부 앵커(`Release.ExpectedMasterSeal` = `release/master-seal.txt`) · Toss 틱 수신 · 키움 프록시 생존 · 슬롯/극한 슬리피지 래치 미발생.
+
+### 16.3 검증 · 지문
+- 사중 빌드 Release 0W/0E · 전체 3,201 테스트 PASS(최종 2회 연속). 1회 실행에서 `MmfIpcFabricTests.Spsc_Concurrent_InOrder_NoTornNoLoss` 간헐 실패 관측 — 미수정 커밋 파일 · 단독 30/30 통과 · 부하 의존 플레이키(별도 Triage 작업 칩 생성).
+- `ProtectiveLimitConverterTests.cs` 20건(교정 끔 Red 12건) · 힙 할당 0(정렬·변환·깊이 판정·송출 수명주기).
+- SHA-256 앞 16자(커밋 직전 작업 트리 기준):
+  `d3a3054cead3ac80` Engines/ProtectiveLimitOrderConverter.cs · `f2c1f21e6aabb86a` Engines/OrderbookDepthGuard.cs · `a933146aad377aba` Adapters/RouterFeedGate.cs · `0eca8eb3c6d6fe2f` Adapters/OrderExecutionFeedAdapter.cs · `935e3208719ddc53` Engine/IOrderRouteGate.cs · `f2582a3123b6a906` Engine/OrderDrainWorker.cs · `8e2c764b1e080a90` Tests/ProtectiveLimitConverterTests.cs
+
+### 16.4 같은 커밋에 포함된 선행 마일스톤(미커밋 누적분)
+Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·F7 부팅 무결성/안티탬퍼 · PII 하드닝 · MMF 포렌식 · 다중 브로커 라우터 · 시세 스트림/렌더 거버너 · 알고 집행(VWAP/TWAP) · 카오스 동시성 Triage · 원자 인터락 집계기 실배선 · 봉인 수검 CLI(`--verify-seal`) · 라우터 참조가/체결 피드 — 상세는 각 단계 STATUS 이력·커밋 본문.

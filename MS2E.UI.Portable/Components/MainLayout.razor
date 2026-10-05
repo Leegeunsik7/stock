@@ -3,16 +3,30 @@
 @inject NavigationManager Nav
 
 @* Phase 94-L: 순수 UI 이관 — 로그인 게이트/설정은 IMainShellNavigationPort(SessionState·LocalDatabase 격리).
-   자식(NavMenu·MarketTicker·SymbolBar·AsOfBar·CommandPalette·ToastHost) 전량 RCL. NavigationManager 는 포터블. *@
+   자식(NavMenu·MarketTicker·SymbolBar·AsOfBar·CommandPalette·ToastHost) 전량 RCL. NavigationManager 는 포터블.
+   [Phase 3 §4 Fail-Closed UI] 시세 스트립(고주파 갱신)과 페이지 본문을 각각 ErrorBoundary 로 격리 — 위젯/페이지 1개의 미처리
+   예외가 셸(내비·명령 팔레트·토스트) 전체 렌더를 붕괴시키지 않는다. 내비게이션(OnParametersSet) 시 본문 격리 자동 해제. *@
 @if (_pass)
 {
     <div class="app-shell">
         <NavMenu />
         <div class="main">
-            <MarketTicker />
-            <SymbolBar />
-            <AsOfBar />
-            @Body
+            <ErrorBoundary @ref="_stripBoundary">
+                <ChildContent>
+                    <MarketTicker />
+                    <SymbolBar />
+                    <AsOfBar />
+                </ChildContent>
+                <ErrorContent Context="fault">
+                    <div class="ms2e-fault" role="alert">⚠ 시세 스트립 오류를 격리했습니다(@(fault.GetType().Name)). <button type="button" @onclick="RecoverStrip">다시 시도</button></div>
+                </ErrorContent>
+            </ErrorBoundary>
+            <ErrorBoundary @ref="_pageBoundary">
+                <ChildContent>@Body</ChildContent>
+                <ErrorContent Context="fault">
+                    <div class="ms2e-fault" role="alert">⚠ 이 화면에서 오류가 발생해 격리했습니다 — 다른 메뉴는 정상 동작합니다(@(fault.GetType().Name)). <button type="button" @onclick="RecoverPage">다시 시도</button></div>
+                </ErrorContent>
+            </ErrorBoundary>
         </div>
         <CommandPalette />
         <ToastHost />
@@ -21,6 +35,8 @@
 
 @code {
     private bool _pass;
+    private ErrorBoundary? _pageBoundary;
+    private ErrorBoundary? _stripBoundary;
 
     protected override void OnInitialized()
     {
@@ -36,4 +52,8 @@
         }
         _pass = true;
     }
+
+    protected override void OnParametersSet() => _pageBoundary?.Recover();   // 새 Body(내비게이션) = 격리 해제
+    private void RecoverPage() => _pageBoundary?.Recover();
+    private void RecoverStrip() => _stripBoundary?.Recover();
 }

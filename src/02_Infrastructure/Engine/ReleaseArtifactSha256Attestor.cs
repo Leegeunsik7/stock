@@ -49,14 +49,27 @@ namespace MS2E.Infrastructure
                 _audit?.Record(IgnitionEventKind.ReleaseAttestation, Interlocked.Read(ref _selfSeal64), 0L);   // seal 발행만(미검증)
         }
 
+        // [봉인 운영] 판정 위임 대상 — 설치본 manifest v2 masterSeal 을 외부 앵커와 대조하는 단일 권위(BootIntegrityGate).
+        //   수정 전엔 호스트가 Release.ExpectedMasterSeal 을 이 타입(실행 DLL 단일 파일 해시와 대조)과 게이트(manifest masterSeal 과 대조)에
+        //   동시에 넣어, 어떤 값으로도 둘 다 통과할 수 없는 영구 교착이었다. 위임 후 SealValid = 게이트 무장 허용(앵커 일치·봉인·핸드셰이크).
+        private BootIntegrityGate? _manifestGate;
+
+        /// <summary>판정을 manifest 게이트에 위임(콜드 1회). 이후 SealValid/AttestationBlocking 은 게이트 상태를 O(1) 반영.</summary>
+        public void DelegateToManifestGate(BootIntegrityGate gate)
+        {
+            ArgumentNullException.ThrowIfNull(gate);
+            Volatile.Write(ref _manifestGate, gate);
+            _audit?.Record(IgnitionEventKind.ReleaseAttestation, Interlocked.Read(ref _selfSeal64), 2L);   // 2 = 위임 결속
+        }
+
         // ── 읽기(δ=0·락프리·O(1)) ──
-        public bool   SealValid         => Interlocked.Read(ref _sealValid) == 1L;   // ★검증 성공(기대 봉인 일치)
-        public bool   Verified          => Interlocked.Read(ref _verified) == 1L;    // 대조 수행됨(기대 봉인 주입)
+        public bool   SealValid         => Volatile.Read(ref _manifestGate) is { } g ? !g.ArmingBlocked : Interlocked.Read(ref _sealValid) == 1L;   // ★검증 성공
+        public bool   Verified          => Volatile.Read(ref _manifestGate) is { } g ? g.Status != BootIntegrityStatus.Verifying : Interlocked.Read(ref _verified) == 1L;
         public long   SealHex64         => Interlocked.Read(ref _selfSeal64);        // 봉인 하위 64비트(UI 헥스)
         public string SealHex           => _selfSealHex;                             // 전체 봉인 hex(콜드 불변)
         public long   AttestedArtifacts => Interlocked.Read(ref _attestedArtifacts);
         /// <summary>★blockWhile 후보 — 유효 봉인(기대 매니페스트 일치) 없으면 릴리스 인증 차단(tighten-only·fail-closed).</summary>
-        public bool   AttestationBlocking => Interlocked.Read(ref _sealValid) == 0L;
+        public bool   AttestationBlocking => !SealValid;
 
         /// <summary>실행 바이너리 봉인을 기대 봉인(외부 신뢰 매니페스트)과 대조(콜드). 일치 시 SealValid=1. 감사 각인.</summary>
         public bool Attest(string expectedSealHex)

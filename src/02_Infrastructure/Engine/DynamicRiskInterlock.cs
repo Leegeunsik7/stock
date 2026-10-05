@@ -29,29 +29,45 @@ namespace MS2E.Infrastructure
     {
         private readonly long[] _pendingNotional;
         private long _captured;
+        private long _published;
         private long _seq;
         private RiskFlightSnapshot _frozen = new(false, RiskBreachSource.Drawdown, 0, 0);
 
         public RiskOrderPurgeRecorder(int pendingSlots = 64)
             => _pendingNotional = new long[pendingSlots > 0 ? pendingSlots : 64];
 
-        /// <summary>미체결 주문 명목가를 스테이징(무장 상태). Disarm 시 전량 소거된다.</summary>
-        public void StagePending(int slot, long notional)
+        /// <summary>미체결 주문 명목가를 스테이징(무장 상태). 반환 false = 이미 Disarm 되어 거부됨.
+        /// [Phase 1 감사 교정] AnomalyFlightRecorder 와 동일 — 소거 후 늦게 도착한 스테이징이 잔량을 되살리던 결함 차단.</summary>
+        [MS2E.Core.ZeroAllocHotPath]
+        public bool StagePending(int slot, long notional)
         {
-            if ((uint)slot < (uint)_pendingNotional.Length) Volatile.Write(ref _pendingNotional[slot], notional);
+            if ((uint)slot >= (uint)_pendingNotional.Length) return false;
+            if (Volatile.Read(ref _captured) != 0) return false;
+            Interlocked.Exchange(ref _pendingNotional[slot], notional);
+            if (Volatile.Read(ref _captured) != 0)
+            {
+                Interlocked.Exchange(ref _pendingNotional[slot], 0);
+                return false;
+            }
             Interlocked.Increment(ref _seq);
+            return true;
         }
 
-        /// <summary>★Disarm 동시 처리: 최초 1회 스냅샷 고정 + 미체결 잔량 버퍼 0x00 소거(일괄 취소 실증). 멱등.</summary>
+        /// <summary>★Disarm 동시 처리: 최초 1회 스냅샷 고정 + 미체결 잔량 버퍼 0x00 소거(일괄 취소 실증). 멱등.
+        /// 스냅샷은 기록 완료 후 발행(torn read 방지).</summary>
+        [MS2E.Core.ZeroAllocHotPath]
         public void CaptureAndPurge(RiskBreachSource source, long valueBps)
         {
             if (Interlocked.Exchange(ref _captured, 1) == 0)
+            {
                 _frozen = new RiskFlightSnapshot(true, source, valueBps, Volatile.Read(ref _seq));
+                Volatile.Write(ref _published, 1);
+            }
             CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(_pendingNotional.AsSpan()));
         }
 
-        public bool HasCaptured => Volatile.Read(ref _captured) == 1;
-        public RiskFlightSnapshot Frozen => _frozen;
+        public bool HasCaptured => Volatile.Read(ref _published) == 1;
+        public RiskFlightSnapshot Frozen => Volatile.Read(ref _published) == 1 ? _frozen : default;
 
         public bool PendingBufferIsZero
         {
@@ -60,9 +76,10 @@ namespace MS2E.Infrastructure
 
         public void Reset()
         {
-            Interlocked.Exchange(ref _captured, 0);
-            _frozen = new(false, RiskBreachSource.Drawdown, 0, 0);
             CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(_pendingNotional.AsSpan()));
+            Volatile.Write(ref _published, 0);
+            _frozen = new(false, RiskBreachSource.Drawdown, 0, 0);
+            Interlocked.Exchange(ref _captured, 0);
         }
     }
 
@@ -81,6 +98,7 @@ namespace MS2E.Infrastructure
         private long _peakEquity = long.MinValue; // 미초기화 센티널
         private long _dayStartEquity = long.MinValue;
         private long _lastDrawdownBps, _lastDailyLossBps;
+        private long _callbackFaults;
         private readonly RiskOrderPurgeRecorder _recorder;
         private readonly Action<RiskBreachSource, long>? _onBreach;
 
@@ -105,21 +123,31 @@ namespace MS2E.Infrastructure
         /// 포트폴리오 평가액 1건 반영(★O(1)·δ=0). 첫 호출은 Peak/DayStart 베이스라인을 확정만 하고 판정은 생략.
         /// 이후 호출마다 Peak 갱신 + 낙폭/일일손실 bps 산출 → 임계 초과 시 단일 Interlocked.Or 로 0ms 원자 Disarm.
         /// </summary>
+        [MS2E.Core.ZeroAllocHotPath]
         public bool Note(long currentEquity)
         {
-            if (Volatile.Read(ref _peakEquity) == long.MinValue)
+            // [Phase 1 감사 교정] 베이스라인 확정·고점 갱신을 CAS 로 — 이전 "읽고-비교-쓰기"는 동시 Note 사이에서 더 낮은 값이
+            // 더 높은 고점을 덮어써(lost update) 낙폭을 과소평가할 수 있었다.
+            if (Interlocked.CompareExchange(ref _peakEquity, currentEquity, long.MinValue) == long.MinValue)
             {
-                Volatile.Write(ref _peakEquity, currentEquity);
-                if (Volatile.Read(ref _dayStartEquity) == long.MinValue) Volatile.Write(ref _dayStartEquity, currentEquity);
+                Interlocked.CompareExchange(ref _dayStartEquity, currentEquity, long.MinValue);
                 return IsDisarmed;
             }
 
-            long peak = Volatile.Read(ref _peakEquity);
-            if (currentEquity > peak) { Volatile.Write(ref _peakEquity, currentEquity); peak = currentEquity; }
+            long peak;
+            while (true)
+            {
+                peak = Volatile.Read(ref _peakEquity);
+                if (currentEquity <= peak) break;
+                if (Interlocked.CompareExchange(ref _peakEquity, currentEquity, peak) == peak) { peak = currentEquity; break; }
+            }
             long dayStart = Volatile.Read(ref _dayStartEquity);
 
-            long drawdownBps = peak > 0 ? (peak - currentEquity) * 10_000 / peak : 0;
-            long dailyLossBps = dayStart > 0 ? (dayStart - currentEquity) * 10_000 / dayStart : 0;
+            // [Phase 1 감사 교정] (peak - current) × 10_000 을 long 으로 곱하면 평가액 스케일이 크면(하우스 QFixed 10^8 기준
+            // 약 922만원 하락부터) 오버플로 → 음수 낙폭 → 미격발(fail-open). 현 어댑터는 원(KRW) 단위라 도달 불가하지만, 단위
+            // 계약이 코드로 강제되지 않으므로 Int128 로 산출해 스케일과 무관하게 정확히 한다(결과는 bps 라 long 에 안전히 들어감).
+            long drawdownBps = peak > 0 ? SaturatingBps((Int128)peak - currentEquity, peak) : 0;
+            long dailyLossBps = dayStart > 0 ? SaturatingBps((Int128)dayStart - currentEquity, dayStart) : 0;
             Volatile.Write(ref _lastDrawdownBps, drawdownBps);
             Volatile.Write(ref _lastDailyLossBps, dailyLossBps);
 
@@ -134,6 +162,7 @@ namespace MS2E.Infrastructure
 
         /// <summary>VaR 스파이크 판정 반영(Idea B 결속 지점 — StreamingParametricVarCalculator.VarBps 를 주입). 저장된
         /// VaR 임계(Configure) 초과 시 동일 0ms 원자 Disarm. 임계 미설정(&lt;0) 이면 판정 생략(fail-closed).</summary>
+        [MS2E.Core.ZeroAllocHotPath]
         public bool NoteVarBreach(long varBps)
         {
             long thr = Volatile.Read(ref _varThresholdBps);
@@ -141,12 +170,25 @@ namespace MS2E.Infrastructure
             return IsDisarmed;
         }
 
+        private static long SaturatingBps(Int128 delta, long baseValue)
+        {
+            Int128 bps = delta * 10_000 / baseValue;
+            if (bps > long.MaxValue) return long.MaxValue;
+            if (bps < long.MinValue) return long.MinValue;
+            return (long)bps;
+        }
+
+        [MS2E.Core.ZeroAllocHotPath]
         private void Trip(RiskBreachSource source, long valueBps)
         {
             long bits = (1L << (int)source) | DisarmBit;
             Interlocked.Or(ref _state, bits);                 // ★0ms 원자 격발(경합 지연 불가)
             _recorder.CaptureAndPurge(source, valueBps);      // 미체결 잔량 일괄 취소 + 0x00 소거
-            _onBreach?.Invoke(source, valueBps);               // → 감사 체인(ZeroAllocForensicAuditStream) 팬인
+            // [Phase 1 감사 교정] 감사 팬인 콜백 예외가 Note 밖으로 새면 Disarm 은 이미 래치돼 안전하지만, 같은 Note 의 나머지 축
+            // (일일손실) 평가가 건너뛰어지고 호출측 평가 루프가 죽는다 — 격리하고 계수만 남긴다(인터록 판정은 감사보다 우선).
+            if (_onBreach is null) return;
+            try { _onBreach(source, valueBps); }
+            catch (Exception) { Interlocked.Increment(ref _callbackFaults); }
         }
 
         public bool IsDisarmed => (Volatile.Read(ref _state) & DisarmBit) != 0;
@@ -156,6 +198,7 @@ namespace MS2E.Infrastructure
         public long DrawdownBps => Volatile.Read(ref _lastDrawdownBps);
         public long DailyLossBps => Volatile.Read(ref _lastDailyLossBps);
         public long PeakEquity => Volatile.Read(ref _peakEquity);
+        public long CallbackFaults => Interlocked.Read(ref _callbackFaults);
 
         /// <summary>물리 수동 재무장 — 원인 규명 후에만. 상태·Recorder 초기화(Peak/DayStart 베이스라인은 보존).</summary>
         public void ReArm()

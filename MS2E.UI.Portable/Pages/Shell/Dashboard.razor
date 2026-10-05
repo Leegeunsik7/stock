@@ -262,6 +262,8 @@
     {
         _theme = Widget.Theme;
         _layout = Layout.Load().ToList();
+        // [시세 하드닝 §2] 선행+후행 스냅샷 거버너 — 창 안 마지막 갱신도 반드시 렌더(이전 ShouldRender 는 거부된 최종 상태를 유실).
+        _idxGov = new SnapshotRenderGovernor(() => _ = InvokeAsync(StateHasChanged), loadGovernor: RenderGov);
         Widget.IndicesRefreshed += OnIdxRefreshed;
         await Widget.LoadAsync();
     }
@@ -269,13 +271,10 @@
     // v12.8.0 감사 — StateAwareRenderGovernor(v10.1.0, 등록·ForceFreeze 결속까지는 돼있었으나 어떤 컴포넌트도
     //   ShouldRender 를 호출하지 않아 실질적으로 미가동 상태였음(실측 확인)). 지수 60초 자동 갱신 이벤트를 이 게이트로
     //   통과시켜 — 동결/고부하 시 렌더 코얼레싱이 실제로 작동하도록 결속한다(정상 상태는 무제한 그대로 통과).
-    private long _lastRenderMicros;
-    private void OnIdxRefreshed()
-    {
-        // ★Int128 경유 — 장시간 구동 시 raw ticks×1e6 오버플로 안전(다른 tick→µs 변환부와 동일 관례).
-        long nowMicros = (long)((System.Int128)System.Diagnostics.Stopwatch.GetTimestamp() * 1_000_000 / System.Diagnostics.Stopwatch.Frequency);
-        if (RenderGov.ShouldRender(ref _lastRenderMicros, nowMicros)) InvokeAsync(StateHasChanged);
-    }
+    //   [시세 하드닝 §2] ShouldRender(선행 에지 전용) → SnapshotRenderGovernor(선행+후행 · 버전 변경 감지 · 부하/동결 적응 창)로 교체.
+    private SnapshotRenderGovernor? _idxGov;
+    private long _idxVersion;
+    private void OnIdxRefreshed() => _idxGov?.Signal(System.Threading.Interlocked.Increment(ref _idxVersion));
 
     protected override async Task OnAfterRenderAsync(bool first)
     {
@@ -379,5 +378,5 @@
         return $"conic-gradient(var(--accent) 0 {a:F1}%, var(--accent-2) {a:F1}% {b:F1}%, var(--warn) {b:F1}% 100%)";
     }
 
-    public void Dispose() { Widget.IndicesRefreshed -= OnIdxRefreshed; }
+    public void Dispose() { Widget.IndicesRefreshed -= OnIdxRefreshed; _idxGov?.Dispose(); }
 }

@@ -7,6 +7,7 @@
 //   🔒 liveArmed:false: 극단 결함 주입/파멸 동결 하에서도 이중키 전 발주 0
 // ============================================================================
 using System;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -263,24 +264,216 @@ namespace StockManager.Tests
             Assert.Equal(0L, g.TornStateBlocks);
         }
 
-        [Fact]
-        public async Task Guard_TornState_Never_Observed_Under_Concurrent_Commit()
+        // ── [동시성 Triage] 결정론 하네스 ─────────────────────────────────────────
+        //  원 테스트(Task.Run 라이터 + 고정 30만 회 독자 예산 + 시작 핸드셰이크 부재)의 실패 원인(전체 스위트 1회 관측,
+        //  ChaosSandboxTests.cs:283 `Assert.True(g.Commits > 0L)`): 스레드풀 포화로 라이터 태스크가 독자 예산 소진 전에
+        //  스케줄되지 못해 커밋 0 — torn 이 아니라 **하네스의 스케줄링 의존**. 같은 원인으로 torn 단언도 동시 실행이
+        //  보장되지 않아 공허(vacuous)했다. 교정: 전용 스레드 + Barrier 동시 출발 + '예산'이 아닌 '진행' 종료 조건
+        //  (라이터 정확히 K 커밋 → 독자는 라이터 완료까지 판독 → 완료 후 최종 판독이 에폭 K 를 반드시 관측).
+        //  판정 불변식: A+B=0 · Epoch=PayloadA(3필드 전부 교차 검증) · 독자별 에폭 단조 · 최종 가시성.
+
+        private sealed class ChaosRoundStats
         {
-            // ★단일 라이터 커밋(SPSC) + 다중 독자: 독자는 절대 부분/찢어진 상태를 보지 않는다(원자 이중버퍼 발행).
-            var g = new ChaosResilientProgressGuard(spinCeiling: 4096);
-            using var cts = new CancellationTokenSource();
-            var writer = Task.Run(() =>
+            public long Torn, NonMonotonic, Reads, FinalMismatch, Rounds, OverlapRounds;
+        }
+
+        /// <summary>독자 1회 판독 검증(δ=0). 반환 = 관측 에폭(판독 실패 시 last 유지).</summary>
+        private static long CheckRead(ChaosResilientProgressGuard g, long last, ChaosRoundStats st, ref long reads)
+        {
+            if (!g.TryRead(out var s)) return last;
+            reads++;
+            if (s.PayloadA + s.PayloadB != 0L || s.Epoch != s.PayloadA) Interlocked.Increment(ref st.Torn);
+            if (s.Epoch < last) Interlocked.Increment(ref st.NonMonotonic);
+            return s.Epoch > last ? s.Epoch : last;
+        }
+
+        /// <summary>
+        /// 영속 스레드 결정론 라운드 러너 — 1 라이터 + readers 독자를 한 번만 만들고 Barrier 로 라운드마다 동시 출발/합류.
+        /// 라운드 = 새 가드 · 라이터 commitsPerRound 커밋 · 독자는 라이터 완료까지 판독 + 완료 후 최종 판독(에폭 == commitsPerRound).
+        /// 종료 조건이 '진행'이라 스케줄링/부하와 무관하게 결정론(라운드 타임아웃만 상한).
+        /// </summary>
+        private static ChaosRoundStats RunChaosRounds(int rounds, int readers, long commitsPerRound, Action? writerPreStart = null)
+        {
+            var st = new ChaosRoundStats();
+            ChaosResilientProgressGuard? cur = null;
+            int writerDone = 0;
+            long overlapThisRound = 0;
+            using var start = new Barrier(readers + 2);
+            using var end = new Barrier(readers + 2);
+            var threads = new Thread[readers + 1];
+            threads[0] = new Thread(() =>
             {
-                long e = 0;
-                while (!cts.IsCancellationRequested) { e++; g.TryCommit(1, e, -e); }   // 불변식 A+B=0
-            });
-            bool torn = false;
-            for (int i = 0; i < 300_000 && !torn; i++)
-                if (g.TryRead(out var s) && (s.PayloadA + s.PayloadB) != 0L) torn = true;   // torn 이면 A+B≠0
-            cts.Cancel();
-            await writer;
-            Assert.False(torn);                                  // ★torn 상태 0회 관측
-            Assert.True(g.Commits > 0L);
+                for (int r = 0; r < rounds; r++)
+                {
+                    if (!start.SignalAndWait(30_000)) return;
+                    writerPreStart?.Invoke();
+                    var g = Volatile.Read(ref cur)!;
+                    for (long e = 1; e <= commitsPerRound; e++) g.TryCommit(1, e, -e);   // 불변식 A+B=0 · Epoch=A
+                    Volatile.Write(ref writerDone, 1);
+                    if (!end.SignalAndWait(30_000)) return;
+                }
+            }) { IsBackground = true, Name = "chaos-writer" };
+            for (int k = 1; k <= readers; k++)
+            {
+                threads[k] = new Thread(() =>
+                {
+                    for (int r = 0; r < rounds; r++)
+                    {
+                        if (!start.SignalAndWait(30_000)) return;
+                        var g = Volatile.Read(ref cur)!;
+                        long last = 0, reads = 0;
+                        while (Volatile.Read(ref writerDone) == 0)
+                            last = CheckRead(g, last, st, ref reads);
+                        if (last > 0 && last < commitsPerRound) Interlocked.Exchange(ref overlapThisRound, 1);   // 라이터 진행 중 관측 = 실제 동시 실행
+                        // 라이터 완료 이후 판독은 반드시 최종 에폭을 관측(발행 가시성 · 스테일 고착 0).
+                        if (!g.TryRead(out var fin) || fin.Epoch != commitsPerRound) Interlocked.Increment(ref st.FinalMismatch);
+                        Interlocked.Add(ref st.Reads, reads);
+                        if (!end.SignalAndWait(30_000)) return;
+                    }
+                }) { IsBackground = true, Name = "chaos-reader" };
+            }
+            foreach (var t in threads) t.Start();
+            for (int r = 0; r < rounds; r++)
+            {
+                Volatile.Write(ref cur, new ChaosResilientProgressGuard(spinCeiling: 4096));
+                Volatile.Write(ref writerDone, 0);
+                Interlocked.Exchange(ref overlapThisRound, 0);
+                Assert.True(start.SignalAndWait(30_000), $"라운드 {r} 출발 합류 타임아웃");
+                Assert.True(end.SignalAndWait(30_000), $"라운드 {r} 종료 합류 타임아웃");
+                Assert.Equal(commitsPerRound, cur!.Commits);                   // 라이터 커밋 결정론(스케줄링 무관)
+                st.Rounds++;
+                st.OverlapRounds += Interlocked.Read(ref overlapThisRound);
+            }
+            foreach (var t in threads) Assert.True(t.Join(30_000));
+            return st;
+        }
+
+        [Fact]
+        public void Guard_TornState_Never_Observed_Under_Concurrent_Commit()
+        {
+            // ★단일 라이터 커밋(SPSC) + 다중 독자: 독자는 절대 부분/찢어진/미발행/역행 상태를 보지 않는다.
+            //   (원 테스트의 스케줄링 의존 결함 교정판 — 위 하네스 주석 참조.)
+            var st = RunChaosRounds(rounds: 1, readers: 3, commitsPerRound: 200_000);
+            Assert.Equal(0L, st.Torn);
+            Assert.Equal(0L, st.NonMonotonic);
+            Assert.Equal(0L, st.FinalMismatch);
+        }
+
+        [Fact]
+        public void Guard_LegacyHarness_WriterStarvation_ReproducedDeterministically()
+        {
+            // [Red 재현 · 결정론] 원 하네스 패턴에서 라이터 시작이 독자 예산 소진 뒤로 밀리면(스레드풀 포화 모사) 커밋 = 0
+            //   → 원 `Assert.True(g.Commits > 0L)` 은 스케줄링만으로 실패한다(코드 결함 아님). 동시에 torn 판정도 공허.
+            var g = new ChaosResilientProgressGuard(spinCeiling: 4096);
+            using var release = new ManualResetEventSlim(false);
+            long e = 0;
+            var writer = new Thread(() => { release.Wait(); for (int i = 0; i < 1_000; i++) { e++; g.TryCommit(1, e, -e); } }) { IsBackground = true };
+            writer.Start();
+            long distinctEpochs = 0, lastEpoch = -1;
+            for (int i = 0; i < 300_000; i++)
+                if (g.TryRead(out var s) && s.Epoch != lastEpoch) { distinctEpochs++; lastEpoch = s.Epoch; }
+            long commitsAtBudgetEnd = g.Commits;
+            release.Set();
+            Assert.True(writer.Join(30_000));
+            Assert.Equal(0L, commitsAtBudgetEnd);   // ★원 단언이 실패하는 정확한 상태
+            Assert.Equal(1L, distinctEpochs);       // ★독자는 에폭 0 만 봤다 — torn '0회' 가 아무것도 증명하지 못함
+
+            // 교정 하네스는 같은 기아(라이터 지연 출발)에서도 결정론 — 진행 종료 조건이라 커밋 K·최종 가시성 보장.
+            var st = RunChaosRounds(rounds: 3, readers: 2, commitsPerRound: 1_000, writerPreStart: () => Thread.Sleep(20));
+            Assert.Equal(0L, st.Torn);
+            Assert.Equal(0L, st.NonMonotonic);
+            Assert.Equal(0L, st.FinalMismatch);
+            Assert.Equal(3L, st.Rounds);
+        }
+
+        [Fact]
+        public void Guard_1000Rounds_Stress_ZeroTorn_ZeroRegression_FinalVisible()
+        {
+            // ★지시 불변식: 동시성 카오스 1,000 회 연속 — flaky 0 · torn 0 · 에폭 역행 0 · 최종 가시성 1,000/1,000.
+            var st = RunChaosRounds(rounds: 1_000, readers: 2, commitsPerRound: 2_000);
+            Assert.Equal(1_000L, st.Rounds);
+            Assert.Equal(0L, st.Torn);
+            Assert.Equal(0L, st.NonMonotonic);
+            Assert.Equal(0L, st.FinalMismatch);
+            Assert.True(st.Reads > 0);
+        }
+
+        // ── [방향 B] 발행 인덱스 검증형 seqlock — stale 인덱스 결정론 재현(선점 모사 seam) ──────────
+
+        private static (ChaosCheckpoint[] Slots, long[] Vers) Internals(ChaosResilientProgressGuard g)
+        {
+            const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance;
+            var t = typeof(ChaosResilientProgressGuard);
+            return ((ChaosCheckpoint[])t.GetField("_slots", F)!.GetValue(g)!, (long[])t.GetField("_vers", F)!.GetValue(g)!);
+        }
+
+        [Fact]
+        public void Guard_StaleIndex_UnpublishedShadow_NeverReturned_EpochNeverRegresses()
+        {
+            // [실결함 · 수정 전 Red] 독자가 _active(=a) 를 읽고 선점 → 라이터가 두 번 커밋해 a 가 다음 그림자가 되고
+            //   그림자 기록을 끝냈지만 CAS 발행 직전. 수정 전 독출은 a 슬롯만 고집해 **미발행 에폭 E+1** 을 반환,
+            //   다음 TryRead 는 실제 활성(E)을 반환 → 에폭 역행.
+            var g = new ChaosResilientProgressGuard(spinCeiling: 64);
+            Assert.True(g.TryCommit(1, 1, -1));     // active = 1 (에폭 1)
+            Assert.True(g.TryCommit(1, 2, -2));     // active = 0 (에폭 2)
+            Assert.True(g.TryRead(out var pub));
+            Assert.Equal(2L, pub.Epoch);
+            int shadow = 1;                         // 현재 그림자 = 1 (독자의 stale 인덱스)
+            var (slots, vers) = Internals(g);
+            vers[shadow]++;                                                          // 라이터: 홀(쓰는 중)
+            slots[shadow] = new ChaosCheckpoint { Epoch = 3, PayloadA = 3, PayloadB = -3 };
+            vers[shadow]++;                                                          // 라이터: 짝(기록 완료) — 아직 CAS 발행 전
+
+            Assert.True(g.TryReadFromStaleHint(shadow, out var s));
+            Assert.Equal(2L, s.Epoch);              // ★발행된 상태만 — 미발행 3 반환 금지
+            Assert.True(g.TryRead(out var s2));
+            Assert.True(s2.Epoch >= s.Epoch);       // ★역행 0
+            Assert.True(g.StaleIndexRedirects >= 1);
+            Assert.False(g.SafeHoldActive);
+        }
+
+        [Fact]
+        public void Guard_StaleIndex_WriterPausedMidWrite_NoFalsePositiveHold()
+        {
+            // [실결함 · 수정 전 Red] 라이터가 그림자 기록 도중 선점(버전 홀수 고착) — 발행된 안정 슬롯이 옆에 있는데
+            //   수정 전 독출은 그 그림자에서 스핀 상한을 소진 → TornStateBlocks++ · SafeHoldActive 오발(무장 하향 false-positive).
+            var g = new ChaosResilientProgressGuard(spinCeiling: 64);
+            Assert.True(g.TryCommit(1, 1, -1));
+            Assert.True(g.TryCommit(1, 2, -2));     // active = 0
+            var (_, vers) = Internals(g);
+            vers[1]++;                              // 슬롯 1(그림자) 기록 중 선점 — 홀수 고착
+
+            Assert.True(g.TryReadFromStaleHint(1, out var s));
+            Assert.Equal(2L, s.Epoch);
+            Assert.Equal(0L, g.TornStateBlocks);
+            Assert.False(g.SafeHoldActive);          // ★정상 경합으로 무장 하향 금지
+            Assert.True(g.ReadRetries >= 1);
+
+            // 진짜 경합(두 슬롯 모두 쓰는 중으로 고착)은 여전히 스핀 상한 → fail-closed 홀드.
+            vers[0]++;
+            Assert.False(g.TryRead(out _));
+            Assert.Equal(1L, g.TornStateBlocks);
+            Assert.True(g.SafeHoldActive);
+        }
+
+        [Fact]
+        public void Guard_StaleRedirectPath_ZeroAllocation()
+        {
+            var g = new ChaosResilientProgressGuard(spinCeiling: 64);
+            g.TryCommit(1, 1, -1); g.TryCommit(1, 2, -2);
+            var (_, vers) = Internals(g);
+            vers[1]++;                              // 그림자 홀수 고착 → 매 판독이 재시도 + 재추적 경로
+            _ = g.TryReadFromStaleHint(1, out _);
+            long min = long.MaxValue;
+            for (int w = 0; w < 3 && min != 0; w++)
+            {
+                long b = GC.GetAllocatedBytesForCurrentThread();
+                long sink = 0;
+                for (int i = 0; i < 100_000; i++) { if (g.TryReadFromStaleHint(1, out var s)) sink += s.Epoch; }
+                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
+                Assert.Equal(200_000L, sink);
+            }
+            Assert.Equal(0L, min);                  // ★재시도·재추적 핫패스 힙 0
         }
 
         [Fact]

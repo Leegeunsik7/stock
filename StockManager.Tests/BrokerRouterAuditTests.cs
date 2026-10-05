@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // BrokerRouterAuditTests — v12.10.0 [Step 4/7] 트레이딩 샌드박스 & 브로커 라우터 전수 오디팅 적대검증
 //   Section 2: ShadowBroker.Place 노이즈 활성 경로(기본값)의 가격 검증 누락 결함 수정 실증(Fail-Closed 초크포인트).
 //   Think Beyond A: OrderParameterValidator(δ=0 호가단위/발주금액 검증, Int128 오버플로 안전).
@@ -150,9 +150,9 @@ namespace StockManager.Tests
         public void CascadeCanceller_CancelAllForBroker_CancelsOnlyThatBroker()
         {
             var c = new PendingOrderCascadeCanceller(16);
-            int s0 = c.Register(brokerId: 0);
-            int s1 = c.Register(brokerId: 0);
-            int s2 = c.Register(brokerId: 1);
+            long s0 = c.Register(brokerId: 0);
+            long s1 = c.Register(brokerId: 0);
+            long s2 = c.Register(brokerId: 1);
 
             int cancelled = c.CancelAllForBroker(0);
 
@@ -166,7 +166,7 @@ namespace StockManager.Tests
         public void CascadeCanceller_MarkFilled_ExcludesFromCascade()
         {
             var c = new PendingOrderCascadeCanceller(16);
-            int s0 = c.Register(0);
+            long s0 = c.Register(0);
             c.MarkFilled(s0);   // 체결 완료 — 추적 해제
 
             int cancelled = c.CancelAllForBroker(0);
@@ -190,7 +190,7 @@ namespace StockManager.Tests
         {
             var c = new PendingOrderCascadeCanceller(16);
             c.Register(0); c.Register(0);
-            int s2 = c.Register(0);
+            long s2 = c.Register(0);
             c.MarkFilled(s2);
             Assert.Equal(2, c.PendingCount(0));
             c.CancelAllForBroker(0);
@@ -233,8 +233,9 @@ namespace StockManager.Tests
         private static void RegisterCancelHot()
         {
             long b = Interlocked.Increment(ref _hotBroker) % 4;
-            int slot = _hotCanceller.Register((int)b);
-            if (slot % 2 == 0) _hotCanceller.MarkFilled(slot);
+            long handle = _hotCanceller.Register((int)b);
+            // [Phase 1] 등록은 이제 빈 슬롯이 없으면 -1(fail-closed — 미체결을 밀어내지 않음). 할당 측정 목적상 매번 해제해 포화 방지.
+            if (handle >= 0) _hotCanceller.MarkFilled(handle);
         }
 
         [Fact]

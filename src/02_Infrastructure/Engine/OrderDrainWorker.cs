@@ -33,6 +33,13 @@ namespace MS2E.Infrastructure
         private readonly LatencySlaGatekeeper? _slaGate;           // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(옵션·δ=0 Record)
         private readonly SlaJitterRegressionGuard? _jitterGuard;   // v10.1.0 Final — ★Think-Beyond 측정-무결성(디스케줄 배제·옵션)
         private readonly MicroCapitalCanaryGovernor? _canaryGov;   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%·LiveBroker 경로 전용·옵션)
+        private readonly MS2E.Core.ArmingInterlockBitmask? _interlocks;   // [실배선 · 방향 B] 송출 직전 원자 인터락 최종 veto(옵션·O(1) δ=0)
+        private long _interlockVetoes;
+        private readonly IOrderRouteGate? _routeGate;   // [피드 연동] 참조가·추적 슬롯 라우터 게이트(옵션 · 실전 경로 전용)
+        private long _routeVetoes;
+        // [실배선 δ=0 교정] Drain(Dispatch) 메서드 그룹 변환이 드레인 사이클마다 Func 델리게이트(64B)를 새로 할당했다
+        //   (50ms 주기 = 초당 20회 상시 GC 압력 · ProductionPipelineWiringTests 실측). ctor 에서 1회 캐시.
+        private readonly Func<OrderProposal, bool> _dispatchFn;
         private static readonly long SlaTickFreq = System.Diagnostics.Stopwatch.Frequency;   // 틱→ns 변환(호스트 QPC 주파수·1회 캐시)
         private readonly System.Threading.Timer?     _timer;
         private volatile bool                        _disposed;
@@ -43,6 +50,10 @@ namespace MS2E.Infrastructure
         private int                                   _disposedLatch;
 
         public bool IsWired { get; }
+        /// <summary>[실배선] 디스패처 무장 판정 이후 ~ 실 송출 직전 사이에 인터락이 Trip 해 거부된 누계(판정↔송출 TOCTOU 봉합 실측).</summary>
+        public long InterlockVetoes => System.Threading.Interlocked.Read(ref _interlockVetoes);
+        /// <summary>[피드 연동] 라우터 게이트(참조가 만료·피드 단절·슬리피지·추적 불가) 거부 누계.</summary>
+        public long RouteVetoes => System.Threading.Interlocked.Read(ref _routeVetoes);
 
         /// <param name="attestation">v4.87.0 — 드레인 루프 예외·이중키 무결성 붕괴 시 ForceFreeze 격발(옵션·null 시 무동작).</param>
         /// <param name="dualKeyIntact">v4.87.0 — 매 드레인 전 이중키(ValveWired ∧ LiveArmingWired) 무결성 검문(옵션).
@@ -59,7 +70,9 @@ namespace MS2E.Infrastructure
                                 ScopeSealedTransitionBarrier? scopeBarrier = null,
                                 LatencySlaGatekeeper? slaGate = null,
                                 SlaJitterRegressionGuard? jitterGuard = null,
-                                MicroCapitalCanaryGovernor? canaryGov = null)
+                                MicroCapitalCanaryGovernor? canaryGov = null,
+                                MS2E.Core.ArmingInterlockBitmask? interlocks = null,
+                                IOrderRouteGate? routeGate = null)
         {
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
@@ -72,6 +85,9 @@ namespace MS2E.Infrastructure
             _slaGate       = slaGate;       // v10.1.0 Final — 드레인 사이클 지연 SLA 계측(주입 시)
             _jitterGuard   = jitterGuard;   // v10.1.0 Final — ★디스케줄 아티팩트 배제(퓨즈 오트립 방지)
             _canaryGov     = canaryGov;     // v10.1.0 Ops — 실전 사출 직전 카나리 캡 검문(LiveBroker/직접 실전 경로 전용)
+            _dispatchFn    = Dispatch;      // ★δ=0: 드레인 콜백 델리게이트 1회 생성(타이머/핀 스레드 가동 전)
+            _routeGate     = routeGate;     // [피드 연동] 송출 직전 라우터 판정 + 송출 결과 슬롯 결속/롤백
+            _interlocks    = interlocks;    // [실배선] 부팅 무결성·자격증명 유출·포렌식 체인·이상 시세·카오스 가드 집계 비트
             _pinGrid       = pinGrid;
             _periodMs      = periodMs < 1 ? 1 : periodMs;
             IsWired        = wired;
@@ -126,13 +142,13 @@ namespace MS2E.Infrastructure
                     // ★나노 SLA 계측: 드레인 사이클 지연(δ=0). per-op QPC 계측은 sub-100ns op 을 왜곡(관측자 효과)하므로 사이클
                     //   경계에서 측정. 지터 가드 admit(디스케줄/역행시계 아티팩트 배제) 표본만 히스토그램 계상 → SLA 퓨즈 오트립 방지.
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                    _dispatcher.Drain(Dispatch);
+                    _dispatcher.Drain(_dispatchFn);
                     long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
                     long nanos = SlaTickFreq > 0L ? (long)((System.Int128)dt * 1_000_000_000L / SlaTickFreq) : 0L;
                     if (_jitterGuard is { } jg) { if (jg.Admit(nanos)) sla.Record(nanos); }
                     else sla.Record(nanos);
                 }
-                else _dispatcher.Drain(Dispatch);
+                else _dispatcher.Drain(_dispatchFn);
             }
             catch (Exception ex) { Freeze("드레인 루프 예외 — 영구 락업: " + ex.Message); }
         }
@@ -159,6 +175,15 @@ namespace MS2E.Infrastructure
                 // route == LiveBroker → 아래 실전 경로(게이트웨이·물리 키)
             }
 
+            // ★[실배선 · 방향 B] 원자 인터락 최종 veto — 디스패처가 무장을 판정한 '뒤' 실 송출 '직전'에 인터락 집계어를 1회 재판독.
+            //   판정과 송출 사이에 부팅 무결성 변조·자격증명 유출·포렌식 체인 붕괴·이상 시세·카오스 홀드가 Trip 했거나, 필수 소스
+            //   미결속/기동 샌니티 미봉인이면 미사출(GatedOut). 드라이런 미러 경로(위)는 브로커 참조 0 이라 적용 대상 아님.
+            if (_interlocks is { } il && il.Blocked)
+            {
+                System.Threading.Interlocked.Increment(ref _interlockVetoes);
+                return false;
+            }
+
             // ★v10.1.0 Ops 카나리 캡: 실전 사출 직전, 최초 실 노출을 자본 ≤0.1% 로 물리 제한. 캡 초과 or 슬리피지 강등 → 미사출(GatedOut).
             //   드라이런 경로는 위에서 이미 미러로 반환 — 카나리는 LiveBroker/직접 실전 경로에만 적용(liveArmed:false 정합).
             if (_canaryGov is { } canary)
@@ -172,23 +197,44 @@ namespace MS2E.Infrastructure
                 if (!canary.TryAdmitOrder(notionalRaw)) return false;   // 캡 초과/강등/미상 명목 → veto(GatedOut·fail-closed)
             }
 
+            // ★[피드 연동] 라우터 게이트 — 카나리까지 통과한 실전 주문만 참조가·라우터 판정 + 추적 슬롯 확보. 실패 = 미송출.
+            // [보호 지정가] 송출 형태 = 게이트 승인값(시장가 → 보호 지정가 · 잔량 부족 시 수량 축소). 게이트 미주입이면 원 제안 그대로.
+            byte sendKind = p.KindByte; long sendPrice = p.PriceRaw, sendQty = p.QtyRaw;
+            if (_routeGate is { } rg)
+            {
+                if (!rg.TryAdmit(in p, out var adm))
+                {
+                    System.Threading.Interlocked.Increment(ref _routeVetoes);
+                    return false;
+                }
+                sendKind = adm.KindByte; sendPrice = adm.PriceRaw; sendQty = adm.QtyRaw;
+            }
+
             // ★v10.0.0 최종 빗장: 게이트웨이 주입 시 실물 사출을 이중키∧방어선∧펄스 재검 + 단발 개통 + 봉인 사출
             //   (exactly-once·torn 방어) 경유. veto 시 false(미사출·fail-safe·Dispatcher 는 GatedOut). 미주입(기본)이면 직접 경로(동작 불변·true).
             if (_gateway is { } gw)
-                return gw.Emit(p.OrderId, p.SymbolCode, p.SideByte, p.KindByte, p.PriceRaw, p.QtyRaw, _placeSealed!);
+            {
+                bool emitted = gw.Emit(p.OrderId, p.SymbolCode, p.SideByte, sendKind, sendPrice, sendQty, _placeSealed!);
+                if (!emitted) _routeGate?.OnNotSent(p.OrderId);   // 게이트웨이 veto = 브로커 미도달 → 슬롯 롤백(접수된 주문은 게이트가 무시)
+                return emitted;
+            }
 
             var symbol     = p.SymbolCode.ToString("D6");
             var side       = p.Side == OrderSide.Buy ? PaperSide.Buy : PaperSide.Sell;
-            var kind       = p.KindByte == 0 ? PaperKind.Market : PaperKind.Limit;
-            var qty        = p.Qty.ToDecimal();
-            var limitPrice = p.Price.ToDecimal();
+            var kind       = sendKind == 0 ? PaperKind.Market : PaperKind.Limit;
+            var qty        = new QQty(sendQty).ToDecimal();
+            var limitPrice = new QPrice(sendPrice).ToDecimal();
 
             var (ok, msg) = _broker.Place(
                 PaperAsset.Stock, symbol, symbol,
                 side, kind, qty, limitPrice, limitPrice);
 
             if (!ok)
+            {
+                _routeGate?.OnNotSent(p.OrderId);
                 throw new InvalidOperationException($"Broker.Place 거부: {msg}");
+            }
+            _routeGate?.OnBrokerAccepted(p.OrderId, msg);
             return true;
         }
 
@@ -206,7 +252,11 @@ namespace MS2E.Infrastructure
                 side, kind, qty, limitPrice, limitPrice);
 
             if (!ok)
+            {
+                _routeGate?.OnNotSent(t.OrderId);
                 throw new InvalidOperationException($"Broker.Place 거부: {msg}");
+            }
+            _routeGate?.OnBrokerAccepted(t.OrderId, msg);
         }
 
         public void Dispose()

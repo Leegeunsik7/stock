@@ -43,14 +43,18 @@ namespace MS2E.Infrastructure
         private readonly AdaptiveOrderThrottle? _throttle;
         private readonly MmfFlightRecorder? _blackbox;
         private readonly int _maxSlices;
+        private readonly long _maxSliceSlippageBps;   // [알고 집행 하드닝] 0 = 비활성 · >0 = 최우선호가 대비 이 bps 밖 호가는 즉시체결 잔량에서 제외
+        private long _residualDropped;
 
         private long _slicesEmitted, _ordersSliced, _lastImbalanceRaw, _heldByToxic, _heldByThrottle;
         private long _cumSavedBps;   // 누적 슬리피지 절감 추정(bps) — '전량 덤프 시 북워크 슬리피지'를 슬라이싱으로 회피한 반사실 비용
 
         public MicroLiquiditySlicer(OrderDispatchRing? ring = null, ToxicFlowSentinel? toxic = null,
-                                    AdaptiveOrderThrottle? throttle = null, int maxSlices = 16, MmfFlightRecorder? blackbox = null)
+                                    AdaptiveOrderThrottle? throttle = null, int maxSlices = 16, MmfFlightRecorder? blackbox = null,
+                                    long maxSliceSlippageBps = 0)
         {
             _ring = ring; _toxic = toxic; _throttle = throttle; _blackbox = blackbox;
+            _maxSliceSlippageBps = maxSliceSlippageBps > 0 ? maxSliceSlippageBps : 0;
             _maxSlices = maxSlices < 1 ? 1 : (maxSlices > 64 ? 64 : maxSlices);
         }
 
@@ -60,6 +64,9 @@ namespace MS2E.Infrastructure
         public long HeldByToxic     => Interlocked.Read(ref _heldByToxic);
         public long HeldByThrottle  => Interlocked.Read(ref _heldByThrottle);
         public long CumSavedBps     => Interlocked.Read(ref _cumSavedBps);   // 누적 슬리피지 절감 추정(bps)
+        /// <summary>스로틀/링 중단으로 사출되지 못하고 호출측에 잔량으로 반환된 누계(raw) — 조용한 유실이 아니라 보고된 잔량.</summary>
+        public long ResidualReturnedRaw => Interlocked.Read(ref _residualDropped);
+        public long MaxSliceSlippageBps => _maxSliceSlippageBps;
 
         /// <summary>
         /// ★전량 즉시 덤프 시 예상 북워크 슬리피지(bps) — 반대편 사다리를 totalQty 만큼 걸어 VWAP 체결가를 구해 best 대비 이탈 bps.
@@ -109,7 +116,7 @@ namespace MS2E.Infrastructure
         /// <summary>지정가 한도 내 즉시체결 가능 반대편 잔량 합(raw). 매수=ask 사다리에서 price&lt;=limit, 매도=bid 사다리에서 price&gt;=limit. δ=0.</summary>
         public static long ComputeFillableQty(in L2Depth d, OrderSide side, long limitPriceRaw)
         {
-            long fill = 0;
+            Int128 fill = 0;   // [알고 집행 하드닝] 5호가 잔량 합 오버플로(음수 전환 → 슬라이스 0 또는 오판) 차단 — 포화 후 반환
             for (int i = 0; i < 5; i++)
             {
                 if (side == OrderSide.Buy)
@@ -123,7 +130,27 @@ namespace MS2E.Infrastructure
                     if (q > 0 && p > 0 && (limitPriceRaw <= 0 || p >= limitPriceRaw)) fill += q;
                 }
             }
-            return fill;
+            return fill > long.MaxValue ? long.MaxValue : (long)fill;
+        }
+
+        /// <summary>
+        /// [알고 집행 하드닝] Orderbook Depth 기반 동적 슬리피지 한도 — 최우선호가 대비 maxSlippageBps 밖의 호가는 즉시체결 잔량에서 제외.
+        /// 시장가(limit≤0)가 5호가 전부를 걷어 가는 경로(수정 전)를 호가 깊이 기준 상한으로 묶는다. 지정가가 더 보수적이면 지정가 우선.
+        /// 최우선호가 결측(≤0)은 판정 불가 → 0(fail-closed · 조각 발주 0). δ=0.
+        /// </summary>
+        public static long ComputeFillableWithinSlippage(in L2Depth d, OrderSide side, long limitPriceRaw, long maxSlippageBps)
+        {
+            if (maxSlippageBps <= 0) return ComputeFillableQty(in d, side, limitPriceRaw);
+            long best = side == OrderSide.Buy ? d.AskPriceRaw[0] : d.BidPriceRaw[0];
+            if (best <= 0) return 0;
+            Int128 band = (Int128)best * maxSlippageBps / 10_000;
+            long bound = side == OrderSide.Buy
+                ? (long)Int128.Min((Int128)best + band, long.MaxValue)
+                : (long)Int128.Max((Int128)best - band, 1);
+            long effective = side == OrderSide.Buy
+                ? (limitPriceRaw > 0 && limitPriceRaw < bound ? limitPriceRaw : bound)
+                : (limitPriceRaw > 0 && limitPriceRaw > bound ? limitPriceRaw : bound);
+            return ComputeFillableQty(in d, side, effective);
         }
 
         /// <summary>
@@ -163,9 +190,16 @@ namespace MS2E.Infrastructure
         /// 스로틀 90% 도달→해당 슬라이스 홀드. 반환=사출된 슬라이스 수. ★실 송출은 하류 무장 게이트 지배(liveArmed:false).
         /// </summary>
         public int SliceAndDispatch(in L2Depth d, long symbolCode, long genomeId, OrderSide side, long totalQtyRaw, long limitPriceRaw, long nowTicks)
+            => SliceAndDispatch(in d, symbolCode, genomeId, side, totalQtyRaw, limitPriceRaw, nowTicks, out _);
+
+        /// <summary>[알고 집행 하드닝] 잔량 보고 오버로드 — residualQtyRaw = 총량 − 실제 사출 합(독성 홀드·슬리피지 상한·스로틀·링 중단분 전부 포함).
+        /// 수정 전에는 스로틀/링 중단 시 남은 슬라이스가 반환값(사출 수)에만 암묵 반영돼 호출측이 잔량을 재계산할 수단이 없었다.</summary>
+        public int SliceAndDispatch(in L2Depth d, long symbolCode, long genomeId, OrderSide side, long totalQtyRaw, long limitPriceRaw, long nowTicks,
+                                    out long residualQtyRaw)
         {
+            residualQtyRaw = totalQtyRaw > 0 ? totalQtyRaw : 0;
             // 독성 베토 — Toxic 이면 전량 홀드.
-            long fillable = ComputeFillableQty(in d, side, limitPriceRaw);
+            long fillable = ComputeFillableWithinSlippage(in d, side, limitPriceRaw, _maxSliceSlippageBps);
             if (_toxic is { } tx)
             {
                 long adj = tx.ToxicityAdjustedFillable(fillable);
@@ -179,6 +213,7 @@ namespace MS2E.Infrastructure
 
             byte kind = limitPriceRaw > 0 ? (byte)1 : (byte)0;   // 1=Limit·0=Market
             int emitted = 0;
+            long emittedQty = 0;
             for (int i = 0; i < n; i++)
             {
                 // 스로틀 90% 도달 시 이후 슬라이스 홀드(초당 주문 한도 초과 방지).
@@ -188,7 +223,10 @@ namespace MS2E.Infrastructure
                 try { _ring?.PublishRaw(new OrderProposal(0, genomeId, symbolCode, side, kind, px, qty, nowTicks)); }
                 catch { break; }   // 링 단일생산자 위반 등 — fail-closed 중단
                 emitted++;
+                emittedQty += slices[i];
             }
+            residualQtyRaw = totalQtyRaw - emittedQty;
+            if (emitted < n) Interlocked.Add(ref _residualDropped, residualQtyRaw);
             if (emitted > 0)
             {
                 Interlocked.Add(ref _slicesEmitted, emitted);

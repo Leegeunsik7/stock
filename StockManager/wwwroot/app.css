@@ -313,3 +313,7 @@
     .navbadge{transform:translate(10px,-8px)}
     .ticker{display:none}                                    /* 협소 화면에선 티커 숨김 */
   }
+
+/* [Phase 3] ErrorBoundary 격리 카드(Portable MainLayout) — 경고색은 상승/하강 색(#E53935/#1E88E5)과 구분되는 앰버 */
+.ms2e-fault { margin:12px 16px; padding:12px 16px; border:1px solid #F9A825; border-radius:8px; background:rgba(249,168,37,.10); color:inherit; }
+.ms2e-fault button { margin-left:8px; padding:3px 12px; border-radius:6px; border:1px solid currentColor; background:transparent; color:inherit; cursor:pointer; }

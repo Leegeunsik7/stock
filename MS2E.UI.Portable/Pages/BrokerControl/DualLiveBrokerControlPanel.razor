@@ -93,14 +93,15 @@
     </div>
 
     @* ── 토스 보유 종목(있으면) ── *@
-    @if (_tossHoldings.Count > 0)
+    @{ var holdings = _tossHoldings; }   @* [Phase 3] 렌더 1회 = 스냅샷 참조 1회 판독(폴 스레드 교체와 무경합) *@
+    @if (holdings.Length > 0)
     {
-        <div class="dlb-panel-h">📄 토스 보유 종목 <span class="dlb-tag">@_tossHoldings.Count 종목</span></div>
+        <div class="dlb-panel-h">📄 토스 보유 종목 <span class="dlb-tag">@holdings.Length 종목</span></div>
         <div class="dlb-tbl-wrap">
             <table class="dlb-tbl">
                 <thead><tr><th>종목(해시)</th><th class="r">수량</th><th class="r">평균단가</th><th class="r">현재가</th><th class="r">평가손익</th></tr></thead>
                 <tbody>
-                    @foreach (var h in _tossHoldings)
+                    @foreach (var h in holdings)
                     {
                         <tr>
                             <td class="mono">x@(h.SymbolHash.ToString("X8"))@(h.IsOverseas ? " 🌐" : "")</td>
@@ -168,7 +169,10 @@
     private readonly MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[] _lines = new MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[2];
     private readonly MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[] _lineBuf = new MS2E.UI.Portable.Ports.Brokers.BrokerLineStatus[2];  // 1회 할당 재사용(관리형 DTO — stackalloc 불가)
     private readonly MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine[] _accts = new MS2E.UI.Portable.Ports.Brokers.BrokerAccountLine[2];
-    private readonly List<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine> _tossHoldings = new();
+    // [Phase 3 §1] 불변 스냅샷 교체 — 기존 List 는 700ms 폴(스레드풀)이 Clear/Add 하는 동안 렌더 스레드가 @foreach 로 열거해
+    //   보유종목이 1건 이상이면 "Collection was modified" InvalidOperationException 으로 렌더가 붕괴했다(UiAndDiAuditTests 재현).
+    private MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine[] _tossHoldings = System.Array.Empty<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine>();
+    private int _polling;   // 타이머 콜백 중첩(폴 >700ms) 재진입 차단 — _lineBuf/_lines 공유 버퍼 이중 기록 방지
 
     private long _marks, _renders, _coalesced;
     private bool _liveArmed;
@@ -189,6 +193,7 @@
     private void Poll(object? _)
     {
         if (_disposed) return;
+        if (System.Threading.Interlocked.Exchange(ref _polling, 1) == 1) return;   // 이전 폴 진행 중 — 이번 주기 건너뜀
         try
         {
             int n = Status.GetLineStatus(_lineBuf);   // 배열→Span. 콜드 표시 경로(700ms) — δ=0 대상은 코얼레서 핫패스.
@@ -212,14 +217,15 @@
             RefreshTossHoldings();
         }
         catch { /* 폴 실패는 관제를 중단하지 않음(fail-closed·다음 주기 재시도) */ }
+        finally { System.Threading.Volatile.Write(ref _polling, 0); }
     }
 
     private void RefreshTossHoldings()
     {
         Span<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine> buf = stackalloc MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine[64];
         int k = Status.GetHoldings(MS2E.UI.Portable.Ports.Brokers.BrokerLine.Toss, buf);
-        _tossHoldings.Clear();
-        for (int i = 0; i < k; i++) _tossHoldings.Add(buf[i]);
+        var next = k <= 0 ? System.Array.Empty<MS2E.UI.Portable.Ports.Brokers.BrokerHoldingLine>() : buf[..k].ToArray();   // 콜드(700ms) 표시 경로 — 1회 할당 허용
+        System.Threading.Volatile.Write(ref _tossHoldings, next);
     }
 
     // 프레임 경계: dirty/헬스전이 병합분만 배수 → 있을 때만 1회 렌더(이종 폭풍을 프레임당 1렌더로 압축).

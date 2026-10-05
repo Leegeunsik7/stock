@@ -117,9 +117,11 @@ namespace StockManager.Tests
             Assert.False(vault.IsBreached);
             fake = true;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            while (!vault.IsBreached && sw.ElapsedMilliseconds < 3000) Thread.Sleep(20);
+            // [Phase 1 감사] 하네스 경합 교정: 감시 스레드는 IsBreached 를 먼저 세운 뒤 onBreach 를 호출한다 — IsBreached 만 기다리면
+            // 콜백 실행 전에 tripped 를 읽어 전체 병렬 실행 부하에서 헛실패했다(격리 실행은 통과). 두 조건을 함께 기다린다.
+            while ((!vault.IsBreached || !Volatile.Read(ref tripped)) && sw.ElapsedMilliseconds < 3000) Thread.Sleep(20);
             Assert.True(vault.IsBreached);
-            Assert.True(tripped);
+            Assert.True(Volatile.Read(ref tripped));
         }
 
         // ══ 🍯 HoneyKeyDecoyMesh ════════════════════════════════════════════

@@ -52,14 +52,36 @@ namespace MS2E.Core
         private long _active;
         private long _switches;
         private long _lastSwitchTicks;
+        private long _blacklist;   // [라우터 하드닝] 장애 브로커 비트셋(≤64) — 어떤 전환 경로로도 재진입 불가
+        private long _refusedSwitches;
         private readonly int _count;
+
+        public const int MaxBrokers = 64;
 
         public LockFreeBrokerSwitchboard(int brokerCount, int initialActive = 0)
         {
-            if (brokerCount < 1) throw new ArgumentOutOfRangeException(nameof(brokerCount), "브로커 수는 ≥1.");
+            if (brokerCount < 1 || brokerCount > MaxBrokers) throw new ArgumentOutOfRangeException(nameof(brokerCount), "브로커 수는 1~64.");
             _count = brokerCount;
             _active = (uint)initialActive < (uint)brokerCount ? initialActive : 0;
         }
+
+        public long BlacklistMask => Interlocked.Read(ref _blacklist);
+        public long RefusedSwitches => Interlocked.Read(ref _refusedSwitches);
+        /// <summary>전 브로커가 블랙리스트(=이중/전면 장애).</summary>
+        public bool AllBlacklisted => (BlacklistMask & AllMask) == AllMask;
+        private long AllMask => _count == 64 ? -1L : (1L << _count) - 1;
+        public bool IsBlacklisted(int broker) => (uint)broker < (uint)_count && (BlacklistMask & (1L << broker)) != 0;
+
+        /// <summary>[라우터 하드닝] 장애 브로커 블랙리스트 등록(원자 Or·멱등). 이전엔 장애 이력이 센티널 내부에만 있어 SwitchTo/TrySwitch
+        /// 를 직접 부르는 경로(운영 콘솔·자동 복귀 로직)가 장애 브로커로 라우팅을 되돌릴 수 있었다.</summary>
+        [ZeroAllocHotPath]
+        public void Blacklist(int broker)
+        {
+            if ((uint)broker < (uint)_count) Interlocked.Or(ref _blacklist, 1L << broker);
+        }
+
+        /// <summary>블랙리스트 해제 — ★물리 이중키 재무장 경로(BrokerFailoverSentinel.TryRearm) 전용.</summary>
+        internal void ClearBlacklist() => Interlocked.Exchange(ref _blacklist, 0);
 
         public int BrokerCount => _count;
         public int Active => (int)Volatile.Read(ref _active);
@@ -67,9 +89,11 @@ namespace MS2E.Core
         public long LastSwitchTicks => Volatile.Read(ref _lastSwitchTicks);
 
         /// <summary>★CAS 원자 전환 — 현재 활성이 expected 일 때만 next 로. 경합 안전(lost-update 불가). δ=0.</summary>
+        [ZeroAllocHotPath]
         public bool TrySwitch(int expected, int next, long nowTicks)
         {
             if ((uint)next >= (uint)_count) return false;
+            if (next != expected && IsBlacklisted(next)) { Interlocked.Increment(ref _refusedSwitches); return false; }   // 장애 브로커 재진입 차단
             if (Interlocked.CompareExchange(ref _active, next, expected) == expected)
             {
                 if (next != expected) { Volatile.Write(ref _lastSwitchTicks, nowTicks); Interlocked.Increment(ref _switches); }
@@ -79,9 +103,11 @@ namespace MS2E.Core
         }
 
         /// <summary>강제 전환(현재값 무관·원자). 반환=이전 활성 인덱스. δ=0.</summary>
+        [ZeroAllocHotPath]
         public int SwitchTo(int next, long nowTicks)
         {
             if ((uint)next >= (uint)_count) return Active;
+            if (IsBlacklisted(next)) { Interlocked.Increment(ref _refusedSwitches); return Active; }   // 장애 브로커 재진입 차단(무변경)
             long prev = Interlocked.Exchange(ref _active, next);
             if (prev != next) { Volatile.Write(ref _lastSwitchTicks, nowTicks); Interlocked.Increment(ref _switches); }
             return (int)prev;
@@ -104,6 +130,7 @@ namespace MS2E.Core
         public const int STATUS_ACCESS_VIOLATION     = unchecked((int)0xC0000005);   // AV 대리(프록시 종료코드)
 
         /// <summary>HRESULT → 심각도. 성공(≥0)=Ok · 재시도가능=Transient · 단절/부재/거부/AV=Fatal · ★미상 실패=보수적 Fatal(fail-closed).</summary>
+        [ZeroAllocHotPath]
         public static ComFaultSeverity ClassifyHResult(int hr)
         {
             if (hr >= 0) return ComFaultSeverity.Ok;   // S_OK 및 성공(음수만 실패 HRESULT)
@@ -159,10 +186,15 @@ namespace MS2E.Core
         private readonly LockFreeBrokerSwitchboard _board;
         private readonly long _http429Thr, _http5xxThr, _slippageThr;
         private readonly PoisonedSecretBuffer? _credentials;
+        private readonly PendingOrderCascadeCanceller? _pending;
+        private readonly Action? _onDualBreakdown;
+        private long _cascadeCancelled;
+        private long _dualBreakdown;   // [방향 B] 전 브로커 장애 도달(sticky)
 
         private long _disarmed;    // 1=주문 경로 봉쇄(sticky·fail-closed)
         private long _wiped;       // 자격증명 소거 1회 보장(멱등)
         private long _failovers;
+        private long _faultedMask; // 장애 판정 브로커 비트셋(≤64) — 페일오버 대상에서 제외
         private int  _lastFault;   // (byte)BrokerFaultKind
 
         /// <param name="credentials">API Secret 버퍼(옵션). 장애 시 0x00 소거(1회).</param>
@@ -171,9 +203,13 @@ namespace MS2E.Core
             long http429Threshold = 5,
             long http5xxThreshold = 3,
             long slippageBpsThreshold = 50,
-            PoisonedSecretBuffer? credentials = null)
+            PoisonedSecretBuffer? credentials = null,
+            PendingOrderCascadeCanceller? pendingOrders = null,
+            Action? onDualBreakdown = null)
         {
             _board        = board ?? throw new ArgumentNullException(nameof(board));
+            _pending      = pendingOrders;
+            _onDualBreakdown = onDualBreakdown;
             _http429Thr   = http429Threshold   > 0 ? http429Threshold   : long.MaxValue;   // ≤0 = 비활성(fail-safe)
             _http5xxThr   = http5xxThreshold   > 0 ? http5xxThreshold   : long.MaxValue;
             _slippageThr  = slippageBpsThreshold > 0 ? slippageBpsThreshold : long.MaxValue;
@@ -187,11 +223,16 @@ namespace MS2E.Core
         public long FailoverCount => Interlocked.Read(ref _failovers);
         public BrokerFaultKind LastFault => (BrokerFaultKind)(byte)Volatile.Read(ref _lastFault);
         public bool CredentialsWiped => Volatile.Read(ref _wiped) == 1;
+        /// <summary>페일오버 캐스케이드로 취소 전환된 미체결 누계.</summary>
+        public long CascadeCancelled => Interlocked.Read(ref _cascadeCancelled);
+        /// <summary>[방향 B] Atomic Fallback Disarm — 전 브로커가 장애(블랙리스트)에 도달했는가(sticky, 재무장 전까지 유지).</summary>
+        public bool DualBreakdown => Volatile.Read(ref _dualBreakdown) == 1;
 
         /// <summary>
         /// 장애 보고(δ=0 핫패스·결정론·주입 tick). 장애 판정 시 → ①주문 경로 0ms 원자 Disarm(sticky) ②활성 브로커면 보조로
         /// 무할당 원자 페일오버(데이터 무중단) ③자격증명 0x00 소거(1회). 반환=장애로 판정됐는가.
         /// </summary>
+        [ZeroAllocHotPath]
         public bool ReportFault(int broker, BrokerFaultKind kind, long value, long nowTicks)
         {
             bool isFault = kind switch
@@ -210,19 +251,61 @@ namespace MS2E.Core
             if (_credentials is not null && Interlocked.Exchange(ref _wiped, 1) == 0)
                 _credentials.PurgeAndPoison();                 // 자격증명 0x00 소거(멱등·1회)
 
-            if (broker == _board.Active && _board.BrokerCount > 1)   // 활성 브로커 장애 → 보조로 원자 페일오버(데이터 무중단)
+            // [Phase 1 감사 교정] 이전: `if (broker == Active) SwitchTo((broker+1)%N)` —
+            //   ① 점검-후-전환 경합: 점검과 전환 사이 다른 경로가 건강한 브로커로 바꿔두면 Exchange 가 그걸 덮어씀(lost update),
+            //   ② 동시 장애 보고 2건이 각자 전환·계수(FailoverCount 이중 계상),
+            //   ③ 다음 후보가 이미 장애 판정된 브로커여도 그대로 전환(장애 브로커로 되돌아감).
+            // 교정: 장애 브로커를 비트셋에 기록하고, "여전히 그 브로커가 활성일 때만" CAS(TrySwitch)로 다음 건강 브로커로 전환.
+            if ((uint)broker < 64u) Interlocked.Or(ref _faultedMask, 1L << broker);
+            _board.Blacklist(broker);   // [라우터 하드닝] 스위치보드 자체가 재진입을 거부(센티널 우회 경로 포함)
+            // [라우터 하드닝] 장애 브로커의 미체결 전량을 세대 태그 슬롯에서 원자 취소 전환 — 이후 그 브로커에서 늦게 도착하는 체결
+            //   통보는 FilledAfterCancel 로, 해제·재사용된 슬롯의 옛 통보는 Stale 로 판정(새 주문 오해제 0 · 체결 유실 0 — 캔슬러 참조).
+            if (_pending is not null && (uint)broker <= PendingOrderCascadeCanceller.MaxBrokerId)
+                Interlocked.Add(ref _cascadeCancelled, _pending.CancelAllForBroker(broker));
+            // [라우터 하드닝] 수렴 루프 — "활성이 블랙리스트에 있는 동안" 건강 후보로 CAS 이동. 이전의 1회 TrySwitch(broker→next) 는
+            //   TOCTOU 경합에 열려 있었다: T0 가 후보 1 을 고른 뒤 T1 이 1 을 장애 처리(T1 의 1→2 CAS 는 활성이 아직 0 이라 실패)하고
+            //   이어 T0 의 0→1 CAS 가 성공하면 장애 브로커 1 이 활성으로 방치됐다(동시 장애 스트레스 테스트가 실측). 보고자마다 블랙리스트를
+            //   먼저 기록한 뒤 이 루프를 돌므로, 마지막 보고자가 끝날 때 활성은 반드시 건강 브로커(또는 전원 장애)다. 반복 ≤ 브로커 수(δ=0).
+            for (int attempt = 0; attempt < _board.BrokerCount && _board.BrokerCount > 1; attempt++)
             {
-                int next = (broker + 1) % _board.BrokerCount;
-                _board.SwitchTo(next, nowTicks);
-                Interlocked.Increment(ref _failovers);
+                int cur = _board.Active;
+                if (!_board.IsBlacklisted(cur)) break;
+                int next = NextHealthy(cur);
+                if (next < 0) break;   // 전원 장애 — 전환하지 않음(주문 경로는 이미 Disarm)
+                if (_board.TrySwitch(cur, next, nowTicks)) Interlocked.Increment(ref _failovers);
+            }
+            // [방향 B] 이중(전면) 장애 — 전환할 곳이 없다. 주문 경로는 이미 Disarm 이지만, 여기서 1회 한정 상위 킬(카나리/킬스위치) 격발.
+            if (_board.AllBlacklisted && Interlocked.CompareExchange(ref _dualBreakdown, 1, 0) == 0)
+            {
+                try { _onDualBreakdown?.Invoke(); } catch { /* 콜백 실패가 봉쇄를 되돌리지 않음(이미 sticky Disarm) */ }
             }
             return true;
+        }
+
+        public bool IsBrokerFaulted(int broker)
+            => (uint)broker < 64u && (Interlocked.Read(ref _faultedMask) & (1L << broker)) != 0;
+
+        [ZeroAllocHotPath]
+        private int NextHealthy(int from)
+        {
+            long faulted = Interlocked.Read(ref _faultedMask) | _board.BlacklistMask;
+            int n = _board.BrokerCount;
+            for (int k = 1; k < n; k++)
+            {
+                int c = (from + k) % n;
+                if (c < 64 && (faulted & (1L << c)) != 0) continue;
+                return c;
+            }
+            return -1;   // 전원 장애 — 전환하지 않음(주문 경로는 이미 Disarm)
         }
 
         /// <summary>★물리 이중 키 재무장(원인 규명 후에만). 소프트웨어 단독 복구 불가(liveArmed:false 불변). 한 키라도 결여 → false.</summary>
         public bool TryRearm(bool valveWired, bool liveArmingWired)
         {
             if (!(valveWired && liveArmingWired)) return false;
+            Interlocked.Exchange(ref _faultedMask, 0);   // 원인 규명 후 재무장 — 장애 이력도 함께 초기화
+            _board.ClearBlacklist();
+            Interlocked.Exchange(ref _dualBreakdown, 0);
             Interlocked.Exchange(ref _disarmed, 0);
             return true;
         }

@@ -44,11 +44,10 @@ namespace MS2E.Infrastructure
         /// 반환값은 기록된 JSON 본문(호출측 로그/감사 기록용).</summary>
         public static string GenerateReleaseSeal(string version, string hostPublishDir, string proxyPublishDir, string outManifestPath)
         {
-            var artifacts = new List<string>(ResolveHostArtifacts(hostPublishDir));
-            artifacts.AddRange(ResolveKiwoomProxyArtifacts(proxyPublishDir));
+            var artifacts = NamedArtifacts(hostPublishDir, proxyPublishDir);
             if (artifacts.Count == 0)
                 throw new InvalidOperationException("배포 아티팩트 0건 — 퍼블리시 선행 필요(fail-closed: 빈 매니페스트 봉인 금지).");
-            return ReleasePackager.WriteManifest(version, artifacts, outManifestPath);
+            return ReleasePackager.WriteManifest(version, artifacts, outManifestPath);   // [Phase 4] v2 역할 한정 명명 봉인
         }
 
         /// <summary>기록된 manifest.sig(JSON) 의 masterSeal 을 현재 Host+Proxy 산출물과 재대조(배포 후 무결성 재검증).
@@ -60,16 +59,39 @@ namespace MS2E.Infrastructure
             catch { return false; }
             if (string.IsNullOrEmpty(expectedMasterSeal)) return false;
 
-            List<string> artifacts;
-            try
-            {
-                artifacts = new List<string>(ResolveHostArtifacts(hostPublishDir));
-                artifacts.AddRange(ResolveKiwoomProxyArtifacts(proxyPublishDir));
-            }
+            List<ReleasePackager.ReleaseArtifact> artifacts;
+            try { artifacts = NamedArtifacts(hostPublishDir, proxyPublishDir); }
             catch { return false; }
 
             try { return ReleasePackager.VerifyArtifacts(artifacts, expectedMasterSeal); }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// [봉인 운영] 외부 신뢰 앵커 결속 재검증 — 매니페스트 masterSeal 이 앵커(64 hex · 상수시간 1비트 비교)와 같고, 현재 산출물이
+        /// 그 봉인과 일치할 때만 true. 앵커 없는 자기 일관성 검증(위 오버로드)은 바이너리+매니페스트 동시 재작성을 통과시키므로
+        /// 배포 승인 판정에는 이 오버로드를 쓴다. 형식 오류·파싱 실패·불일치 → false(fail-closed).
+        /// </summary>
+        public static bool VerifyReleaseSeal(string manifestPath, string hostPublishDir, string proxyPublishDir, string expectedAnchorHex)
+        {
+            if (!BootIntegrityGate.IsStrictSealHex(expectedAnchorHex)) return false;
+            string manifestSeal;
+            try { manifestSeal = ExtractMasterSeal(File.ReadAllText(manifestPath)); }
+            catch { return false; }
+            byte[] a, m;
+            try { a = Convert.FromHexString(expectedAnchorHex.Trim()); m = Convert.FromHexString(manifestSeal.Trim()); }
+            catch (FormatException) { return false; }
+            if (a.Length != m.Length || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, m)) return false;
+            return VerifyReleaseSeal(manifestPath, hostPublishDir, proxyPublishDir);
+        }
+
+        /// <summary>[Phase 4] 역할 한정 이름("host/…"·"proxy/…")으로 봉인 대상 구성 — 동명 바이너리의 폴더 간 치환도 봉인이 탐지.</summary>
+        public static List<ReleasePackager.ReleaseArtifact> NamedArtifacts(string hostPublishDir, string proxyPublishDir)
+        {
+            var list = new List<ReleasePackager.ReleaseArtifact>();
+            foreach (var p in ResolveHostArtifacts(hostPublishDir)) list.Add(new("host/" + Path.GetFileName(p), p));
+            foreach (var p in ResolveKiwoomProxyArtifacts(proxyPublishDir)) list.Add(new("proxy/" + Path.GetFileName(p), p));
+            return list;
         }
 
         private static List<string> CollectBinaries(string dir)

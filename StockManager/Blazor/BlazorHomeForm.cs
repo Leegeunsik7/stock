@@ -365,10 +365,28 @@ namespace StockManager.Blazor
             //   (Step 7/7 식 전수 스캔으로 발견): 릴리스 봉인 미검증/불일치(AttestationBlocking) → 무장 하드 차단.
             //   Release.ExpectedMasterSeal 미설정(기본값) 상태에서도 SealValid=false 이므로 기본이 곧 fail-closed.
             ReleaseArtifactSha256Attestor? releaseAttestorRef = null;
+            // [F7] 콜드부트 안티탬퍼 핸드셰이크 — 설치본 manifest.sig 수렴 + SHA-256 0B 재검증. null(결속 실패) = 차단(?? true · fail-closed).
+            MS2E.Infrastructure.BootIntegrityGate? bootIntegrityRef = null;
+            // [MMF 하드닝] 포렌식 감사 체인 변조 → 무장 차단. null(결속 전/실패) = 차단(?? true · fail-closed).
+            MS2E.Infrastructure.ForensicChainDisarmInterlock? forensicChainRef = null;
+            // [시세 하드닝] 이상 시세(가격≤0·틱 점프·가격제한폭 이탈) 유입 → 시세 라인 격리 + 무장 차단. null = 차단(?? true).
+            MS2E.Infrastructure.MarketDataSpikeInterlock? spikeRef = null;
+            // [실배선 · 방향 B] 원자 인터락 집계기 — 5개 하드닝 차단 엔진(부팅 무결성·자격증명 유출·포렌식 체인·이상 시세·카오스 가드)을
+            //   단일 long 비트마스크로 푸시 수렴. 필수 소스는 결속 전부터 차단 비트가 서 있고(미결속 = 차단), 조립 완료 후 Seal() 이
+            //   '전부 결속' 을 확인해야 기동 샌니티 비트가 내려간다(방향 A). 무장 술어 앞단 O(1) 단락 + 송출 직전 최종 veto(OrderDrainWorker).
+            var interlockMask = new MS2E.Core.ArmingInterlockBitmask(
+                MS2E.Core.ArmingInterlockSource.BootIntegrity, MS2E.Core.ArmingInterlockSource.CredentialLeak,
+                MS2E.Core.ArmingInterlockSource.ForensicChain, MS2E.Core.ArmingInterlockSource.MarketSpike,
+                MS2E.Core.ArmingInterlockSource.ChaosProgress,
+                MS2E.Core.ArmingInterlockSource.RouterFeed,      // [피드 연동 · 방향 B] 시세/체결 피드 단절 회로(기동 직후 피드 미수립 = 차단)
+                MS2E.Core.ArmingInterlockSource.OrderSlotAge,    // [피드 연동 · 방향 A] 응답 타임아웃 슬롯 회수 = 미확인 노출 차단
+                MS2E.Core.ArmingInterlockSource.ExtremeSlippage); // [보호 지정가 · 방향 B] 체결가 극한 괴리 기습 체결 → Disarm
+            services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
                 cfg.GetBool("Dispatch.LiveArmingWired", false), armingGate,
-                blockWhile: () => (warmRestartRef?.IsRecovering ?? false)
+                blockWhile: () => interlockMask.Blocked                         // [실배선] 집계 비트(미결속·미봉인·Trip) → O(1) 단락 차단
+                                || (warmRestartRef?.IsRecovering ?? false)
                                 || (kernelJitterRef?.SafeHoldActive ?? false)
                                 || (ioFirewallRef?.HoldActive ?? false)
                                 || (varGuardRef?.LimitBreached ?? false)
@@ -391,7 +409,11 @@ namespace StockManager.Blazor
                                 || (driftRef?.DriftBlocking ?? false)              // v10.1.0 Ops — ★호스트 환경 드리프트 → 무장 하향
                                 || (canaryRef?.CanaryBlocking ?? false)            // v10.1.0 Ops — 카나리 슬리피지 강등 → 무장 tighten
                                 || (panicRef?.PanicBlocking ?? false)              // v10.1.0 Ops — 운용자 패닉 격발 → 무장 tighten
-                                || (releaseAttestorRef?.AttestationBlocking ?? false));   // v12.14.0-GM — 릴리스 봉인 미검증/불일치 → 무장 하드 차단
+                                || (releaseAttestorRef?.AttestationBlocking ?? true)     // v12.14.0-GM — 릴리스 봉인 미검증/불일치 → 무장 하드 차단([봉인 운영] manifest 게이트 위임 · null = 차단)
+                                || (bootIntegrityRef?.ArmingBlocked ?? true)            // [F7] 바이너리 무결성 미봉인/검증중/변조 → 무장 하드 차단
+                                || MS2E.Infrastructure.RawCredentialLeakInterlock.Shared.ArmingBlocked    // [PII] 원문 자격증명 로그 유출 시도 → 무장 영구 차단
+                                || (forensicChainRef?.ArmingBlocked ?? true)          // [MMF] 포렌식 해시 체인 변조 → 무장 영구 차단
+                                || (spikeRef?.ArmingBlocked ?? true));                // [시세] 이상 시세 유입 → 무장 차단(sticky·물리 재무장)
             // ★v10.1.0 디스패처 무장 술어 = 드라이런 스코프(가상 미러 급전·barrier RouteNow 가 broker 를 물리 차단) ∨ 실전 무장.
             //   드라이런 'armed' 는 오직 미러로만 도달 — 실 브로커 소켓 0비트(liveArmed:false 불변·barrier=DryRun→미러, =Live→게이트웨이).
             Func<bool> armedPredicate = () => { try { return (scopeBarrierRef?.DryRunActive ?? false) || liveArmed(); } catch { return false; } };
@@ -564,7 +586,9 @@ namespace StockManager.Blazor
             services.AddSingleton(orderThrottle);
             var toxicSentinel = new ToxicFlowSentinel(ignition, rescaleSlippage: null, blackbox: blackbox);
             services.AddSingleton(toxicSentinel);
-            var liquiditySlicer = new MicroLiquiditySlicer(dispatchRing, toxicSentinel, orderThrottle, blackbox: blackbox);
+            // [알고 집행 하드닝] 호가 깊이 기반 조각 슬리피지 상한(기본 100bps · tighten-only — 상한 밖 호가는 즉시체결 잔량에서 제외).
+            var liquiditySlicer = new MicroLiquiditySlicer(dispatchRing, toxicSentinel, orderThrottle, blackbox: blackbox,
+                maxSliceSlippageBps: cfg.GetInt("Algo.MaxSliceSlippageBps", 100, 1, 10_000));
             services.AddSingleton(liquiditySlicer);
             // v5.3.0 — 무정지 전략 핫패치 게이트 & ALC 격리 그리드. ★liveArmed:false 불변: 핫스왑은 무장 상태 무접촉 —
             //   교체 전략의 신호도 GatedOrderDispatcher 무장 게이트∧이중키∧MasterIgnited 하류라 실 송출 0. 자율 Activate 없음.
@@ -750,6 +774,7 @@ namespace StockManager.Blazor
             chaosRef      = chaosSanitizer;   // 무장 술어 blockWhile 결속(tighten-only)
             chaosRecovRef = chaosRecovery;
             chaosGuardRef = chaosGuard;
+            chaosGuard.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ChaosProgress);
             services.AddSingleton(chaosSanitizer);
             services.AddSingleton(chaosReplayer);
             services.AddSingleton(chaosRecovery);
@@ -790,8 +815,9 @@ namespace StockManager.Blazor
             var slaGate      = new LatencySlaGatekeeper(
                 slaP9999Nanos: cfg.GetInt("Sla.P9999BudgetNanos", 500_000, 1000, 100_000_000),   // 드레인 사이클 P99.99 예산(기본 500µs)
                 attestation:   cfg.GetBool("Sla.FuseArmed", false) ? attestation : null);          // ★ForceFreeze 옵트인(기본 tighten-only)
-            var releaseAttestor = new ReleaseArtifactSha256Attestor(
-                expectedSealHex: cfg.GetString("Release.ExpectedMasterSeal", ""), audit: ignAudit);
+            // [봉인 운영] Release.ExpectedMasterSeal(= manifest v2 masterSeal)은 더 이상 여기(실행 DLL 단일 파일 해시 대조)에 주입하지 않는다 —
+            //   두 검사에 같은 값을 넣어 어떤 설정으로도 무장이 불가능했던 교착 교정. 판정은 아래 BootIntegrityGate 결속 시 위임(그 전까지 차단).
+            var releaseAttestor = new ReleaseArtifactSha256Attestor(audit: ignAudit);
             releaseAttestorRef = releaseAttestor;   // v12.14.0-GM — 무장 술어 blockWhile 결속(위 armedPredicate)
             // v10.1.0 Ops — 사전 점화 서명 + 카나리 거버너 + ★Think-Beyond 드리프트 센티널 + 패닉 스위치.
             //   ★liveArmed:false: 전부 순수 채점/판정 — IBroker·소켓·onSend 참조 0. 전 blockWhile tighten-only(무장 부여 불가).
@@ -869,8 +895,60 @@ namespace StockManager.Blazor
             // v10.2.0 Toss — 토스증권 조회 전용 포트폴리오 동기화 + 실시간 시세 게이트웨이(★read-only·liveArmed:false —
             //   발주 경로 무접촉·RejectOrderAttempt 하드 veto). 실 배선: tokenProvider=TossTokenService.CurrentAccessToken,
             //   accountFetch=HttpClient GET 계좌 엔드포인트(미구성 시 미인증→미동기화·fail-closed).
+            // [피드 연동] ResilientOrderRouter 실배선 — 참조가 피드(Toss 틱 → 종목별 신선 참조가) + 체결/취소 통보 피드(키움 브리지 →
+            //   추적 슬롯 수명주기 대사) + 슬롯 수명 샌니타이저(방향 A) + 피드 단절 회로 차단기(방향 B). 송출 직전 RouterFeedGate 가
+            //   OrderDrainWorker 실전 경로에서 참조가·라우터 판정·추적 확보를 강제(드라이런 미러 경로 무영향 · liveArmed:false 불변).
+            var refPriceFeed  = new StockManager.Adapters.ReferencePriceFeedAdapter(
+                maxAgeMicros: cfg.GetInt("Router.RefPriceMaxAgeMs", 3000, 100, 600_000) * 1000L);
+            var routerBoard   = new MS2E.Core.LockFreeBrokerSwitchboard(1);
+            var routerPending = new MS2E.Core.PendingOrderCascadeCanceller(1024);
+            var routerSentinel = new MS2E.Core.BrokerFailoverSentinel(routerBoard, pendingOrders: routerPending);
+            var orderRouter   = new MS2E.Core.ResilientOrderRouter(routerBoard, routerSentinel, routerPending,
+                idMapCapacityPow2: 2048, maxSlippageBps: cfg.GetInt("Router.MaxSlippageBps", 50, 1, 10_000));
+            // [보호 지정가 · 방향 B] 체결가가 판정 참조가에서 극한 괴리(기본 200bps)로 체결되면 전체 발주 회로 sticky Disarm.
+            var extremeSlip   = new StockManager.Engines.ExtremeSlippageDisarmInterlock(cfg.GetInt("Router.ExtremeSlippageBps", 200, 10, 5_000));
+            var execFeed      = new StockManager.Adapters.OrderExecutionFeedAdapter(orderRouter, capacity: 1024,
+                slotTtlMicros: cfg.GetInt("Router.SlotTtlSeconds", 120, 5, 3600) * 1_000_000L,
+                onRecord: r => { try { Log.Warn($"[RouterRecon] {r.Kind} proposal={r.ProposalId} brokerOrder={r.BrokerOrderId} qty={r.Qty}"); } catch { } },
+                extremeSlippage: extremeSlip);
+            var feedBreaker   = new StockManager.Adapters.FeedDisconnectCircuitBreaker(refPriceFeed, () => bridge.IsProxyAlive,
+                maxPriceSilenceMicros: cfg.GetInt("Router.MaxPriceSilenceMs", 5000, 100, 600_000) * 1000L);
+            // [보호 지정가 · 추천 A] 시장가 → 참조가 ± offset 보호 지정가(호가 단위 보호 방향 정렬 · 가격제한폭 클램프) 변환 + 1~3호가 깊이 가드.
+            //   ★호가 깊이 피드 생산자는 아직 없다(Toss/키움 모두 L2 미파싱) — DepthBook 은 비어 있고 Router.MarketRequiresDepth(기본 true)면
+            //   시장가는 '깊이 미상'으로 거부된다(미분류 fail-closed). 지정가는 가격이 보호선이라 영향 없음.
+            long maxSlipBps   = orderRouter.MaxSlippageBps;
+            var protectiveConv = new StockManager.Engines.ProtectiveLimitOrderConverter(
+                Math.Min(cfg.GetInt("Router.ProtectiveOffsetBps", 30, 1, 1_000), maxSlipBps));
+            var depthBook     = new StockManager.Engines.DepthBook(maxAgeMicros: cfg.GetInt("Router.DepthMaxAgeMs", 2000, 100, 600_000) * 1000L);
+            var routerGate    = new StockManager.Adapters.RouterFeedGate(orderRouter, refPriceFeed, execFeed, feedBreaker,
+                converter: protectiveConv, depth: depthBook,
+                requireDepthForMarket: cfg.GetBool("Router.MarketRequiresDepth", true),
+                basePriceRaw: sym => spikeRef is { } sp && sp.TryGetReference(sym, out long b) && b < long.MaxValue / 100_000_000L ? b * 100_000_000L : 0L);
+            extremeSlip.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ExtremeSlippage);
+            services.AddSingleton(extremeSlip);
+            services.AddSingleton(protectiveConv);
+            services.AddSingleton(depthBook);
+            Action<FillPayload> onBridgeFill = execFeed.OnFill;
+            bridge.FillReceived += onBridgeFill;
+            feedBreaker.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.RouterFeed);
+            execFeed.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OrderSlotAge);
+            var routerSweep   = new System.Threading.Timer(_ =>
+            {
+                try { execFeed.SweepExpired(); } catch { }
+                try { feedBreaker.Evaluate(); } catch { }
+            }, null, 1000, 1000);
+            FormClosed += (_, _) => ShutdownTrace.Step("routerFeeds", () => { routerSweep.Dispose(); bridge.FillReceived -= onBridgeFill; });
+            services.AddSingleton(refPriceFeed);
+            services.AddSingleton(orderRouter);
+            services.AddSingleton(execFeed);
+            services.AddSingleton(feedBreaker);
+            services.AddSingleton(routerGate);
             var tossSeqGuardian      = new SequenceContinuityGuardian();
-            var tossGateway          = new TossWebSocketMarketDataGateway(tossSeqGuardian);
+            var marketSpike          = new MS2E.Infrastructure.MarketDataSpikeInterlock();   // [시세 하드닝] 틱 점프 10% · 가격제한폭 ±30%(기준가 주입 시)
+            spikeRef = marketSpike;
+            marketSpike.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.MarketSpike);
+            services.AddSingleton(marketSpike);
+            var tossGateway          = new TossWebSocketMarketDataGateway(tossSeqGuardian, spikeGuard: marketSpike, tickSink: refPriceFeed);   // [피드 연동] 수용 틱 → 참조가
             // v10.2.1 Toss Live REST 실통신 — OAuth Basic 토큰 교환(TossTokenService 재사용·백그라운드 선제 갱신·락-프리 핫패스)
             //   + Bearer 잔고 GET(/v1/accounts/holdings) + TossLiveApiGovernor(레이트/429/서킷) 게이팅 + TossJsonParser δ=0 파싱.
             //   ★조회 전용·liveArmed:false: 발주 메서드 0. 자격증명은 금고에서 콜드 패스에서만 복호화(requireArmed:false 읽기전용).
@@ -929,6 +1007,25 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.Core.IHardwareKillSwitchPort>(killBridge);
             services.AddSingleton(killBridge);
             services.AddSingleton(killPurger);
+            // [F7] 부팅 무결성 게이트: 검증은 스레드풀(UI 부팅 비차단·락 공유 0 → 초기화 데드락 불가), 완료 전 Verifying = 무장 차단.
+            //   변조 Trip → killPurger(API Secret) 즉시 0x00 소거 + 킬스위치 격발(카나리 Kill 결선 경로 재사용). 30초 주기 백그라운드 재검증.
+            try
+            {
+                var bootIntegrity = MS2E.Infrastructure.BootIntegrityGate.Start(
+                    AppContext.BaseDirectory, cfg.GetString("Release.ExpectedMasterSeal", ""), killPurger,
+                    onTrip: _ => { try { killBridge.Signal(MS2E.Core.KillSwitchReason.Manual); } catch { } },
+                    requireExternalAnchor: true);   // [봉인 운영] 외부 앵커 미주입 = Unanchored(무장 차단) · 불일치 = 소거·킬
+                bootIntegrityRef = bootIntegrity;
+                releaseAttestor.DelegateToManifestGate(bootIntegrity);   // 릴리스 봉인 판정 단일 권위
+                bootIntegrity.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.BootIntegrity);   // 검증 중(Verifying) = 비트 유지
+                services.AddSingleton(bootIntegrity);
+                FormClosed += (_, _) => ShutdownTrace.Step("bootIntegrity", () => bootIntegrity.Dispose());
+            }
+            catch { /* 결속 실패 → bootIntegrityRef=null → blockWhile ?? true(무장 차단) */ }
+            // [PII 하드닝] 원문 자격증명 유출 인터락 싱크 결속 — Trip 시 API Secret 전량 0x00 + 킬스위치 격발(카나리 Kill 경로 재사용).
+            MS2E.Infrastructure.RawCredentialLeakInterlock.Shared.Bind(killPurger,
+                onTrip: () => { try { killBridge.Signal(MS2E.Core.KillSwitchReason.Manual); } catch { } });
+            MS2E.Infrastructure.RawCredentialLeakInterlock.Shared.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.CredentialLeak);
             services.AddSingleton(killSpin);
             services.AddSingleton(pulseGuard);
             // v11.4.2 Think-Beyond — Stage 1 드라이런 이중 엔진: ①레이턴시 거버너(δ=0 락프리 — UI 패닉 방어) ②Zero-Leak Veto 인터락(O(1) fail-closed + 변조불가 감사). 인터락이 거버너 breach 를 소비(융합).
@@ -1020,7 +1117,22 @@ namespace StockManager.Blazor
             //   최초 등록. 등록 즉시 DynamicRiskAdapter(위, 옵션 인자)에도 자동 결선되어 리스크 위반 이벤트가
             //   드디어 실제 체인에 기록되기 시작한다. MmfFlightRecorder(blackbox, 위 92행에서 이미 실배선)를
             //   Virtualize 대용량 뷰어에 최초 결속(기존 TelemetryMonitor 는 최근 100건 고정 헥스덤프만 노출했음).
-            services.AddSingleton<MS2E.Core.ZeroAllocForensicAuditStream>(_ => new MS2E.Core.ZeroAllocForensicAuditStream(8192));
+            // [MMF 하드닝] 인스턴스 즉시 생성 — 체인 변조 Disarm 인터락이 같은 스트림을 10초 주기로 검증(δ=0)하고, 결함 시 API Secret 0x00 +
+            //   킬스위치 격발 + 무장 술어 영구 차단. 이전엔 검증 결과를 UI 뷰어만 소비해 체인이 조작돼도 무장이 가능했다.
+            var forensicStream = new MS2E.Core.ZeroAllocForensicAuditStream(8192);
+            services.AddSingleton(forensicStream);
+            bootIntegrityRef?.AttachForensicStream(forensicStream);   // [봉인 운영 · 방향 B] 봉인 변조 증거(기대/실측 해시) 해시 체인 각인
+            try
+            {
+                var forensicChain = new MS2E.Infrastructure.ForensicChainDisarmInterlock(forensicStream, killPurger,
+                    onTrip: _ => { try { killBridge.Signal(MS2E.Core.KillSwitchReason.Manual); } catch { } });
+                forensicChain.StartMonitor(TimeSpan.FromSeconds(10));
+                forensicChainRef = forensicChain;
+                forensicChain.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ForensicChain);
+                services.AddSingleton(forensicChain);
+                FormClosed += (_, _) => ShutdownTrace.Step("forensicChain", () => forensicChain.Dispose());
+            }
+            catch { /* 결속 실패 → forensicChainRef=null → blockWhile ?? true(무장 차단) */ }
             services.AddSingleton<MS2E.UI.Portable.Ports.Shell.IForensicAuditViewPort, MS2E.Infrastructure.ForensicAuditViewAdapter>();
             // Phase 94-L — CommandPalette & MainLayout Port(DIP): 명령 레지스트리(scoped·Nav) + 핫키 브릿지/JS Interop 안전 센티널.
             services.AddSingleton<MS2E.Infrastructure.DotNetObjectRefSentinel>();
@@ -1139,6 +1251,10 @@ namespace StockManager.Blazor
             //   LiveArmingWired 와 독립 스위치 — 둘 다 ON 이어야 실 주문 흐름(이중 키 잠금).
             // v4.87.0 — fail-closed 강화: 드레인 루프 예외 or 이중키 무결성(런타임 ValveWired) 붕괴 → 강등이 아니라
             //   ForceFreeze 단일 소스로 영구 락업. dualKeyIntact 는 매 틱 ValveWired 설정이 유지되는지 검문.
+            // [실배선 · 방향 A] 기동 샌니티 봉인 — 필수 인터락 소스 전부 결속 확인 후에만 샌니티 비트 해제. 누락(생성 예외로 결속 실패 등)
+            //   이면 비트 영구 유지 = 무장 불가(부팅 원자 중단) · MissingMask 로 누락 소스 진단(DI 싱글턴 조회).
+            if (!interlockMask.Seal(out long missingInterlocks))
+                System.Diagnostics.Trace.WriteLine($"[InterlockSanity] 필수 인터락 미결속 mask=0x{missingInterlocks:X} — 무장 영구 차단");
             var drainWorker = new OrderDrainWorker(ringDispatcher, broker,
                 wired: cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런도 드레인 가동(미러 급전)
                 periodMs: 50,
@@ -1148,7 +1264,9 @@ namespace StockManager.Blazor
                 gateway: ignGateway,   // v10.0.0 — 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유(미wired면 미가동)
                 mockMirror: mockMirror, scopeBarrier: scopeBarrier,   // v10.1.0 — 드라이런 스코프면 실 브로커 대신 가상 미러로 봉인 루프백
                 slaGate: slaGate, jitterGuard: jitterGuard,   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
-                canaryGov: canaryGovernor);   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
+                canaryGov: canaryGovernor,   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
+                interlocks: interlockMask,   // [실배선] 판정↔송출 사이 인터락 Trip → 송출 직전 veto(GatedOut)
+                routeGate: routerGate);      // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

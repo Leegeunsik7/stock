@@ -37,6 +37,7 @@ namespace MS2E.Core
     {
         /// <summary>단일 주문 파라미터 O(1) 검증(δ=0·값타입). tickSizeRaw≤0 이면 호가단위 검사 생략(자유소수 자산).
         /// minNotionalRaw/maxNotionalRaw≤0 이면 해당 축 비활성.</summary>
+        [ZeroAllocHotPath]
         public static OrderValidationResult Validate(
             long priceRaw, long qtyRaw, long tickSizeRaw, long minNotionalRaw, long maxNotionalRaw)
         {
@@ -80,60 +81,176 @@ namespace MS2E.Core
     // ════════════════════════════════════════════════════════════════════════
     /// <summary>브로커별 미체결 주문 슬롯을 추적하고, 페일오버 통보 시 해당 브로커 전량을 원자적으로 취소 전환하는
     /// δ=0 캐스케이드 취소기. BrokerFailoverSentinel.ReportFault 콜백에서 CancelAllForBroker 호출로 결속(합성 —
-    /// BrokerFailoverSentinel 내부 수정 없음).</summary>
+    /// BrokerFailoverSentinel 내부 수정 없음).
+    ///
+    /// [Phase 1 감사 교정] 이전 구현은 두 결함이 있었다(CoreEngineAuditTests 에서 Red 재현):
+    ///   ① 순환 인덱스(s % cap)로 슬롯을 배정해, 용량보다 많은 주문이 쌓이면 아직 미체결인 슬롯을 덮어썼다 — 추적에서
+    ///      사라진 주문은 페일오버 캐스케이드 취소에서 누락(이 엔진이 막으려던 바로 그 fail-open).
+    ///   ② 브로커 ID 와 취소 플래그가 서로 다른 워드라, 슬롯 해제·재사용 사이에 옛 핸들로 MarkFilled/CAS 가 들어오면 새 주문을
+    ///      잘못 해제/취소했다(ABA).
+    /// 교정: 슬롯 상태를 단일 long 워드 [세대 32bit | 취소 1bit | 브로커ID+1 31bit] 로 합쳐 모든 전이를 1회 CAS 로 수행.
+    /// 등록은 빈 슬롯을 CAS 로 점유하고, 빈 슬롯이 없으면 -1(fail-closed — 추적 불가 주문은 호출측이 발주를 거부해야 함).
+    /// 핸들 = (세대 &lt;&lt; 32) | 슬롯 — 세대가 다르면 옛 핸들은 아무것도 바꾸지 못한다.</summary>
+    /// <summary>[라우터 하드닝] 체결 통보 판정 — 호출측이 "유실 없이" 회계하도록 세 경우를 구분한다.</summary>
+    public enum FillOutcome : byte
+    {
+        Filled = 0,             // 정상 체결 — 슬롯 해제
+        FilledAfterCancel = 1,  // 페일오버 캐스케이드로 취소 전환된 뒤 도착한 체결 — 실체결이므로 반드시 포지션 반영 + 대사(reconcile)
+        Stale = 2,              // 세대가 다른(이미 해제·재사용된 슬롯의) 옛 통보 — 무시(새 주문 오해제 차단)
+    }
+
     public sealed class PendingOrderCascadeCanceller
     {
-        private readonly long[] _brokerOfSlot;   // -1=빈 슬롯, 그외=등록된 브로커 id
-        private readonly long[] _cancelled;      // 0=대기, 1=취소됨
+        private const long OwnerMask = 0x7FFF_FFFFL;       // bit 0..30: brokerId + 1 (0 = 빈 슬롯)
+        private const long CancelledBit = 1L << 31;
+        private const int GenerationShift = 32;
+        public const int MaxBrokerId = 0x7FFF_FFFE;
+
+        private readonly long[] _slot;
         private readonly int _cap;
-        private long _nextSlot;
+        private int _probeStart;
+        private long _lateFills, _staleNotices;
+
+        /// <summary>취소 전환 후 도착한 실체결 누계(대사 필요 건수 — 0 이 아니면 페일오버 중 체결이 있었다).</summary>
+        public long LateFillsAfterCancel => Interlocked.Read(ref _lateFills);
+        /// <summary>세대 불일치로 무시된 옛 통보 누계.</summary>
+        public long StaleNotices => Interlocked.Read(ref _staleNotices);
 
         public PendingOrderCascadeCanceller(int capacity)
         {
             if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
             _cap = capacity;
-            _brokerOfSlot = new long[capacity];
-            _cancelled = new long[capacity];
-            for (int i = 0; i < capacity; i++) _brokerOfSlot[i] = -1;
+            _slot = new long[capacity];
         }
 
-        /// <summary>미체결 주문 1건 등록(★단일 라이터 계약·δ=0). 반환=슬롯 인덱스(체결/취소 시 참조).</summary>
-        public int Register(int brokerId)
+        public int Capacity => _cap;
+
+        /// <summary>미체결 주문 1건 등록(δ=0·락프리 CAS 점유). 반환=핸들(체결/취소 조회에 사용). 빈 슬롯이 없으면 -1
+        /// (★fail-closed: 기존 미체결 추적을 절대 밀어내지 않는다).</summary>
+        [ZeroAllocHotPath]
+        public long Register(int brokerId)
         {
-            long s = Interlocked.Increment(ref _nextSlot) - 1;
-            int idx = (int)(s % _cap);
-            Volatile.Write(ref _cancelled[idx], 0);
-            Volatile.Write(ref _brokerOfSlot[idx], brokerId);
-            return idx;
+            if ((uint)brokerId > MaxBrokerId) throw new ArgumentOutOfRangeException(nameof(brokerId));
+            int start = (int)((uint)Interlocked.Increment(ref _probeStart) % (uint)_cap);
+            for (int k = 0; k < _cap; k++)
+            {
+                int idx = start + k;
+                if (idx >= _cap) idx -= _cap;
+                while (true)
+                {
+                    long w = Volatile.Read(ref _slot[idx]);
+                    if ((w & OwnerMask) != 0) break;                       // 점유 중 → 다음 슬롯
+                    long gen = ((w >> GenerationShift) + 1) & 0x7FFF_FFFFL;   // 31비트 — 핸들이 항상 음이 아니게(-1 = 등록 실패와 구분)
+                    long claimed = (gen << GenerationShift) | ((long)brokerId + 1);
+                    if (Interlocked.CompareExchange(ref _slot[idx], claimed, w) == w)
+                        return (gen << GenerationShift) | (uint)idx;
+                }
+            }
+            return -1;
         }
 
-        /// <summary>체결 완료 — 추적 해제(캐스케이드 취소 대상에서 제외).</summary>
-        public void MarkFilled(int slot)
+        /// <summary>체결 통보 — 슬롯 해제 + 판정 반환. 세대가 다른 옛 핸들은 Stale(무변경).
+        /// [라우터 하드닝] 이전엔 void 라 ① 취소 전환 뒤 도착한 실체결(페일오버 경합)과 ② 옛 세대 통보를 호출측이 구분할 수 없어,
+        /// ①을 "취소됐으니 무시"로 처리하면 실체결이 회계에서 유실됐다. 이제 FilledAfterCancel 로 명시(대사 대상) · 누계 계수.</summary>
+        [ZeroAllocHotPath]
+        public FillOutcome MarkFilled(long handle)
         {
-            if ((uint)slot < (uint)_cap) Volatile.Write(ref _brokerOfSlot[slot], -1);
+            if (!TryDecode(handle, out int idx, out long gen)) { Interlocked.Increment(ref _staleNotices); return FillOutcome.Stale; }
+            while (true)
+            {
+                long w = Volatile.Read(ref _slot[idx]);
+                if ((w & OwnerMask) == 0 || (w >> GenerationShift) != gen)
+                {
+                    Interlocked.Increment(ref _staleNotices);
+                    return FillOutcome.Stale;                                         // 이미 해제 또는 재사용됨
+                }
+                long freed = gen << GenerationShift;                                  // 세대 보존 · 소유/취소 비트 0
+                if (Interlocked.CompareExchange(ref _slot[idx], freed, w) == w)
+                {
+                    if ((w & CancelledBit) == 0) return FillOutcome.Filled;
+                    Interlocked.Increment(ref _lateFills);
+                    return FillOutcome.FilledAfterCancel;
+                }
+            }
         }
 
-        /// <summary>★지정 브로커의 모든 미체결 슬롯을 원자적으로 취소 전환(CAS — 슬롯당 1회만 성공, 중복 취소 카운트
-        /// 불가). 반환=이번 호출로 새로 취소된 건수.</summary>
+        /// <summary>[피드 연동] 추적 포기 해제 — 송출 전 중단(브로커 미도달) 또는 응답 타임아웃 회수 시 슬롯을 체결/취소 계수 없이 반납.
+        /// 세대 불일치·이미 해제 = false(무변경). 반환 true 시 wasCancelled = 취소 전환 상태였는지.</summary>
+        [ZeroAllocHotPath]
+        public bool Release(long handle, out bool wasCancelled)
+        {
+            wasCancelled = false;
+            if (!TryDecode(handle, out int idx, out long gen)) return false;
+            while (true)
+            {
+                long w = Volatile.Read(ref _slot[idx]);
+                if ((w & OwnerMask) == 0 || (w >> GenerationShift) != gen) return false;
+                if (Interlocked.CompareExchange(ref _slot[idx], gen << GenerationShift, w) == w)
+                {
+                    wasCancelled = (w & CancelledBit) != 0;
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>[라우터 하드닝] 브로커의 취소 확인 수신 — "취소 전환된" 슬롯만 해제(아직 취소 요청 전인 슬롯은 무변경 false).
+        /// 이미 체결로 해제됐거나 옛 세대면 false.</summary>
+        [ZeroAllocHotPath]
+        public bool ConfirmCancelled(long handle)
+        {
+            if (!TryDecode(handle, out int idx, out long gen)) return false;
+            while (true)
+            {
+                long w = Volatile.Read(ref _slot[idx]);
+                if ((w & OwnerMask) == 0 || (w >> GenerationShift) != gen || (w & CancelledBit) == 0) return false;
+                if (Interlocked.CompareExchange(ref _slot[idx], gen << GenerationShift, w) == w) return true;
+            }
+        }
+
+        /// <summary>★지정 브로커의 모든 미체결 슬롯을 원자적으로 취소 전환(슬롯당 1회만 성공 — 중복 카운트 불가).
+        /// 반환=이번 호출로 새로 취소된 건수.</summary>
+        [ZeroAllocHotPath]
         public int CancelAllForBroker(long brokerId)
         {
+            if ((ulong)brokerId > MaxBrokerId) return 0;
+            long owner = brokerId + 1;
             int n = 0;
             for (int i = 0; i < _cap; i++)
             {
-                if (Volatile.Read(ref _brokerOfSlot[i]) == brokerId
-                    && Interlocked.CompareExchange(ref _cancelled[i], 1, 0) == 0)
-                    n++;
+                while (true)
+                {
+                    long w = Volatile.Read(ref _slot[i]);
+                    if ((w & OwnerMask) != owner || (w & CancelledBit) != 0) break;
+                    if (Interlocked.CompareExchange(ref _slot[i], w | CancelledBit, w) == w) { n++; break; }
+                }
             }
             return n;
         }
 
-        public bool IsCancelled(int slot) => (uint)slot < (uint)_cap && Volatile.Read(ref _cancelled[slot]) == 1;
+        public bool IsCancelled(long handle)
+        {
+            if (!TryDecode(handle, out int idx, out long gen)) return false;
+            long w = Volatile.Read(ref _slot[idx]);
+            return (w >> GenerationShift) == gen && (w & OwnerMask) != 0 && (w & CancelledBit) != 0;
+        }
+
         public long PendingCount(long brokerId)
         {
-            long n = 0;
+            if ((ulong)brokerId > MaxBrokerId) return 0;
+            long owner = brokerId + 1, n = 0;
             for (int i = 0; i < _cap; i++)
-                if (Volatile.Read(ref _brokerOfSlot[i]) == brokerId && Volatile.Read(ref _cancelled[i]) == 0) n++;
+            {
+                long w = Volatile.Read(ref _slot[i]);
+                if ((w & OwnerMask) == owner && (w & CancelledBit) == 0) n++;
+            }
             return n;
+        }
+
+        private bool TryDecode(long handle, out int idx, out long gen)
+        {
+            idx = (int)(handle & 0xFFFF_FFFFL);
+            gen = (handle >> GenerationShift) & 0x7FFF_FFFFL;
+            return handle >= 0 && (uint)idx < (uint)_cap;
         }
     }
 }

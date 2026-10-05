@@ -11,6 +11,13 @@ namespace StockManager
         [STAThread]
         static void Main(string[] args)
         {
+            // [봉인 운영] 릴리스 봉인 수검 CLI — UI·DB·로그·뮤텍스 초기화 이전 분기(부작용 0 · 종료 코드로 판정 전달).
+            if (StockManager.Tools.ReleaseVerificationCli.IsInvocation(args))
+            {
+                Environment.ExitCode = StockManager.Tools.ReleaseVerificationCli.Run(args, Console.Out);
+                return;
+            }
+
             ApplicationConfiguration.Initialize();
 
             // 전역 예외 핸들러
@@ -176,15 +183,10 @@ namespace StockManager
         {
             try
             {
-                foreach (var key in new[]
-                {
-                    "Gemini.ApiKey", "KIS.AppKey", "KIS.AppSecret",
-                    "Upbit.AccessKey", "Upbit.SecretKey", "Telegram.Token",
-                })
-                    LogRedactor.Shared.Register(db.GetSecret(key));
-
-                LogRedactor.Shared.Register(db.GetSetting("KIS.AccountNo"));   // 민감 평문 식별자
-                Log.Info($"[보안] 로그 비밀 차폐 활성 — 등록 {LogRedactor.Shared.Count}건");
+                // [PII 하드닝] 키 목록 단일 원천(LogSecretCatalog) — 교정 전 인라인 6키는 Toss.ClientId/ClientSecret/Account·KIS.Account·
+                //   Email.Pass·Cartridge.PrivKey 누락. 자격증명은 RawCredentialLeakInterlock 에도 등록(원문 유출 시도 → 토큰 소거·무장 차단).
+                var (creds, ids) = LogSecretCatalog.RegisterAll(db.GetSecret, db.GetSetting, LogRedactor.Shared, RawCredentialLeakInterlock.Shared);
+                Log.Info($"[보안] 로그 비밀 차폐 활성 — 등록 {LogRedactor.Shared.Count}건(자격증명 {creds} · 식별자 {ids})");
             }
             catch (Exception ex) { Log.Error("[보안] 로그 비밀 등록 실패", ex); }
         }
