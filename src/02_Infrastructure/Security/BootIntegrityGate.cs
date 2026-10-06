@@ -241,8 +241,8 @@ namespace MS2E.Infrastructure
                 if (!ReleasePackager.VerifyArtifacts(named, masterSeal))
                 {
                     // 디스크 바이너리가 매니페스트와 다름 = 변조 → 핸드셰이크로 Trip(소거) 경로 태움
-                    _handshake = new AssemblyAntiTamperHandshake(shake, _secrets, _purger, OnHandshakeTrip);
-                    var v0 = _handshake.Verify();
+                    if (!Adopt(new AssemblyAntiTamperHandshake(shake, _secrets, _purger, OnHandshakeTrip))) return;
+                    var v0 = _handshake!.Verify();
                     if (v0.Passed)
                     {
                         string recomputed;
@@ -255,8 +255,8 @@ namespace MS2E.Infrastructure
                     if (v0.Passed) Trip();   // 개별 해시는 맞으나 봉인이 다름(항목 누락/추가) — 매니페스트 불일치로 소거
                     return;
                 }
-                _handshake = new AssemblyAntiTamperHandshake(shake, _secrets, _purger, OnHandshakeTrip);
-                var v = _handshake.Verify();
+                if (!Adopt(new AssemblyAntiTamperHandshake(shake, _secrets, _purger, OnHandshakeTrip))) return;
+                var v = _handshake!.Verify();
                 if (!v.Passed)
                 {
                     if ((uint)v.Index < (uint)shake.Count)
@@ -269,12 +269,24 @@ namespace MS2E.Infrastructure
                     Set(BootIntegrityStatus.Unanchored, $"봉인 내부 일관 {entries.Count}건 · 외부 신뢰 앵커(Release.ExpectedMasterSeal) 미주입 — 무장 차단");
                 else
                     Set(BootIntegrityStatus.Sealed, $"봉인 검증 {entries.Count}건 일치" + (AnchorVerified ? " · 외부 앵커 일치" : ""));
-                _handshake.StartMonitor(_monitorInterval);
+                _handshake.StartMonitor(_monitorInterval);   // 경합 Dispose 시 ObjectDisposedException → 아래 catch(Faulted = 차단)
             }
             catch (Exception ex)
             {
                 Set(BootIntegrityStatus.Faulted, ex.GetType().Name + ": " + ex.Message);   // 예외 = 차단(fail-closed)
             }
+        }
+
+        // [실결함 교정] 비동기 수렴 중 게이트가 이미 처분됐으면(Dispose 가 _handshake=null 을 본 경우) 새 핸드셰이크를 스스로 처분 —
+        //   수정 전엔 아티팩트 파일 핸들(FileShare.Read = 쓰기·삭제 거부)이 GC 종료자까지 누수돼 바이너리 교체/삭제가 막혔다.
+        //   Dekker 순서: 여기는 _handshake 게시(Exchange) → _disposed 판독, Dispose 는 _disposed 기록(Exchange) → _handshake 판독 —
+        //   양쪽 전 펜스라 적어도 한쪽이 상대를 보고 처분한다(이중 처분은 멱등).
+        private bool Adopt(AssemblyAntiTamperHandshake h)
+        {
+            Interlocked.Exchange(ref _handshake, h);
+            if (Volatile.Read(ref _disposed) == 0) return true;
+            h.Dispose();
+            return false;
         }
 
         private void Trip()
@@ -356,7 +368,7 @@ namespace MS2E.Infrastructure
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
-            _handshake?.Dispose();
+            Volatile.Read(ref _handshake)?.Dispose();
             SignalInterlock();   // 처분 = 차단(ArmingBlocked) → 집계 비트 Raise
         }
     }

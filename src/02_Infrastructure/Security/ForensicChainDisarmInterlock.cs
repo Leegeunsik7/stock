@@ -77,24 +77,41 @@ namespace MS2E.Infrastructure
             try { _onTrip?.Invoke(v); } catch { Interlocked.Increment(ref _faults); }
         }
 
+        // [실결함 교정] AssemblyAntiTamperHandshake 와 같은 CAS→Start 창(미시작 스레드를 본 Dispose 가 Join 생략 후 _stop 처분 →
+        //   모니터가 처분된 이벤트를 Wait → 미처리 예외 = 프로세스 종료) — 시작·처분 상호 배제 + 처분 경합 예외 흡수.
+        private readonly object _lifecycle = new();
+
         public void StartMonitor(TimeSpan interval)
         {
             if (interval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(interval));
-            if (Volatile.Read(ref _disposed) == 1) throw new ObjectDisposedException(nameof(ForensicChainDisarmInterlock));
-            var t = new Thread(() =>
+            lock (_lifecycle)
             {
-                while (!_stop.Wait(interval))
-                    if (Volatile.Read(ref _disposed) == 1 || Check().Intact == false) return;
-            }) { IsBackground = true, Name = "MS2E.ForensicChainGuard" };
-            if (Interlocked.CompareExchange(ref _monitor, t, null) is null) t.Start();
+                if (Volatile.Read(ref _disposed) == 1) throw new ObjectDisposedException(nameof(ForensicChainDisarmInterlock));
+                if (Volatile.Read(ref _monitor) is not null) return;
+                var t = new Thread(() =>
+                {
+                    try
+                    {
+                        while (!_stop.Wait(interval))
+                            if (Volatile.Read(ref _disposed) == 1 || Check().Intact == false) return;
+                    }
+                    catch (ObjectDisposedException) { /* 처분 = 정지 */ }
+                }) { IsBackground = true, Name = "MS2E.ForensicChainGuard" };
+                t.Start();
+                Volatile.Write(ref _monitor, t);
+            }
         }
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
-            _stop.Set();
-            var t = Volatile.Read(ref _monitor);
-            if (t is not null && t.IsAlive && t != Thread.CurrentThread) t.Join();
+            Thread? t;
+            lock (_lifecycle)
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+                _stop.Set();
+                t = Volatile.Read(ref _monitor);
+            }
+            if (t is not null && t != Thread.CurrentThread) t.Join();
             _stop.Dispose();
         }
     }

@@ -50,6 +50,7 @@ namespace MS2E.Infrastructure
         private readonly VolatileMemoryPurger? _purger;
         private readonly Action<TamperReason>? _onTrip;
         private readonly ManualResetEventSlim _stop = new(false);
+        private readonly object _lifecycle = new();   // [실결함 교정] StartMonitor ↔ Dispose 상호 배제(미시작 스레드 창 봉쇄)
         private Thread? _monitor;
         private int _tripped, _handshakeOk, _disposed;
         private long _verifications, _tripReason, _callbackFaults;
@@ -177,29 +178,45 @@ namespace MS2E.Infrastructure
         }
 
         /// <summary>[방향 B] 전용 백그라운드 스레드 주기 재검증 시작(1회만). Trip 시 루프 종료.</summary>
+        /// <remarks>[실결함 교정 · 테스트 호스트 크래시 실측] 수정 전엔 CAS 로 스레드를 게시한 '뒤' Start 했다 — 그 사이 다른 스레드의
+        /// Dispose 가 미시작 스레드(IsAlive=false)를 보고 Join 을 건너뛴 채 _stop 을 처분하면, 이어 시작된 모니터가 처분된
+        /// ManualResetEventSlim.Wait 에서 ObjectDisposedException → 백그라운드 스레드 미처리 예외 = 프로세스 종료
+        /// (이벤트 로그 1026 실측: BootIntegrityGate 비동기 수렴의 StartMonitor ↔ 게이트 Dispose 경합). 이제 시작·처분을 같은 락으로 직렬화.</remarks>
         public void StartMonitor(TimeSpan interval)
         {
             if (interval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(interval));
-            if (Volatile.Read(ref _disposed) == 1) throw new ObjectDisposedException(nameof(AssemblyAntiTamperHandshake));
-            if (Interlocked.CompareExchange(ref _monitor, new Thread(() => MonitorLoop(interval)) { IsBackground = true, Name = "MS2E.AntiTamperGuard" }, null) is not null)
-                return;
-            _monitor!.Start();
+            lock (_lifecycle)
+            {
+                if (Volatile.Read(ref _disposed) == 1) throw new ObjectDisposedException(nameof(AssemblyAntiTamperHandshake));
+                if (_monitor is not null) return;
+                var t = new Thread(() => MonitorLoop(interval)) { IsBackground = true, Name = "MS2E.AntiTamperGuard" };
+                t.Start();                                   // 락 안에서 시작 — Dispose 는 '시작된' 스레드만 본다
+                Volatile.Write(ref _monitor, t);
+            }
         }
 
         private void MonitorLoop(TimeSpan interval)
         {
-            while (!_stop.Wait(interval))
+            try
             {
-                if (Volatile.Read(ref _disposed) == 1 || Verify().Tripped) return;
+                while (!_stop.Wait(interval))
+                {
+                    if (Volatile.Read(ref _disposed) == 1 || Verify().Tripped) return;
+                }
             }
+            catch (ObjectDisposedException) { /* 처분 경합 방어(심층) — 처분 = 정지 의미 · 프로세스 크래시 금지 */ }
         }
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
-            _stop.Set();
-            var t = Volatile.Read(ref _monitor);
-            if (t is not null && t.IsAlive && t != Thread.CurrentThread) t.Join();
+            Thread? t;
+            lock (_lifecycle)
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+                _stop.Set();
+                t = Volatile.Read(ref _monitor);
+            }
+            if (t is not null && t != Thread.CurrentThread) t.Join();
             lock (_verifyGate)
             {
                 foreach (var h in _handles) h?.Dispose();
