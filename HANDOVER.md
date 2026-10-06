@@ -772,3 +772,28 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 18.3 검증
 - `PaperTradingE2EStressTests.cs` 19건(방어 끔 Red 16건): E2E 전량 체결·대사 잔존 0 · P50≤P99≤P99.9 · 계층별 단일 격발 정확 비트 + 체인 Disarm · 7계층 동시 격발 40라운드(비트당 전이 정확히 1회 · 체인 무결 · 이후 송출 0) · seqlock 20만 게시 찢김 0 · 1만 틱 렌더 합치기 · 센티널 · 하네스 객체 그래프 실 브로커 0 · E2E 정상 상태 δ=0.
+
+---
+
+## 19. v12.14.1-GM 최종 출하 기록 (2026-10-06)
+
+### 19.1 커밋 · 태그
+- `09070c7` — v12.14.1-GM Production Golden Master(E2E 하네스 · 7대 인터락 · 릴리스 CI · 태그 9f3b7ef 누락분 IKiwoomApi.cs/KiwoomProxyHost.cs 복구). 21파일 선별 스테이징(타 세션 BrokerSettingsPage.razor · InstallerBuildPanel.razor · .claude/* 제외).
+- `7681aa5` — fix(release-blocker): 백그라운드 감시 스레드 시작↔처분 경합 크래시 교정(아래 19.2).
+- 태그 `v12.14.1-GM`(annotated) 재지정 이력: 9f3b7ef(클린 빌드 불가) → 09070c7 → **7681aa5**. 원격 저장소 없음(푸시 이력 0 — 재지정 영향 범위 로컬 한정).
+- 클린 체크아웃(별도 git worktree) 오중 빌드 Release `-warnaserror` 0W/0E.
+
+### 19.2 ★출하 중 발견 · 교정한 실결함(release-package [3/10] 이 차단)
+- 증상: 테스트 호스트 조기 종료(684 · 1,560/3,353 · 실패 0). Windows 이벤트 로그 1026 = testhost 미처리 `ObjectDisposedException(ManualResetEventSlim)` ← `AssemblyAntiTamperHandshake.MonitorLoop`.
+- 원인: `StartMonitor` 가 CAS 로 스레드를 게시한 뒤 `Start` — 그 사이 `BootIntegrityGate` 비동기 수렴(Task.Run)과 경합한 `Dispose` 가 미시작 스레드(IsAlive=false)를 보고 Join 생략 후 `_stop` 처분 → 모니터가 처분된 이벤트 Wait → 프로세스 종료. **앱 종료 시에도 동일 크래시 가능.**
+- 교정: AssemblyAntiTamperHandshake · ForensicChainDisarmInterlock 시작/처분 lifecycle 락(시작 후 게시) + 처분 경합 예외 흡수 · BootIntegrityGate `Adopt`(처분 후 생성된 핸드셰이크 자가 처분 — 아티팩트 파일 핸들 누수 동반 교정).
+- ★출하본 미포함(태그 이후 · 작업 트리 미커밋): GenesisPreFlightUpdater/PortfolioRiskUpdater 루프 처분 경합 흡수(Join 2초 타임아웃 후 `_stop` 처분 → 다음 Wait 크래시 경로) — 앱 종료 시 크래시 가능성. 다음 버전 커밋 대상.
+- 증거: `MonitorLifecycleRaceTests` 4건 — 수정 전 코드 3/3 테스트 호스트 크래시(동일 예외) · 수정 후 통과.
+- ★미해명 1건: 교정 커밋 후 첫 packaging 실행에서 테스트 호스트가 243건에서 1회 더 종료(예외 출력·이벤트 로그·WER·덤프 모두 없음). 직접/PowerShell/빌드 직후/새 경로 등 24회 재현 실패 후 packaging 재실행에서 전 단계 통과. 같은 시각 Windows 방화벽 프롬프트(새 경로 testhost — `V560V600PathGammaTests` 의 0.0.0.0 UDP 멀티캐스트 바인딩)가 관측됐으나 인과 미입증 — 외부 요인(보안 제품) 가능성 · 후속 추적 권장.
+
+### 19.3 출하 아티팩트(release-package.ps1 [0/10]~[10/10] 전 단계 통과 · 클린 worktree @7681aa5)
+- `release/release-v12.14.1-GM.zip` — 2,903,759 B · SHA-256 `E7C73D63625B578FBD74C8601008C1F9583E586FB13AAFDACD3E8A6EED2D1B31`
+- `release/master-seal.txt`(배포 PC `Release.ExpectedMasterSeal`) — `038981351CF2C3E1310C6C17CF95BAB71D5973D82C432738CFE7C18FD3A5EBFE` · 아티팩트 38
+- `release/RELEASE_MANIFEST.json` — v12.14.1-GM @7681aa50ec · 피어 QuantumVault@57b18226ae(읽기 전용 관측)
+- 독립 재수검: `--verify-seal`(Sealed · 앵커 일치) · `--verify-zip`(Ok 무추출) · `--release-handshake`(Ok) 전부 exit 0.
+- 구 산출물(작업 트리 빌드 · 태그 불일치)은 `release/superseded-9f3b7ef-worktree-build/` 로 보관(삭제 아님).
