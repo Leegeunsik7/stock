@@ -840,3 +840,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 21.3 검증
 - `KisMultiBrokerRoutingTests.cs` 21건(방어 끔 Red 6건 · PINGPONG 수정 전 Red · Contains 판정 오판 실증) · 프레임 판독·AES 복호·통보 사상·Bearer·세션 판정 δ=0 실측 · 전체 3,395 Pass ×2 · 오중 빌드 -warnaserror 0W/0E.
 - 한계: KIS 필드 순서·TR ID·응답 키는 공개 문서 기준(이 저장소에 VTS 실측 이력 없음) · KisLiveBroker 는 동기 HttpClient(네트워크 테스트 없음 · 소스 회귀 테스트만).
+
+---
+
+## 22. 차기: 무중단 롤오버 가드 · 헬스 에이전트 (2026-10-06 · 미커밋)
+
+### 22.1 전제 검증
+- `LiveSoakSentinel`(v12.5.0 "최초로 Disarm 에 결속" 주석)은 프로덕션 어디서도 생성되지 않는다(사문) — 호스트에 자원 폭주를 무장 차단으로 잇는 경로가 없었다.
+- 키움 프록시(`KiwoomProxyHost.RunAsync`)는 파이프 연결 1개를 받고 끊기면 종료 — 키움 주문번호↔클라이언트 ID 사상표(KiwoomComEventCore)가 함께 사라진다. 새 호스트+새 프록시는 구 주문의 체결 통보를 사상할 수 없다(UnknownOrder).
+- 단일 인스턴스 뮤텍스 없음(신·구 프로세스 동시 실행 가능). 프로덕션 호스트는 브리지 연결 호출부가 없고 프록시 진입점은 `NullKiwoomApi`(TODO) — 실 추적 슬롯은 현재 생기지 않는다.
+
+### 22.2 구현
+- `StockManager/Services/ProcessRolloverGuard.cs` — MMF(`Local\MS2E_ROLLOVER_V1`) 헤더 128B + 슬롯 80B×N. 구: `Publish`(Admitted 미결속 송신이 있으면 NotQuiescent) → SHA-256(epoch‖count‖슬롯) 봉인 → `WaitForAck`. 신: `TryAdopt`(매직/버전/상태/체크섬 검증 → 전량 ImportSlot → Ack) · 실패 = sticky 불일치. `ArmingBlocked = 불일치 ∨ (승계>0 ∧ 대사 미완료)` · `MarkReconciled()` 는 브로커 대사기(미구현)가 호출해야 할 지점.
+- 호스트: 기동 시 승계 시도 → 성공 시 `ExecutionBridgeBroker.SeedOrderIdFloor`(승계 최대 클라이언트 ID 이하 재발급 금지) · `Rollover`(20) 필수 비트. 종료(OnFormClosing) 시 추적 슬롯이 있으면 발행 → `Rollover.AckWaitSeconds`(기본 5) 대기 → 미확인이면 운용자 확인(아니오 = 종료 취소). Windows 종료는 예외.
+- `OrderExecutionFeedAdapter.ExportSlots/ImportSlot/InFlightUnbound/MaxTrackedBrokerOrderId` — 승계 슬롯은 이 프로세스 라우터에 기록이 없으므로 라우터 호출 생략(_adopted).
+- `StockManager/Telemetry/HealthMonitoringAgent.cs` — 전용 스레드(기본 50ms · 스레드풀 고갈과 무관하게 스캔) · `Environment.WorkingSet` > `Health.MaxWorkingSetMB`(1024) · 재사용 `IThreadPoolWorkItem` 탐침 큐 지연(미실행 대기 포함) > `Health.MaxStallMs`(100) · `GC.GetTotalPauseDuration` 증가분 > `Health.MaxGcPausePerScanMs`(200) · CPU‰(GetProcessTimes · 관측) → `HealthAgent`(21) · 기동 유예 `Health.WarmupSeconds`(30). δ=0.
+- `src/02_Infrastructure/Engine/HostHealthHeartbeat.cs`(프록시에 소스 링크) — 방향 A: 호스트가 스캔마다 64B 고정 하트비트(QPC·WS·CPU·트립 플래그 · seqlock) 사상. 방향 B: 프록시 `HostHeartbeatEgressGate` — 매수/매도/정정 송신 직전 맵 없음·찢김·200ms 초과·트립이면 키움 송신 0 + 거부 프레임(호스트 슬롯 즉시 반납). 취소는 통과. 프록시 `Program.cs` 기본 활성.
+  - 지시서의 '외부 워치독이 발주 소켓 물리 단절'은 관리자 권한(방화벽/TCP 테이블 조작)이 필요하고 시세 연결까지 끊긴다 → 주문이 실제로 나가는 프록시 송신 지점에서 차단.
+
+### 22.3 검증 · 한계
+- `ZeroDowntimeRolloverTests.cs` 12건(방어 끔 Red 9건) · 발행→승계→Ack 왕복·스캔·하트비트·게이트 δ=0 · 전체 3,407 Pass ×2 · 오중 빌드 -warnaserror 0W/0E.
+- 한계: 승계는 '가시성' 승계다 — 브로커 미체결 조회(OPT10075 등) 대사기 미구현이라 승계 후 신규 발주는 계속 차단. 프록시 게이트는 프록시 측 단위 테스트가 없다(테스트 프로젝트가 프록시를 참조하지 않음 — 게이트 클래스는 공유 소스라 호스트 측에서 검증 · 프록시 결선은 소스 회귀).

@@ -48,6 +48,16 @@ namespace StockManager.Adapters
 
     public readonly record struct ReconciliationRecord(long Micros, ReconciliationKind Kind, long ProposalId, long BrokerOrderId, long Qty);
 
+    /// <summary>[롤오버] 프로세스 간 승계용 추적 슬롯 1건(고정 레이아웃 · MMF 직렬화 · 80B).</summary>
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
+    public struct HandoffSlot
+    {
+        public long ProposalId, BrokerOrderId, RouterKeyLo, RouterKeyHi;
+        public long OrderQty, Filled, ReferenceRaw, AgeMicros;
+        public int Broker, Flags;                 // Flags: 1 = 매수 · 2 = 접수 확인(Accepted) · 4 = 응답 수신(acked)
+        public long Reserved;
+    }
+
     public sealed class OrderExecutionFeedAdapter : IArmingBlockSource, IOrderAmendGate
     {
         /// <summary>[정정/취소] 진행 중 표지 유효 창 — 브로커 확인이 이 시간 안에 오지 않으면 실패로 보고 해제(수동 재요청 허용).</summary>
@@ -68,6 +78,7 @@ namespace StockManager.Adapters
         private readonly long[] _refRaw;
         private readonly StockManager.Engines.ExtremeSlippageDisarmInterlock? _extreme;
         private readonly bool[] _accepted;
+        private readonly bool[] _adopted;   // [롤오버] 이전 프로세스에서 승계한 슬롯 — 이 프로세스 라우터에는 기록이 없다(라우터 호출 생략)
         private readonly long _acceptedTtlMicros;
         private readonly BrokerStateMismatchInterlock? _mismatch;
         private MS2E.Core.ZeroAllocForensicAuditStream? _forensic;
@@ -92,6 +103,7 @@ namespace StockManager.Adapters
             _mismatch = mismatch;
             _acceptedTtlMicros = Math.Max(acceptedTtlMicros, slotTtlMicros);   // 접수 TTL 은 응답 TTL 이상(짧게 설정돼도 응답 TTL 로 상향)
             _accepted = new bool[capacity];
+            _adopted = new bool[capacity];
             _router = router ?? throw new ArgumentNullException(nameof(router));
             if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
             if (slotTtlMicros <= 0) throw new ArgumentOutOfRangeException(nameof(slotTtlMicros));
@@ -105,6 +117,76 @@ namespace StockManager.Adapters
         }
 
         public long AmendBlocked => Interlocked.Read(ref _amendBlocked);
+
+        // ── [롤오버] 슬롯 승계(δ=0 · 호출측 버퍼) ───────────────────────────────
+
+        /// <summary>송신했으나 브로커 번호 미결속(Admitted) 슬롯 수 — 0 이어야 승계 가능(번호 없는 주문은 새 프로세스가 대사 불가).</summary>
+        public int InFlightUnbound
+        {
+            get { lock (_gate) { int n = 0; for (int i = 0; i < _state.Length; i++) if (_state[i] == Admitted) n++; return n; } }
+        }
+
+        /// <summary>추적 슬롯 내보내기. 반환 = 건수(버퍼 부족 −1 · 미결속 존재 −2 → 승계 금지).</summary>
+        public int ExportSlots(Span<HandoffSlot> dst)
+        {
+            long now = _nowMicros();
+            lock (_gate)
+            {
+                int n = 0;
+                for (int i = 0; i < _state.Length; i++)
+                {
+                    if (_state[i] == Free) continue;
+                    if (_state[i] == Admitted) return -2;
+                    if (n >= dst.Length) return -1;
+                    dst[n++] = new HandoffSlot
+                    {
+                        ProposalId = _proposalId[i], BrokerOrderId = _brokerOrderId[i],
+                        RouterKeyLo = (long)(ulong)_routerKey[i], RouterKeyHi = (long)(ulong)(_routerKey[i] >> 64),
+                        OrderQty = _orderQty[i], Filled = _filled[i], ReferenceRaw = _refRaw[i], AgeMicros = Math.Max(0, now - _admittedMicros[i]),
+                        Broker = _broker[i], Flags = (_isBuy[i] ? 1 : 0) | (_accepted[i] ? 2 : 0) | (_acked[i] ? 4 : 0),
+                    };
+                }
+                return n;
+            }
+        }
+
+        /// <summary>승계 슬롯 1건 가져오기(접수 확인 상태 · 라우터 호출 생략 표시). 같은 브로커 번호 중복·포화·형식 이탈 = false.</summary>
+        public bool ImportSlot(in HandoffSlot s)
+        {
+            if (s.BrokerOrderId == 0 || s.OrderQty <= 0 || s.Filled < 0 || s.Filled >= s.OrderQty || s.AgeMicros < 0) return false;
+            long now = _nowMicros();
+            lock (_gate)
+            {
+                if (FindByBrokerOrder(s.BrokerOrderId) >= 0) return false;
+                for (int i = 0; i < _state.Length; i++)
+                {
+                    if (_state[i] != Free) continue;
+                    _state[i] = Accepted; _proposalId[i] = s.ProposalId; _brokerOrderId[i] = s.BrokerOrderId;
+                    _routerKey[i] = ((UInt128)(ulong)s.RouterKeyHi << 64) | (ulong)s.RouterKeyLo;
+                    _broker[i] = s.Broker; _orderQty[i] = s.OrderQty; _filled[i] = s.Filled; _refRaw[i] = s.ReferenceRaw;
+                    _admittedMicros[i] = now - s.AgeMicros;
+                    _isBuy[i] = (s.Flags & 1) != 0; _accepted[i] = (s.Flags & 2) != 0; _acked[i] = (s.Flags & 4) != 0;
+                    _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0;
+                    _adopted[i] = true;
+                    _tracked++;
+                    return true;
+                }
+                Interlocked.Increment(ref _trackFull);
+                return false;
+            }
+        }
+
+        /// <summary>추적 중 최대 브로커 주문번호(키움 네임스페이스만) — 새 프로세스의 클라이언트 ID 하한 시드용.</summary>
+        public long MaxTrackedBrokerOrderId(long excludeAtOrAbove)
+        {
+            lock (_gate)
+            {
+                long max = 0;
+                for (int i = 0; i < _state.Length; i++)
+                    if (_state[i] != Free && _brokerOrderId[i] < excludeAtOrAbove && _brokerOrderId[i] > max) max = _brokerOrderId[i];
+                return max;
+            }
+        }
 
         /// <summary>
         /// [포트폴리오 · 방향 B] 브로커 접수 확인(번호 결속)된 미체결 주문번호 복사(δ=0 · 호출측 버퍼) — 일괄 취소 대상.
@@ -326,7 +408,7 @@ namespace StockManager.Adapters
                             record = false; kind = ReconciliationKind.Filled;
                             goto done;
                         }
-                        var outcome = _router.OnFill(_routerKey[i], _broker[i]);
+                        var outcome = _adopted[i] ? FillNoticeKind.Filled : _router.OnFill(_routerKey[i], _broker[i]);
                         kind = cum > _orderQty[i] ? ReconciliationKind.Overfill
                              : outcome switch
                                {
@@ -344,7 +426,7 @@ namespace StockManager.Adapters
                     else if (status == BridgeFillStatus.Rejected)
                     {
                         // [키움 프로토콜] 거부 = 종결 — TTL 대기 없이 즉시 반납(무장 유지 · OrderSlotAge 비트 미격발)
-                        _router.ReleaseTerminal(_routerKey[i], _broker[i]);
+                        if (!_adopted[i]) _router.ReleaseTerminal(_routerKey[i], _broker[i]);
                         kind = ReconciliationKind.Rejected;
                         qty = _orderQty[i] - _filled[i];
                         Interlocked.Increment(ref _rejectedReleased);
@@ -353,7 +435,7 @@ namespace StockManager.Adapters
                     else if (status == BridgeFillStatus.CancelConfirmed)
                     {
                         // 캐스케이드 취소 전환 슬롯이면 정식 확인, 아니면(운용자/브로커 직접 취소) 종결 해제
-                        if (!_router.OnCancelConfirmed(_routerKey[i], _broker[i])) _router.ReleaseTerminal(_routerKey[i], _broker[i]);
+                        if (!_adopted[i] && !_router.OnCancelConfirmed(_routerKey[i], _broker[i])) _router.ReleaseTerminal(_routerKey[i], _broker[i]);
                         kind = ReconciliationKind.CancelConfirmed;
                         qty = _filled[i];                                    // 취소 전 경합 체결 누적(부분 체결 후 취소 = 실 노출 기록)
                         FreeSlot(i);
@@ -386,7 +468,7 @@ namespace StockManager.Adapters
                     else
                     {
                         // Legacy(구 프록시 · 체결량 0 모호 통보) — 구 동작 유지
-                        if (!_router.OnCancelConfirmed(_routerKey[i], _broker[i])) { _acked[i] = true; Interlocked.Increment(ref _zeroQtyIgnored); return; }
+                        if (_adopted[i] || !_router.OnCancelConfirmed(_routerKey[i], _broker[i])) { _acked[i] = true; Interlocked.Increment(ref _zeroQtyIgnored); return; }
                         kind = ReconciliationKind.CancelConfirmed;
                         FreeSlot(i);
                     }
@@ -421,7 +503,8 @@ namespace StockManager.Adapters
                     if (_state[i] == Free) continue;
                     long ttl = _accepted[i] ? _acceptedTtlMicros : _ttlMicros;   // [키움 프로토콜] 접수 확인 주문은 장기 TTL
                     if (now - _admittedMicros[i] <= ttl) continue;
-                    _router.ReclaimExpired(_routerKey[i], out bool wasCancelling);
+                    bool wasCancelling = false;
+                    if (!_adopted[i]) _router.ReclaimExpired(_routerKey[i], out wasCancelling);
                     var kind = wasCancelling ? ReconciliationKind.ExpiredWhileCancelling
                              : _accepted[i] ? ReconciliationKind.ExpiredAccepted
                              : _acked[i] ? ReconciliationKind.ExpiredAcknowledged : ReconciliationKind.Expired;
@@ -474,7 +557,7 @@ namespace StockManager.Adapters
         private void FreeSlot(int i)
         {
             _state[i] = Free; _proposalId[i] = 0; _brokerOrderId[i] = 0; _routerKey[i] = default; _acked[i] = false; _accepted[i] = false;
-            _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0;
+            _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0; _adopted[i] = false;
             _tracked--;
         }
 

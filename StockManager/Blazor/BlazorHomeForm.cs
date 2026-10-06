@@ -388,7 +388,9 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.AccountDivergence, // [계좌 · 방향 B] 정적 구간 브로커 보유 ≠ 호스트 추정 보유 → Disarm
                 MS2E.Core.ArmingInterlockSource.EgressBypass, // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달 → 송출 차단 + Disarm
                 MS2E.Core.ArmingInterlockSource.PreFlightBoot, // [사전 검증] 시계 역행 · 안전 설정 런타임 변조 · 프록시 파이프 신원 불일치 → Disarm + 키 소거
-                MS2E.Core.ArmingInterlockSource.CorrelationCrash); // [포트폴리오 · 방향 B] 보유 종목 동시 하락 → 미체결 일괄 취소 + Disarm
+                MS2E.Core.ArmingInterlockSource.CorrelationCrash, // [포트폴리오 · 방향 B] 보유 종목 동시 하락 → 미체결 일괄 취소 + Disarm
+                MS2E.Core.ArmingInterlockSource.Rollover,        // [롤오버] 승계 슬롯 불일치 · 승계 후 브로커 대사 미완료 → 신규 발주 차단
+                MS2E.Core.ArmingInterlockSource.HealthAgent);    // [헬스] Working Set 폭주 · 스레드풀 정체 · GC 정지 폭주 → Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
@@ -1074,6 +1076,48 @@ namespace StockManager.Blazor
             services.AddSingleton(refPriceFeed);
             services.AddSingleton(orderRouter);
             services.AddSingleton(execFeed);
+            // [롤오버 · 추천 A] 선행 프로세스가 MMF 에 승계 슬롯을 발행해 두었으면 체크섬 검증 후 원자 승계 + HandoffAck.
+            //   불일치 = sticky Rollover 비트 · 승계 성공이어도 브로커 대사(MarkReconciled) 전까지 신규 발주 차단(Fail-Closed).
+            //   승계 슬롯의 최대 클라이언트 ID 이하로는 새 주문 ID 를 발급하지 않는다(충돌 = 오대사).
+            var rolloverGuard = StockManager.Services.ProcessRolloverGuard.CreatePublisher(
+                cfg.GetString("Rollover.MapName", StockManager.Services.ProcessRolloverGuard.DefaultMapName));
+            var adoptResult = rolloverGuard.TryAdopt(execFeed);
+            if (adoptResult == StockManager.Services.RolloverAdoptResult.Adopted)
+            {
+                broker.SeedOrderIdFloor(execFeed.MaxTrackedBrokerOrderId(MS2E.Infrastructure.KisOrderIdSpace.Namespace));
+                Log.Warn($"[Rollover] 선행 프로세스 슬롯 {rolloverGuard.AdoptedCount}건 승계 — 브로커 대사 전까지 신규 발주 차단");
+            }
+            else if (adoptResult != StockManager.Services.RolloverAdoptResult.NoHandoff)
+                Log.Warn($"[Rollover] 승계 실패 {adoptResult} — 신규 발주 차단(sticky)");
+            rolloverGuard.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.Rollover);
+            services.AddSingleton(rolloverGuard);
+            // 종료 시: 추적 슬롯이 남아 있으면 발행 → 후속 프로세스 HandoffAck 대기 → 미확인이면 운용자 확인 없이는 종료하지 않는다.
+            int ackWaitSec = cfg.GetInt("Rollover.AckWaitSeconds", 5, 0, 300);
+            _rolloverCloseGate = () =>
+            {
+                if (execFeed.Tracked == 0) return true;
+                var pub = rolloverGuard.Publish(execFeed, DateTime.UtcNow.Ticks);
+                if (pub == StockManager.Services.RolloverPublishResult.Published && rolloverGuard.WaitForAck(TimeSpan.FromSeconds(ackWaitSec))) return true;
+                var answer = MessageBox.Show(
+                    $"미체결 추적 주문 {execFeed.Tracked}건이 후속 프로세스로 승계 확인되지 않았습니다({pub}).\n종료하면 이 주문들의 체결·취소를 이 앱이 더 이상 추적하지 않습니다.\n그래도 종료하시겠습니까?",
+                    "롤오버 승계 미확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                return answer == DialogResult.Yes;
+            };
+            FormClosed += (_, _) => ShutdownTrace.Step("rolloverGuard", () => rolloverGuard.Dispose());
+            // [헬스 · 추천 A] 무할당 헬스 에이전트(전용 스레드 50ms) — Working Set · 스레드풀 정체 · GC 정지 폭주 → HealthAgent 비트(0ms).
+            //   [방향 A+B] 스캔마다 비관리 고정 하트비트(MMF)를 사상 → 키움 프록시가 주문 송신 직전 판독(박동 200ms 초과/트립 = 송신 거부).
+            //   기동 유예(기본 30초) — 부팅 초기화의 스레드풀 점유를 sticky 트립으로 오판하지 않도록.
+            var hostHeartbeat = new MS2E.Infrastructure.HostHeartbeatWriter();
+            var healthAgent = new StockManager.Telemetry.HealthMonitoringAgent(
+                maxWorkingSetBytes: cfg.GetInt("Health.MaxWorkingSetMB", 1024, 128, 65_536) * 1024L * 1024L,
+                maxStallMicros: cfg.GetInt("Health.MaxStallMs", 100, 10, 10_000) * 1000L,
+                maxGcPausePerScan: TimeSpan.FromMilliseconds(cfg.GetInt("Health.MaxGcPausePerScanMs", 200, 10, 10_000)),
+                heartbeat: hostHeartbeat,
+                warmup: TimeSpan.FromSeconds(cfg.GetInt("Health.WarmupSeconds", 30, 0, 600)));
+            healthAgent.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.HealthAgent);
+            healthAgent.Start(TimeSpan.FromMilliseconds(cfg.GetInt("Health.ScanIntervalMs", 50, 20, 1_000)));
+            services.AddSingleton(healthAgent);
+            FormClosed += (_, _) => ShutdownTrace.Step("healthAgent", () => { healthAgent.Dispose(); hostHeartbeat.Dispose(); });
             services.AddSingleton(feedBreaker);
             services.AddSingleton(routerGate);
             var tossSeqGuardian      = new SequenceContinuityGuardian();
@@ -1557,8 +1601,17 @@ namespace StockManager.Blazor
             base.WndProc(ref m);
         }
 
+        // [롤오버] 종료 게이트(생성 시 결선) — false = 종료 취소(승계 미확인 · 운용자 거부)
+        private Func<bool>? _rolloverCloseGate;
+
         protected override void OnFormClosing(System.Windows.Forms.FormClosingEventArgs e)
         {
+            if (!e.Cancel && _rolloverCloseGate is { } gate && e.CloseReason != System.Windows.Forms.CloseReason.WindowsShutDown)
+            {
+                bool allow;
+                try { allow = gate(); } catch (Exception) { allow = true; }   // 게이트 자체 고장이 종료를 영구히 막지 않게
+                if (!allow) { e.Cancel = true; return; }
+            }
             ShutdownTrace.Begin("OnFormClosing");   // WM_CLOSE 를 못 거친 경로(코드 종료) 대비 — 이미 시작됐으면 no-op
             ShutdownTrace.Mark("OnFormClosing enter");
             base.OnFormClosing(e);

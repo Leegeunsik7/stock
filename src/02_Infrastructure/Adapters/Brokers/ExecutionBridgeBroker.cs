@@ -148,6 +148,16 @@ namespace MS2E.Infrastructure
         /// <summary>[정정/취소] 게이트가 송신 전 차단한 취소/정정 누계(이미 종결 · 중복 · 잔량 초과).</summary>
         public long AmendBlocked => Interlocked.Read(ref _amendBlocked);
 
+        /// <summary>[롤오버] 클라이언트 주문 ID 하한 시드 — 승계 슬롯의 최대 ID 이하로는 새 주문 ID 를 발급하지 않는다(충돌 = 오대사).</summary>
+        public void SeedOrderIdFloor(long floor)
+        {
+            long cur;
+            while ((cur = Interlocked.Read(ref _nextOrderId)) < floor)
+                if (Interlocked.CompareExchange(ref _nextOrderId, floor, cur) == cur) return;
+        }
+
+        public long LastIssuedOrderId => Interlocked.Read(ref _nextOrderId);
+
         public void Cancel(string orderId)
         {
             if (!long.TryParse(orderId, out long id)) return;

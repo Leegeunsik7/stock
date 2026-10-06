@@ -73,6 +73,8 @@ namespace MS2E.Core
         CorrelationCrash = 17, // [포트폴리오 · 방향 B] 보유 종목 동시 하락(체계적 상관 급등) → 미체결 일괄 취소 + Disarm
         KisAuth         = 18,  // [KIS] 접근 토큰 만료 임박(5분) 갱신 실패 · 만료 → Disarm
         KisSession      = 19,  // [KIS · 방향 B] 실시간 WebSocket PINGPONG/수신 침묵 타임아웃 → KIS 블랙리스트 + Disarm
+        Rollover        = 20,  // [롤오버] 승계 슬롯 불일치(체크섬·건수·충돌) 또는 승계 후 브로커 대사 미완료 → 신규 발주 차단
+        HealthAgent     = 21,  // [헬스] Working Set 폭주 · 스레드풀 정체(큐 지연) · GC 정지 폭주 → Disarm
         StartupSanity   = 63,
     }
 
