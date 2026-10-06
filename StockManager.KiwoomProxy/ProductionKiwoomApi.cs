@@ -1,7 +1,7 @@
 // ============================================================================
 // ProductionKiwoomApi — 과제 2 §2.1: 실 키움 OpenAPI+ COM(axKHOpenAPI) ↔ IKiwoomApi 결속
 //
-//  ★★ SDK 게이트: 본 파일은 기본적으로 `#if KIWOOM_COM` 로 '전량 제외'된다. 따라서 표준 0/0
+//  ★★ SDK 게이트: 본 파일의 COM 어댑터는 기본적으로 KIWOOM_COM 조건부 컴파일로 '전량 제외'된다. 따라서 표준 0/0
 //     빌드(키움 SDK 미설치 환경·CI)에는 영향이 0 이다. axKHOpenAPI COM 타입은 이 저장소에
 //     없으며(키움증권 OpenAPI+ 설치본에만 존재), 아래 코드는 '운영자가 실 배선 시' 활성화한다.
 //
@@ -15,11 +15,10 @@
 //  ── 설계(격리·δ=0·fail-closed 계승) ─────────────────────────────────────────
 //   · axKHOpenAPI 는 ActiveX 컨트롤 → STA 스레드 + 메시지 펌프 필요. 숨김 Form(_host) 위에 얹고
 //     Application.Run 으로 펌프를 돌린다(전용 STA 스레드).
-//   · COM 이벤트(OnReceiveRealData/OnReceiveChejanData)는 STA 스레드에서 발생 → IKiwoomApi 이벤트로
-//     매핑. 수신 파싱은 값타입만 사용(문자열→숫자 변환은 콜드, 이후 KiwoomProxyHost 가 v4.82.0
-//     재사용 버퍼+_sendLock 으로 δ=0 직렬화 송신).
+//   · [키움 COM · 추천 A] 이벤트 처리 로직(FID 사상 · 주문번호 양방향 사상 · 보류 체결 통보 · 서버 거부 분류 · 송신 거부)은
+//     전부 공용 KiwoomComEventCore(src/02_Infrastructure/Engine/KiwoomComBridgeCore.cs · COM 무의존 · 테스트 검증)로 이관.
+//     이 파일의 조건부 블록은 STA 호스팅 · AxKHOpenAPI → IKiwoomOcx 위임 · 이벤트 구독 · STA 펌프 Beat 타이머만 남는다.
 //   · 계좌번호·화면번호는 배포별 값 → KiwoomComConfig 로 주입(코드에 박제하지 않음·No Guessing).
-//   · FID 는 키움 OpenAPI+ 표준 코드(현재가 10·누적거래량 13·등락율 12; 체결 9203/9001/910/911/907).
 // ============================================================================
 
 namespace StockManager.KiwoomProxy
@@ -33,8 +32,8 @@ namespace StockManager.KiwoomProxy
         public string RealScreenNo { get; init; } = "5000";
         /// <summary>주문 화면번호(예: "5001").</summary>
         public string OrderScreenNo { get; init; } = "5001";
-        /// <summary>실시간 구독 FID 목록(기본: 현재가·등락율·누적거래량).</summary>
-        public string RealFidList { get; init; } = "10;12;13";
+        /// <summary>[L2] 체결(10~13 · 11=전일대비 → 기준가) + 10호가 가격·잔량(41~80 → 주식호가잔량).</summary>
+        public string RealFidList { get; init; } = KiwoomRealFids.DefaultRegistrationList();
     }
 }
 
@@ -49,23 +48,55 @@ namespace StockManager.KiwoomProxy
     using AxKHOpenAPILib;   // COM Interop — 키움 OpenAPI+ 설치·참조 시에만 존재(SDK 게이트)
 
     /// <summary>
-    /// 실 키움 OpenAPI+ COM 어댑터. STA 스레드에서 axKHOpenAPI(ActiveX)를 구동하고, COM 이벤트를
-    /// IKiwoomApi 이벤트로 매핑한다. KiwoomProxyHost 가 이 인스턴스를 구독해 파이프로 송신한다.
+    /// 실 키움 OpenAPI+ COM 어댑터 — [키움 COM · 추천 A] 얇은 위임만 남김.
+    ///   COM 이벤트 → KiwoomComEventCore(공용 · COM 무의존 · 테스트 검증) → 와이어 페이로드 → IKiwoomApi 이벤트.
+    ///   이 #if 블록의 책임은 ① STA 스레드 + ActiveX 호스팅 ② AxKHOpenAPI → IKiwoomOcx 위임 ③ 이벤트 구독 ④ STA 펌프 Beat 타이머뿐.
+    ///   ★SDK 미설치 환경에선 컴파일되지 않는다 — 로직은 전부 코어로 옮겨 이 블록의 미검증 표면을 최소화했다.
     /// </summary>
     public sealed class ProductionKiwoomApi : IKiwoomApi, IDisposable
     {
         private readonly KiwoomComConfig _cfg;
+        private readonly StaPumpWatchdog _pump = new(stallMillis: 100);
         private Thread?      _staThread;
         private Form?        _host;
         private AxKHOpenAPI? _ax;
+        private System.Windows.Forms.Timer? _beat;
+        private KiwoomComEventCore? _core;
         private volatile bool _ready;
 
         public event EventHandler<TickEventArgs>?    TickReceived;
         public event EventHandler<FillEventArgs>?    FillReceived;
+        // [키움 COM · 실결함] 계좌 TR(opw00001/opw00018) 은 미결선이라 AccountReceived 는 발생하지 않는다 — 수정 전 이 블록은
+        //   TreatWarningsAsErrors 하에서 CS0067(미사용 이벤트)로 KIWOOM_COM 빌드 자체가 실패했다(인터롭 형상 쉼 컴파일로 실측).
+#pragma warning disable CS0067
         public event EventHandler<AccountEventArgs>? AccountReceived;
+#pragma warning restore CS0067
+        public event EventHandler<OrderBookEventArgs>? OrderBookReceived;
+        public event EventHandler<ReferencePriceEventArgs>? ReferencePriceReceived;
+        public event EventHandler<ServerErrorEventArgs>? ServerErrorReceived;
+        public event EventHandler<AccountCashEventArgs>? AccountCashReceived;
+        public event EventHandler<PositionEventArgs>? PositionReceived;
+
+        /// <summary>[방향 A] STA 펌프 정상(최초 Beat 전 = 정상 간주 · 동결 sticky).</summary>
+        public bool PumpHealthy => !_pump.IsStalled();
 
         public ProductionKiwoomApi(KiwoomComConfig config)
             => _cfg = config ?? throw new ArgumentNullException(nameof(config));
+
+        /// <summary>AxKHOpenAPI → IKiwoomOcx 위임(시그니처 동일).</summary>
+        private sealed class AxOcx : IKiwoomOcx
+        {
+            private readonly AxKHOpenAPI _ax;
+            public AxOcx(AxKHOpenAPI ax) => _ax = ax;
+            public string GetCommRealData(string realKey, int fid) => _ax.GetCommRealData(realKey, fid);
+            public string GetChejanData(int fid) => _ax.GetChejanData(fid);
+            public string GetCommData(string trCode, string recordName, int index, string itemName) => _ax.GetCommData(trCode, recordName, index, itemName);
+            public int SendOrder(string rqName, string screenNo, string accountNo, int orderType, string code, int qty, int price, string hoga, string orgOrderNo)
+                => _ax.SendOrder(rqName, screenNo, accountNo, orderType, code, qty, price, hoga, orgOrderNo);
+            public void SetInputValue(string id, string value) => _ax.SetInputValue(id, value);
+            public int CommRqData(string rqName, string trCode, int prevNext, string screenNo) => _ax.CommRqData(rqName, trCode, prevNext, screenNo);
+            public int GetRepeatCnt(string trCode, string recordName) => _ax.GetRepeatCnt(trCode, recordName);
+        }
 
         // ── STA 부팅: 숨김 Form + ActiveX + 메시지 펌프 ─────────────────────────
         public void Connect()
@@ -80,9 +111,30 @@ namespace StockManager.KiwoomProxy
                 _host.Controls.Add(_ax);
                 ((System.ComponentModel.ISupportInitialize)_ax).EndInit();
 
-                _ax.OnEventConnect      += OnEventConnect;
-                _ax.OnReceiveRealData   += OnReceiveRealData;
-                _ax.OnReceiveChejanData += OnReceiveChejanData;
+                _core = new KiwoomComEventCore(new AxOcx(_ax),
+                    onTick: t => TickReceived?.Invoke(this, new TickEventArgs { SymbolCode = t.SymbolCode, Price = t.Price, Volume = t.Volume, ChangeRate = t.ChangeRate }),
+                    onFill: f =>
+                    {
+                        var st = BridgeFillStatusCodec.Decode(in f, out long rem);
+                        FillReceived?.Invoke(this, new FillEventArgs { OrderId = f.OrderId, SymbolCode = f.SymbolCode, FillPrice = f.FillPrice,
+                                                                       FillQty = f.FillQty, Side = f.Side, Status = st, RemainingQty = rem });
+                    },
+                    onBook: b => OrderBookReceived?.Invoke(this, new OrderBookEventArgs { Book = b }),
+                    onBase: rp => ReferencePriceReceived?.Invoke(this, new ReferencePriceEventArgs { SymbolCode = rp.SymbolCode, BasePrice = rp.BasePrice }),
+                    onServerError: code => ServerErrorReceived?.Invoke(this, new ServerErrorEventArgs { Code = code }),
+                    onCash: c => AccountCashReceived?.Invoke(this, new AccountCashEventArgs { Cash = c }),
+                    onPosition: row => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row }));
+
+                _ax.OnEventConnect      += (_, e) => _ready = e.nErrCode == 0;   // 0 = 로그인 성공
+                _ax.OnReceiveRealData   += (_, e) => _core.OnRealData(e.sRealType, e.sRealKey);
+                _ax.OnReceiveChejanData += (_, e) => _core.OnChejan(e.sGubun);
+                _ax.OnReceiveTrData     += (_, e) => _core.OnTrData(e.sRQName, e.sTrCode);
+                _ax.OnReceiveMsg        += (_, e) => _core.OnReceiveMsg(e.sRQName, e.sMsg);   // [키움 COM] 서버 거부 메시지
+
+                // [방향 A] STA 펌프 Beat(50ms) — 펌프가 얼면 Beat 가 멈추고 프록시 Ping 응답이 억제된다. 보류 체결 통보 만료도 여기서.
+                _beat = new System.Windows.Forms.Timer { Interval = 50 };
+                _beat.Tick += (_, _) => { _pump.Beat(); _core.FlushExpired(); };
+                _beat.Start();
 
                 _host.HandleCreated += (_, _) => { _ax.CommConnect(); started.Set(); };
                 Application.Run(_host);   // STA 메시지 펌프(ActiveX 필수)
@@ -93,47 +145,24 @@ namespace StockManager.KiwoomProxy
             started.Wait(TimeSpan.FromSeconds(10));
         }
 
-        private void OnEventConnect(object? sender, _DKHOpenAPIEvents_OnEventConnectEvent e)
-            => _ready = e.nErrCode == 0;   // 0 = 로그인 성공
-
-        // ── 실시간 시세 → TickReceived ─────────────────────────────────────────
-        private void OnReceiveRealData(object? sender, _DKHOpenAPIEvents_OnReceiveRealDataEvent e)
-        {
-            if (_ax is null) return;
-            if (e.sRealType != "주식체결") return;   // 체결 실시간만
-            long code   = ParseCode(e.sRealKey);
-            double price = Math.Abs(ParseDouble(_ax.GetCommRealData(e.sRealKey, 10)));   // FID 10 현재가(부호 제거)
-            double rate  = ParseDouble(_ax.GetCommRealData(e.sRealKey, 12));             // FID 12 등락율
-            long vol     = (long)ParseDouble(_ax.GetCommRealData(e.sRealKey, 13));       // FID 13 누적거래량
-            TickReceived?.Invoke(this, new TickEventArgs
-            { SymbolCode = code, Price = price, Volume = vol, ChangeRate = rate });
-        }
-
-        // ── 체결/거부 → FillReceived ───────────────────────────────────────────
-        private void OnReceiveChejanData(object? sender, _DKHOpenAPIEvents_OnReceiveChejanDataEvent e)
-        {
-            if (_ax is null || e.sGubun != "0") return;   // "0" = 주문체결
-            long orderId = (long)ParseDouble(_ax.GetChejanData(9203));   // 주문번호
-            long code    = ParseCode(_ax.GetChejanData(9001));           // 종목코드(A 접두 가능)
-            double fillPx = Math.Abs(ParseDouble(_ax.GetChejanData(910)));// 체결가
-            long fillQty  = (long)ParseDouble(_ax.GetChejanData(911));    // 체결량(0 = 거부/미체결 → ProxyHost 가 OrderRejected 로 표기)
-            int side      = _ax.GetChejanData(907).Trim() == "2" ? 1 : -1;// 907 매도수구분(2=매수)
-            FillReceived?.Invoke(this, new FillEventArgs
-            { OrderId = orderId, SymbolCode = code, FillPrice = fillPx, FillQty = fillQty, Side = side });
-        }
-
         // ── 명령(Terminal → COM) ───────────────────────────────────────────────
         public void SendOrder(long symbolCode, int side, double price, long qty, long orderId)
         {
-            if (_ax is null || !_ready) return;
-            if (string.IsNullOrWhiteSpace(_cfg.AccountNo)) return;   // ★fail-closed: 계좌 미설정 → 송출 안 함
-            int orderType = side > 0 ? 1 : 2;                        // 1=신규매수, 2=신규매도
-            string hoga   = price <= 0.0 ? "03" : "00";              // 03=시장가, 00=지정가
-            _ax.SendOrder($"RQ{orderId}", _cfg.OrderScreenNo, _cfg.AccountNo, orderType,
-                          symbolCode.ToString("D6"), (int)qty, (int)price, hoga, "");
+            var core = _core;
+            if (core is null || !_ready)
+            {
+                // 미연결/미로그인 — 송신 불가를 거부로 즉시 통지(호스트 슬롯 0ms 반납)
+                FillReceived?.Invoke(this, new FillEventArgs { OrderId = orderId, SymbolCode = symbolCode, Side = side > 0 ? 1 : -1,
+                                                               Status = BridgeFillStatus.Rejected, RemainingQty = 0 });
+                return;
+            }
+            core.SendOrder(orderId, _cfg.OrderScreenNo, _cfg.AccountNo, symbolCode, side, price, qty);   // 계좌 미설정 · rc≠0 → 코어가 Rejected 통지
         }
 
-        public void CancelOrder(long orderId) { /* 취소는 원주문번호 필요 — LiveAuditService 원장과 결속(운영자 배선) */ }
+        // [정정/취소 · 실결함] 수정 전 빈 스텁 — 호스트 취소 요청이 조용히 소실됐다. 이제 코어가 원주문번호·최신 미체결로 키움 3/4(취소)·5/6(정정) 송신.
+        public void CancelOrder(long orderId) => _core?.CancelOrder(orderId);
+
+        public void ModifyOrder(long orderId, double price, long qty) => _core?.ModifyOrder(orderId, (long)price, qty);
 
         public void SubscribeTick(long symbolCode)
         {
@@ -144,26 +173,18 @@ namespace StockManager.KiwoomProxy
         public void UnsubscribeTick(long symbolCode)
             => _ax?.SetRealRemove(_cfg.RealScreenNo, symbolCode.ToString("D6"));
 
-        public void QueryAccount() { /* opw00001/opw00018 TR 요청 — OnReceiveTrData → AccountReceived(운영자 배선) */ }
+        // [계좌] OPW00018(보유) · OPW00001(예수금) — 응답은 OnReceiveTrData → 코어 → AccountCash/Position 이벤트
+        public void QueryAccount() => _core?.QueryAccount(_cfg.AccountNo, _cfg.OrderScreenNo);
 
-        // ── 파싱 헬퍼 ───────────────────────────────────────────────────────────
-        private static long ParseCode(string s)
-            => long.TryParse(new string(System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Where(s ?? "", char.IsDigit))), out var v) ? v : 0L;
-        private static double ParseDouble(string s)
-            => double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0.0;
-
-        // ── 드라이버 해제(Phase 95-A §1) — COM RCW 결정적 해제 + 자격증명 원자 소거 ──────────────
-        //   ★STA 스레드에서 순차 처리: (1) axKHOpenAPI(AxHost) Dispose → OCX 언로드, (2) COM RCW 잔여 refcount 를
-        //     Marshal.FinalReleaseComObject 로 0 까지 강제 해제(RCW 릭·유령 참조 차단), (3) 숨김 Form Dispose.
-        //   ★자격증명(계좌번호)은 char[] 사본으로 보관되지 않는 불변 string → 여기선 참조 해제만; API Secret 등
-        //     byte[] 비밀은 상위(BrokerFailoverSentinel/PoisonedSecretBuffer)가 CryptographicOperations.ZeroMemory 로 소거.
+        // ── 드라이버 해제(Phase 95-A §1) — COM RCW 결정적 해제 ──────────────────────────────
         public void Dispose()
         {
-            var ax = _ax; var host = _host;
+            var ax = _ax; var host = _host; var beat = _beat;
             try
             {
                 host?.BeginInvoke(new Action(() =>
                 {
+                    try { beat?.Stop(); beat?.Dispose(); } catch { }
                     try { ax?.Dispose(); } catch { }                                            // (1) AxHost → OCX 언로드
                     if (ax is not null && Marshal.IsComObject(ax))                               // (2) RCW refcount 0 까지 강제 해제
                         try { while (Marshal.FinalReleaseComObject(ax) > 0) { } } catch { }
@@ -171,8 +192,7 @@ namespace StockManager.KiwoomProxy
                 }));
             }
             catch { }
-            // 계좌번호 참조 소거(불변 string — GC 회수 유도). byte[] 비밀은 없음(로그인은 OCX 자체 다이얼로그).
-            _staThread = null; _ax = null; _host = null;
+            _staThread = null; _ax = null; _host = null; _beat = null; _core = null;
         }
     }
 }

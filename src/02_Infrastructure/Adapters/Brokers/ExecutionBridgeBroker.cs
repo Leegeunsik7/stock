@@ -142,9 +142,16 @@ namespace MS2E.Infrastructure
 
         // ── IBroker.Cancel ────────────────────────────────────────────────────
 
+        /// <summary>[정정/취소] 전방 판정 게이트(옵션 · 호스트 추적 원장). 미주입이면 기존 동작(무조건 송신).</summary>
+        public IOrderAmendGate? AmendGate { get; set; }
+        private long _amendBlocked;
+        /// <summary>[정정/취소] 게이트가 송신 전 차단한 취소/정정 누계(이미 종결 · 중복 · 잔량 초과).</summary>
+        public long AmendBlocked => Interlocked.Read(ref _amendBlocked);
+
         public void Cancel(string orderId)
         {
             if (!long.TryParse(orderId, out long id)) return;
+            if (AmendGate is { } g && !g.TryBeginCancel(id)) { Interlocked.Increment(ref _amendBlocked); return; }   // 종결/중복 취소 0ms 차단
 
             _audit.CancelOrder(id);
 
@@ -153,6 +160,24 @@ namespace MS2E.Infrastructure
                 Type    = OrderRequestType.CancelOrder,
                 OrderId = id,
             };
+            _ = _bridge.SendOrderAsync(req);
+        }
+
+        /// <summary>[정정] 지정가 정정 — 원주문의 잔량 이하 수량만(게이트 + 프록시 코어 이중 검증). 반환 = 송신 여부.</summary>
+        public bool Modify(string orderId, decimal newPrice, decimal newQty)
+        {
+            if (!long.TryParse(orderId, out long id) || newPrice <= 0 || newQty <= 0 || newQty != decimal.Truncate(newQty)) return false;
+            if (AmendGate is { } g && !g.TryBeginModify(id, (long)newQty, (long)newPrice)) { Interlocked.Increment(ref _amendBlocked); return false; }
+            _attestation.AssertNormal($"ExecutionBridgeBroker.Modify({orderId})");
+            var req = new OrderRequest { Type = OrderRequestType.ModifyOrder, OrderId = id, Price = (double)newPrice, Quantity = (long)newQty };
+            _ = _bridge.SendOrderAsync(req);
+            return true;
+        }
+
+        /// <summary>[계좌] OPW00018·OPW00001 조회 요청(조회 TR 레이트 — 호출 주기 ≥ 10초 유지).</summary>
+        public void QueryAccount()
+        {
+            var req = new OrderRequest { Type = OrderRequestType.QueryAccount };
             _ = _bridge.SendOrderAsync(req);
         }
 

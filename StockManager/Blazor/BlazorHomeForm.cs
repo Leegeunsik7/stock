@@ -380,7 +380,12 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.ChaosProgress,
                 MS2E.Core.ArmingInterlockSource.RouterFeed,      // [피드 연동 · 방향 B] 시세/체결 피드 단절 회로(기동 직후 피드 미수립 = 차단)
                 MS2E.Core.ArmingInterlockSource.OrderSlotAge,    // [피드 연동 · 방향 A] 응답 타임아웃 슬롯 회수 = 미확인 노출 차단
-                MS2E.Core.ArmingInterlockSource.ExtremeSlippage); // [보호 지정가 · 방향 B] 체결가 극한 괴리 기습 체결 → Disarm
+                MS2E.Core.ArmingInterlockSource.ExtremeSlippage, // [보호 지정가 · 방향 B] 체결가 극한 괴리 기습 체결 → Disarm
+                MS2E.Core.ArmingInterlockSource.BrokerStateMismatch, // [키움 프로토콜 · 방향 B] 추적 잔량 ≠ 브로커 미체결 잔량 → Disarm
+                MS2E.Core.ArmingInterlockSource.OrderbookIlliquidity, // [L2 · 방향 B] 연속매매 중 호가 교차/공백/극한 스프레드 → Disarm
+                MS2E.Core.ArmingInterlockSource.LatencyStall,    // [저지연 · 방향 B] Tick-to-Trade 프로세스 내 구간 정지 → Disarm
+                MS2E.Core.ArmingInterlockSource.KiwoomServerError, // [키움 COM · 방향 B] 중대 서버 오류 · STA 펌프 동결 → Disarm
+                MS2E.Core.ArmingInterlockSource.AccountDivergence); // [계좌 · 방향 B] 정적 구간 브로커 보유 ≠ 호스트 추정 보유 → Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
@@ -663,7 +668,14 @@ namespace StockManager.Blazor
             MmfIpcFabric? mmfFabric = null;
             try { mmfFabric = new MmfIpcFabric("MS2E_MMF_FABRIC_" + Environment.ProcessId, MmfFabricRole.Writer, attestation: attestation, heartbeatTimeoutMs: 1000, blackbox: blackbox); }
             catch { mmfFabric = null; }
-            if (mmfFabric is { }) { services.AddSingleton(mmfFabric); FormClosed += (_, _) => ShutdownTrace.Step("mmfFabric", () => mmfFabric.Dispose()); }
+            if (mmfFabric is { })
+            {
+                services.AddSingleton(mmfFabric);
+                FormClosed += (_, _) => ShutdownTrace.Step("mmfFabric", () => mmfFabric.Dispose());
+                // [MMF Triage · 방향 B] 시퀀스 역전/찢김/경계 파손 Poison → 집계 비트 Raise(송출 직전 veto). 선택 소스(생성 실패 시 미결속 —
+                //   패브릭은 발주 경로가 아니므로 부재가 무장을 막지 않는다 · 오염은 기존대로 ForceFreeze 도 함께).
+                mmfFabric.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.MmfFabric);
+            }
             // v6.0.0/v7.0.0 — Path Gamma & Phase 7 텔레메트리 소스(수동·순수 인메모리 관측 인프라 — liveArmed:false·δ=0).
             //   ★부팅 생성 안전: CausalWeaveClock/Ring 은 관리형 배킹, RioHardwareProbe 는 콜드 1회 캡스 진단(Publisher
             //     생성자가 Probe() 1회 실행·Sample 핫패스는 캐시 결과만 읽음), CausalAuditVault 는 인메모리 원장 —
@@ -907,10 +919,14 @@ namespace StockManager.Blazor
                 idMapCapacityPow2: 2048, maxSlippageBps: cfg.GetInt("Router.MaxSlippageBps", 50, 1, 10_000));
             // [보호 지정가 · 방향 B] 체결가가 판정 참조가에서 극한 괴리(기본 200bps)로 체결되면 전체 발주 회로 sticky Disarm.
             var extremeSlip   = new StockManager.Engines.ExtremeSlippageDisarmInterlock(cfg.GetInt("Router.ExtremeSlippageBps", 200, 10, 5_000));
+            var brokerMismatch = new StockManager.Adapters.BrokerStateMismatchInterlock();   // [키움 프로토콜 · 방향 B]
             var execFeed      = new StockManager.Adapters.OrderExecutionFeedAdapter(orderRouter, capacity: 1024,
                 slotTtlMicros: cfg.GetInt("Router.SlotTtlSeconds", 120, 5, 3600) * 1_000_000L,
                 onRecord: r => { try { Log.Warn($"[RouterRecon] {r.Kind} proposal={r.ProposalId} brokerOrder={r.BrokerOrderId} qty={r.Qty}"); } catch { } },
-                extremeSlippage: extremeSlip);
+                extremeSlippage: extremeSlip,
+                // [키움 프로토콜] 접수 확인(Accepted) 주문은 호가 대기 — 무응답 TTL(2분) 대신 장기 TTL · 거부는 즉시 반납
+                acceptedTtlMicros: cfg.GetInt("Router.AcceptedTtlMinutes", 480, 5, 1440) * 60_000_000L,
+                mismatch: brokerMismatch);
             var feedBreaker   = new StockManager.Adapters.FeedDisconnectCircuitBreaker(refPriceFeed, () => bridge.IsProxyAlive,
                 maxPriceSilenceMicros: cfg.GetInt("Router.MaxPriceSilenceMs", 5000, 100, 600_000) * 1000L);
             // [보호 지정가 · 추천 A] 시장가 → 참조가 ± offset 보호 지정가(호가 단위 보호 방향 정렬 · 가격제한폭 클램프) 변환 + 1~3호가 깊이 가드.
@@ -919,17 +935,101 @@ namespace StockManager.Blazor
             long maxSlipBps   = orderRouter.MaxSlippageBps;
             var protectiveConv = new StockManager.Engines.ProtectiveLimitOrderConverter(
                 Math.Min(cfg.GetInt("Router.ProtectiveOffsetBps", 30, 1, 1_000), maxSlipBps));
-            var depthBook     = new StockManager.Engines.DepthBook(maxAgeMicros: cfg.GetInt("Router.DepthMaxAgeMs", 2000, 100, 600_000) * 1000L);
+            var depthBook     = new StockManager.Engines.DepthBook(maxAgeMicros: cfg.GetInt("Router.DepthMaxAgeMs", 2000, 100, 600_000) * 1000L,
+                maxSpreadBps: cfg.GetInt("Router.MaxSpreadBps", 300, 1, 10_000));   // [L2] 1호가 스프레드 상한(시장가 송출 거부)
+            // [정정/취소·계좌 · 추천 A] OPW00018(보유)·OPW00001(예수금) 동기화 → 주문가능금액/보유수량 송출 게이트 + 정적 구간 잔고 괴리 Disarm.
+            //   Router.RequireAccountSync(기본 true) = 스냅샷 미수신/만료 시 전 주문 거부(fail-closed · 스텁 트랜스포트에선 송출 0 이 정직한 상태).
+            var accountDivergence = new StockManager.Adapters.AccountDivergenceInterlock();
+            accountDivergence.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.AccountDivergence);
+            var accountSync   = new StockManager.Adapters.AccountStateSyncAdapter(capacity: 256,
+                staleMicros: cfg.GetInt("Account.StaleSeconds", 30, 15, 600) * 1_000_000L,
+                interlock: accountDivergence,
+                onRecord: r => { try { Log.Warn($"[AccountRecon] {r.Kind} symbol={r.BrokerOrderId} brokerQty={r.Qty}"); } catch { } });
+            services.AddSingleton(accountDivergence);
+            services.AddSingleton(accountSync);
             var routerGate    = new StockManager.Adapters.RouterFeedGate(orderRouter, refPriceFeed, execFeed, feedBreaker,
                 converter: protectiveConv, depth: depthBook,
                 requireDepthForMarket: cfg.GetBool("Router.MarketRequiresDepth", true),
-                basePriceRaw: sym => spikeRef is { } sp && sp.TryGetReference(sym, out long b) && b < long.MaxValue / 100_000_000L ? b * 100_000_000L : 0L);
+                basePriceRaw: sym => spikeRef is { } sp && sp.TryGetReference(sym, out long b) && b < long.MaxValue / 100_000_000L ? b * 100_000_000L : 0L,
+                account: cfg.GetBool("Router.RequireAccountSync", true) ? accountSync : null);
+            // [정정/취소] 취소·정정 전방 게이트 = 체결 피드 추적 원장(종결/중복/잔량 초과 송신 0)
+            broker.AmendGate = execFeed;
             extremeSlip.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ExtremeSlippage);
+            // [L2 · 추천 A] 키움 실시간 L2(주식호가잔량 10호가) → 파서 검증 → DepthBook(보호 지정가 1~3호가 깊이 · 스프레드 가드) +
+            //   플래시 크래시 인터락. 기준가(현재가−전일대비) → MarketDataSpikeInterlock.SetReference(가격제한폭 밴드·클램프 활성).
+            //   키움 체결 틱 → 이상 시세 인터락 통과분만 참조가 피드(Toss 미결선이어도 시장가 보호 지정가 판정 가능). ★Toss L2 는 스키마 미상 — 미결선.
+            var illiquidity   = new StockManager.Engines.OrderbookIlliquidityInterlock(
+                cfg.GetInt("Router.FlashSpreadBps", 1_000, 50, 10_000), StockManager.Engines.OrderbookIlliquidityInterlock.KrxContinuousSessionNow);
+            illiquidity.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OrderbookIlliquidity);
+            services.AddSingleton(illiquidity);
+            // [저지연] 키움 L2 10호가 원본 = GC 힙 밖 네이티브 seqlock 표(SafeHandle 결정론적 해제) · DepthBook 도 네이티브 저장소로 격상.
+            var nativeBook    = new StockManager.Buffers.UnmanagedOrderBookBuffer();
+            services.AddSingleton(nativeBook);
+            // [저지연 · 방향 A/B] 주문별 Tick-to-Trade µs 프로파일러(최근 1,024건 P50/P99 · 네이티브 로그 히스토그램 P99.9) +
+            //   송출 직전 정지 임계 초과 시 미송출·Disarm(필수 비트). 임계 기본 5,000µs.
+            var t2tProfiler   = new StockManager.Telemetry.TickToTradeLatencyProfiler(cfg.GetInt("Router.StallThresholdMicros", 5_000, 500, 1_000_000));
+            t2tProfiler.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.LatencyStall);
+            services.AddSingleton(t2tProfiler);
+            FormClosed += (_, _) => ShutdownTrace.Step("nativeBuffers", () => { nativeBook.Dispose(); depthBook.Dispose(); t2tProfiler.Dispose(); });
+            Action<OrderBookPayload> onBridgeBook = book =>
+            {
+                nativeBook.Write(in book);   // 판정 무관 원본 10호가 보존(네이티브)
+                var v = L2OrderBookDepthParser.Validate(in book, out var depth, out long spreadBps);
+                illiquidity.Observe(v, spreadBps);
+                // 비정상 판정이면 depth = 빈 스냅샷으로 덮어써 직전 정상 스냅샷의 잔존 사용을 차단(깊이 0 = 시장가 거부 · fail-closed)
+                depthBook.OnDepth(StockManager.Adapters.ReferencePriceFeedAdapter.SymbolHashForCode(book.SymbolCode), in depth);
+            };
+            Action<ReferencePricePayload> onBridgeBase = rp =>
+            {
+                long sym = StockManager.Adapters.ReferencePriceFeedAdapter.SymbolHashForCode(rp.SymbolCode);
+                spikeRef?.SetReference(sym, rp.BasePrice);   // 원 단위 — Toss/키움 틱 가격과 같은 단위
+            };
+            Action<TickPayload> onBridgeTick = t =>
+            {
+                if (!(t.Price > 0) || t.Price > 1e12) return;
+                long sym = StockManager.Adapters.ReferencePriceFeedAdapter.SymbolHashForCode(t.SymbolCode);
+                long px = (long)Math.Round(t.Price, MidpointRounding.AwayFromZero);
+                if (spikeRef is { } sp && sp.Observe(sym, px) == MS2E.Infrastructure.SpikeVerdict.Accepted) refPriceFeed.OnTick(sym, px, 0);
+            };
+            // [키움 COM · 방향 B] 프록시 ErrorReport(71xx 중대 서버 오류 · STA 펌프 동결) → 집계 비트(동결은 기존 KiwoomFreezeRelay 가 병행)
+            var kiwoomServerErr = new StockManager.Adapters.KiwoomServerErrorInterlock();
+            kiwoomServerErr.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.KiwoomServerError);
+            services.AddSingleton(kiwoomServerErr);
+            Action<ErrorPayload> onBridgeError = kiwoomServerErr.OnError;
+            bridge.ErrorReceived += onBridgeError;
+            FormClosed += (_, _) => ShutdownTrace.Step("kiwoomServerErr", () => bridge.ErrorReceived -= onBridgeError);
+            bridge.OrderBookReceived      += onBridgeBook;
+            bridge.ReferencePriceReceived += onBridgeBase;
+            bridge.TickReceived           += onBridgeTick;
+            FormClosed += (_, _) => ShutdownTrace.Step("l2Feeds", () =>
+            {
+                bridge.OrderBookReceived -= onBridgeBook; bridge.ReferencePriceReceived -= onBridgeBase; bridge.TickReceived -= onBridgeTick;
+            });
+            brokerMismatch.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.BrokerStateMismatch);
+            services.AddSingleton(brokerMismatch);
             services.AddSingleton(extremeSlip);
             services.AddSingleton(protectiveConv);
             services.AddSingleton(depthBook);
             Action<FillPayload> onBridgeFill = execFeed.OnFill;
             bridge.FillReceived += onBridgeFill;
+            // [계좌] 브리지 계좌 프레임 + 체결(추정 보유) → 동기화 어댑터 · 주기 조회(조회 TR 2건/회 · 기본 10초 = 분당 12건 ≪ 100)
+            Action<FillPayload> onAccountFill = accountSync.OnFill;
+            Action<AccountCashPayload> onAccountCash = accountSync.OnCash;
+            Action<PositionPayload> onAccountPosition = accountSync.OnPosition;
+            bridge.FillReceived        += onAccountFill;
+            bridge.AccountCashReceived += onAccountCash;
+            bridge.PositionReceived    += onAccountPosition;
+            int accountQuerySec = cfg.GetInt("Account.QueryIntervalSeconds", 10, 10, 600);
+            var accountQuery  = new System.Threading.Timer(_ =>
+            {
+                if (!bridge.IsProxyAlive) return;
+                try { accountSync.MarkQueryRequested(); broker.QueryAccount(); } catch { }
+            }, null, accountQuerySec * 1000, accountQuerySec * 1000);
+            FormClosed += (_, _) => ShutdownTrace.Step("accountSync", () =>
+            {
+                accountQuery.Dispose();
+                bridge.FillReceived -= onAccountFill; bridge.AccountCashReceived -= onAccountCash; bridge.PositionReceived -= onAccountPosition;
+            });
             feedBreaker.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.RouterFeed);
             execFeed.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OrderSlotAge);
             var routerSweep   = new System.Threading.Timer(_ =>
@@ -1121,7 +1221,8 @@ namespace StockManager.Blazor
             //   킬스위치 격발 + 무장 술어 영구 차단. 이전엔 검증 결과를 UI 뷰어만 소비해 체인이 조작돼도 무장이 가능했다.
             var forensicStream = new MS2E.Core.ZeroAllocForensicAuditStream(8192);
             services.AddSingleton(forensicStream);
-            bootIntegrityRef?.AttachForensicStream(forensicStream);   // [봉인 운영 · 방향 B] 봉인 변조 증거(기대/실측 해시) 해시 체인 각인
+            bootIntegrityRef?.AttachForensicStream(forensicStream);
+            execFeed.AttachForensicStream(forensicStream);   // [키움 프로토콜 · 방향 A] 대사 이력(거부·부분체결·취소·불일치) 해시 체인 각인   // [봉인 운영 · 방향 B] 봉인 변조 증거(기대/실측 해시) 해시 체인 각인
             try
             {
                 var forensicChain = new MS2E.Infrastructure.ForensicChainDisarmInterlock(forensicStream, killPurger,
@@ -1266,7 +1367,8 @@ namespace StockManager.Blazor
                 slaGate: slaGate, jitterGuard: jitterGuard,   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
                 canaryGov: canaryGovernor,   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
                 interlocks: interlockMask,   // [실배선] 판정↔송출 사이 인터락 Trip → 송출 직전 veto(GatedOut)
-                routeGate: routerGate);      // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백
+                routeGate: routerGate,       // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백
+                latencyProbe: t2tProfiler);  // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 정지 veto
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

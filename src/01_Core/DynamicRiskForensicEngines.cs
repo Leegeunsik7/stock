@@ -30,7 +30,7 @@ using System.Threading;
 namespace MS2E.Core
 {
     /// <summary>감사 체인 이벤트 종류 — 무장/해제/킬스위치/리스크 위반.</summary>
-    public enum AuditEventKind : byte { Arm = 0, Disarm = 1, KillSwitch = 2, RiskViolation = 3, SealTamper = 4 }
+    public enum AuditEventKind : byte { Arm = 0, Disarm = 1, KillSwitch = 2, RiskViolation = 3, SealTamper = 4, Reconciliation = 5 }
 
     /// <summary>감사 링크 1건의 불변 뷰(포렌식 조회용 — 원본 배열 노출 없이 값타입 복사).</summary>
     public readonly record struct AuditLinkView(long Sequence, AuditEventKind Kind, long PayloadTag, long TimestampTicks, bool Live,

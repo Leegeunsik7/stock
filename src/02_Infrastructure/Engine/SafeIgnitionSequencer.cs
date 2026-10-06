@@ -258,7 +258,7 @@ namespace MS2E.Infrastructure
             FillPrice      = ProbeReferencePrice,   // 격리 기준: 잔차 0
             FillQty        = 1L,
             Side           = +1,                     // 매수(FillPayload 규약: +1 매수)
-            Pad            = 0,
+            Status         = 0,   // [키움 프로토콜] 구 Pad · 0 = Legacy
             TimestampTicks = tsTicks,
         };
 

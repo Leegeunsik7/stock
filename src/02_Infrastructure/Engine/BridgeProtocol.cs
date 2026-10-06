@@ -26,7 +26,11 @@ namespace MS2E.Infrastructure
         ErrorReport    = 5,
         Ping           = 6,   // BridgeClient → ProxyHost: 50ms 초고속 헬스체크 요청(seq 에코)
         Pong           = 7,   // ProxyHost → BridgeClient: Ping 응답(양방향 생존성·RTT)
+        OrderBook      = 8,   // [L2] ProxyHost → BridgeClient: 10호가 매도/매수 가격·잔량(키움 주식호가잔량 FID 41~80)
+        ReferencePrice = 9,   // [L2] ProxyHost → BridgeClient: 기준가(전일종가 = 현재가 − 전일대비 FID 11) — 가격제한폭 산정
         OrderRequest   = 10,  // BridgeClient → ProxyHost 방향
+        AccountCash    = 11,  // [계좌] ProxyHost → BridgeClient: OPW00001 예수금상세(예수금·D+2·주문가능금액)
+        Position       = 12,  // [계좌] ProxyHost → BridgeClient: OPW00018 보유 종목 1행(배치 번호·행 번호·행 수)
     }
 
     // ── 주문 종류 ─────────────────────────────────────────────────────────────
@@ -38,6 +42,7 @@ namespace MS2E.Infrastructure
         QueryAccount    = 4,
         SubscribeTick   = 5,
         UnsubscribeTick = 6,
+        ModifyOrder     = 7,   // [정정] Price = 정정가 · Quantity = 정정수량(키움 SendOrder 5 매수정정 / 6 매도정정)
     }
 
     // ── 페이로드 구조체 (전부 Blittable) ──────────────────────────────────────
@@ -53,15 +58,16 @@ namespace MS2E.Infrastructure
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct FillPayload          // 48B
+    public struct FillPayload          // 56B([키움 프로토콜] 구 48B + RemainingQty — 구 프레임은 BridgeFillReader.TryReadFill 로 하위 호환)
     {
         public long   OrderId;
         public long   SymbolCode;
         public double FillPrice;
         public long   FillQty;
         public int    Side;            // +1 = 매수, -1 = 매도
-        public int    Pad;
+        public int    Status;          // [키움 프로토콜] 구 Pad — BridgeFillStatusCodec(상태 코드 · 매직 0xA5 · 잔량 유효 비트). 0 = Legacy
         public long   TimestampTicks;
+        public long   RemainingQty;    // [키움 프로토콜] 브로커 미체결 잔량(902 FID) — Status 잔량 유효 비트가 설 때만 의미
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -78,6 +84,96 @@ namespace MS2E.Infrastructure
         public int  ErrorCode;
         public int  Pad;
         public long TimestampTicks;
+    }
+
+    /// <summary>[계좌] OPW00001 예수금상세 스냅샷(32B · 원).</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct AccountCashPayload
+    {
+        public long Deposit;          // 예수금
+        public long D2Deposit;        // d+2 추정예수금
+        public long OrderableCash;    // 주문가능금액(증거금율 반영 — 브로커 산정)
+        public long TimestampTicks;
+    }
+
+    /// <summary>[계좌] OPW00018 보유 종목 1행(48B). 한 조회 = 같은 BatchId 의 RowCount 행(RowCount 0 = 보유 없음 · SymbolCode 0).</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct PositionPayload
+    {
+        public long BatchId;
+        public int  RowIndex;
+        public int  RowCount;
+        public long SymbolCode;
+        public long Quantity;         // 보유수량(주)
+        public long AvgPrice;         // 매입가(원)
+        public long TimestampTicks;
+    }
+
+    /// <summary>[L2] 10호가 고정 인라인 버퍼(C#12 InlineArray · blittable · 힙 0).</summary>
+    [InlineArray(10)]
+    public struct OrderBookLevels10 { private long _e0; }
+
+    /// <summary>[L2] 10호가 스냅샷(336B). 가격 = 원(정수) · 잔량 = 주 · 지수 0 = 최우선호가. 0 = 해당 호가 없음.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct OrderBookPayload
+    {
+        public long SymbolCode;
+        public long TimestampTicks;
+        public OrderBookLevels10 AskPrice;   // 매도호가 1~10(오름차순)
+        public OrderBookLevels10 AskQty;
+        public OrderBookLevels10 BidPrice;   // 매수호가 1~10(내림차순)
+        public OrderBookLevels10 BidQty;
+    }
+
+    /// <summary>[L2] 기준가(전일종가) 통지(24B). 가격 = 원.</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct ReferencePricePayload
+    {
+        public long SymbolCode;
+        public long BasePrice;
+        public long TimestampTicks;
+    }
+
+    /// <summary>[L2] 키움 실시간 FID 사상(순수 함수 · 프록시/호스트 공용 · COM 무의존 → 테스트 가능).</summary>
+    public static class KiwoomRealFids
+    {
+        public const int AskPrice1 = 41, BidPrice1 = 51, AskQty1 = 61, BidQty1 = 71;   // 각 10개 연속(41~50 · 51~60 · 61~70 · 71~80)
+        public const int CurrentPrice = 10, ChangeFromPrevClose = 11, ChangeRate = 12, AccVolume = 13;
+
+        /// <summary>SetRealReg FID 목록 — 체결(10~13) + 10호가 가격·잔량(41~80).</summary>
+        public static string DefaultRegistrationList()
+        {
+            var sb = new System.Text.StringBuilder("10;11;12;13");
+            for (int f = 41; f <= 80; f++) sb.Append(';').Append(f);
+            return sb.ToString();
+        }
+
+        /// <summary>키움 가격 문자열(부호 = 등락 방향 · 공백 패딩) → 원 절대값. 파싱 실패 = 0(해당 호가 없음).</summary>
+        public static long ParsePrice(ReadOnlySpan<char> s)
+        {
+            s = s.Trim();
+            if (s.Length > 0 && (s[0] == '+' || s[0] == '-')) s = s[1..];
+            return long.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long v) && v > 0 ? v : 0;
+        }
+
+        /// <summary>키움 수량 문자열 → 주(음수/실패 = 0).</summary>
+        public static long ParseQty(ReadOnlySpan<char> s)
+        {
+            s = s.Trim();
+            if (s.Length > 0 && s[0] == '+') s = s[1..];
+            return long.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long v) && v > 0 ? v : 0;
+        }
+
+        /// <summary>기준가 = |현재가| − 부호있는 전일대비(키움 FID 11 은 상승 +, 하락 −). 비양수 = 0(무효).</summary>
+        public static long BasePrice(ReadOnlySpan<char> currentPrice10, ReadOnlySpan<char> change11)
+        {
+            long cur = ParsePrice(currentPrice10);
+            var c = change11.Trim();
+            bool neg = c.Length > 0 && c[0] == '-';
+            long chg = ParsePrice(c);
+            long b = neg ? cur + chg : cur - chg;
+            return cur > 0 && b > 0 ? b : 0;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -188,6 +284,6 @@ namespace MS2E.Infrastructure
         public static long ParseSymbol(string? code)
             => long.TryParse(code, out var v) ? v : 0L;
 
-        private static bool IsValidWireType(int t) => t is (>= 0 and <= 7) or 10;
+        private static bool IsValidWireType(int t) => t is >= 0 and <= 12;   // [L2] 8·9 · [계좌] 11 AccountCash · 12 Position
     }
 }

@@ -54,6 +54,20 @@ namespace MS2E.Infrastructure
 
         public FillAuditResult ProcessFill(FillPayload fill)
         {
+            // [키움 프로토콜] 체결량 0 = 주문 상태 통보(접수/거부/취소확인) — 체결 감사 대상이 아니다. 수정 전엔 체결가 0 을
+            //   '형식 오류 체결'로 보고 ForceFreeze 했다(브리지 게이트가 폐기해 잠복 · 게이트 교정 후 발현 방지).
+            if (fill.FillQty == 0)
+            {
+                var notice = StockValidator.ValidateOrderNotice(fill);
+                if (!notice.IsValid) return new FillAuditResult(false, $"상태 통보 형식 오류: {notice.Summary()}", 0.0, 0L);
+                var status = BridgeFillStatusCodec.Decode(fill.Status, out _);
+                if (_pending.TryGetValue(fill.OrderId, out var po) && po.FilledQty < po.Quantity)
+                {
+                    if (status == BridgeFillStatus.Rejected) po.State = PendingOrderState.Rejected;
+                    else if (status == BridgeFillStatus.CancelConfirmed) po.State = PendingOrderState.Cancelled;
+                }
+                return new FillAuditResult(true, $"주문 상태 통보({status})", 0.0, 0L);
+            }
             // 1차: StockValidator 게이트 (형식 오류는 attestation 없이도 차단)
             var v = StockValidator.ValidateFill(fill);
             if (!v.IsValid)

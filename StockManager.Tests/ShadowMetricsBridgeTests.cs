@@ -19,7 +19,7 @@ namespace StockManager.Tests
         { SymbolCode = sym, Price = price, Volume = 100, ChangeRate = 0.0, TimestampTicks = 1 };
 
         private static FillPayload Fill(long sym, double price) => new FillPayload
-        { OrderId = 1, SymbolCode = sym, FillPrice = price, FillQty = 10, Side = 1, Pad = 0, TimestampTicks = 1 };
+        { OrderId = 1, SymbolCode = sym, FillPrice = price, FillQty = 10, Side = 1, Status = 0, TimestampTicks = 1 };
 
         private static StrategySpec Spec(string id) => new StrategySpec(
             id, id,

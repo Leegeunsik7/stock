@@ -32,6 +32,8 @@
   -->
   <ItemGroup>
     <Compile Include="..\src\02_Infrastructure\Engine\BridgeProtocol.cs" />
+    <Compile Include="..\src\02_Infrastructure\Engine\BridgeOrderStatus.cs" />
+    <Compile Include="..\src\02_Infrastructure\Engine\KiwoomComBridgeCore.cs" />
   </ItemGroup>
 
 </Project>

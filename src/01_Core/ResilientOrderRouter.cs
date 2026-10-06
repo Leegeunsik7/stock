@@ -189,6 +189,10 @@ namespace MS2E.Core
         FeedDisconnected = 11, // [피드 연동] 시세/체결 피드 단절 회로 차단
         DepthInsufficient = 12,      // [보호 지정가] 1~3호가 즉시 체결 잔량 0 · 시장가 깊이 미상/만료
         ProtectionUnavailable = 13,  // [보호 지정가] 보호 지정가 산출 불가(포화·가격제한폭 밖 참조가)
+        SpreadTooWide = 14,          // [L2] 1호가 스프레드 상한 초과 · 한쪽 결측/교차 — 시장가 송출 거부
+        AccountStale = 15,           // [계좌] 예수금/잔고 스냅샷 미수신·만료 — 송출 거부(fail-closed)
+        InsufficientCash = 16,       // [계좌] 매수 명목 > 주문가능금액 − 예약분
+        InsufficientPosition = 17,   // [계좌] 매도 수량 > 호스트 추정 보유
     }
 
     public readonly record struct OrderRouteResult(OrderRouteVerdict Verdict, int Broker, long Handle)
@@ -206,7 +210,7 @@ namespace MS2E.Core
         private readonly ZeroAllocOrderIdMap _ids;
         private readonly BrokerHeartbeatBitmaskMonitor? _heartbeat;
         private readonly long _maxSlippageBps;
-        private long _rejected, _misrouted, _unknown, _aborted, _reclaimed;
+        private long _rejected, _misrouted, _unknown, _aborted, _reclaimed, _terminal;
 
         public ResilientOrderRouter(LockFreeBrokerSwitchboard board, BrokerFailoverSentinel sentinel, PendingOrderCascadeCanceller pending,
                                     int idMapCapacityPow2, long maxSlippageBps, BrokerHeartbeatBitmaskMonitor? heartbeat = null)
@@ -227,6 +231,7 @@ namespace MS2E.Core
         public long AbortedRoutes => Interlocked.Read(ref _aborted);
         public long MaxSlippageBps => _maxSlippageBps;
         public long ReclaimedSlots => Interlocked.Read(ref _reclaimed);
+        public long TerminalReleases => Interlocked.Read(ref _terminal);
         /// <summary>[피드 연동] 외부 전방 판정(참조가 만료·피드 단절)으로 거부된 주문도 같은 거부 누계에 계상.</summary>
         public OrderRouteResult RejectExternal(OrderRouteVerdict verdict) => Reject(verdict, -1);
 
@@ -312,6 +317,19 @@ namespace MS2E.Core
             _pending.Release(handle, out _);
             _ids.TryRemove(orderId);
             Interlocked.Increment(ref _aborted);
+            return true;
+        }
+
+        /// <summary>[키움 프로토콜] 브로커 종결 통보(거부 · 비캐스케이드 취소 확인) — 체결/취소 계수 없이 추적 즉시 해제(δ=0).
+        /// 거부된 주문이 TTL 까지 슬롯을 점유하던 경로를 0ms 반납으로 대체한다.</summary>
+        [ZeroAllocHotPath]
+        public bool ReleaseTerminal(UInt128 orderId, int reportingBroker)
+        {
+            if (!_ids.TryGet(orderId, out long handle, out int broker)) return false;
+            if (broker != reportingBroker) { Interlocked.Increment(ref _misrouted); return false; }   // 오배송 통보는 남의 주문을 해제하지 못함
+            _pending.Release(handle, out _);
+            _ids.TryRemove(orderId);
+            Interlocked.Increment(ref _terminal);
             return true;
         }
 

@@ -177,6 +177,21 @@ namespace MS2E.Infrastructure
         }
 
         /// <summary>KiwoomBridgeClient 수신 체결 검증.</summary>
+        /// <summary>[키움 프로토콜] 체결량 0 주문 상태 통보(접수/거부/취소확인) 형식 검증 — 체결가 0 허용 · 수량은 정확히 0.</summary>
+        public static ValidationResult ValidateOrderNotice(FillPayload fill)
+        {
+            var r = new ValidationResult();
+            if (fill.SymbolCode <= 0 || fill.SymbolCode > 999_999)
+                r.Add(nameof(fill.SymbolCode), $"KSE 코드 범위 오류: {fill.SymbolCode}");
+            if (fill.FillQty != 0)
+                r.Add(nameof(fill.FillQty), $"상태 통보 수량은 0 이어야 합니다: {fill.FillQty}");
+            if (!double.IsFinite(fill.FillPrice) || fill.FillPrice < 0)
+                r.Add(nameof(fill.FillPrice), $"상태 통보 가격 비정상: {fill.FillPrice}");
+            if (fill.Side != 1 && fill.Side != -1)
+                r.Add(nameof(fill.Side), $"매매방향은 +1(매수)/-1(매도)이어야 합니다: {fill.Side}");
+            return r;
+        }
+
         public static ValidationResult ValidateFill(FillPayload fill)
         {
             var r = new ValidationResult();

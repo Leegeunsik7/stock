@@ -14,7 +14,30 @@
 namespace MS2E.Infrastructure
 {
     /// <summary>게이트가 승인한 실제 송출 형태(값 타입 · δ=0). KindByte 0=시장가 · 1=지정가 / PriceRaw·QtyRaw = QPrice·QQty raw(10^8).</summary>
-    public readonly record struct OrderAdmission(byte KindByte, long PriceRaw, long QtyRaw);
+    /// <summary>[저지연] BasisAgeMicros = 판정에 쓴 참조가 틱의 나이(µs · −1 = 미상) — Tick-to-Trade 의 '틱 → 판정' 구간.</summary>
+    public readonly record struct OrderAdmission(byte KindByte, long PriceRaw, long QtyRaw, long BasisAgeMicros = -1);
+
+    /// <summary>
+    /// [저지연] 주문 1건 Tick-to-Trade 계측 프로브(δ=0). OrderDrainWorker 실전 경로가 호출:
+    ///   t0 = Timestamp()(디스패치 진입) → 게이트 판정 → AdmitBeforeSend(t0)(송출 직전 지연 폭주면 false = 미송출 · Disarm)
+    ///   → 실 송출 → RecordSent(t0, basisAge)(프로세스 내 구간 + 틱 나이 = Tick-to-Trade 기록).
+    /// </summary>
+    /// <summary>
+    /// [정정/취소] 전방 판정 게이트(δ=0) — ExecutionBridgeBroker 가 취소/정정 요청을 파이프로 보내기 '전' 호출.
+    /// 추적 원장에 없거나(이미 체결/취소/거부 종결) 진행 중 취소가 있거나 정정 수량이 잔량을 넘으면 false = 송신 0.
+    /// </summary>
+    public interface IOrderAmendGate
+    {
+        bool TryBeginCancel(long brokerOrderId);
+        bool TryBeginModify(long brokerOrderId, long newQtyShares, long newPriceWon);
+    }
+
+    public interface ITickToTradeProbe
+    {
+        long Timestamp();
+        bool AdmitBeforeSend(long dispatchStartTimestamp);
+        void RecordSent(long dispatchStartTimestamp, long basisAgeMicros);
+    }
 
     public interface IOrderRouteGate
     {

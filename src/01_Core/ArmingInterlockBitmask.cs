@@ -52,6 +52,12 @@ namespace MS2E.Core
         RouterFeed      = 6,   // [피드 연동 · 방향 B] 시세/체결 피드 단절 회로 차단기
         OrderSlotAge    = 7,   // [피드 연동 · 방향 A] 응답 타임아웃 슬롯 회수(미확인 노출) 차단
         ExtremeSlippage = 8,   // [보호 지정가 · 방향 B] 체결가 극한 괴리 기습 체결 → Disarm
+        MmfFabric       = 9,   // [MMF Triage · 방향 B] MMF IPC 시퀀스 역전/찢김/경계 파손 → Disarm
+        BrokerStateMismatch = 10, // [키움 프로토콜 · 방향 B] 클라이언트 추적 잔량 ≠ 브로커 미체결 잔량 → Disarm
+        OrderbookIlliquidity = 11, // [L2 · 방향 B] 연속매매 중 호가 교차/공백/극한 스프레드 → Disarm
+        LatencyStall    = 12,  // [저지연 · 방향 B] Tick-to-Trade 프로세스 내 구간 정지 임계 초과(GC 정지·선점) → Disarm
+        KiwoomServerError = 13, // [키움 COM · 방향 B] 비밀번호·계좌 정지·증거금 부족·STA 펌프 동결 → Disarm
+        AccountDivergence = 14, // [계좌 · 방향 B] OPW00018 보유 ↔ 호스트 추정 보유 불일치(정적 구간) → Disarm
         StartupSanity   = 63,
     }
 

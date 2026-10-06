@@ -105,6 +105,8 @@ namespace StockManager.Adapters
         private readonly StockManager.Engines.DepthBook? _depth;
         private readonly bool _requireDepthForMarket;
         private readonly Func<long, long>? _basePriceRaw;
+        private readonly AccountStateSyncAdapter? _account;
+        private long _accountRejects;
         private long _admitted, _staleRejects, _feedRejects, _routeRejects, _fractionalRejects, _trackRejects, _notSent;
         private long _marketConverted, _depthRejects, _depthReduced, _protectionRejects, _slippageRejects;
         private int _lastVerdict;
@@ -115,7 +117,8 @@ namespace StockManager.Adapters
         /// <param name="basePriceRaw">종목 키 → 기준가 raw(가격제한폭 클램프 · 0 = 미상 → 클램프 생략).</param>
         public RouterFeedGate(ResilientOrderRouter router, ReferencePriceFeedAdapter price, OrderExecutionFeedAdapter exec, FeedDisconnectCircuitBreaker breaker,
                               StockManager.Engines.ProtectiveLimitOrderConverter? converter = null, StockManager.Engines.DepthBook? depth = null,
-                              bool requireDepthForMarket = true, Func<long, long>? basePriceRaw = null)
+                              bool requireDepthForMarket = true, Func<long, long>? basePriceRaw = null,
+                              AccountStateSyncAdapter? account = null)
         {
             _router = router ?? throw new ArgumentNullException(nameof(router));
             _price = price ?? throw new ArgumentNullException(nameof(price));
@@ -125,7 +128,11 @@ namespace StockManager.Adapters
             if (_converter.OffsetBps > router.MaxSlippageBps)
                 throw new ArgumentException($"보호 offset {_converter.OffsetBps}bps > 라우터 슬리피지 한도 {router.MaxSlippageBps}bps — 모든 시장가가 자가 거부됨", nameof(converter));
             _depth = depth; _requireDepthForMarket = requireDepthForMarket; _basePriceRaw = basePriceRaw;
+            _account = account;
         }
+
+        /// <summary>[계좌] 주문가능금액/보유수량/스냅샷 만료로 거부한 누계.</summary>
+        public long AccountRejects => Interlocked.Read(ref _accountRejects);
 
         public long MarketConverted => Interlocked.Read(ref _marketConverted);
         public long DepthRejects => Interlocked.Read(ref _depthRejects);
@@ -152,7 +159,7 @@ namespace StockManager.Adapters
             admission = default;
             if (_breaker.Evaluate()) return Reject(OrderRouteVerdict.FeedDisconnected, ref _feedRejects);
             long symHash = ReferencePriceFeedAdapter.SymbolHashForCode(p.SymbolCode);
-            if (_price.TryGetReference(symHash, out long reference, out _) != ReferencePriceVerdict.Fresh)
+            if (_price.TryGetReference(symHash, out long reference, out long basisAgeMicros) != ReferencePriceVerdict.Fresh)
                 return Reject(OrderRouteVerdict.StaleReference, ref _staleRejects);
 
             long shares = p.QtyRaw / QtyScale;
@@ -191,10 +198,30 @@ namespace StockManager.Adapters
                             break;
                         case StockManager.Engines.DepthVerdict.Insufficient:
                             return DepthReject(p.OrderId, shares);
+                        case StockManager.Engines.DepthVerdict.SpreadTooWide:
+                            _exec.ReportGateEvent(ReconciliationKind.SpreadRejected, p.OrderId, shares);
+                            return Reject(OrderRouteVerdict.SpreadTooWide, ref _depthRejects);
                         default:   // Missing · Stale
                             if (_requireDepthForMarket) return DepthReject(p.OrderId, shares);
                             break;
                     }
+                }
+            }
+
+            // ②-c [계좌] 주문가능금액(매수 · 예약) / 추정 보유수량(매도) — 스냅샷 부재/만료 = 거부
+            long reservedWon = 0;
+            if (_account is { } acct)
+            {
+                if (side == OrderSide.Buy)
+                {
+                    reservedWon = NotionalWonCeil(limit, shares);
+                    var av = acct.TryReserveBuy(reservedWon);
+                    if (av != AccountVerdict.Ok) { reservedWon = 0; return AccountReject(p.OrderId, shares, av == AccountVerdict.Stale ? OrderRouteVerdict.AccountStale : OrderRouteVerdict.InsufficientCash); }
+                }
+                else
+                {
+                    var av = acct.CheckSell(p.SymbolCode, shares);
+                    if (av != AccountVerdict.Ok) return AccountReject(p.OrderId, shares, av == AccountVerdict.Stale ? OrderRouteVerdict.AccountStale : OrderRouteVerdict.InsufficientPosition);
                 }
             }
 
@@ -204,6 +231,7 @@ namespace StockManager.Adapters
             Volatile.Write(ref _lastVerdict, (int)r.Verdict);
             if (!r.Accepted)
             {
+                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);   // 미송출 — 예약 반환
                 Interlocked.Increment(ref _routeRejects);
                 if (r.Verdict == OrderRouteVerdict.SlippageExceeded)
                 {
@@ -214,13 +242,28 @@ namespace StockManager.Adapters
             }
             if (!_exec.TryTrack(p.OrderId, key, r.Broker, shares, side == OrderSide.Buy, reference))
             {
+                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);
                 _router.Abort(key);
                 Interlocked.Increment(ref _trackRejects);
                 return false;
             }
             Interlocked.Increment(ref _admitted);
-            admission = new OrderAdmission(1, limit, shares * QtyScale);   // ★송출 Kind 는 항상 지정가
+            admission = new OrderAdmission(1, limit, shares * QtyScale, basisAgeMicros);   // ★송출 Kind 는 항상 지정가 · 참조가 틱 나이 동봉
             return true;
+        }
+
+        private bool AccountReject(long proposalId, long shares, OrderRouteVerdict v)
+        {
+            _exec.ReportGateEvent(ReconciliationKind.AccountRejected, proposalId, shares);
+            return Reject(v, ref _accountRejects);
+        }
+
+        // 명목(원) = ⌈지정가 raw(10^8) × 주 / 10^8⌉ — Int128 곱(오버플로 차단) · 상한 포화
+        internal static long NotionalWonCeil(long limitRaw, long shares)
+        {
+            if (limitRaw <= 0 || shares <= 0) return 0;
+            Int128 n = ((Int128)limitRaw * shares + (100_000_000 - 1)) / 100_000_000;
+            return n > long.MaxValue ? long.MaxValue : (long)n;
         }
 
         private bool DepthReject(long proposalId, long shares)

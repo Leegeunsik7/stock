@@ -57,6 +57,10 @@ namespace MS2E.Infrastructure
         public event Action<TickPayload>?    TickReceived;
         public event Action<FillPayload>?    FillReceived;
         public event Action<AccountPayload>? AccountReceived;
+        public event Action<OrderBookPayload>? OrderBookReceived;            // [L2] 10호가 스냅샷(검증 통과분)
+        public event Action<ReferencePricePayload>? ReferencePriceReceived;  // [L2] 기준가(전일종가)
+        public event Action<AccountCashPayload>? AccountCashReceived;        // [계좌] OPW00001 예수금상세
+        public event Action<PositionPayload>? PositionReceived;              // [계좌] OPW00018 보유 1행
         public event Action<ErrorPayload>?   ErrorReceived;
         /// <summary>하트비트 타임아웃 또는 파이프 단절 시 발행.</summary>
         public event Action?                 ProxyLost;
@@ -265,7 +269,20 @@ namespace MS2E.Infrastructure
                     break;
                 case BridgeMessageType.OrderFilled:
                 case BridgeMessageType.OrderRejected:
-                    FillReceived?.Invoke(BridgeSerializer.Unpack<FillPayload>(env.Payload));
+                    // [키움 프로토콜] 56B 신 프레임 · 48B 구 프레임(잔량 없음) 모두 수용 — 길이 미달 프레임은 폐기(파싱 불가 = 미반영)
+                    if (BridgeFillReader.TryReadFill(env.Payload, out var fill)) FillReceived?.Invoke(fill);
+                    break;
+                case BridgeMessageType.OrderBook:
+                    OrderBookReceived?.Invoke(BridgeSerializer.Unpack<OrderBookPayload>(env.Payload));
+                    break;
+                case BridgeMessageType.ReferencePrice:
+                    ReferencePriceReceived?.Invoke(BridgeSerializer.Unpack<ReferencePricePayload>(env.Payload));
+                    break;
+                case BridgeMessageType.AccountCash:
+                    AccountCashReceived?.Invoke(BridgeSerializer.Unpack<AccountCashPayload>(env.Payload));
+                    break;
+                case BridgeMessageType.Position:
+                    PositionReceived?.Invoke(BridgeSerializer.Unpack<PositionPayload>(env.Payload));
                     break;
                 case BridgeMessageType.AccountState:
                     AccountReceived?.Invoke(BridgeSerializer.Unpack<AccountPayload>(env.Payload));
@@ -311,9 +328,33 @@ namespace MS2E.Infrastructure
 
                     case BridgeMessageType.OrderFilled:
                     case BridgeMessageType.OrderRejected:
-                        if (payload.Length < Unsafe.SizeOf<FillPayload>()) return false;
-                        return StockValidator.ValidateFill(
-                            BridgeSerializer.Unpack<FillPayload>(payload)).IsValid;
+                        // [키움 프로토콜] 수정 전: 체결량 0 통보(접수·거부·취소확인 — 체결가 0)를 '체결' 규칙으로 검증해 전량 폐기했다
+                        //   → 호스트는 거부/취소 확인을 한 번도 받지 못했다. 체결(>0)만 체결 규칙, 나머지는 주문 상태 통보 규칙.
+                        if (!BridgeFillReader.TryReadFill(payload, out var f)) return false;
+                        return (f.FillQty > 0 ? StockValidator.ValidateFill(f) : StockValidator.ValidateOrderNotice(f)).IsValid;
+
+                    case BridgeMessageType.OrderBook:
+                        // [L2] 길이·심볼 범위만 게이트(형식 오류 폐기). 시장 상태 판정(교차·공백·스프레드)은 하류 L2 파서/인터락 몫 —
+                        //   여기서 버리면 플래시 크래시 징후 자체가 관측되지 않는다.
+                        if (payload.Length < Unsafe.SizeOf<OrderBookPayload>()) return false;
+                        var ob = BridgeSerializer.Unpack<OrderBookPayload>(payload);
+                        return ob.SymbolCode > 0 && ob.SymbolCode <= 999_999;
+
+                    case BridgeMessageType.AccountCash:
+                        return payload.Length >= Unsafe.SizeOf<AccountCashPayload>();
+
+                    case BridgeMessageType.Position:
+                        // [계좌] 행 번호/행 수 정합 · 보유 행은 종목 범위 · 수량 비음수(형식 오류 행은 배치 전체를 미완으로 남겨 비교 생략 = 안전 측)
+                        if (payload.Length < Unsafe.SizeOf<PositionPayload>()) return false;
+                        var pos = BridgeSerializer.Unpack<PositionPayload>(payload);
+                        if (pos.RowCount < 0 || pos.RowCount > 10_000 || pos.Quantity < 0) return false;
+                        if (pos.RowCount == 0) return pos.RowIndex == 0;
+                        return pos.RowIndex >= 0 && pos.RowIndex < pos.RowCount && pos.SymbolCode > 0 && pos.SymbolCode <= 999_999;
+
+                    case BridgeMessageType.ReferencePrice:
+                        if (payload.Length < Unsafe.SizeOf<ReferencePricePayload>()) return false;
+                        var rp = BridgeSerializer.Unpack<ReferencePricePayload>(payload);
+                        return rp.SymbolCode > 0 && rp.SymbolCode <= 999_999 && rp.BasePrice > 0;
 
                     default:
                         return true;

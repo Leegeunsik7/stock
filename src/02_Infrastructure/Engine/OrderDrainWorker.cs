@@ -37,6 +37,8 @@ namespace MS2E.Infrastructure
         private long _interlockVetoes;
         private readonly IOrderRouteGate? _routeGate;   // [피드 연동] 참조가·추적 슬롯 라우터 게이트(옵션 · 실전 경로 전용)
         private long _routeVetoes;
+        private readonly ITickToTradeProbe? _latencyProbe;   // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 지연 폭주 veto(옵션)
+        private long _latencyVetoes;
         // [실배선 δ=0 교정] Drain(Dispatch) 메서드 그룹 변환이 드레인 사이클마다 Func 델리게이트(64B)를 새로 할당했다
         //   (50ms 주기 = 초당 20회 상시 GC 압력 · ProductionPipelineWiringTests 실측). ctor 에서 1회 캐시.
         private readonly Func<OrderProposal, bool> _dispatchFn;
@@ -54,6 +56,8 @@ namespace MS2E.Infrastructure
         public long InterlockVetoes => System.Threading.Interlocked.Read(ref _interlockVetoes);
         /// <summary>[피드 연동] 라우터 게이트(참조가 만료·피드 단절·슬리피지·추적 불가) 거부 누계.</summary>
         public long RouteVetoes => System.Threading.Interlocked.Read(ref _routeVetoes);
+        /// <summary>[저지연] 디스패치 진입 → 송출 직전 구간이 정지 임계를 넘어 미송출된 누계(GC 정지·스레드 선점).</summary>
+        public long LatencyVetoes => System.Threading.Interlocked.Read(ref _latencyVetoes);
 
         /// <param name="attestation">v4.87.0 — 드레인 루프 예외·이중키 무결성 붕괴 시 ForceFreeze 격발(옵션·null 시 무동작).</param>
         /// <param name="dualKeyIntact">v4.87.0 — 매 드레인 전 이중키(ValveWired ∧ LiveArmingWired) 무결성 검문(옵션).
@@ -72,8 +76,10 @@ namespace MS2E.Infrastructure
                                 SlaJitterRegressionGuard? jitterGuard = null,
                                 MicroCapitalCanaryGovernor? canaryGov = null,
                                 MS2E.Core.ArmingInterlockBitmask? interlocks = null,
-                                IOrderRouteGate? routeGate = null)
+                                IOrderRouteGate? routeGate = null,
+                                ITickToTradeProbe? latencyProbe = null)
         {
+            _latencyProbe  = latencyProbe;
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
             _att           = attestation;
@@ -174,6 +180,7 @@ namespace MS2E.Infrastructure
                     return _mockMirror?.SealAndVirtualFill(p.OrderId, p.SymbolCode, p.SideByte, p.KindByte, p.PriceRaw, p.QtyRaw) ?? false;
                 // route == LiveBroker → 아래 실전 경로(게이트웨이·물리 키)
             }
+            long t0 = _latencyProbe?.Timestamp() ?? 0;   // [저지연] 실전 경로 디스패치 진입 시각(프로브 단조 시계)
 
             // ★[실배선 · 방향 B] 원자 인터락 최종 veto — 디스패처가 무장을 판정한 '뒤' 실 송출 '직전'에 인터락 집계어를 1회 재판독.
             //   판정과 송출 사이에 부팅 무결성 변조·자격증명 유출·포렌식 체인 붕괴·이상 시세·카오스 홀드가 Trip 했거나, 필수 소스
@@ -199,7 +206,7 @@ namespace MS2E.Infrastructure
 
             // ★[피드 연동] 라우터 게이트 — 카나리까지 통과한 실전 주문만 참조가·라우터 판정 + 추적 슬롯 확보. 실패 = 미송출.
             // [보호 지정가] 송출 형태 = 게이트 승인값(시장가 → 보호 지정가 · 잔량 부족 시 수량 축소). 게이트 미주입이면 원 제안 그대로.
-            byte sendKind = p.KindByte; long sendPrice = p.PriceRaw, sendQty = p.QtyRaw;
+            byte sendKind = p.KindByte; long sendPrice = p.PriceRaw, sendQty = p.QtyRaw, basisAge = -1;
             if (_routeGate is { } rg)
             {
                 if (!rg.TryAdmit(in p, out var adm))
@@ -207,7 +214,16 @@ namespace MS2E.Infrastructure
                     System.Threading.Interlocked.Increment(ref _routeVetoes);
                     return false;
                 }
-                sendKind = adm.KindByte; sendPrice = adm.PriceRaw; sendQty = adm.QtyRaw;
+                sendKind = adm.KindByte; sendPrice = adm.PriceRaw; sendQty = adm.QtyRaw; basisAge = adm.BasisAgeMicros;
+            }
+
+            // ★[저지연 · 방향 B] 송출 직전 지연 폭주 veto — 디스패치 진입 이후 GC 정지/스레드 선점으로 임계를 넘겼으면 그 주문은
+            //   이미 낡은 판단 위에 있다 → 미송출(슬롯 롤백) + 프로브가 회로 Disarm. '보낸 뒤 취소' 대신 '보내기 전 원자 중단'.
+            if (_latencyProbe is { } lp && !lp.AdmitBeforeSend(t0))
+            {
+                System.Threading.Interlocked.Increment(ref _latencyVetoes);
+                _routeGate?.OnNotSent(p.OrderId);
+                return false;
             }
 
             // ★v10.0.0 최종 빗장: 게이트웨이 주입 시 실물 사출을 이중키∧방어선∧펄스 재검 + 단발 개통 + 봉인 사출
@@ -216,6 +232,7 @@ namespace MS2E.Infrastructure
             {
                 bool emitted = gw.Emit(p.OrderId, p.SymbolCode, p.SideByte, sendKind, sendPrice, sendQty, _placeSealed!);
                 if (!emitted) _routeGate?.OnNotSent(p.OrderId);   // 게이트웨이 veto = 브로커 미도달 → 슬롯 롤백(접수된 주문은 게이트가 무시)
+                else _latencyProbe?.RecordSent(t0, basisAge);
                 return emitted;
             }
 
@@ -235,6 +252,7 @@ namespace MS2E.Infrastructure
                 throw new InvalidOperationException($"Broker.Place 거부: {msg}");
             }
             _routeGate?.OnBrokerAccepted(p.OrderId, msg);
+            _latencyProbe?.RecordSent(t0, basisAge);   // [저지연] 송출 완료 시점 Tick-to-Trade 기록
             return true;
         }
 

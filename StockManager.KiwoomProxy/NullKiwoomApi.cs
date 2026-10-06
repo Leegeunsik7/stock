@@ -12,6 +12,25 @@ namespace StockManager.KiwoomProxy
     {
         public event EventHandler<TickEventArgs>?    TickReceived;
         public event EventHandler<FillEventArgs>?    FillReceived;
+        public event EventHandler<OrderBookEventArgs>? OrderBookReceived;
+        public event EventHandler<ServerErrorEventArgs>? ServerErrorReceived;
+        public event EventHandler<AccountCashEventArgs>? AccountCashReceived;
+        public event EventHandler<PositionEventArgs>? PositionReceived;
+        public void ModifyOrder(long orderId, double price, long qty) { }
+        public void SimulateAccountCash(in AccountCashPayload cash) => AccountCashReceived?.Invoke(this, new AccountCashEventArgs { Cash = cash });
+        public void SimulatePosition(in PositionPayload row) => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row });
+        /// <summary>시뮬레이터 — 기본 정상. 테스트/운영자 드릴이 false 로 STA 동결을 모사.</summary>
+        public bool PumpHealthy { get; set; } = true;
+
+        public void SimulateServerError(int code)
+            => ServerErrorReceived?.Invoke(this, new ServerErrorEventArgs { Code = code });
+        public event EventHandler<ReferencePriceEventArgs>? ReferencePriceReceived;
+
+        public void SimulateOrderBook(in OrderBookPayload book)
+            => OrderBookReceived?.Invoke(this, new OrderBookEventArgs { Book = book });
+
+        public void SimulateReferencePrice(long symbolCode, long basePrice)
+            => ReferencePriceReceived?.Invoke(this, new ReferencePriceEventArgs { SymbolCode = symbolCode, BasePrice = basePrice });
         public event EventHandler<AccountEventArgs>? AccountReceived;
 
         public void Connect()                                                        { }
@@ -26,9 +45,11 @@ namespace StockManager.KiwoomProxy
             => TickReceived?.Invoke(this, new TickEventArgs
                { SymbolCode = symbolCode, Price = price, Volume = volume, ChangeRate = changeRate });
 
-        public void SimulateFill(long orderId, long symbolCode, double fillPrice, long qty, int side)
+        public void SimulateFill(long orderId, long symbolCode, double fillPrice, long qty, int side,
+                                 BridgeFillStatus status = BridgeFillStatus.Legacy, long remainingQty = -1)
             => FillReceived?.Invoke(this, new FillEventArgs
-               { OrderId = orderId, SymbolCode = symbolCode, FillPrice = fillPrice, FillQty = qty, Side = side });
+               { OrderId = orderId, SymbolCode = symbolCode, FillPrice = fillPrice, FillQty = qty, Side = side,
+                 Status = status, RemainingQty = remainingQty });
 
         public void SimulateAccount(long deposit, long equity, long unfilledCount = 0)
             => AccountReceived?.Invoke(this, new AccountEventArgs

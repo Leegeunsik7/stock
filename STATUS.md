@@ -1,18 +1,19 @@
 # Current Project Status
 
-- **Active Milestone**: [보호 지정가 · 추천 A] 시장가 → 참조가 기반 보호 지정가 변환 · 1~3호가 깊이 가드 · 호가 단위 정렬(방향 A) · 극한 슬리피지 Disarm(방향 B) (v12.14.1-GM)
-- **Build Status**: 사중 빌드 Release 0/0(WebOnly → sln Default+PrimesBench+x86 KiwoomProxy), 전체 3,201 — 3회 중 2회 100% · 1회 무관 플레이키(MmfIpcFabricTests.Spsc · 미수정 파일 · 단독 30/30), infra-scan coupling 0
-- **Updated At**: 2026-10-05 18:20
+- **Active Milestone**: [정정/취소·계좌 · 추천 A] 키움 정정/취소 파이프라인(원주문번호 사상) · 계좌 상태 동기화(OPW00018/OPW00001 · δ=0) · Cancel-Fill Race 배리어(방향 A) · 계좌 잔고 괴리 Disarm(방향 B) (v12.14.1-GM)
+- **Build Status**: 사중 빌드 Release 0/0(WebOnly → sln Default+PrimesBench+x86 KiwoomProxy), 3,307/3,307 Pass(2회 연속), infra-scan coupling 0, KIWOOM_COM 인터롭 쉼 컴파일 0/0
+- **Updated At**: 2026-10-06 02:10
 
 ## Completed Deliverables
-- [실결함] 피드 연동 후에도 시장가는 PaperKind.Market 그대로 브로커 송출(라우터는 참조가 존재만 확인) → IOrderRouteGate 가 송출 형태(OrderAdmission) 반환 · OrderDrainWorker 는 승인값으로 송출 — 송출 Kind 항상 지정가
-- ProtectiveLimitOrderConverter: 매수 상한 = 참조가×(1+offset) 내림 정렬 · 매도 하한 ×(1−offset) 올림 정렬 · 가격제한폭(기준가 ±30%) 보호 방향 클램프/이상치 거부 · Int128 포화 · offset ≤ 라우터 한도 강제
-- 방향 A KrxTickAligner: QPrice raw 7구간 테이블(기존 KrxTickLadder 전 구간 동치 · 격자 유효성 · δ=0 — ReadOnlySpan 프로퍼티 배열 패턴의 호출당 144B 할당 실측 후 정적 배열로)
-- DepthBook(IDepthSink): 1~3호가·보호선 이내 잔량 — 시장가 Ok/축소/거부 · 깊이 미상·만료 시장가 거부(Router.MarketRequiresDepth 기본 true) · 대사 DepthRejected/DepthReduced/SlippageRejected
-- 방향 B ExtremeSlippageDisarmInterlock: 체결가 ↔ 판정 참조가 불리 괴리 200bps 초과 → sticky Disarm(ExtremeSlippage 비트 · 이중키 재무장) · BlazorHomeForm 전량 결선
-- ProtectiveLimitConverterTests.cs 20건(교정 끔 Red 12건) · RouterFeedAdapterTests 2건 의미 갱신
+- [실결함] ProductionKiwoomApi.CancelOrder/QueryAccount 빈 스텁(호스트 취소 소실) → 코어 위임: 취소 3/4 · 정정 5/6 · 원주문번호 D7 · 최신 미체결 기준 잔량 초과/중복/미접수 차단 · 사상 전 취소 보류 후 집행
+- [실결함] 취소/정정은 새 주문번호 — 취소확인 통보가 미사상 번호로 보류→만료되어 호스트 슬롯이 TTL 까지 잔존(sticky Disarm) → RC 응답 사상 + FID 904 원주문번호 폴백 + 대체된 구 번호 비체결 통보 무시
+- 호스트 IOrderAmendGate(OrderExecutionFeedAdapter): 종결/중복/잔량 초과 취소·정정 송신 0 · ExecutionBridgeBroker 전방 차단 · Modify/QueryAccount 경로 신설
+- 방향 A: 취소 후 체결 반영·경합 완전 체결 = CancelRaceFilled 종결 · 정정 진행 창(5초) 내 잔량 불일치 유예 · 정정 접수 잔량으로 추적 수량 재기준(오격발 방지)
+- AccountStateSyncAdapter: 브리지 고정 프레임(Cash 32B · Position 48B) → 고정 배열 δ=0 · 주문가능금액 예약 게이트 · 추정 보유 매도 게이트 · 만료 = fail-closed(RouterFeedGate 판정 15/16/17)
+- 방향 B: 정적 구간(조회 전후 체결 0) 1주 단위 양방향 대조 → AccountDivergenceInterlock(필수 비트 14 · 이중키 재무장) · 10초 주기 조회(분당 TR 12건)
+- KiwoomCancelModifyAccountTests.cs 25건(교정 끔 Red 15건)
 
 ## 정직 스코핑
-- 지시서의 StockManager/Engines 부재(신설) · ★Toss/키움 어느 쪽도 L2 호가를 파싱하지 않아 DepthBook 생산자 0 → 현재 시장가는 실전 경로에서 전량 거부(옵트아웃 키 존재)
-- 가격제한폭 클램프는 기준가 주입(MarketDataSpikeInterlock.SetReference) 시에만 — 현 호출자 0 · 지정가 주문은 깊이 축소 미적용(대기 허용)
-- Next: MmfIpcFabric 플레이키 Triage 칩 생성 · 신규 지시 대기(누적 미커밋)
+- ★키움 SDK 미설치 — 실 AxKHOpenAPI 미검증 · 정정/취소 통보의 9203/904 실제 배치는 공개 문서 기반 가정(모의투자 1회 실측 필요)
+- OPW00004 에 주문가능금액 부재 → OPW00001 사용 · 예수금은 수수료/세금/D+2 미모델로 게이트만(1원 대조 아님) · 매도 미체결 예약 미반영(브로커 거부로 종결)
+- Next: 커밋 대기(MMF·키움 프로토콜·L2·저지연·키움 COM·정정/취소 미커밋) · SDK 설치 환경 모의투자 검증

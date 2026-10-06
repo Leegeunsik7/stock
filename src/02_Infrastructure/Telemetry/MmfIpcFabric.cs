@@ -29,6 +29,15 @@
 //    ④ 공유 길이 불신: MMF 가 보고하는 값이 아니라 로컬 상수(_capacity/_slotStride)로만 경계 산정.
 //  전부 unsafe 포인터 + Volatile/Interlocked(x64 TSO·8정렬) 로 무할당 수행.
 //
+//  ── [MMF Triage] 교정(실측 · 결정론 Red) ──────────────────────────────────────
+//   ⑤ 백프레셔 하트비트 오판: 링이 가득 차 TryPublish 가 false(정상 백프레셔)를 반환하는 동안 라이터는 하트비트를 갱신하지
+//      않았다. 리더가 선점/지연으로 임계보다 오래 멈췄다가 돌아오면, 살아서 대기 중인 라이터를 '단절'로 판정해 Poison →
+//      ForceFreeze(전 스위트 부하에서 Spsc_Concurrent 플레이키의 실제 경로 — 리더 40ms 정지 주입으로 100% 재현).
+//      가득참 분기에서도 하트비트를 갱신한다(라이터가 직접 관측한 생존 증거). 크래시 감지는 그대로 — 죽은 라이터는 갱신 불가.
+//   ⑥ seqlock 재검(s2) 전 전체 펜스: 페이로드 load 가 s2 load 뒤로 밀리는 load-load 재배치(ARM64·JIT)를 봉쇄.
+//      x64 TSO 에선 무해했으나 방어 재검이 약한 메모리 모델에서 공허해지지 않게 한다.
+//   ⑦ [방향 B] IArmingBlockSource — Poison/공유 오염 격리 즉시 ArmingInterlockBitmask 비트 Raise(sticky · 송출 직전 veto 반영).
+//
 //  ── liveArmed:false 불변 ─────────────────────────────────────────────────────
 //  패브릭은 '프레임 전송'만 한다 — 외부 증권사 소켓을 열지 않는다(그것은 x86 프록시의 몫이고, 주문 송출은 여전히
 //  하류 ZeroLeakProtocolIsolator + 이중키∧MasterIgnited 게이트가 지배). MMF 개통이 곧 발주 무장이 아니다 —
@@ -49,7 +58,7 @@ namespace MS2E.Infrastructure
     public enum MmfFabricRole { Writer, Reader }
 
     /// <summary>MMF 상주 락-프리 SPSC 링 — unsafe 포인터 δ=0. 하트비트·경계검증·오염 시 ForceFreeze.</summary>
-    public sealed unsafe class MmfIpcFabric : IDisposable
+    public sealed unsafe class MmfIpcFabric : IDisposable, MS2E.Core.IArmingBlockSource
     {
         // ── 상수(레이아웃·마커) ────────────────────────────────────────────────
         private const long Magic         = 0x4D533245_4D4D4631L;   // "MS2EMMF1"
@@ -139,6 +148,22 @@ namespace MS2E.Infrastructure
         public string LastReason        => _lastReason;
         public int    Capacity          => _capacity;
         public MmfFabricRole Role       => _role;
+        /// <summary>[방향 B] 무장 차단 — 오염 격리(sticky · 패브릭 재생성 전까지).</summary>
+        public bool   ArmingBlocked     => IsCorrupted;
+        /// <summary>가득참 백프레셔 중 라이터 하트비트 갱신 누계(⑤ — 리더 지연 오판 방지 증거).</summary>
+        public long   BackpressureBeats => Interlocked.Read(ref _backpressureBeats);
+
+        private long _backpressureBeats;
+        private MS2E.Core.ArmingInterlockLink? _interlockLink;
+
+        /// <summary>[방향 B] 원자 인터락 집계기 결속 — 결속 즉시 현재 오염 상태 동기화.</summary>
+        public void BindInterlock(MS2E.Core.ArmingInterlockBitmask aggregator, MS2E.Core.ArmingInterlockSource bit)
+        {
+            ArgumentNullException.ThrowIfNull(aggregator);
+            var link = aggregator.Bind(bit, this);
+            Volatile.Write(ref _interlockLink, link);
+            link.Resync();
+        }
         public long   Published         { get { if (!Enter()) return 0L; try { return Volatile.Read(ref HeadRef); } finally { Leave(); } } }
         public long   Consumed          { get { if (!Enter()) return 0L; try { return Volatile.Read(ref TailRef); } finally { Leave(); } } }
         public long   Depth             { get { if (!Enter()) return 0L; try { long h = Volatile.Read(ref HeadRef), t = Volatile.Read(ref TailRef); long d = h - t; return d < 0 ? 0 : d; } finally { Leave(); } } }
@@ -190,7 +215,13 @@ namespace MS2E.Infrastructure
                 long head = Volatile.Read(ref HeadRef);
                 long tail = Volatile.Read(ref TailRef);
                 if (!BoundsOk(head, tail)) { Poison("MMF Fabric Corrupted — 헤드/테일 경계 파손"); return false; }
-                if (head - tail >= _capacity) return false;   // 가득참 — 정상 백프레셔(부패 아님)
+                if (head - tail >= _capacity)
+                {
+                    // ⑤ 가득참 = 정상 백프레셔. 라이터는 살아 있으므로 하트비트 갱신 — 지연된 리더의 '라이터 단절' 오판 차단.
+                    Volatile.Write(ref WriterHbRef, _nowTicks());
+                    Interlocked.Increment(ref _backpressureBeats);
+                    return false;
+                }
 
                 byte* slot = _base + HeaderBytes + (head & _mask) * _slotStride;
                 long* seqp = (long*)(slot + SlotSeqOff);
@@ -245,6 +276,7 @@ namespace MS2E.Infrastructure
                 if (frameLen > 0)
                     fixed (byte* d = dest)
                         Buffer.MemoryCopy(slot + SlotPayOff, d, dest.Length, frameLen);
+                Interlocked.MemoryBarrier();                  // ⑥ 페이로드 load → s2 load 순서 고정(약한 메모리 모델)
                 long s2 = Volatile.Read(ref *seqp);           // seqlock 재검 — 복사 중 라이터 덮어씀 격리
                 if (s2 != s1) { Volatile.Write(ref ReaderHbRef, now); return false; }   // torn — 재시도(부패 아님)
 
@@ -320,6 +352,7 @@ namespace MS2E.Infrastructure
             _blackbox?.Record(FlightEventKind.MmfPoison, 0L, 0L, 0L, 0L, 3);
             try { if (_base != null) Volatile.Write(ref CorruptRef, 1L); } catch { }
             try { _att?.ForceFreeze("MmfIpcFabric: " + reason); } catch { }
+            Volatile.Read(ref _interlockLink)?.Resync();   // ⑦ 집계 비트 Raise
         }
 
         /// <summary>상대가 이미 부패를 알린 경우 — 로컬 격리만(중복 동결 방지·이미 상대가 동결).</summary>
@@ -327,6 +360,7 @@ namespace MS2E.Infrastructure
         {
             Volatile.Write(ref _corrupted, 1);
             _lastReason = reason;
+            Volatile.Read(ref _interlockLink)?.Resync();
         }
 
         public void Dispose()

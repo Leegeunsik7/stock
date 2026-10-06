@@ -25,55 +25,41 @@ namespace StockManager.Engines
         void OnDepth(long symbolHash, in L2Depth depth);
     }
 
-    public enum DepthVerdict : byte { Ok = 0, Reduced = 1, Insufficient = 2, Missing = 3, Stale = 4 }
+    public enum DepthVerdict : byte { Ok = 0, Reduced = 1, Insufficient = 2, Missing = 3, Stale = 4, SpreadTooWide = 5 }
 
-    public sealed class DepthBook : IDepthSink
+    public sealed class DepthBook : IDepthSink, IDisposable
     {
         public const int Levels = 3;   // 1~3호가만 즉시 체결 가능 잔량으로 인정
         private const long QtyScale = 100_000_000L;
 
-        private readonly long[] _key, _ver, _at;
-        private readonly L2Depth[] _depth;
-        private readonly int _mask;
+        // [저지연] 저장소 = GC 힙 밖 네이티브 seqlock 표(64B 정렬 슬롯 · SafeHandle 결정론적 해제) — 이전: 관리 배열 4종
+        private readonly StockManager.Buffers.NativeSeqlockTable<L2Depth> _table;
         private readonly long _maxAgeMicros;
+        private readonly long _maxSpreadBps;   // [L2] 최우선 매도/매수 스프레드 상한(0 = 비활성)
         private readonly Func<long> _nowMicros;
-        private readonly object _writeGate = new();
-        private long _updates, _tableFull;
+        private long _updates;
 
-        public DepthBook(int capacityPow2 = 4096, long maxAgeMicros = 2_000_000, Func<long>? nowMicros = null)
+        public DepthBook(int capacityPow2 = 4096, long maxAgeMicros = 2_000_000, Func<long>? nowMicros = null, long maxSpreadBps = 0)
         {
+            _maxSpreadBps = maxSpreadBps > 0 ? maxSpreadBps : 0;
             if (capacityPow2 < 2 || (capacityPow2 & (capacityPow2 - 1)) != 0) throw new ArgumentException("용량은 2의 거듭제곱", nameof(capacityPow2));
             if (maxAgeMicros <= 0) throw new ArgumentOutOfRangeException(nameof(maxAgeMicros));
-            _key = new long[capacityPow2]; _ver = new long[capacityPow2]; _at = new long[capacityPow2]; _depth = new L2Depth[capacityPow2];
-            _mask = capacityPow2 - 1; _maxAgeMicros = maxAgeMicros;
+            _table = new StockManager.Buffers.NativeSeqlockTable<L2Depth>(capacityPow2);
+            _maxAgeMicros = maxAgeMicros;
             _nowMicros = nowMicros ?? (static () => (long)((Int128)Stopwatch.GetTimestamp() * 1_000_000 / Stopwatch.Frequency));
         }
 
         public long Updates => Interlocked.Read(ref _updates);
-        public long TableFull => Interlocked.Read(ref _tableFull);
+        public long MaxSpreadBps => _maxSpreadBps;
+        public long TableFull => _table.TableFull;
+        public bool IsDisposed => _table.IsDisposed;
 
         public void OnDepth(long symbolHash, in L2Depth depth)
         {
-            long key = symbolHash == 0 ? 1 : symbolHash;
-            long now = _nowMicros();
-            lock (_writeGate)
-            {
-                int i = (int)((ulong)key & (ulong)_mask);
-                for (int probe = 0; probe <= _mask; probe++, i = (i + 1) & _mask)
-                {
-                    long k = _key[i];
-                    if (k != key && k != 0) continue;
-                    Interlocked.Increment(ref _ver[i]);
-                    _depth[i] = depth;
-                    Volatile.Write(ref _at[i], now);
-                    Interlocked.Increment(ref _ver[i]);
-                    if (k == 0) Volatile.Write(ref _key[i], key);
-                    Interlocked.Increment(ref _updates);
-                    return;
-                }
-                Interlocked.Increment(ref _tableFull);
-            }
+            if (_table.Write(symbolHash, in depth, _nowMicros())) Interlocked.Increment(ref _updates);
         }
+
+        public void Dispose() => _table.Dispose();
 
         /// <summary>즉시 체결 가능 잔량 판정(δ=0). allowedShares = 송출 허용 수량(Ok = 주문 · Reduced = 잔량 · 그 외 0).</summary>
         public DepthVerdict Evaluate(long symbolHash, OrderSide side, long limitRaw, long orderShares, out long allowedShares)
@@ -82,6 +68,15 @@ namespace StockManager.Engines
             if (orderShares <= 0 || limitRaw <= 0) return DepthVerdict.Insufficient;
             if (!TryRead(symbolHash, out L2Depth d, out long age)) return DepthVerdict.Missing;
             if (age > _maxAgeMicros) return DepthVerdict.Stale;
+            // [L2] 스프레드 상한 — 1호가 간격이 넓으면 보호 지정가라도 미끄러짐 기대값이 크다(얇은 호가) → 시장가 송출 거부
+            if (_maxSpreadBps > 0)
+            {
+                long a1 = d.AskPriceRaw[0], b1 = d.BidPriceRaw[0];
+                if ((side == OrderSide.Buy ? a1 : b1) <= 0) return DepthVerdict.Insufficient;   // 체결 측 호가 없음 = 잔량 0
+                if (a1 <= 0 || b1 <= 0 || b1 >= a1) return DepthVerdict.SpreadTooWide;          // 반대측 결측·교차 = 스프레드 판정 불가 → 거부
+                Int128 bps = (Int128)(a1 - b1) * 20_000 / ((Int128)a1 + b1);
+                if (bps > _maxSpreadBps) return DepthVerdict.SpreadTooWide;
+            }
             Int128 fillRaw = 0;
             for (int lv = 0; lv < Levels; lv++)
             {
@@ -101,29 +96,80 @@ namespace StockManager.Engines
 
         private bool TryRead(long symbolHash, out L2Depth depth, out long ageMicros)
         {
-            depth = default; ageMicros = long.MaxValue;
-            long key = symbolHash == 0 ? 1 : symbolHash;
-            int i = (int)((ulong)key & (ulong)_mask);
-            for (int probe = 0; probe <= _mask; probe++, i = (i + 1) & _mask)
-            {
-                long k = Volatile.Read(ref _key[i]);
-                if (k == 0) return false;
-                if (k != key) continue;
-                for (int spin = 0; spin < 64; spin++)
-                {
-                    long v1 = Volatile.Read(ref _ver[i]);
-                    if ((v1 & 1) != 0) continue;
-                    L2Depth copy = _depth[i];
-                    long at = Volatile.Read(ref _at[i]);
-                    Interlocked.MemoryBarrier();
-                    if (Volatile.Read(ref _ver[i]) != v1) continue;
-                    depth = copy;
-                    ageMicros = Math.Max(0, _nowMicros() - at);
-                    return true;
-                }
-                return false;   // 지속 기록 경합 — 미상 처리(fail-closed)
-            }
-            return false;
+            ageMicros = long.MaxValue;
+            if (!_table.TryRead(symbolHash, out depth, out long at)) return false;   // 미등록 · 지속 경합 · 처분 후 = 미상(fail-closed)
+            ageMicros = Math.Max(0, _nowMicros() - at);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// [L2 · 방향 B] Orderbook Illiquidity &amp; Flash Crash Disarm Interlock — 연속매매 시간 중 호가 데이터가 교차/공백/형식 오류이거나
+    /// 1호가 스프레드가 극한(기본 1,000bps)으로 벌어지면 전체 발주 회로 sticky Disarm(물리 이중키 재무장).
+    /// 연속매매 외 시간(동시호가 예상가 교차·장전 공백 정상)에는 관측만 계수하고 격발하지 않는다(오격발 방지).
+    /// 주문 단위 스프레드 거부(DepthBook.maxSpreadBps · 기본 300bps)와 별개 — 이쪽은 시장 전체 이상 징후 회로 차단.
+    /// </summary>
+    public sealed class OrderbookIlliquidityInterlock : IArmingBlockSource
+    {
+        private readonly long _flashSpreadBps;
+        private readonly Func<bool> _continuousSession;
+        private int _tripped, _lastVerdict;
+        private long _trips, _anomaliesOffSession, _observed;
+        private ArmingInterlockLink? _link;
+
+        public OrderbookIlliquidityInterlock(long flashSpreadBps = 1_000, Func<bool>? continuousSession = null)
+        {
+            if (flashSpreadBps < 1) throw new ArgumentOutOfRangeException(nameof(flashSpreadBps));
+            _flashSpreadBps = flashSpreadBps;
+            _continuousSession = continuousSession ?? (static () => true);
+        }
+
+        public bool Tripped => Volatile.Read(ref _tripped) == 1;
+        public bool ArmingBlocked => Tripped;
+        public long Trips => Interlocked.Read(ref _trips);
+        public long Observed => Interlocked.Read(ref _observed);
+        public long AnomaliesOffSession => Interlocked.Read(ref _anomaliesOffSession);
+        public L2BookVerdict LastTripVerdict => (L2BookVerdict)Volatile.Read(ref _lastVerdict);
+
+        public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
+        {
+            var link = aggregator.Bind(bit, this);
+            Volatile.Write(ref _link, link);
+            link.Resync();
+        }
+
+        /// <summary>스냅샷 판정 1건 관측(δ=0). 반환 = 이번에 Trip.</summary>
+        public bool Observe(L2BookVerdict verdict, long spreadBps)
+        {
+            Interlocked.Increment(ref _observed);
+            bool anomaly = verdict is L2BookVerdict.Crossed or L2BookVerdict.FlashHole or L2BookVerdict.Malformed or L2BookVerdict.NonMonotonic
+                           || (verdict == L2BookVerdict.Ok && spreadBps > _flashSpreadBps);
+            if (!anomaly) return false;
+            bool session;
+            try { session = _continuousSession(); } catch { session = true; }   // 판정 불가 = 연속매매로 간주(격발 측 · fail-closed)
+            if (!session) { Interlocked.Increment(ref _anomaliesOffSession); return false; }
+            if (Interlocked.CompareExchange(ref _tripped, 1, 0) != 0) return false;
+            Volatile.Write(ref _lastVerdict, (int)verdict);
+            Interlocked.Increment(ref _trips);
+            Volatile.Read(ref _link)?.Resync();
+            return true;
+        }
+
+        public bool TryRearm(bool valveWired, bool liveArmingWired)
+        {
+            if (!(valveWired && liveArmingWired)) return false;
+            Volatile.Write(ref _tripped, 0);
+            Volatile.Read(ref _link)?.Resync();
+            return true;
+        }
+
+        /// <summary>KRX 연속매매 시간(평일 09:00:00 ≤ KST &lt; 15:20:00) — 동시호가/장전/장후 제외. 공휴일 미반영(정직: 격발 측으로만 오차).</summary>
+        public static bool KrxContinuousSessionNow()
+        {
+            var kst = DateTime.UtcNow.AddHours(9);
+            if (kst.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+            var t = kst.TimeOfDay;
+            return t >= new TimeSpan(9, 0, 0) && t < new TimeSpan(15, 20, 0);
         }
     }
 

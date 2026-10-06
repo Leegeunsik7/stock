@@ -157,7 +157,7 @@ namespace StockManager.Tests
             Assert.Equal(7L, r2.OrderId);
             Assert.Equal(-1, r2.Side);
             Assert.Equal(BridgeSerializer.HeaderSize + 40, n1);   // Tick 40B
-            Assert.Equal(BridgeSerializer.HeaderSize + 48, n2);   // Fill 48B — 각 헤더가 자기 길이를 정확 기술
+            Assert.Equal(BridgeSerializer.HeaderSize + 56, n2);   // Fill 56B([키움 프로토콜] +RemainingQty) — 각 헤더가 자기 길이를 정확 기술
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -469,8 +469,14 @@ namespace StockManager.Tests
             => Assert.Equal(40, Unsafe.SizeOf<TickPayload>());
 
         [Fact]
-        public void FillPayload_SizeIs_48B()
-            => Assert.Equal(48, Unsafe.SizeOf<FillPayload>());
+        public void FillPayload_SizeIs_56B_LegacyPrefix48()
+        {
+            // [키움 프로토콜] 56B = 구 48B 레이아웃(접두 불변 · Pad→Status) + RemainingQty. 구 48B 프레임은 BridgeFillReader 가 수용.
+            Assert.Equal(56, Unsafe.SizeOf<FillPayload>());
+            Assert.Equal(48, BridgeFillReader.LegacyFillBytes);
+            Assert.Equal(36, (int)System.Runtime.InteropServices.Marshal.OffsetOf<FillPayload>(nameof(FillPayload.Status)));
+            Assert.Equal(48, (int)System.Runtime.InteropServices.Marshal.OffsetOf<FillPayload>(nameof(FillPayload.RemainingQty)));
+        }
 
         [Fact]
         public void AccountPayload_SizeIs_24B()
