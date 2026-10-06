@@ -1,19 +1,19 @@
 # Current Project Status
 
-- **Active Milestone**: [정정/취소·계좌 · 추천 A] 키움 정정/취소 파이프라인(원주문번호 사상) · 계좌 상태 동기화(OPW00018/OPW00001 · δ=0) · Cancel-Fill Race 배리어(방향 A) · 계좌 잔고 괴리 Disarm(방향 B) (v12.14.1-GM)
-- **Build Status**: 사중 빌드 Release 0/0(WebOnly → sln Default+PrimesBench+x86 KiwoomProxy), 3,307/3,307 Pass(2회 연속), infra-scan coupling 0, KIWOOM_COM 인터롭 쉼 컴파일 0/0
-- **Updated At**: 2026-10-06 02:10
+- **Active Milestone**: [E2E 스트레스 · 추천 A] 실전 게이팅 사슬 + 가상 브로커 모의 거래 하네스 · 7대 인터락 동시 격발 · 인터락 전이 포렌식 즉시 각인 · 텔레메트리 렌더 거버너(방향 A) · 송출 우회 백업 인터락(방향 B) (v12.14.1-GM)
+- **Build Status**: 오중 빌드 Release 0/0(WebOnly → sln Default+PrimesBench+x86 KiwoomProxy+KiwoomComShim), 3,353/3,353 Pass(11회 연속) · 단 1회 실행이 684건에서 조기 종료(원인 미확인 · 재현 0/11), infra-scan coupling 0
+- **Updated At**: 2026-10-06 12:40
 
 ## Completed Deliverables
-- [실결함] ProductionKiwoomApi.CancelOrder/QueryAccount 빈 스텁(호스트 취소 소실) → 코어 위임: 취소 3/4 · 정정 5/6 · 원주문번호 D7 · 최신 미체결 기준 잔량 초과/중복/미접수 차단 · 사상 전 취소 보류 후 집행
-- [실결함] 취소/정정은 새 주문번호 — 취소확인 통보가 미사상 번호로 보류→만료되어 호스트 슬롯이 TTL 까지 잔존(sticky Disarm) → RC 응답 사상 + FID 904 원주문번호 폴백 + 대체된 구 번호 비체결 통보 무시
-- 호스트 IOrderAmendGate(OrderExecutionFeedAdapter): 종결/중복/잔량 초과 취소·정정 송신 0 · ExecutionBridgeBroker 전방 차단 · Modify/QueryAccount 경로 신설
-- 방향 A: 취소 후 체결 반영·경합 완전 체결 = CancelRaceFilled 종결 · 정정 진행 창(5초) 내 잔량 불일치 유예 · 정정 접수 잔량으로 추적 수량 재기준(오격발 방지)
-- AccountStateSyncAdapter: 브리지 고정 프레임(Cash 32B · Position 48B) → 고정 배열 δ=0 · 주문가능금액 예약 게이트 · 추정 보유 매도 게이트 · 만료 = fail-closed(RouterFeedGate 판정 15/16/17)
-- 방향 B: 정적 구간(조회 전후 체결 0) 1주 단위 양방향 대조 → AccountDivergenceInterlock(필수 비트 14 · 이중키 재무장) · 10초 주기 조회(분당 TR 12건)
-- KiwoomCancelModifyAccountTests.cs 25건(교정 끔 Red 15건)
+- [발견] 출하 드라이런은 인터락 veto·라우터 게이트·T2T 프로브 이전에 미러로 분기 — 실전 사슬 미리허설 → 하네스는 실전 사슬 + VirtualPaperBroker(네트워크 0)
+- [실결함] 인터락 Disarm 의 포렌식 각인 경로 0 → ArmingInterlockBitmask 전이 관측자(비트당 정확히 1회) + InterlockForensicRecorder(해시 체인 + MMF 블랙박스) 호스트 결선
+- [실결함 · δ] OrderDrainWorker 송출 1건당 종목 문자열 할당 → KseSymbolText 캐시(적중 0B)
+- PaperTradingSimulationHarness: 틱/10호가 → 제안 → 드레인 → 가상 체결 → 대사 · 정상 상태 δ=0 실측 · T2T P50/P99/P99.9
+- SevenLayerInterlockInjector: 실 인터락 7종을 실제 Trip 경로로 격발 — 동시 격발 40라운드 비트당 전이 1회 · 체인 무결 · 이후 송출 0
+- 방향 A SimulationTelemetryChannel(seqlock) + SnapshotRenderGovernor 합치기 · 방향 B LiveArmedEgressSentinel(EgressBypass 15 필수 비트 · 실 브로커 앞 결선)
+- PaperTradingE2EStressTests.cs 19건(방어 끔 Red 16건) · HANDOVER.md §18
 
 ## 정직 스코핑
-- ★키움 SDK 미설치 — 실 AxKHOpenAPI 미검증 · 정정/취소 통보의 9203/904 실제 배치는 공개 문서 기반 가정(모의투자 1회 실측 필요)
-- OPW00004 에 주문가능금액 부재 → OPW00001 사용 · 예수금은 수수료/세금/D+2 미모델로 게이트만(1원 대조 아님) · 매도 미체결 예약 미반영(브로커 거부로 종결)
-- Next: 커밋 대기(MMF·키움 프로토콜·L2·저지연·키움 COM·정정/취소 미커밋) · SDK 설치 환경 모의투자 검증
+- 0.1ns Disarm 은 물리 불가 — '격발 반환 시 이미 Blocked' 로 검증 · 소켓 물리 차단 미구현(관리자 방화벽 변경 필요 · 피드 동반 단절) · Blazor 대시보드 페이지 미작성(엔진만)
+- 실 Toss/키움 피드 미연결(합성 틱·호가) · 태그 v12.14.1-GM 클린 빌드 불가 상태 지속(이전 보고 — 커밋/태그 재지정 대기)
+- Next: 누락 파일 + CI 게이트 + E2E 하네스 커밋 → 태그 재지정 → release-package.ps1

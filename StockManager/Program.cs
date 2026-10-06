@@ -17,6 +17,12 @@ namespace StockManager
                 Environment.ExitCode = StockManager.Tools.ReleaseVerificationCli.Run(args, Console.Out);
                 return;
             }
+            // [릴리스 CI] 출하 zip 무추출 수검 · 다중 저장소 매니페스트 동기화/핸드셰이크 — 동일하게 UI 초기화 이전 분기.
+            if (StockManager.Tools.ReleaseHandshakeCli.IsInvocation(args))
+            {
+                Environment.ExitCode = StockManager.Tools.ReleaseHandshakeCli.Run(args, Console.Out);
+                return;
+            }
 
             ApplicationConfiguration.Initialize();
 

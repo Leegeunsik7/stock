@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StockManager.KiwoomProxy", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MS2E.UI.Portable", "MS2E.UI.Portable\MS2E.UI.Portable.csproj", "{86AE54D9-B364-4569-846E-622F196A7453}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{AD4BB697-0BCB-4B18-BFB5-6BFFB78FB276}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KiwoomComShim", "tools\KiwoomComShim\KiwoomComShim.csproj", "{D4963A21-6116-4169-A111-58599C6086A2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +46,12 @@ Global
 		{86AE54D9-B364-4569-846E-622F196A7453}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{86AE54D9-B364-4569-846E-622F196A7453}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{86AE54D9-B364-4569-846E-622F196A7453}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4963A21-6116-4169-A111-58599C6086A2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4963A21-6116-4169-A111-58599C6086A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4963A21-6116-4169-A111-58599C6086A2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4963A21-6116-4169-A111-58599C6086A2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D4963A21-6116-4169-A111-58599C6086A2} = {AD4BB697-0BCB-4B18-BFB5-6BFFB78FB276}
 	EndGlobalSection
 EndGlobal

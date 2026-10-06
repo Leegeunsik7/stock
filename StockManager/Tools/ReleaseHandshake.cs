@@ -1,0 +1,576 @@
+// ============================================================================
+// ReleaseHandshake — [릴리스 CI · 추천 A] 출하 zip 무추출 수검(방향 A) + 다중 저장소 앤티-탬퍼 핸드셰이크(방향 B)
+//
+//  ① ZipSealDryRunVerifier(방향 A) — release-v*.zip 을 디스크에 풀지 않고 항목 스트림을 직접 SHA-256 으로 흘려
+//     (a) zip 내장 manifest.sig 의 masterSeal = 외부 앵커(master-seal.txt), (b) 항목별 해시 = 매니페스트 기재값,
+//     (c) 실측 해시로 재계산한 v2 봉인 = 앵커, (d) 매니페스트 누락/미등재 바이너리/경로 이탈 0 — 전부 성립해야 Ok.
+//     ★δ=0 범위(정직): 항목 해시 루프(HashStreamInto · 풀 버퍼 1개 + IncrementalHash 재사용)와 봉인 재계산(ComputeSealInto)은
+//       힙 0B 실측. zip 디렉터리 파싱(ZipArchive 항목 객체·Deflate 스트림)과 매니페스트 JSON 파싱은 BCL 내부 할당이 있다(콜드 1회).
+//  ② MultiRepoReleaseManifest(방향 B) — StockManager 출하 사실(태그·소스 커밋·manifest.sig 해시·masterSeal·38 아티팩트·zip·
+//     COM 쉼 산출물·liveArmed 기본값·인터락 목록)과 피어 저장소(QuantumVault) 관측값(HEAD·봉인 매니페스트 해시·rootHash)을
+//     RELEASE_MANIFEST.json 하나로 묶고, 정규화 문자열의 SHA-256(manifestHash)으로 자기 봉인한다.
+//     Verify 는 기록값 ↔ 실측값을 대조해 하나라도 어긋나면 거부(어느 항목이 왜 어긋났는지 판정값으로 반환).
+//     ★피어 저장소는 읽기 전용 — 쓰기 0(QuantumVault 는 별도 제품 · v2.7.0 봉인 동결 · 사용자 결정 2026-10-06).
+//  ③ GitRepoProbe — git 을 셸 없이(ArgumentList) 호출해 HEAD·태그 커밋·작업 트리 변경·태그↔HEAD 코드 이탈을 관측.
+//     문서(*.md)·docs/·release/·.claude/·graphify-out/ 변경은 코드 이탈로 보지 않는다(출하 바이너리에 영향 없음).
+//  ④ ReleaseHandshakeCli — 호스트 실행 파일의 콜드 CLI(--verify-zip · --sync-release-manifest · --release-handshake).
+//     release-package.ps1 가 [9/10]·[10/10] 에서 호출 — 실패 = zip·해시·앵커·매니페스트 삭제 후 중단(fail-closed).
+// ============================================================================
+using System;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using MS2E.Infrastructure;
+
+namespace StockManager.Tools
+{
+    // ════════════════════════════════════════════════════════════════════════
+    // ① 방향 A — 출하 zip 무추출 수검
+    // ════════════════════════════════════════════════════════════════════════
+
+    public enum ZipSealVerdict : byte
+    {
+        Ok = 0, AnchorMalformed = 1, ZipUnreadable = 2, ManifestMissing = 3, ManifestInvalid = 4, AnchorMismatch = 5,
+        PathEscape = 6, UnlistedBinary = 7, DuplicateEntry = 8, ArtifactTampered = 9, ArtifactMissing = 10, SealMismatch = 11,
+    }
+
+    public static class ZipSealDryRunVerifier
+    {
+        public const int HashLen = 32;
+        private const int ChunkBytes = 81_920;
+
+        /// <summary>zip 무추출 수검. expectedSealHex = 외부 앵커(master-seal.txt 내용 · 64 hex).</summary>
+        public static ZipSealVerdict Verify(string zipPath, string expectedSealHex, out string detail)
+        {
+            detail = "";
+            string anchor = (expectedSealHex ?? "").Trim();
+            if (!BootIntegrityGate.IsStrictSealHex(anchor)) { detail = "앵커 형식 오류(64 hex 아님)"; return ZipSealVerdict.AnchorMalformed; }
+            byte[] anchorBytes = Convert.FromHexString(anchor);
+            ZipArchive zip;
+            try { zip = ZipFile.OpenRead(zipPath); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
+            { detail = "zip 열기 실패: " + ex.GetType().Name; return ZipSealVerdict.ZipUnreadable; }
+            using (zip)
+            {
+                var mEntry = zip.GetEntry("manifest.sig");
+                if (mEntry is null) { detail = "zip 에 manifest.sig 없음 — 비봉인 패키지"; return ZipSealVerdict.ManifestMissing; }
+                string mText;
+                try { using var sr = new StreamReader(mEntry.Open(), Encoding.UTF8); mText = sr.ReadToEnd(); }
+                catch (Exception ex) when (ex is IOException or InvalidDataException) { detail = "manifest.sig 읽기 실패: " + ex.GetType().Name; return ZipSealVerdict.ZipUnreadable; }
+                if (!BootIntegrityGate.TryParse(mText, out var entries, out string sealField, out string why)) { detail = "manifest.sig 무효: " + why; return ZipSealVerdict.ManifestInvalid; }
+                if (!HexEquals(sealField, anchorBytes)) { detail = "manifest.sig masterSeal ≠ 외부 앵커"; return ZipSealVerdict.AnchorMismatch; }
+
+                int n = entries.Count;
+                var names = new string[n];
+                var expected = new byte[n * HashLen];
+                entries.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+                for (int i = 0; i < n; i++) { names[i] = entries[i].Name; entries[i].Sha.CopyTo(expected, i * HashLen); }
+                var actual = new byte[n * HashLen];
+                var seen = new bool[n];
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes);
+                try
+                {
+                    using var ih = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                    foreach (var e in zip.Entries)
+                    {
+                        string name = e.FullName.Replace('\\', '/');
+                        if (name.Length == 0 || name[^1] == '/' || name == "manifest.sig") continue;
+                        if (name[0] == '/' || name.Contains("..", StringComparison.Ordinal) || name.IndexOf(':') >= 0)
+                        { detail = "경로 이탈 항목: " + name; return ZipSealVerdict.PathEscape; }
+                        int idx = Array.BinarySearch(names, name, StringComparer.Ordinal);
+                        if (idx < 0)
+                        {
+                            if (IsBinary(name)) { detail = "매니페스트 미등재 바이너리: " + name; return ZipSealVerdict.UnlistedBinary; }
+                            continue;   // 설정·문서 등 비바이너리는 봉인 대상 아님(호스트 BootIntegrityGate 와 동일 범위)
+                        }
+                        if (seen[idx]) { detail = "중복 항목: " + name; return ZipSealVerdict.DuplicateEntry; }
+                        seen[idx] = true;
+                        try { using var s = e.Open(); HashStreamInto(s, ih, buffer, actual.AsSpan(idx * HashLen, HashLen)); }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException) { detail = "항목 읽기 실패(손상): " + name; return ZipSealVerdict.ArtifactTampered; }
+                        if (!CryptographicOperations.FixedTimeEquals(actual.AsSpan(idx * HashLen, HashLen), expected.AsSpan(idx * HashLen, HashLen)))
+                        { detail = "해시 불일치: " + name; return ZipSealVerdict.ArtifactTampered; }
+                    }
+                }
+                finally { ArrayPool<byte>.Shared.Return(buffer); }
+                for (int i = 0; i < n; i++)
+                    if (!seen[i]) { detail = "매니페스트 기재 아티팩트 누락: " + names[i]; return ZipSealVerdict.ArtifactMissing; }
+
+                // 실측 해시로 v2 봉인 재계산 — manifest 의 masterSeal 필드만 맞추고 항목 해시를 바꾼 위조까지 차단
+                var nameHashes = new byte[n * HashLen];
+                for (int i = 0; i < n; i++) SHA256.HashData(Encoding.UTF8.GetBytes(names[i]), nameHashes.AsSpan(i * HashLen, HashLen));
+                var scratch = new byte[HashLen + n * 2 * HashLen];
+                Span<byte> seal = stackalloc byte[HashLen];
+                ComputeSealInto(ReleasePackager.GenesisHeadHash(), nameHashes, actual, scratch, seal);
+                if (!CryptographicOperations.FixedTimeEquals(seal, anchorBytes)) { detail = "실측 재계산 봉인 ≠ 앵커"; return ZipSealVerdict.SealMismatch; }
+                detail = $"artifacts={n} seal={anchor[..16]}… 일치(무추출)";
+                return ZipSealVerdict.Ok;
+            }
+        }
+
+        /// <summary>스트림 → SHA-256(δ=0 · 호출측 버퍼/해셔 재사용). dst = 32B.</summary>
+        public static void HashStreamInto(Stream s, IncrementalHash ih, byte[] buffer, Span<byte> dst)
+        {
+            int r;
+            while ((r = s.Read(buffer, 0, buffer.Length)) > 0) ih.AppendData(buffer, 0, r);
+            if (!ih.TryGetHashAndReset(dst, out int w) || w != HashLen) throw new CryptographicException("SHA-256 출력 길이 이상");
+        }
+
+        /// <summary>v2 봉인 = SHA256(genesis ‖ Σ(nameHash ‖ contentHash))(이름 서수 정렬 순 · δ=0). scratch ≥ 32 + n·64.</summary>
+        public static void ComputeSealInto(ReadOnlySpan<byte> genesis, ReadOnlySpan<byte> nameHashes, ReadOnlySpan<byte> contentHashes, Span<byte> scratch, Span<byte> dst)
+        {
+            int n = contentHashes.Length / HashLen;
+            if (genesis.Length != HashLen || nameHashes.Length != contentHashes.Length || contentHashes.Length % HashLen != 0) throw new ArgumentException("해시 길이 불일치");
+            int len = HashLen + n * 2 * HashLen;
+            if (scratch.Length < len) throw new ArgumentException("scratch 부족", nameof(scratch));
+            genesis.CopyTo(scratch);
+            for (int i = 0; i < n; i++)
+            {
+                int at = HashLen + i * 2 * HashLen;
+                nameHashes.Slice(i * HashLen, HashLen).CopyTo(scratch.Slice(at, HashLen));
+                contentHashes.Slice(i * HashLen, HashLen).CopyTo(scratch.Slice(at + HashLen, HashLen));
+            }
+            SHA256.HashData(scratch[..len], dst);
+        }
+
+        /// <summary>hex 문자열 ↔ 바이트 상수 시간 대조(대소문자 무관 · δ=0 · 형식 오류 = false).</summary>
+        public static bool HexEquals(ReadOnlySpan<char> hex, ReadOnlySpan<byte> bytes)
+        {
+            hex = hex.Trim();
+            if (hex.Length != bytes.Length * 2 || bytes.Length > 64) return false;
+            Span<byte> tmp = stackalloc byte[64];
+            var t = tmp[..bytes.Length];
+            return TryDecodeHex(hex, t) && CryptographicOperations.FixedTimeEquals(t, bytes);
+        }
+
+        /// <summary>hex → 바이트(δ=0 · 길이 = dst·2 정확히 · 형식 오류 = false).</summary>
+        public static bool TryDecodeHex(ReadOnlySpan<char> hex, Span<byte> dst)
+        {
+            if (hex.Length != dst.Length * 2) return false;
+            for (int i = 0; i < dst.Length; i++)
+            {
+                int hi = Nibble(hex[2 * i]), lo = Nibble(hex[2 * i + 1]);
+                if ((hi | lo) < 0) return false;
+                dst[i] = (byte)((hi << 4) | lo);
+            }
+            return true;
+        }
+
+        private static int Nibble(char c) => c switch
+        {
+            >= '0' and <= '9' => c - '0',
+            >= 'a' and <= 'f' => c - 'a' + 10,
+            >= 'A' and <= 'F' => c - 'A' + 10,
+            _ => -1,
+        };
+
+        private static bool IsBinary(string name)
+            => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ② 방향 B — 다중 저장소 릴리스 매니페스트 + 핸드셰이크
+    // ════════════════════════════════════════════════════════════════════════
+
+    public sealed record PeerRecord(string Name, string Commit, string ManifestPath, string ManifestSha256, string RootHash);
+
+    public sealed record ReleaseManifestInput(
+        string Version, string Tag, string SourceCommit,
+        string ManifestSigSha256, string MasterSeal, string GenesisHeadHash,
+        IReadOnlyList<(string Name, string Sha256)> Artifacts,
+        string ZipName, string ZipSha256, string ShimSha256,
+        bool LiveArmedDefault, IReadOnlyList<string> Interlocks, PeerRecord? Peer);
+
+    public sealed record RepoObservation(string? Head, string? TagCommit, IReadOnlyList<string> DirtyPaths, IReadOnlyList<string> DriftPaths);
+
+    public sealed record PeerObservation(string? Head, IReadOnlyList<string> DirtyPaths, string? ManifestSha256, string? RootHash);
+
+    public sealed record HandshakeObservation(
+        RepoObservation Repo, string? ManifestSigSha256, string? ManifestSigVersion, string? ManifestSigMasterSeal,
+        IReadOnlyList<(string Name, string Sha256)> ManifestSigArtifacts, string? ZipSha256, string? AnchorSeal, string? ShimSha256,
+        PeerObservation? Peer);
+
+    public enum ReleaseHandshakeVerdict : byte
+    {
+        Ok = 0, Malformed = 1, SelfHashMismatch = 2, LiveArmedViolation = 3, TagMissing = 4, SourceCommitMismatch = 5,
+        HeadDrift = 6, DirtyTree = 7, ManifestSigMismatch = 8, MasterSealMismatch = 9, ArtifactSetMismatch = 10,
+        ZipMismatch = 11, ShimMismatch = 12, PeerMissing = 13, PeerDirty = 14, PeerCommitMismatch = 15, PeerManifestMismatch = 16,
+    }
+
+    public static class MultiRepoReleaseManifest
+    {
+        public const string Schema = "ms2e-multirepo-release/1";
+        public const string FileName = "RELEASE_MANIFEST.json";
+
+        /// <summary>정규화 문자열 SHA-256(자기 봉인) — JSON 공백·필드 순서와 무관, 해시는 대문자·커밋은 소문자로 정규화.</summary>
+        public static string CanonicalHash(ReleaseManifestInput m)
+        {
+            var sb = new StringBuilder(4096);
+            void L(string k, string v) => sb.Append(k).Append('=').Append(v).Append('\n');
+            L("schema", Schema); L("version", m.Version); L("tag", m.Tag); L("sourceCommit", m.SourceCommit.ToLowerInvariant());
+            L("manifestSigSha256", m.ManifestSigSha256.ToUpperInvariant()); L("masterSeal", m.MasterSeal.ToUpperInvariant());
+            L("genesisHeadHash", m.GenesisHeadHash.ToUpperInvariant()); L("zipName", m.ZipName); L("zipSha256", m.ZipSha256.ToUpperInvariant());
+            L("shimSha256", m.ShimSha256.ToUpperInvariant()); L("liveArmedDefault", m.LiveArmedDefault ? "true" : "false");
+            foreach (var i in m.Interlocks) L("interlock", i);
+            var arts = new List<(string Name, string Sha256)>(m.Artifacts);
+            arts.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+            foreach (var a in arts) L("artifact", a.Name + "|" + a.Sha256.ToUpperInvariant());
+            if (m.Peer is { } p)
+            {
+                L("peer.name", p.Name); L("peer.commit", p.Commit.ToLowerInvariant()); L("peer.manifestPath", p.ManifestPath);
+                L("peer.manifestSha256", p.ManifestSha256.ToUpperInvariant()); L("peer.rootHash", p.RootHash);
+            }
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+        }
+
+        public static string Build(ReleaseManifestInput m)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
+            {
+                w.WriteStartObject();
+                w.WriteString("schema", Schema);
+                w.WriteString("version", m.Version);
+                w.WriteString("tag", m.Tag);
+                w.WriteString("sourceCommit", m.SourceCommit.ToLowerInvariant());
+                w.WriteString("manifestSigSha256", m.ManifestSigSha256.ToUpperInvariant());
+                w.WriteString("masterSeal", m.MasterSeal.ToUpperInvariant());
+                w.WriteString("genesisHeadHash", m.GenesisHeadHash.ToUpperInvariant());
+                w.WriteString("zipName", m.ZipName);
+                w.WriteString("zipSha256", m.ZipSha256.ToUpperInvariant());
+                w.WriteString("shimSha256", m.ShimSha256.ToUpperInvariant());
+                w.WriteBoolean("liveArmedDefault", m.LiveArmedDefault);
+                w.WriteStartArray("interlocks");
+                foreach (var i in m.Interlocks) w.WriteStringValue(i);
+                w.WriteEndArray();
+                w.WriteNumber("artifactCount", m.Artifacts.Count);
+                w.WriteStartArray("artifacts");
+                var arts = new List<(string Name, string Sha256)>(m.Artifacts);
+                arts.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+                foreach (var a in arts) { w.WriteStartObject(); w.WriteString("name", a.Name); w.WriteString("sha256", a.Sha256.ToUpperInvariant()); w.WriteEndObject(); }
+                w.WriteEndArray();
+                if (m.Peer is { } p)
+                {
+                    w.WriteStartObject("peer");
+                    w.WriteString("name", p.Name); w.WriteString("commit", p.Commit.ToLowerInvariant()); w.WriteString("manifestPath", p.ManifestPath);
+                    w.WriteString("manifestSha256", p.ManifestSha256.ToUpperInvariant()); w.WriteString("rootHash", p.RootHash);
+                    w.WriteEndObject();
+                }
+                w.WriteString("manifestHash", CanonicalHash(m));
+                w.WriteEndObject();
+            }
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
+
+        public static bool TryParse(string json, out ReleaseManifestInput manifest, out string storedHash, out string why)
+        {
+            manifest = null!; storedHash = ""; why = "";
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var r = doc.RootElement;
+                string S(JsonElement e, string k) => e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : throw new FormatException(k);
+                if (S(r, "schema") != Schema) { why = "스키마 불일치"; return false; }
+                var interlocks = new List<string>();
+                foreach (var i in r.GetProperty("interlocks").EnumerateArray()) interlocks.Add(i.GetString() ?? throw new FormatException("interlock"));
+                var arts = new List<(string, string)>();
+                foreach (var a in r.GetProperty("artifacts").EnumerateArray()) arts.Add((S(a, "name"), S(a, "sha256")));
+                if (r.GetProperty("artifactCount").GetInt32() != arts.Count) { why = "artifactCount 불일치"; return false; }
+                PeerRecord? peer = null;
+                if (r.TryGetProperty("peer", out var pe) && pe.ValueKind == JsonValueKind.Object)
+                    peer = new PeerRecord(S(pe, "name"), S(pe, "commit"), S(pe, "manifestPath"), S(pe, "manifestSha256"), S(pe, "rootHash"));
+                manifest = new ReleaseManifestInput(S(r, "version"), S(r, "tag"), S(r, "sourceCommit"), S(r, "manifestSigSha256"), S(r, "masterSeal"),
+                    S(r, "genesisHeadHash"), arts, S(r, "zipName"), S(r, "zipSha256"), S(r, "shimSha256"),
+                    r.GetProperty("liveArmedDefault").GetBoolean(), interlocks, peer);
+                storedHash = S(r, "manifestHash");
+                return true;
+            }
+            catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException or KeyNotFoundException)
+            {
+                why = "파싱 실패: " + ex.GetType().Name + " " + ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>핸드셰이크 — 기록(json) ↔ 실측(obs) 대조. 첫 불일치에서 거부(원자적: 부분 통과 없음).</summary>
+        public static ReleaseHandshakeVerdict Verify(string json, HandshakeObservation obs, out string detail)
+        {
+            if (!TryParse(json, out var m, out string stored, out string why)) { detail = why; return ReleaseHandshakeVerdict.Malformed; }
+            if (!HexEq(stored, CanonicalHash(m))) { detail = "manifestHash ≠ 정규화 재계산(매니페스트 변조)"; return ReleaseHandshakeVerdict.SelfHashMismatch; }
+            if (m.LiveArmedDefault) { detail = "liveArmedDefault=true — Fail-Closed 불변식 위반"; return ReleaseHandshakeVerdict.LiveArmedViolation; }
+            var repo = obs.Repo;
+            if (repo.TagCommit is null) { detail = $"태그 {m.Tag} 없음"; return ReleaseHandshakeVerdict.TagMissing; }
+            if (!string.Equals(repo.TagCommit, m.SourceCommit, StringComparison.OrdinalIgnoreCase))
+            { detail = $"태그 {m.Tag} → {Short(repo.TagCommit)} ≠ 기록 소스 커밋 {Short(m.SourceCommit)}(태그 이동/재작성)"; return ReleaseHandshakeVerdict.SourceCommitMismatch; }
+            if (repo.DriftPaths.Count > 0) { detail = $"태그↔HEAD 코드 이탈 {repo.DriftPaths.Count}건(예: {repo.DriftPaths[0]})"; return ReleaseHandshakeVerdict.HeadDrift; }
+            if (repo.DirtyPaths.Count > 0) { detail = $"작업 트리 미커밋 코드 {repo.DirtyPaths.Count}건(예: {repo.DirtyPaths[0]}) — 출하 바이너리 ≠ 태그 소스"; return ReleaseHandshakeVerdict.DirtyTree; }
+            if (obs.ManifestSigSha256 is null || !HexEq(obs.ManifestSigSha256, m.ManifestSigSha256) || obs.ManifestSigVersion != m.Version || m.Tag != "v" + m.Version)
+            { detail = "manifest.sig 파일 해시/버전/태그 명명 불일치"; return ReleaseHandshakeVerdict.ManifestSigMismatch; }
+            if (obs.ManifestSigMasterSeal is null || obs.AnchorSeal is null || !HexEq(obs.ManifestSigMasterSeal, m.MasterSeal) || !HexEq(obs.AnchorSeal, m.MasterSeal))
+            { detail = "masterSeal(manifest.sig · master-seal.txt · 기록) 3자 불일치"; return ReleaseHandshakeVerdict.MasterSealMismatch; }
+            if (!SameArtifacts(m.Artifacts, obs.ManifestSigArtifacts, out string diff)) { detail = "아티팩트 집합 불일치: " + diff; return ReleaseHandshakeVerdict.ArtifactSetMismatch; }
+            if (obs.ZipSha256 is null || !HexEq(obs.ZipSha256, m.ZipSha256)) { detail = "zip SHA-256 불일치/없음"; return ReleaseHandshakeVerdict.ZipMismatch; }
+            if (obs.ShimSha256 is null || !HexEq(obs.ShimSha256, m.ShimSha256)) { detail = "COM 쉼 산출물 해시 불일치/없음(쉼 게이트 미통과 빌드)"; return ReleaseHandshakeVerdict.ShimMismatch; }
+            if (m.Peer is { } p)
+            {
+                var po = obs.Peer;
+                if (po?.Head is null) { detail = $"피어 {p.Name} 저장소 관측 불가"; return ReleaseHandshakeVerdict.PeerMissing; }
+                if (po.DirtyPaths.Count > 0) { detail = $"피어 {p.Name} 미커밋 코드 {po.DirtyPaths.Count}건(예: {po.DirtyPaths[0]})"; return ReleaseHandshakeVerdict.PeerDirty; }
+                if (!string.Equals(po.Head, p.Commit, StringComparison.OrdinalIgnoreCase)) { detail = $"피어 {p.Name} HEAD {Short(po.Head)} ≠ 기록 {Short(p.Commit)}"; return ReleaseHandshakeVerdict.PeerCommitMismatch; }
+                if (po.ManifestSha256 is null || !HexEq(po.ManifestSha256, p.ManifestSha256) || po.RootHash != p.RootHash)
+                { detail = $"피어 {p.Name} 봉인 매니페스트 해시/rootHash 불일치"; return ReleaseHandshakeVerdict.PeerManifestMismatch; }
+            }
+            detail = $"{m.Tag} @{Short(m.SourceCommit)} · artifacts={m.Artifacts.Count} · seal={m.MasterSeal[..16]}…" + (m.Peer is { } pp ? $" · peer {pp.Name}@{Short(pp.Commit)}" : "");
+            return ReleaseHandshakeVerdict.Ok;
+        }
+
+        private static bool SameArtifacts(IReadOnlyList<(string Name, string Sha256)> a, IReadOnlyList<(string Name, string Sha256)> b, out string diff)
+        {
+            diff = "";
+            if (a.Count != b.Count) { diff = $"개수 {a.Count} ≠ {b.Count}"; return false; }
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var x in b) map[x.Name] = x.Sha256;
+            foreach (var x in a)
+            {
+                if (!map.TryGetValue(x.Name, out var sha)) { diff = "누락 " + x.Name; return false; }
+                if (!HexEq(sha, x.Sha256)) { diff = "해시 " + x.Name; return false; }
+            }
+            return true;
+        }
+
+        private static bool HexEq(string a, string b)
+        {
+            if (a.Length != b.Length || a.Length % 2 != 0 || a.Length > 128) return false;
+            Span<byte> bb = stackalloc byte[64];
+            var t = bb[..(b.Length / 2)];
+            if (!ZipSealDryRunVerifier.TryDecodeHex(b, t)) return false;
+            return ZipSealDryRunVerifier.HexEquals(a, t);
+        }
+
+        private static string Short(string s) => s.Length > 10 ? s[..10] : s;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ③ git 관측(셸 없음 · 콜드)
+    // ════════════════════════════════════════════════════════════════════════
+
+    public static class GitRepoProbe
+    {
+        /// <summary>출하 바이너리에 영향 없는 경로(문서·산출물·도구 캐시) — 코드 이탈/미커밋 판정에서 제외.</summary>
+        public static bool IsCodePath(string path)
+        {
+            string p = path.Replace('\\', '/').Trim().Trim('"');
+            if (p.Length == 0) return false;
+            if (p.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase) || p.StartsWith("release/", StringComparison.OrdinalIgnoreCase)
+                || p.StartsWith("docs/", StringComparison.OrdinalIgnoreCase) || p.StartsWith("graphify-out/", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return !p.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsSafeRef(string tag)
+        {
+            if (string.IsNullOrEmpty(tag) || tag.Length > 64 || tag[0] == '-') return false;
+            foreach (char c in tag) if (!(char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_')) return false;
+            return true;
+        }
+
+        public static RepoObservation Observe(string repoRoot, string tag)
+        {
+            string? head = Git(repoRoot, "rev-parse", "HEAD");
+            string? tagCommit = IsSafeRef(tag) ? Git(repoRoot, "rev-list", "-n", "1", tag) : null;
+            var dirty = StatusPaths(repoRoot);
+            var drift = new List<string>();
+            if (head is not null && tagCommit is not null && !string.Equals(head, tagCommit, StringComparison.OrdinalIgnoreCase))
+            {
+                string? names = Git(repoRoot, "diff", "--name-only", tagCommit, head);
+                if (names is null) drift.Add("(git diff 실패)");
+                else foreach (var l in names.Split('\n')) if (IsCodePath(l)) drift.Add(l.Trim());
+            }
+            return new RepoObservation(head, tagCommit, dirty, drift);
+        }
+
+        public static List<string> StatusPaths(string repoRoot)
+        {
+            var list = new List<string>();
+            string? st = Git(repoRoot, "status", "--porcelain", "--untracked-files=all");
+            if (st is null) { list.Add("(git status 실패)"); return list; }
+            foreach (var line in st.Split('\n'))
+            {
+                string raw = line.TrimEnd('\r');
+                if (raw.Length < 4) continue;
+                string p = raw[3..].Trim();
+                int arrow = p.IndexOf(" -> ", StringComparison.Ordinal);
+                if (arrow >= 0) p = p[(arrow + 4)..];
+                if (IsCodePath(p)) list.Add(p);
+            }
+            return list;
+        }
+
+        /// <summary>git 호출(셸 미경유 · ArgumentList) — 실패/비정상 종료 = null(fail-closed 판정은 호출측).</summary>
+        public static string? Git(string repoRoot, params string[] args)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = repoRoot };
+                psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("core.quotepath=false");
+                foreach (var a in args) psi.ArgumentList.Add(a);
+                using var p = Process.Start(psi);
+                if (p is null) return null;
+                var err = p.StandardError.ReadToEndAsync();   // stderr 파이프 포화 교착 방지(병행 배출)
+                string o = p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(30_000)) { try { p.Kill(true); } catch (InvalidOperationException) { } return null; }
+                err.Wait(5_000);
+                return p.ExitCode == 0 ? o.TrimEnd('\r', '\n', ' ') : null;   // ★앞 공백 보존 — porcelain 첫 줄 " D .claude/…" 의 상태열 손상 방지
+            }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { return null; }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ④ 콜드 CLI
+    // ════════════════════════════════════════════════════════════════════════
+
+    public static class ReleaseHandshakeCli
+    {
+        public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
+        public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
+        public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
+
+        public static bool IsInvocation(string[]? args)
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+
+        /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
+        public static int Run(string[] args, TextWriter output)
+        {
+            var sw = new StringWriter();
+            int code = RunCore(args, sw);
+            output.Write(sw.ToString());
+            string? report = ParseOptions(args).GetValueOrDefault("--report");
+            if (!string.IsNullOrWhiteSpace(report))
+            {
+                try { File.WriteAllText(report, sw.ToString(), new UTF8Encoding(false)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { if (code == ExitOk) code = ExitUsage; }
+            }
+            return code;
+        }
+
+        private static int RunCore(string[] args, TextWriter output)
+        {
+            var o = ParseOptions(args);
+            try
+            {
+                if (Eq(args[0], VerifyZipFlag))
+                {
+                    string? zip = Arg(args, 1), sealFile = o.GetValueOrDefault("--seal-file");
+                    if (zip is null || sealFile is null || !File.Exists(sealFile)) { output.WriteLine("[verify-zip] 사용: --verify-zip <zip> --seal-file <master-seal.txt>"); return ExitUsage; }
+                    var v = ZipSealDryRunVerifier.Verify(zip, File.ReadAllText(sealFile), out string d);
+                    output.WriteLine($"[verify-zip] {v}: {d}");
+                    return v == ZipSealVerdict.Ok ? ExitOk : ExitRejected;
+                }
+                string? releaseDir = o.GetValueOrDefault("--release-dir"), repo = o.GetValueOrDefault("--repo"), shim = o.GetValueOrDefault("--shim");
+                if (releaseDir is null || repo is null || shim is null) { output.WriteLine("[handshake] 사용: --release-dir <dir> --repo <root> --shim <dll> [--peer <root>] [--peer-manifest <rel>] [--out|--manifest <json>]"); return ExitUsage; }
+                string? peer = o.GetValueOrDefault("--peer");
+                string peerRel = o.GetValueOrDefault("--peer-manifest") ?? PeerManifestDefault;
+                if (Eq(args[0], SyncFlag))
+                {
+                    if (!o.ContainsKey("--live-armed-guard-passed")) { output.WriteLine("[sync] liveArmed 소스 가드 통과 표지 없음 — 기록 거부"); return ExitRejected; }
+                    string outPath = o.GetValueOrDefault("--out") ?? Path.Combine(releaseDir, MultiRepoReleaseManifest.FileName);
+                    if (!TryCollect(releaseDir, repo, shim, peer, peerRel, out var obs, out var sig, out string why)) { output.WriteLine("[sync] 수집 실패: " + why); return ExitRejected; }
+                    if (obs.Repo.TagCommit is null) { output.WriteLine($"[sync] 태그 v{sig.Version} 없음 — 기록 거부"); return ExitRejected; }
+                    PeerRecord? pr = obs.Peer is { Head: { } ph } po ? new PeerRecord(Path.GetFileName(Path.GetFullPath(peer!).TrimEnd('\\', '/')), ph, peerRel, po.ManifestSha256 ?? "", po.RootHash ?? "") : null;
+                    if (peer is not null && pr is null) { output.WriteLine("[sync] 피어 저장소 관측 불가 — 기록 거부"); return ExitRejected; }
+                    var m = new ReleaseManifestInput(sig.Version, "v" + sig.Version, obs.Repo.TagCommit, obs.ManifestSigSha256!, sig.MasterSeal, sig.Genesis,
+                        obs.ManifestSigArtifacts, sig.ZipName, obs.ZipSha256 ?? "", obs.ShimSha256 ?? "", false, Enum.GetNames<MS2E.Core.ArmingInterlockSource>(), pr);
+                    string json = MultiRepoReleaseManifest.Build(m);
+                    // 원자적 기록: 임시 파일 → 즉시 핸드셰이크 → 통과 시에만 교체(실패 = 기존 파일 보존 · 임시 삭제)
+                    string tmp = outPath + ".tmp";
+                    File.WriteAllText(tmp, json, new UTF8Encoding(false));
+                    var hv = MultiRepoReleaseManifest.Verify(File.ReadAllText(tmp), obs, out string hd);
+                    if (hv != ReleaseHandshakeVerdict.Ok) { File.Delete(tmp); output.WriteLine($"[sync] 기록 직후 핸드셰이크 거부 {hv}: {hd}"); return ExitRejected; }
+                    File.Move(tmp, outPath, overwrite: true);
+                    output.WriteLine($"[sync] {MultiRepoReleaseManifest.FileName} 기록: {outPath} · {hd}");
+                    return ExitOk;
+                }
+                {
+                    string manifestPath = o.GetValueOrDefault("--manifest") ?? Path.Combine(releaseDir, MultiRepoReleaseManifest.FileName);
+                    if (!File.Exists(manifestPath)) { output.WriteLine("[handshake] 매니페스트 없음: " + manifestPath); return ExitRejected; }
+                    if (!TryCollect(releaseDir, repo, shim, peer, peerRel, out var obs, out _, out string why)) { output.WriteLine("[handshake] 수집 실패: " + why); return ExitRejected; }
+                    var v = MultiRepoReleaseManifest.Verify(File.ReadAllText(manifestPath), obs, out string d);
+                    output.WriteLine($"[handshake] {v}: {d}");
+                    return v == ReleaseHandshakeVerdict.Ok ? ExitOk : ExitRejected;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                output.WriteLine("[handshake] I/O 실패: " + ex.Message);
+                return ExitRejected;
+            }
+        }
+
+        public readonly record struct SigFacts(string Version, string MasterSeal, string Genesis, string ZipName);
+
+        /// <summary>release 폴더·저장소·쉼 산출물·피어에서 실측값 수집(콜드).</summary>
+        public static bool TryCollect(string releaseDir, string repo, string shim, string? peer, string peerRel, out HandshakeObservation obs, out SigFacts sig, out string why)
+        {
+            obs = null!; sig = default; why = "";
+            string sigPath = Path.Combine(releaseDir, "manifest.sig");
+            if (!File.Exists(sigPath)) { why = "manifest.sig 없음"; return false; }
+            string sigText = File.ReadAllText(sigPath);
+            if (!BootIntegrityGate.TryParse(sigText, out var entries, out string seal, out string pw)) { why = "manifest.sig 무효: " + pw; return false; }
+            string version, genesis;
+            using (var doc = JsonDocument.Parse(sigText))
+            {
+                version = doc.RootElement.TryGetProperty("version", out var ve) ? ve.GetString() ?? "" : "";
+                genesis = doc.RootElement.TryGetProperty("genesisHeadHash", out var ge) ? ge.GetString() ?? "" : "";
+            }
+            if (version.Length == 0 || !GitRepoProbe.IsSafeRef("v" + version)) { why = "manifest.sig version 무효"; return false; }
+            var arts = new List<(string, string)>(entries.Count);
+            foreach (var (n, h) in entries) arts.Add((n, Convert.ToHexString(h)));
+            string zipName = "release-v" + version + ".zip";
+            string zipPath = Path.Combine(releaseDir, zipName);
+            string anchorPath = Path.Combine(releaseDir, "master-seal.txt");
+            PeerObservation? po = null;
+            if (peer is not null)
+            {
+                string pm = Path.Combine(peer, peerRel.Replace('/', Path.DirectorySeparatorChar));
+                string? root = null;
+                if (File.Exists(pm))
+                {
+                    try { using var pd = JsonDocument.Parse(File.ReadAllText(pm)); root = pd.RootElement.TryGetProperty("rootHash", out var rh) ? rh.GetString() : null; }
+                    catch (JsonException) { root = null; }
+                }
+                po = new PeerObservation(GitRepoProbe.Git(peer, "rev-parse", "HEAD"), GitRepoProbe.StatusPaths(peer), File.Exists(pm) ? FileSha(pm) : null, root);
+            }
+            sig = new SigFacts(version, seal, genesis, zipName);
+            obs = new HandshakeObservation(GitRepoProbe.Observe(repo, "v" + version), FileSha(sigPath), version, seal, arts,
+                File.Exists(zipPath) ? FileSha(zipPath) : null, File.Exists(anchorPath) ? File.ReadAllText(anchorPath).Trim() : null,
+                File.Exists(shim) ? FileSha(shim) : null, po);
+            return true;
+        }
+
+        public static string FileSha(string path)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81_920, FileOptions.SequentialScan);
+            return Convert.ToHexString(SHA256.HashData(fs));
+        }
+
+        private static Dictionary<string, string> ParseOptions(string[] args)
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 1; i < args.Length; i++)
+            {
+                if (!args[i].StartsWith("--", StringComparison.Ordinal)) continue;
+                bool hasValue = i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal);
+                d[args[i]] = hasValue ? args[++i].Trim('"') : "";
+            }
+            return d;
+        }
+
+        private static string? Arg(string[] args, int i) => i < args.Length && !args[i].StartsWith("--", StringComparison.Ordinal) ? args[i].Trim('"') : null;
+        private static bool Eq(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+}

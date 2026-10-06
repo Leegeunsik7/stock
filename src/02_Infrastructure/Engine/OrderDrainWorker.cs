@@ -236,7 +236,7 @@ namespace MS2E.Infrastructure
                 return emitted;
             }
 
-            var symbol     = p.SymbolCode.ToString("D6");
+            var symbol     = KseSymbolText.D6(p.SymbolCode);   // [E2E · δ=0] 주문당 문자열 할당 제거(캐시 적중)
             var side       = p.Side == OrderSide.Buy ? PaperSide.Buy : PaperSide.Sell;
             var kind       = sendKind == 0 ? PaperKind.Market : PaperKind.Limit;
             var qty        = new QQty(sendQty).ToDecimal();
@@ -259,7 +259,7 @@ namespace MS2E.Infrastructure
         // ★v10.0.0 봉인 사출: 게이트웨이가 봉인한 불변 토큰만 소켓으로. 거부 시 throw → 상류 Mission-A 벽(ForceFreeze).
         private void PlaceSealed(in SealedOrderToken t)
         {
-            var symbol     = t.SymbolCode.ToString("D6");
+            var symbol     = KseSymbolText.D6(t.SymbolCode);
             var side       = t.SideByte == 0 ? PaperSide.Buy : PaperSide.Sell;
             var kind       = t.KindByte == 0 ? PaperKind.Market : PaperKind.Limit;
             var qty        = new QQty(t.QtyRaw).ToDecimal();

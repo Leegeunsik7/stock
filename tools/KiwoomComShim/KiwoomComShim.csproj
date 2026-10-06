@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    [CI 게이트 · 오중 빌드 5번째] 키움 COM 인터롭 형상 쉼 — #if KIWOOM_COM 블록 자동 컴파일 수검.
+    · KIWOOM_COM 정의 + 실제 프록시 소스(ProductionKiwoomApi 등) 링크 + AxKHOpenAPIShim(인터롭 형상) → 경고=오류 빌드.
+    · 산출물은 검증 전용 라이브러리 — 출하 금지(release-package.ps1 스테이징은 host/proxy bin 만 복사).
+    · 위치: 리포 루트 tools/ (StockManager/ 하위에 두면 호스트 SDK 기본 Compile 글롭이 쉼 소스와 obj/*.cs 를 흡수해
+      호스트에 가짜 AxKHOpenAPILib 형식이 섞이고 AssemblyInfo 중복 오류가 난다 — 지시서 경로 StockManager/Tools 대신 tools/).
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x86</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MS2E.KiwoomComShim</AssemblyName>
+    <RootNamespace>StockManager.KiwoomProxy</RootNamespace>
+    <DefineConstants>$(DefineConstants);KIWOOM_COM</DefineConstants>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AxKHOpenAPIShim.cs" />
+    <Compile Include="..\..\StockManager.KiwoomProxy\ProductionKiwoomApi.cs" Link="Linked\ProductionKiwoomApi.cs" />
+    <Compile Include="..\..\StockManager.KiwoomProxy\IKiwoomApi.cs" Link="Linked\IKiwoomApi.cs" />
+    <Compile Include="..\..\StockManager.KiwoomProxy\GlobalUsings.MS2E.cs" Link="Linked\GlobalUsings.MS2E.cs" />
+    <Compile Include="..\..\src\02_Infrastructure\Engine\BridgeProtocol.cs" Link="Linked\BridgeProtocol.cs" />
+    <Compile Include="..\..\src\02_Infrastructure\Engine\BridgeOrderStatus.cs" Link="Linked\BridgeOrderStatus.cs" />
+    <Compile Include="..\..\src\02_Infrastructure\Engine\KiwoomComBridgeCore.cs" Link="Linked\KiwoomComBridgeCore.cs" />
+  </ItemGroup>
+
+</Project>

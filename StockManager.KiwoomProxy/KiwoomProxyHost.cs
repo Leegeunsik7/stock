@@ -55,6 +55,11 @@ namespace StockManager.KiwoomProxy
             _api.TickReceived    += OnTick;
             _api.FillReceived    += OnFill;
             _api.AccountReceived += OnAccount;
+            _api.OrderBookReceived      += OnOrderBook;        // [L2]
+            _api.ReferencePriceReceived += OnReferencePrice;   // [L2]
+            _api.ServerErrorReceived    += OnServerError;      // [키움 COM] 중대 서버 오류 → ErrorReport
+            _api.AccountCashReceived    += OnAccountCash;      // [계좌] OPW00001 → AccountCash 프레임
+            _api.PositionReceived       += OnPosition;         // [계좌] OPW00018 행 → Position 프레임
 
             _api.Connect();
 
@@ -69,6 +74,11 @@ namespace StockManager.KiwoomProxy
                 _api.TickReceived    -= OnTick;
                 _api.FillReceived    -= OnFill;
                 _api.AccountReceived -= OnAccount;
+                _api.OrderBookReceived      -= OnOrderBook;
+                _api.ReferencePriceReceived -= OnReferencePrice;
+                _api.ServerErrorReceived    -= OnServerError;
+                _api.AccountCashReceived    -= OnAccountCash;
+                _api.PositionReceived       -= OnPosition;
             }
         }
 
@@ -98,8 +108,47 @@ namespace StockManager.KiwoomProxy
                 FillQty        = e.FillQty,
                 Side           = e.Side,
                 TimestampTicks = DateTime.UtcNow.Ticks,
+                // [키움 프로토콜] 상태 명시 + 미체결 잔량 동봉(매직 0xA5 — 구 호스트는 Pad 로 무시 · 신 호스트는 즉시 구분)
+                Status         = BridgeFillStatusCodec.Encode(e.Status, e.RemainingQty >= 0),
+                RemainingQty   = e.RemainingQty >= 0 ? e.RemainingQty : 0,
             };
             SendFrame(e.FillQty > 0 ? BridgeMessageType.OrderFilled : BridgeMessageType.OrderRejected, in p);
+        }
+
+        // [L2] 10호가 스냅샷 → OrderBook 프레임(336B · 타임스탬프 프록시 수신 시각)
+        private void OnOrderBook(object? sender, OrderBookEventArgs e)
+        {
+            var p = e.Book;
+            p.TimestampTicks = DateTime.UtcNow.Ticks;
+            SendFrame(BridgeMessageType.OrderBook, in p);
+        }
+
+        // [L2] 기준가 → ReferencePrice 프레임(호스트가 MarketDataSpikeInterlock.SetReference 로 가격제한폭 활성)
+        private void OnReferencePrice(object? sender, ReferencePriceEventArgs e)
+        {
+            if (e.SymbolCode <= 0 || e.BasePrice <= 0) return;
+            var p = new ReferencePricePayload { SymbolCode = e.SymbolCode, BasePrice = e.BasePrice, TimestampTicks = DateTime.UtcNow.Ticks };
+            SendFrame(BridgeMessageType.ReferencePrice, in p);
+        }
+
+        // [키움 COM · 방향 B] 중대 서버 오류(비밀번호·계좌 정지·증거금) → ErrorReport — 호스트 KiwoomFreezeRelay 동결 + 인터락 비트
+        private void OnServerError(object? sender, ServerErrorEventArgs e)
+        {
+            if (e.Code == 0) return;
+            var p = new ErrorPayload { ErrorCode = e.Code, TimestampTicks = DateTime.UtcNow.Ticks };
+            SendFrame(BridgeMessageType.ErrorReport, in p);
+        }
+
+        private void OnAccountCash(object? sender, AccountCashEventArgs e)
+        {
+            var p = e.Cash;
+            SendFrame(BridgeMessageType.AccountCash, in p);
+        }
+
+        private void OnPosition(object? sender, PositionEventArgs e)
+        {
+            var p = e.Row;
+            SendFrame(BridgeMessageType.Position, in p);
         }
 
         private void OnAccount(object? sender, AccountEventArgs e)
@@ -113,12 +162,28 @@ namespace StockManager.KiwoomProxy
             SendFrame(BridgeMessageType.AccountState, in p);
         }
 
+        // [키움 COM · 방향 A] STA 펌프 생존 확인 — 동결이면 최초 1회 ErrorReport(StaPumpStall) 송신 후 false(생존 신호 전면 중단)
+        private int _stallReported;
+        private bool PumpAliveOrReport()
+        {
+            bool healthy;
+            try { healthy = _api.PumpHealthy; } catch { healthy = false; }
+            if (healthy) return true;
+            if (Interlocked.CompareExchange(ref _stallReported, 1, 0) == 0)
+            {
+                var p = new ErrorPayload { ErrorCode = KiwoomServerErrorCodes.StaPumpStall, TimestampTicks = DateTime.UtcNow.Ticks };
+                try { SendFrame(BridgeMessageType.ErrorReport, in p); } catch { }
+            }
+            return false;
+        }
+
         // ── 하트비트 루프 ─────────────────────────────────────────────────────
         private async Task HeartbeatLoopAsync(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(HeartbeatIntervalMs, ct);
+                if (!PumpAliveOrReport()) continue;   // [키움 COM · 방향 A] STA 동결 — 생존 신호 중단(호스트 하트비트 단절 → ProxyLost 동결)
                 SendHeartbeat(Interlocked.Increment(ref _sequence));
             }
         }
@@ -139,6 +204,7 @@ namespace StockManager.KiwoomProxy
                 if (type == BridgeMessageType.Ping)
                 {
                     long seq = payload.Length >= sizeof(long) ? BitConverter.ToInt64(payload) : 0L;
+                    if (!PumpAliveOrReport()) continue;   // [키움 COM · 방향 A] STA 동결 — Pong 억제(파이프 스레드가 살아 있어도 COM 은 죽었다)
                     SendControl(BridgeMessageType.Pong, seq);
                     continue;
                 }
@@ -162,6 +228,9 @@ namespace StockManager.KiwoomProxy
                     break;
                 case OrderRequestType.CancelOrder:
                     _api.CancelOrder(req.OrderId);
+                    break;
+                case OrderRequestType.ModifyOrder:   // [정정] Price = 정정가 · Quantity = 정정수량
+                    _api.ModifyOrder(req.OrderId, req.Price, req.Quantity);
                     break;
                 case OrderRequestType.SubscribeTick:
                     _api.SubscribeTick(req.SymbolCode);

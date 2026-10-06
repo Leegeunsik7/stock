@@ -722,3 +722,53 @@ WinForms 진입점      → Launcher.cs
 
 ### 16.4 같은 커밋에 포함된 선행 마일스톤(미커밋 누적분)
 Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·F7 부팅 무결성/안티탬퍼 · PII 하드닝 · MMF 포렌식 · 다중 브로커 라우터 · 시세 스트림/렌더 거버너 · 알고 집행(VWAP/TWAP) · 카오스 동시성 Triage · 원자 인터락 집계기 실배선 · 봉인 수검 CLI(`--verify-seal`) · 라우터 참조가/체결 피드 — 상세는 각 단계 STATUS 이력·커밋 본문.
+
+---
+
+## 17. v12.14.1-GM 출하 직전 하드닝 · 릴리스 CI 게이트 (2026-10-05 ~ 10-06)
+
+### 17.1 키움 경로 마일스톤(커밋 9f3b7ef 대상)
+- **MMF IPC 트리아지**: 링 포화 시 라이터 하트비트 갱신(배압 중 생존 오판 제거) · s2 재확인 전 `Interlocked.MemoryBarrier` · `ArmingInterlockSource.MmfFabric`(9) 결선. 1,000 라운드 SPSC 스트레스.
+- **키움 프로토콜 명시화**: FillPayload 56B(`Status` 매직 0xA5 + 브로커 잔량 902) · 거부 0ms 슬롯 반납 · 접수 장기 TTL · 잔량 불일치 → `BrokerStateMismatch`(10) Disarm · 대사 포렌식 체인 각인.
+- **L2 Depth**: 키움 10호가(`OrderBookPayload` 336B) → `L2OrderBookDepthParser`(교차/역전/공백/편측) → `DepthBook`(네이티브 seqlock 저장소) + 스프레드 상한 · 플래시 크래시 `OrderbookIlliquidity`(11) · 기준가 자동 주입(가격제한폭 클램프 활성).
+- **지연 프로파일러**: `TickToTradeLatencyProfiler`(µs · P50/P99 · 네이티브 히스토그램 P99.9) · 송출 직전 정지 임계 초과 = 미송출 + `LatencyStall`(12). `UnmanagedOrderBookBuffer`(SafeHandle 결정론 해제).
+- **키움 COM 코어 이관**: `KiwoomComEventCore`(COM 무의존 · 가짜 OCX 전 경로 테스트) · OnReceiveMsg 서버 거부 분류 · 주문번호 경합 보류 · STA 펌프 감시 · 중대 오류 `KiwoomServerError`(13).
+- **정정/취소 · 계좌 동기화**: 취소 3/4 · 정정 5/6 · 원주문번호 D7 · 잔량 초과/중복 차단 · ★취소/정정 새 주문번호 사상(FID 904 폴백) · 호스트 `IOrderAmendGate` · Cancel-Fill Race 배리어 · `AccountStateSyncAdapter`(OPW00018/OPW00001 · δ=0) · 주문가능금액/보유 게이트 · 정적 구간 잔고 괴리 `AccountDivergence`(14).
+
+### 17.2 릴리스 CI 게이트(이번 마일스톤)
+- **오중 빌드 5번째 = `tools/KiwoomComShim/KiwoomComShim.csproj`**(솔루션 등재 · x86 · `KIWOOM_COM` · 경고=오류): 실제 `ProductionKiwoomApi.cs`/`IKiwoomApi.cs`/`KiwoomComBridgeCore.cs` 링크 + `AxKHOpenAPIShim.cs`(공개 문서 시그니처 형상). 테스트 프로젝트가 `ReferenceOutputAssembly=false` 로 참조 → **테스트 빌드마다 `#if KIWOOM_COM` 블록 컴파일**. 산출물은 출하 금지(스테이징은 host/proxy bin 만).
+  - 위치를 지시서의 `StockManager/Tools/` 가 아닌 루트 `tools/` 로 둔 이유: 호스트 SDK 기본 Compile 글롭이 쉼 소스·obj/*.cs 를 흡수(가짜 AxKHOpenAPILib 가 호스트에 섞임 · AssemblyInfo 중복).
+- **방향 A `ZipSealDryRunVerifier`**(`StockManager/Tools/ReleaseHandshake.cs` · CLI `--verify-zip <zip> --seal-file master-seal.txt`): zip 무추출 · 항목 스트림 SHA-256 · 내장 manifest.sig ↔ 앵커 · 실측 해시로 v2 봉인 재계산(봉인 필드만 맞춘 위조 차단) · 미등재/누락/중복/경로 이탈 0. 실 릴리스 zip(38 아티팩트) Ok 실측.
+- **방향 B `MultiRepoReleaseManifest` + `GitRepoProbe`**(CLI `--sync-release-manifest` · `--release-handshake`): `release/RELEASE_MANIFEST.json`(schema `ms2e-multirepo-release/1`) = 태그·소스 커밋·manifest.sig 해시·masterSeal·아티팩트 38·zip·쉼 산출물 해시·`liveArmedDefault=false`·인터락 목록 + 피어 QuantumVault HEAD/봉인 매니페스트(`release/offline-bundle/RELEASE_MANIFEST.json`) 해시·rootHash. 정규화 문자열 SHA-256 자기 봉인. 기록 직후 재수검 통과 시에만 원자 교체.
+  - **피어 QuantumVault 는 읽기 전용**(2026-10-06 사용자 결정 — 별도 제품 · v2.7.0 봉인 동결 · 매니페스트 수정 시 rootHash 봉인 파괴).
+- **`release-package.ps1` 0/10 ~ 10/10**: [0] 빌드 전 소스 무결성(태그 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0 — 문서/release/.claude/docs 제외) · [2] 쉼 산출물 갱신 확인 · [9] 무추출 zip 수검 · [10] 동기화 + 독립 핸드셰이크. 실패 = zip·.sha256·master-seal.txt·RELEASE_MANIFEST.json 전량 폐기.
+
+### 17.3 ★출하 차단 사실(조치 필요)
+- **태그 `v12.14.1-GM`(9f3b7ef)은 빌드 불가**: 커밋에 `NullKiwoomApi.cs` 는 포함됐으나 그 형식을 정의한 `StockManager.KiwoomProxy/IKiwoomApi.cs`·`KiwoomProxyHost.cs` 가 누락(작업 트리에만 존재) → `git archive v12.14.1-GM` 클린 빌드 시 x86 프록시 CS0246 5건. 현 `release/` zip 은 작업 트리 빌드라 태그 소스와 불일치.
+- 조치: 두 파일(+ 이번 CI 게이트 파일) 커밋 → 태그 재지정(원격 푸시 여부 확인 후) → `release-package.ps1` 재실행. 현재 상태에서 스크립트는 [0/10] 에서 정확히 거부(빌드 0 · 기존 zip 무변경 실측).
+
+### 17.4 검증
+- 오중 빌드 Release 0W/0E · `QuantumVaultPipelineIntegrationTests.cs` 27건(방어 끔 Red 10건) · 전체 스위트 결과는 STATUS.md.
+- δ=0 범위(정직): 항목 해시 루프·봉인 재계산·hex 대조만 0B 실측. ZipArchive 디렉터리/Deflate · JSON 파싱 · git 프로세스는 콜드 1회 할당.
+
+---
+
+## 18. E2E 모의 거래 · 7대 인터락 스트레스 하네스 (2026-10-06)
+
+### 18.1 전제 검증 결과(정직)
+- **출하 드라이런은 실전 게이팅 사슬을 리허설하지 않는다**: `Dispatch.DryRunActive` 시 `ScopeSealedTransitionBarrier` 가 주문을 `MockExecutionOrderBookMirror` 로 돌리는데, 이 분기는 `OrderDrainWorker.Dispatch` 안에서 인터락 최종 veto · `RouterFeedGate`(참조가/깊이/보호 지정가/추적 슬롯) · Tick-to-Trade 프로브 **이전**에 있다. → 하네스는 실전 사슬을 그대로 조립하고 IBroker 자리에만 `VirtualPaperBroker` 를 꽂는다.
+- **인터락 Disarm 의 포렌식 각인 경로 0**: 지시서의 "격발 시 MMF 포렌식 체인 즉시 사출"은 존재하지 않았다(체인에는 대사·봉인 이벤트만). → `IInterlockTransitionSink` 신설.
+- **송출 1건당 문자열 할당**: `OrderDrainWorker` 가 `SymbolCode.ToString("D6")` 로 주문마다 새 문자열 → `KseSymbolText` 캐시(적중 δ=0).
+- 지시서의 "0.1ns Atomic Disarm" 은 물리적으로 불가(Interlocked.Or 1회 ≈ 수 ns). 검증 기준은 "격발 호출 반환 시점에 `Blocked` 가 이미 true(비동기 지연 0)".
+- "Pii" 인터락 = `RawCredentialLeakInterlock`(CredentialLeak), "MarketDataSpike" = `MarketSpike` 비트.
+
+### 18.2 구현
+- `ArmingInterlockBitmask.AttachTransitionSink` — Interlocked.Or/And 직전 값으로 **실제로 바뀐 비트만** 정확히 1회 통지(동시 Trip 경합에서도 중복 0). 관측자 예외는 차단에 무영향(비트 선반영). 교체 금지.
+- `StockManager/Telemetry/InterlockForensicRecorder.cs` — 전이 → `ZeroAllocForensicAuditStream`(Disarm/Arm · payload = 비트) + `MmfFlightRecorder`(InterlockRaised/Cleared). 호스트 결선.
+- `StockManager/Simulation/PaperTradingSimulationHarness.cs` — `VirtualPaperBroker`(네트워크 0 · IsLive=false · 사전 할당 주문번호) · `SevenLayerInterlockInjector`(실 인터락 객체를 실제 Trip 경로로 격발) · `SimulationTelemetryChannel`(seqlock · 방향 A) · 하네스.
+- 방향 A: 텔레메트리 스냅샷 → `SnapshotRenderGovernor.Signal(version)` — 창당 선행+후행 렌더로 합치기. ★거버너는 Idle 상태 첫 신호에서 **신호 스레드에서 동기 렌더**하므로 실제 Blazor 결선 시 render 콜백은 `InvokeAsync` 위임만 해야 한다(UI 페이지는 이번에 만들지 않음 — RatchetCeiling 불변).
+- 방향 B(안전 변형): `StockManager/Adapters/LiveArmedEgressSentinel.cs` — 실 브로커 앞 데코레이터. 물리 이중키 미충족 Place = 전달 0 · 증거 · sticky `EgressBypass`(15 · 필수 비트) · ForceFreeze · 이중키 재무장. 호스트 `OrderDrainWorker` 는 센티널 경유.
+  - **프로세스 소켓 물리 차단은 구현하지 않음**: 관리자 권한 방화벽 변경(시스템 보안 설정) 필요 + 시세·체결 피드까지 끊겨 이미 나간 주문 상태를 볼 수 없게 됨.
+
+### 18.3 검증
+- `PaperTradingE2EStressTests.cs` 19건(방어 끔 Red 16건): E2E 전량 체결·대사 잔존 0 · P50≤P99≤P99.9 · 계층별 단일 격발 정확 비트 + 체인 Disarm · 7계층 동시 격발 40라운드(비트당 전이 정확히 1회 · 체인 무결 · 이후 송출 0) · seqlock 20만 게시 찢김 0 · 1만 틱 렌더 합치기 · 센티널 · 하네스 객체 그래프 실 브로커 0 · E2E 정상 상태 δ=0.

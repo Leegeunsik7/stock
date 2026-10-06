@@ -25,7 +25,36 @@ namespace StockManager.KiwoomProxy
         public double FillPrice;
         public long   FillQty;
         public int    Side;         // +1 = 매수, -1 = 매도
+        /// <summary>[키움 프로토콜] 통보 상태(접수/거부/취소확인/체결). 미설정 = Legacy(구 동작).</summary>
+        public BridgeFillStatus Status;
+        /// <summary>[키움 프로토콜] 브로커 미체결 잔량(902 FID) · −1 = 미상.</summary>
+        public long   RemainingQty = -1;
     }
+
+    /// <summary>[L2] 10호가 스냅샷(가격 원 · 잔량 주).</summary>
+    public sealed class OrderBookEventArgs : EventArgs
+    {
+        public OrderBookPayload Book;
+    }
+
+    /// <summary>[L2] 기준가(전일종가 · 원).</summary>
+    public sealed class ReferencePriceEventArgs : EventArgs
+    {
+        public long SymbolCode;
+        public long BasePrice;
+    }
+
+    /// <summary>[키움 COM] 키움 서버 중대 오류(KiwoomServerErrorCodes 71xx) — 프록시가 ErrorReport 로 송신.</summary>
+    public sealed class ServerErrorEventArgs : EventArgs
+    {
+        public int Code;
+    }
+
+    /// <summary>[계좌] OPW00001 예수금상세.</summary>
+    public sealed class AccountCashEventArgs : EventArgs { public AccountCashPayload Cash; }
+
+    /// <summary>[계좌] OPW00018 보유 1행.</summary>
+    public sealed class PositionEventArgs : EventArgs { public PositionPayload Row; }
 
     public sealed class AccountEventArgs : EventArgs
     {
@@ -42,11 +71,21 @@ namespace StockManager.KiwoomProxy
         event EventHandler<TickEventArgs>    TickReceived;
         event EventHandler<FillEventArgs>    FillReceived;
         event EventHandler<AccountEventArgs> AccountReceived;
+        event EventHandler<OrderBookEventArgs> OrderBookReceived;            // [L2]
+        event EventHandler<ReferencePriceEventArgs> ReferencePriceReceived;  // [L2]
+        event EventHandler<ServerErrorEventArgs> ServerErrorReceived;        // [키움 COM] 중대 서버 오류
+        event EventHandler<AccountCashEventArgs> AccountCashReceived;        // [계좌] OPW00001
+        event EventHandler<PositionEventArgs> PositionReceived;              // [계좌] OPW00018 행
+
+        /// <summary>[키움 COM · 방향 A] COM STA 메시지 펌프 정상 여부 — false 면 프록시가 Pong 을 억제(호스트 하트비트 단절 → 동결).</summary>
+        bool PumpHealthy { get; }
 
         // ── 터미널 → COM 명령 방향 ────────────────────────────────────────────
         void Connect();
         void SendOrder(long symbolCode, int side, double price, long qty, long orderId);
         void CancelOrder(long orderId);
+        /// <summary>[정정] 지정가 정정(price = 정정가 원 · qty = 정정수량 주).</summary>
+        void ModifyOrder(long orderId, double price, long qty);
         void SubscribeTick(long symbolCode);
         void UnsubscribeTick(long symbolCode);
         void QueryAccount();

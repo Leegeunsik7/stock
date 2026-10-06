@@ -1,9 +1,13 @@
 ﻿# ============================================================================
 # release-package.ps1 — v12.14.1-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
-#   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench 는 CI 검증 전용).
+#   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
+#     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
+#            출하 바이너리가 '태그된 소스' 그대로 빌드됨을 빌드 전에 보증(실증: v12.14.1-GM 태그는 IKiwoomApi.cs 미포함으로 x86 프록시
+#            빌드 불가 · 작업 트리 빌드로 출하 → 태그와 출하물 불일치). 실패 = 즉시 중단(빌드 0).
 #     [1/8] WebOnly Release 빌드 — 0W/0E 검증 전용(산출물 폐기 · Host 출력 폴더를 공유하므로 먼저 태움)
-#     [2/8] Default Release 빌드(sln: Host+Tests+PrimesBench+x86 KiwoomProxy) — 0W/0E, 패키징 대상
+#     [2/8] Default Release 빌드(sln: Host+Tests+PrimesBench+x86 KiwoomProxy+KiwoomComShim) — 0W/0E, 패키징 대상
+#           + [오중 빌드] KiwoomComShim(#if KIWOOM_COM 인터롭 형상 쉼) 산출물이 이번 빌드에서 갱신됐는지 확인(미갱신 = 중단)
 #     [3/8] StockManager 전체 유닛 테스트 — 100% Pass 필수
 #     [4/8] infra-scan.ps1(Phase 83 결합도) — baseline 이하
 #     [5/8] Phase114 RatchetCeiling(≤40) 단독 재확인
@@ -17,13 +21,20 @@
 #             masterSeal · 미등재 바이너리 0 · 런타임 BootIntegrityGate 와 동일 코드 경로). 실패 = 중단.
 #     [8/8] zip 패키징 + 사후 검증(빈 zip·해시 리스트 불일치·매니페스트 누락/봉인 불일치 → zip 삭제 후 중단)
 #           + [봉인 운영] 최종 zip 을 수검 CLI 로 재수검(추출 → 앵커 대조) — 통과해야만 .sha256·master-seal.txt 발행.
+#     [9/10] [방향 A] 출하 zip 무추출 수검(--verify-zip) — 항목 스트림 SHA-256 · 내장 manifest.sig ↔ master-seal.txt ·
+#            실측 해시 재계산 봉인 ↔ 앵커 · 미등재/누락/경로 이탈 0. 실패 = zip·.sha256·master-seal.txt 삭제 후 중단.
+#     [10/10] [방향 B] 다중 저장소 핸드셰이크 — RELEASE_MANIFEST.json(태그·소스 커밋·manifest.sig·masterSeal·아티팩트·zip·쉼 해시·
+#            liveArmed=false·인터락 + 피어 QuantumVault HEAD/봉인 매니페스트 해시 '읽기 전용')을 원자 기록 후 독립 재수검.
+#            불일치 = 모든 출하 산출물 삭제 후 중단. 피어 저장소에는 쓰지 않는다.
 #   전부 실패-닫힘: 어느 단계든 실패하면 즉시 중단, 불완전 zip 은 남기지 않는다.
 #
-#   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]
+#   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]
 # ============================================================================
 param(
     [string]$Version = "",
-    [switch]$SkipWebOnlyGate
+    [switch]$SkipWebOnlyGate,
+    [string]$PeerRepo = "",
+    [switch]$NoPeer
 )
 $ErrorActionPreference = "Stop"
 $root       = $PSScriptRoot
@@ -42,8 +53,34 @@ $manifestOut = Join-Path $releaseDir "manifest.sig"
 $zipOut      = Join-Path $releaseDir "release-v$Version-GM.zip"
 
 function Fail($msg) { Write-Host "✗ $msg" -ForegroundColor Red; exit 1 }
-function Step($n, $msg) { Write-Host "[$n/8] $msg" -ForegroundColor Cyan }
+function Step($n, $msg) { Write-Host "[$n/10] $msg" -ForegroundColor Cyan }
 $hostExe = Join-Path $hostBin "MS2E.StockSuite.exe"
+$shimDll = Join-Path $root "tools\KiwoomComShim\bin\Release\net8.0-windows\MS2E.KiwoomComShim.dll"
+if ([string]::IsNullOrWhiteSpace($PeerRepo)) { $PeerRepo = Join-Path (Split-Path $root -Parent) "QuantumVault" }
+
+# [릴리스 CI] 출하 산출물 전량 폐기(부분 산출 잔존 금지)
+function Remove-ReleaseOutputs {
+    foreach ($f in @($zipOut, "$zipOut.sha256", (Join-Path $releaseDir "master-seal.txt"), (Join-Path $releaseDir "RELEASE_MANIFEST.json"))) {
+        Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# [릴리스 CI] 호스트 콜드 CLI(--verify-zip · --sync-release-manifest · --release-handshake) — 보고서는 UTF-8 파일(--report)로 판독.
+function Invoke-HostCli([string[]]$cliArgs, [string]$label) {
+    if (-not (Test-Path -LiteralPath $hostExe)) { Fail "CLI 실행 파일 없음: $hostExe" }
+    $report = Join-Path $releaseDir "cli-$label.txt"
+    $proc = Start-Process -FilePath $hostExe -ArgumentList ($cliArgs + @('--report', ('"' + $report + '"'))) -Wait -PassThru -NoNewWindow
+    if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Encoding UTF8 | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray } }
+    return $proc.ExitCode
+}
+
+# [릴리스 CI] 출하 바이너리에 영향 없는 경로(문서·산출물·도구 캐시) — 호스트 GitRepoProbe.IsCodePath 와 동일 규칙.
+function Test-CodePath([string]$p) {
+    $q = $p.Trim().Trim('"').Replace('\', '/')
+    if ($q.Length -eq 0) { return $false }
+    foreach ($pre in @('.claude/', 'release/', 'docs/', 'graphify-out/')) { if ($q.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase)) { return $false } }
+    return -not $q.EndsWith('.md', [StringComparison]::OrdinalIgnoreCase)
+}
 
 # [봉인 운영] 수검 CLI 호출 — 출하 호스트 실행 파일의 --verify-seal(UI/DB 초기화 이전 분기). 종료 코드 0 만 통과.
 #   PS 5.1 Start-Process 는 인자를 따옴표 없이 공백 결합하므로 경로를 직접 감싼다.
@@ -58,6 +95,22 @@ function Invoke-SealCli([string]$target, [string]$seal, [string]$label) {
 
 Write-Host "== MS2E StockSuite v$Version Production Golden Master 패키징 ==" -ForegroundColor Green
 
+# ── [0/10] 소스 무결성 사전 검사(빌드 전 · fail-closed) ──
+Step 0 "소스 무결성 사전 검사(태그 v$Version-GM · 태그↔HEAD 코드 이탈 · 미커밋 코드)..."
+$tag = "v$Version-GM"
+$headCommit = (& git -C $root rev-parse HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $headCommit) { Fail "git HEAD 판독 실패 — 소스 미확인 출하 금지" }
+$tagCommit = (& git -C $root rev-list -n 1 $tag 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $tagCommit) { Fail "태그 $tag 없음 — 태그되지 않은 소스 출하 금지" }
+if ($headCommit.Trim() -ne $tagCommit.Trim()) {
+    $drift = @(& git -C $root diff --name-only $tagCommit.Trim() $headCommit.Trim() | Where-Object { Test-CodePath $_ })
+    if ($drift.Count -gt 0) { Fail "태그 $tag 이후 코드 변경 $($drift.Count)건(예: $($drift[0])) — 태그 재지정 또는 HEAD 를 태그로" }
+}
+$dirty = @(& git -C $root -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
+if ($dirty.Count -gt 0) { Fail "미커밋 코드 $($dirty.Count)건(예: $($dirty[0])) — 작업 트리 빌드는 태그 소스와 다름(출하 금지)" }
+Write-Host "  OK: $tag = HEAD 코드 · 미커밋 코드 0" -ForegroundColor DarkGreen
+$buildStart = Get-Date
+
 # ── [1/8] WebOnly 빌드(검증 전용 — 산출물 폐기, Host 출력 폴더 공유이므로 먼저 태움) ──
 if (-not $SkipWebOnlyGate) {
     Step 1 "WebOnly Release 빌드(0W/0E 검증 전용)..."
@@ -68,9 +121,18 @@ if (-not $SkipWebOnlyGate) {
 }
 
 # ── [2/8] Default 빌드(sln 전체 — Host/Tests/PrimesBench/x86 KiwoomProxy, 패키징 대상 산출) ──
-Step 2 "Default Release 빌드(sln 전체: Host+Tests+PrimesBench+x86 KiwoomProxy)..."
+Step 2 "Default Release 빌드(sln 전체: Host+Tests+PrimesBench+x86 KiwoomProxy+KiwoomComShim)..."
 dotnet build $sln -c Release -m:1
 if ($LASTEXITCODE -ne 0) { Fail "Default 빌드 실패(exit $LASTEXITCODE) — 0W/0E 아님, 패키징 중단" }
+# [오중 빌드] COM 인터롭 쉼(#if KIWOOM_COM) 컴파일 증거 — 산출물 존재 + 이번 빌드 이후 갱신(증분 빌드 생략분은 입력 무변경이 보증)
+if (-not (Test-Path -LiteralPath $shimDll)) { Fail "KiwoomComShim 산출물 없음 — #if KIWOOM_COM 블록 미검증 출하 금지: $shimDll" }
+$shimProj = Join-Path $root "tools\KiwoomComShim\KiwoomComShim.csproj"
+$shimInputs = @($shimProj, (Join-Path $root "tools\KiwoomComShim\AxKHOpenAPIShim.cs"), (Join-Path $root "StockManager.KiwoomProxy\ProductionKiwoomApi.cs"),
+                (Join-Path $root "StockManager.KiwoomProxy\IKiwoomApi.cs"), (Join-Path $root "src\02_Infrastructure\Engine\KiwoomComBridgeCore.cs"),
+                (Join-Path $root "src\02_Infrastructure\Engine\BridgeProtocol.cs"), (Join-Path $root "src\02_Infrastructure\Engine\BridgeOrderStatus.cs"))
+$newestInput = ($shimInputs | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } | Measure-Object -Maximum).Maximum
+if ((Get-Item -LiteralPath $shimDll).LastWriteTimeUtc -lt $newestInput) { Fail "KiwoomComShim 산출물이 입력보다 오래됨 — 쉼 미재빌드(오중 빌드 게이트 실패)" }
+Write-Host "  OK: KiwoomComShim(#if KIWOOM_COM) 0W/0E 컴파일 산출 확인" -ForegroundColor DarkGreen
 
 # ── [3/8] 전체 유닛 테스트 스위트 ──
 Step 3 "전체 유닛 테스트 스위트 실행..."
@@ -177,5 +239,23 @@ Set-Content -LiteralPath (Join-Path $releaseDir "master-seal.txt") -Value $maste
 $zipSha = (Get-FileHash -Algorithm SHA256 -Path $zipOut).Hash
 Set-Content -LiteralPath "$zipOut.sha256" -Value ("{0}  {1}" -f $zipSha, (Split-Path $zipOut -Leaf)) -Encoding UTF8
 
-Write-Host "== 완료: $zipOut (SHA-256 $zipSha) ==" -ForegroundColor Green
+
+# ── [9/10] [방향 A] 출하 zip 무추출 수검 ──
+Step 9 "출하 zip 무추출 수검(--verify-zip · 항목 스트림 해시 · 재계산 봉인 ↔ master-seal.txt)..."
+$zipVerify = Invoke-HostCli @('--verify-zip', ('"' + $zipOut + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"')) "verify-zip"
+if ($zipVerify -ne 0) { Remove-ReleaseOutputs; Fail "zip 무추출 수검 실패(exit=$zipVerify) — 출하 산출물 전량 폐기" }
+
+# ── [10/10] [방향 B] 다중 저장소 핸드셰이크(피어 읽기 전용) ──
+Step 10 "다중 저장소 매니페스트 원자 기록 + 독립 핸드셰이크..."
+$hsArgs = @('--release-dir', ('"' + $releaseDir + '"'), '--repo', ('"' + $root + '"'), '--shim', ('"' + $shimDll + '"'))
+if (-not $NoPeer) {
+    if (-not (Test-Path -LiteralPath (Join-Path $PeerRepo ".git"))) { Remove-ReleaseOutputs; Fail "피어 저장소 없음: $PeerRepo (-NoPeer 로 명시 생략 가능)" }
+    $hsArgs += @('--peer', ('"' + $PeerRepo + '"'))
+}
+$syncExit = Invoke-HostCli (@('--sync-release-manifest') + $hsArgs + @('--live-armed-guard-passed')) "sync"
+if ($syncExit -ne 0) { Remove-ReleaseOutputs; Fail "RELEASE_MANIFEST.json 동기화 거부(exit=$syncExit) — 출하 산출물 전량 폐기" }
+$hsExit = Invoke-HostCli (@('--release-handshake') + $hsArgs) "handshake"
+if ($hsExit -ne 0) { Remove-ReleaseOutputs; Fail "다중 저장소 핸드셰이크 거부(exit=$hsExit) — 출하 산출물 전량 폐기" }
+
+Write-Host "== 완료: $zipOut (SHA-256 $zipSha) · RELEASE_MANIFEST.json 봉인 ==" -ForegroundColor Green
 exit 0

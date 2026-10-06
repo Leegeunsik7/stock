@@ -40,6 +40,16 @@ namespace MS2E.Core
         bool ArmingBlocked { get; }
     }
 
+    /// <summary>
+    /// [E2E 스트레스 · 포렌식] 집계어 비트 전이 관측자 — 비트가 0→1(raised) 또는 1→0(cleared)로 '실제로 바뀐' 순간에만
+    /// 정확히 1회 호출된다(Interlocked.Or/And 의 직전 값으로 판정 → 동시 다발 Trip 에서도 비트당 1회 · 중복 0).
+    /// 호출 시점에 비트는 이미 반영됐다(차단이 관측보다 먼저 = 관측자 예외/지연이 차단을 늦추지 못함). 구현은 δ=0 · 비차단이어야 한다.
+    /// </summary>
+    public interface IInterlockTransitionSink
+    {
+        void OnTransition(long raisedBits, long clearedBits, long maskAfter);
+    }
+
     /// <summary>고정 비트 배정 — 진단/텔레메트리 판독용 안정 레이아웃.</summary>
     public enum ArmingInterlockSource : byte
     {
@@ -58,6 +68,7 @@ namespace MS2E.Core
         LatencyStall    = 12,  // [저지연 · 방향 B] Tick-to-Trade 프로세스 내 구간 정지 임계 초과(GC 정지·선점) → Disarm
         KiwoomServerError = 13, // [키움 COM · 방향 B] 비밀번호·계좌 정지·증거금 부족·STA 펌프 동결 → Disarm
         AccountDivergence = 14, // [계좌 · 방향 B] OPW00018 보유 ↔ 호스트 추정 보유 불일치(정적 구간) → Disarm
+        EgressBypass    = 15,  // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달(무장 우회 오작동) → 송출 차단 + Disarm
         StartupSanity   = 63,
     }
 
@@ -99,6 +110,8 @@ namespace MS2E.Core
         private readonly ArmingInterlockLink?[] _links = new ArmingInterlockLink?[MaxSourceBits];
         private long _mask, _bound, _blockedReads, _sealAttempts;
         private int _sealed;
+        private IInterlockTransitionSink? _sink;
+        private long _transitions, _sinkFaults;
 
         /// <param name="requiredSources">결속 전까지 차단 비트가 선 채로 유지될 필수 소스들.</param>
         public ArmingInterlockBitmask(params ArmingInterlockSource[] requiredSources)
@@ -133,6 +146,19 @@ namespace MS2E.Core
         public long BlockedReads => Interlocked.Read(ref _blockedReads);
         public long SealAttempts => Interlocked.Read(ref _sealAttempts);
         public bool IsRaised(ArmingInterlockSource s) => (Volatile.Read(ref _mask) & (1L << (int)s)) != 0;
+        /// <summary>관측자에 통지된 실제 비트 전이 누계(raised/cleared 각각 1건).</summary>
+        public long Transitions => Interlocked.Read(ref _transitions);
+        public long SinkFaults => Interlocked.Read(ref _sinkFaults);
+
+        /// <summary>[포렌식] 비트 전이 관측자 결속(1회 · 교체 금지). 결속 시점의 현재 차단 비트를 raised 로 1회 통지(기동 상태 각인).</summary>
+        public void AttachTransitionSink(IInterlockTransitionSink sink)
+        {
+            ArgumentNullException.ThrowIfNull(sink);
+            if (Interlocked.CompareExchange(ref _sink, sink, null) is not null)
+                throw new InvalidOperationException("전이 관측자 이미 결속됨 — 교체 금지(포렌식 이력 단절 방지)");
+            long m = Volatile.Read(ref _mask);
+            if (m != 0) Notify(m, 0, m);
+        }
 
         /// <summary>소스 결속(콜드 패스). 같은 비트 재결속은 거부(소스 바꿔치기 차단). 결속 직후 현재 상태로 동기화.</summary>
         public ArmingInterlockLink Bind(ArmingInterlockSource bit, IArmingBlockSource source)
@@ -170,7 +196,27 @@ namespace MS2E.Core
             for (int i = 0; i < _links.Length; i++) Volatile.Read(ref _links[i])?.Resync();
         }
 
-        internal void RaiseBits(long bits) => Interlocked.Or(ref _mask, bits);
-        internal void ClearBits(long bits) => Interlocked.And(ref _mask, ~bits);
+        // ★Interlocked.Or/And 는 직전 값을 돌려준다 — 실제로 바뀐 비트만 관측자에 통지(동시 Trip 경합에서도 비트당 정확히 1회).
+        internal void RaiseBits(long bits)
+        {
+            long prev = Interlocked.Or(ref _mask, bits);
+            long raised = bits & ~prev;
+            if (raised != 0) Notify(raised, 0, prev | bits);
+        }
+
+        internal void ClearBits(long bits)
+        {
+            long prev = Interlocked.And(ref _mask, ~bits);
+            long cleared = bits & prev;
+            if (cleared != 0) Notify(0, cleared, prev & ~bits);
+        }
+
+        private void Notify(long raised, long cleared, long maskAfter)
+        {
+            if (Volatile.Read(ref _sink) is not { } s) return;
+            Interlocked.Increment(ref _transitions);
+            try { s.OnTransition(raised, cleared, maskAfter); }
+            catch (Exception) { Interlocked.Increment(ref _sinkFaults); }   // 관측 실패는 차단에 무영향(비트는 이미 반영)
+        }
     }
 }

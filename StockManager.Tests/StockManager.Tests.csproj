@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\StockManager\StockManager.csproj" />
+    <!-- [CI 게이트] 키움 COM 인터롭 쉼(#if KIWOOM_COM) — 출력 미참조 · 빌드 순서만: 테스트 빌드마다 쉼 컴파일(0W/0E) 수검 -->
+    <ProjectReference Include="..\tools\KiwoomComShim\KiwoomComShim.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
 </Project>

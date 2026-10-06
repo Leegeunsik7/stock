@@ -53,6 +53,7 @@ namespace MS2E.Infrastructure
         KillSwitchTrip = 53, DeadmanRevert = 54, RedTeamDrill = 55,       // v5.0.0 Red Team·데드맨
         ComaDiagnosed = 60, ChannelFailover = 61, ThreadStarvation = 62, // v5.1.0 자율 라이브 감시망
         OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
+        InterlockRaised = 70, InterlockCleared = 71, EgressBypassBlocked = 72, // [E2E 스트레스] 집계어 비트 전이 · 무장 우회 송출 차단
         LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
         StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어
         BasketNetted = 83, WashTradeRejected = 84, StrategyFanout = 85,   // v5.4.0 다중 전략 인터리빙·네팅·자전거래 방어

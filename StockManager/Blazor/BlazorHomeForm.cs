@@ -385,7 +385,8 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.OrderbookIlliquidity, // [L2 · 방향 B] 연속매매 중 호가 교차/공백/극한 스프레드 → Disarm
                 MS2E.Core.ArmingInterlockSource.LatencyStall,    // [저지연 · 방향 B] Tick-to-Trade 프로세스 내 구간 정지 → Disarm
                 MS2E.Core.ArmingInterlockSource.KiwoomServerError, // [키움 COM · 방향 B] 중대 서버 오류 · STA 펌프 동결 → Disarm
-                MS2E.Core.ArmingInterlockSource.AccountDivergence); // [계좌 · 방향 B] 정적 구간 브로커 보유 ≠ 호스트 추정 보유 → Disarm
+                MS2E.Core.ArmingInterlockSource.AccountDivergence, // [계좌 · 방향 B] 정적 구간 브로커 보유 ≠ 호스트 추정 보유 → Disarm
+                MS2E.Core.ArmingInterlockSource.EgressBypass); // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달 → 송출 차단 + Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
@@ -1220,6 +1221,11 @@ namespace StockManager.Blazor
             // [MMF 하드닝] 인스턴스 즉시 생성 — 체인 변조 Disarm 인터락이 같은 스트림을 10초 주기로 검증(δ=0)하고, 결함 시 API Secret 0x00 +
             //   킬스위치 격발 + 무장 술어 영구 차단. 이전엔 검증 결과를 UI 뷰어만 소비해 체인이 조작돼도 무장이 가능했다.
             var forensicStream = new MS2E.Core.ZeroAllocForensicAuditStream(8192);
+            // [E2E 스트레스] 무장 집계어 비트 전이(어느 인터락이 언제 Disarm/해제) → 포렌식 해시 체인 + MMF 블랙박스 즉시 각인.
+            //   결속 시점 차단 비트(기동 미봉인 상태 등)는 1회 raised 로 기록.
+            var interlockRecorder = new StockManager.Telemetry.InterlockForensicRecorder(forensicStream, blackbox);
+            interlockMask.AttachTransitionSink(interlockRecorder);
+            services.AddSingleton(interlockRecorder);
             services.AddSingleton(forensicStream);
             bootIntegrityRef?.AttachForensicStream(forensicStream);
             execFeed.AttachForensicStream(forensicStream);   // [키움 프로토콜 · 방향 A] 대사 이력(거부·부분체결·취소·불일치) 해시 체인 각인   // [봉인 운영 · 방향 B] 봉인 변조 증거(기대/실측 해시) 해시 체인 각인
@@ -1354,9 +1360,16 @@ namespace StockManager.Blazor
             //   ForceFreeze 단일 소스로 영구 락업. dualKeyIntact 는 매 틱 ValveWired 설정이 유지되는지 검문.
             // [실배선 · 방향 A] 기동 샌니티 봉인 — 필수 인터락 소스 전부 결속 확인 후에만 샌니티 비트 해제. 누락(생성 예외로 결속 실패 등)
             //   이면 비트 영구 유지 = 무장 불가(부팅 원자 중단) · MissingMask 로 누락 소스 진단(DI 싱글턴 조회).
+            // [E2E · 방향 B] 실 브로커 송출 초크포인트 백업 인터락 — 물리 이중키(ValveWired ∧ LiveArmingWired) 미충족인데 Place 가
+            //   도달하면(상류 게이트 전부 오작동) 실 브로커 전달 0 + 증거 수집 + sticky Disarm + 비상 동결. 정상 경로에서는 도달 자체가 없다.
+            var egressSentinel = new StockManager.Adapters.LiveArmedEgressSentinel(broker,
+                () => cfg.GetBool("Dispatch.ValveWired", false) && cfg.GetBool("Dispatch.LiveArmingWired", false),
+                blackbox, why => attestation.ForceFreeze(why));
+            egressSentinel.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.EgressBypass);
+            services.AddSingleton(egressSentinel);
             if (!interlockMask.Seal(out long missingInterlocks))
                 System.Diagnostics.Trace.WriteLine($"[InterlockSanity] 필수 인터락 미결속 mask=0x{missingInterlocks:X} — 무장 영구 차단");
-            var drainWorker = new OrderDrainWorker(ringDispatcher, broker,
+            var drainWorker = new OrderDrainWorker(ringDispatcher, egressSentinel,   // [E2E · 방향 B] 실 브로커 앞 백업 인터락 경유
                 wired: cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런도 드레인 가동(미러 급전)
                 periodMs: 50,
                 attestation: attestation,
