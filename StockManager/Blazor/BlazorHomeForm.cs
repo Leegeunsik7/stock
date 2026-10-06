@@ -386,7 +386,9 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.LatencyStall,    // [저지연 · 방향 B] Tick-to-Trade 프로세스 내 구간 정지 → Disarm
                 MS2E.Core.ArmingInterlockSource.KiwoomServerError, // [키움 COM · 방향 B] 중대 서버 오류 · STA 펌프 동결 → Disarm
                 MS2E.Core.ArmingInterlockSource.AccountDivergence, // [계좌 · 방향 B] 정적 구간 브로커 보유 ≠ 호스트 추정 보유 → Disarm
-                MS2E.Core.ArmingInterlockSource.EgressBypass); // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달 → 송출 차단 + Disarm
+                MS2E.Core.ArmingInterlockSource.EgressBypass, // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달 → 송출 차단 + Disarm
+                MS2E.Core.ArmingInterlockSource.PreFlightBoot, // [사전 검증] 시계 역행 · 안전 설정 런타임 변조 · 프록시 파이프 신원 불일치 → Disarm + 키 소거
+                MS2E.Core.ArmingInterlockSource.CorrelationCrash); // [포트폴리오 · 방향 B] 보유 종목 동시 하락 → 미체결 일괄 취소 + Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
             Func<bool> liveArmed = DispatchArming.ResolvePredicate(
@@ -948,11 +950,34 @@ namespace StockManager.Blazor
                 onRecord: r => { try { Log.Warn($"[AccountRecon] {r.Kind} symbol={r.BrokerOrderId} brokerQty={r.Qty}"); } catch { } });
             services.AddSingleton(accountDivergence);
             services.AddSingleton(accountSync);
+            // [포트폴리오 리스크 · 추천 A] 단일 종목(기본 총자산 20%) · 섹터(기본 40%) 익스포저 상한 — RouterFeedGate(송출 전방)에서 매수 거부.
+            //   총자산 = 예수금 + Σ 보유 × 마크가(키움 체결 틱). 평가 미상 = 거부(fail-closed). 섹터표 = Exposure.SectorTablePath("코드,섹터" UTF-8) · 미등재 = 미분류 버킷.
+            //   보유 종목 동시 하락(체계적 상관 붕괴) → CorrelationCrashInterlock: 미체결 일괄 취소 + Disarm(필수 비트).
+            var exposureGate  = new StockManager.Engines.PortfolioExposureGate(accountSync,
+                cfg.GetInt("Exposure.SingleNameCapBps", (int)StockManager.Engines.PortfolioExposureGate.DefaultSingleNameCapBps, 0, 10_000),
+                cfg.GetInt("Exposure.SectorCapBps", (int)StockManager.Engines.PortfolioExposureGate.DefaultSectorCapBps, 0, 10_000));
+            string sectorTable = cfg.GetString("Exposure.SectorTablePath", "");
+            if (sectorTable.Length > 0)
+            {
+                try { if (System.IO.File.Exists(sectorTable)) exposureGate.IngestSectorTable(System.IO.File.ReadAllBytes(sectorTable)); }
+                catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { Log.Warn("[Exposure] 섹터표 판독 실패: " + ex.Message); }
+            }
+            services.AddSingleton(exposureGate);
+            var correlationCrash = new StockManager.Engines.CorrelationCrashInterlock(
+                cfg.GetInt("Correlation.DropBps", (int)StockManager.Engines.CorrelationCrashInterlock.DefaultDropBps, 50, 5_000),
+                cfg.GetInt("Correlation.MinNames", StockManager.Engines.CorrelationCrashInterlock.DefaultMinNames, 2, 100),
+                cfg.GetInt("Correlation.BreadthBps", (int)StockManager.Engines.CorrelationCrashInterlock.DefaultBreadthBps, 1_000, 10_000),
+                openOrders: buf => execFeed.CopyOpenBrokerOrders(buf.Span),
+                cancel: id => broker.Cancel(id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                onTrip: n => { try { Log.Warn($"[CorrelationCrash] 보유 종목 동시 하락 — Disarm · 미체결 취소 {n}건 요청"); } catch { } });
+            correlationCrash.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.CorrelationCrash);
+            services.AddSingleton(correlationCrash);
             var routerGate    = new StockManager.Adapters.RouterFeedGate(orderRouter, refPriceFeed, execFeed, feedBreaker,
                 converter: protectiveConv, depth: depthBook,
                 requireDepthForMarket: cfg.GetBool("Router.MarketRequiresDepth", true),
                 basePriceRaw: sym => spikeRef is { } sp && sp.TryGetReference(sym, out long b) && b < long.MaxValue / 100_000_000L ? b * 100_000_000L : 0L,
-                account: cfg.GetBool("Router.RequireAccountSync", true) ? accountSync : null);
+                account: cfg.GetBool("Router.RequireAccountSync", true) ? accountSync : null,
+                exposure: exposureGate);
             // [정정/취소] 취소·정정 전방 게이트 = 체결 피드 추적 원장(종결/중복/잔량 초과 송신 0)
             broker.AmendGate = execFeed;
             extremeSlip.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ExtremeSlippage);
@@ -991,6 +1016,8 @@ namespace StockManager.Blazor
                 long sym = StockManager.Adapters.ReferencePriceFeedAdapter.SymbolHashForCode(t.SymbolCode);
                 long px = (long)Math.Round(t.Price, MidpointRounding.AwayFromZero);
                 if (spikeRef is { } sp && sp.Observe(sym, px) == MS2E.Infrastructure.SpikeVerdict.Accepted) refPriceFeed.OnTick(sym, px, 0);
+                exposureGate.OnMark(t.SymbolCode, px);          // [포트폴리오] 보유 평가 마크가
+                correlationCrash.OnTick(t.SymbolCode, px);      // [포트폴리오 · 방향 B] 세션 고점 대비 동시 낙폭
             };
             // [키움 COM · 방향 B] 프록시 ErrorReport(71xx 중대 서버 오류 · STA 펌프 동결) → 집계 비트(동결은 기존 KiwoomFreezeRelay 가 병행)
             var kiwoomServerErr = new StockManager.Adapters.KiwoomServerErrorInterlock();
@@ -1014,6 +1041,9 @@ namespace StockManager.Blazor
             Action<FillPayload> onBridgeFill = execFeed.OnFill;
             bridge.FillReceived += onBridgeFill;
             // [계좌] 브리지 계좌 프레임 + 체결(추정 보유) → 동기화 어댑터 · 주기 조회(조회 TR 2건/회 · 기본 10초 = 분당 12건 ≪ 100)
+            Action<FillPayload> onExposureFill = exposureGate.OnFill;
+            bridge.FillReceived += onExposureFill;
+            FormClosed += (_, _) => ShutdownTrace.Step("exposureFill", () => bridge.FillReceived -= onExposureFill);
             Action<FillPayload> onAccountFill = accountSync.OnFill;
             Action<AccountCashPayload> onAccountCash = accountSync.OnCash;
             Action<PositionPayload> onAccountPosition = accountSync.OnPosition;
@@ -1033,9 +1063,11 @@ namespace StockManager.Blazor
             });
             feedBreaker.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.RouterFeed);
             execFeed.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OrderSlotAge);
+            long[] heldSym = new long[512], heldQty = new long[512];   // [포트폴리오 · 방향 B] 보유 집합 갱신 버퍼(타이머 단일 스레드)
             var routerSweep   = new System.Threading.Timer(_ =>
             {
                 try { execFeed.SweepExpired(); } catch { }
+                try { int hn = accountSync.CopyPositions(heldSym, heldQty); if (hn >= 0) correlationCrash.SetHeld(heldSym.AsSpan(0, hn)); } catch { }
                 try { feedBreaker.Evaluate(); } catch { }
             }, null, 1000, 1000);
             FormClosed += (_, _) => ShutdownTrace.Step("routerFeeds", () => { routerSweep.Dispose(); bridge.FillReceived -= onBridgeFill; });
@@ -1108,6 +1140,41 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.Core.IHardwareKillSwitchPort>(killBridge);
             services.AddSingleton(killBridge);
             services.AddSingleton(killPurger);
+            // [사전 검증 · 추천 A] 부팅/런타임 Fail-Closed 게이트 — ①시계 역행(부팅 앵커 · 런타임 벽시계↔QPC) ②안전 설정 런타임 변조(지문)
+            //   ③키움 프록시 파이프 서버 신원 불일치 → 필수 비트 Raise + killPurger(API Secret) 즉시 소거. 복구 = 원인 제거 후 재시작.
+            var bootPreFlight = new StockManager.Security.BootPreFlightSentinel(killPurger,
+                onTrip: f => { try { Log.Warn($"[PreFlight] 사전 검증 실패 {f} — 무장 차단 · 자격증명 소거"); } catch { } });
+            bootPreFlight.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.PreFlightBoot);
+            services.AddSingleton(bootPreFlight);
+            string clockAnchorPath = StockManager.Security.BootPreFlightSentinel.DefaultAnchorPath();
+            long bootNow = DateTime.UtcNow.Ticks;
+            if (bootPreFlight.EvaluateBootClock(bootNow, StockManager.Security.BootPreFlightSentinel.ReadClockAnchor(clockAnchorPath)) == StockManager.Security.PreFlightFault.None)
+                StockManager.Security.BootPreFlightSentinel.AdvanceClockAnchor(clockAnchorPath, bootNow);   // 되감긴 시계로는 절대 덮어쓰지 않음
+            byte[] safetyFp = new byte[32];
+            StockManager.Security.BootPreFlightSentinel.ComputeConfigFingerprint(rawConfig, safetyFp);
+            bootPreFlight.SealConfig(safetyFp);
+            // 프록시 파이프 신원: 설치 레이아웃(<root>/host · <root>/proxy) 또는 평면 배치에서 프록시 실행 파일 경로를 기대값으로 고정
+            string proxyExe = cfg.GetString("Kiwoom.ProxyPath", "");
+            if (proxyExe.Length == 0)
+            {
+                string layered = System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "proxy", "MS2E.KiwoomProxyHost.exe"));
+                proxyExe = System.IO.File.Exists(layered) ? layered : System.IO.Path.Combine(AppContext.BaseDirectory, "MS2E.KiwoomProxyHost.exe");
+            }
+            bridge.ServerIdentityVerifier = MS2E.Infrastructure.PipeServerIdentity.ImagePathVerifier(proxyExe);
+            Action<int> onProxyIdentityRejected = _ => bootPreFlight.ReportProxyIdentityRejected();
+            bridge.ServerIdentityRejected += onProxyIdentityRejected;
+            var preFlightTimer = new System.Threading.Timer(_ =>
+            {
+                try
+                {
+                    bootPreFlight.ObserveClock(DateTime.UtcNow.Ticks, System.Diagnostics.Stopwatch.GetTimestamp(), System.Diagnostics.Stopwatch.Frequency);
+                    StockManager.Security.BootPreFlightSentinel.ComputeConfigFingerprint(rawConfig, safetyFp);   // 타이머 단일 스레드 — 버퍼 재사용
+                    bootPreFlight.ObserveConfigFingerprint(safetyFp);
+                    if (!bootPreFlight.Tripped) StockManager.Security.BootPreFlightSentinel.AdvanceClockAnchor(clockAnchorPath, DateTime.UtcNow.Ticks);
+                }
+                catch { }
+            }, null, 5_000, 5_000);
+            FormClosed += (_, _) => ShutdownTrace.Step("bootPreFlight", () => { preFlightTimer.Dispose(); bridge.ServerIdentityRejected -= onProxyIdentityRejected; });
             // [F7] 부팅 무결성 게이트: 검증은 스레드풀(UI 부팅 비차단·락 공유 0 → 초기화 데드락 불가), 완료 전 Verifying = 무장 차단.
             //   변조 Trip → killPurger(API Secret) 즉시 0x00 소거 + 킬스위치 격발(카나리 Kill 결선 경로 재사용). 30초 주기 백그라운드 재검증.
             try

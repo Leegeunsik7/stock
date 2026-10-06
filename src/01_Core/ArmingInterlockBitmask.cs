@@ -69,6 +69,10 @@ namespace MS2E.Core
         KiwoomServerError = 13, // [키움 COM · 방향 B] 비밀번호·계좌 정지·증거금 부족·STA 펌프 동결 → Disarm
         AccountDivergence = 14, // [계좌 · 방향 B] OPW00018 보유 ↔ 호스트 추정 보유 불일치(정적 구간) → Disarm
         EgressBypass    = 15,  // [E2E · 방향 B] liveArmed:false 인데 실 브로커 Place 도달(무장 우회 오작동) → 송출 차단 + Disarm
+        PreFlightBoot   = 16,  // [사전 검증] 시계 역행(부팅·런타임) · 안전 설정 런타임 변조 · 프록시 파이프 서버 신원 불일치 → Disarm + 키 소거
+        CorrelationCrash = 17, // [포트폴리오 · 방향 B] 보유 종목 동시 하락(체계적 상관 급등) → 미체결 일괄 취소 + Disarm
+        KisAuth         = 18,  // [KIS] 접근 토큰 만료 임박(5분) 갱신 실패 · 만료 → Disarm
+        KisSession      = 19,  // [KIS · 방향 B] 실시간 WebSocket PINGPONG/수신 침묵 타임아웃 → KIS 블랙리스트 + Disarm
         StartupSanity   = 63,
     }
 

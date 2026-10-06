@@ -38,10 +38,56 @@ namespace MS2E.Infrastructure
             return MaskInPlace(destination);
         }
 
+        // ── ⑦ 등록 비밀값(정확 일치) ─────────────────────────────────────────
+        //   [KIS] AppSecret 은 고정 접두·구조가 없는 긴 무작위 문자열이라 패턴 규칙(⑥)이 잡지 못한다(실측: 수정 전 평문 통과).
+        //   런타임에 실제 비밀값을 등록(콜드 1회)하면 등장 위치를 전 문자 '*' 로 치환. 판정은 Span IndexOf(힙 0).
+        private static volatile char[][] s_secrets = Array.Empty<char[]>();
+        private static readonly object s_secretGate = new();
+        public const int MinRegisteredSecretLength = 8;
+
+        /// <summary>정확 일치 마스킹 대상 비밀값 등록(콜드 · 8자 미만/중복 무시). 반환 = 신규 등록 여부.</summary>
+        public static bool RegisterSecret(string? secret)
+        {
+            if (string.IsNullOrWhiteSpace(secret)) return false;
+            secret = secret.Trim();
+            if (secret.Length < MinRegisteredSecretLength) return false;
+            lock (s_secretGate)
+            {
+                foreach (var s in s_secrets) if (s.AsSpan().SequenceEqual(secret)) return false;
+                var copy = GC.AllocateArray<char>(secret.Length, pinned: true);
+                secret.AsSpan().CopyTo(copy);
+                var next = new char[s_secrets.Length + 1][];
+                s_secrets.CopyTo(next, 0); next[^1] = copy;
+                s_secrets = next;
+                return true;
+            }
+        }
+
+        private static int MaskRegisteredSecrets(Span<char> t)
+        {
+            var secrets = s_secrets;
+            int count = 0;
+            for (int k = 0; k < secrets.Length; k++)
+            {
+                ReadOnlySpan<char> s = secrets[k];
+                int from = 0;
+                while (from <= t.Length - s.Length)
+                {
+                    int at = t[from..].IndexOf(s);
+                    if (at < 0) break;
+                    at += from;
+                    t.Slice(at, s.Length).Fill('*');
+                    count++;
+                    from = at + s.Length;
+                }
+            }
+            return count;
+        }
+
         /// <summary>호출측 버퍼를 제자리 마스킹(힙 할당 0).</summary>
         public static int MaskInPlace(Span<char> text)
         {
-            int n = 0;
+            int n = MaskRegisteredSecrets(text);   // ⑦ 먼저 — 등록 비밀값이 다른 규칙에 부분 매칭돼 일부만 가려지는 것 방지
             n += MaskResidentNumbers(text);
             n += MaskCards(text);
             n += MaskEmails(text);

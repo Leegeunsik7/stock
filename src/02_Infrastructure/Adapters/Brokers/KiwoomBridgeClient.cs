@@ -53,6 +53,17 @@ namespace MS2E.Infrastructure
         private volatile bool                    _disposed;
         private CancellationTokenSource?          _cts;
 
+        // ── [사전 검증] 파이프 서버 신원 ──────────────────────────────────────
+        /// <summary>
+        /// 연결 직후 서버 PID 를 넘겨 받는 신원 검증기(옵션 · 예: PipeServerIdentity.ImagePathVerifier(프록시 경로)).
+        /// false/예외/PID 판독 실패 = 거부: 파이프 파괴 · ServerIdentityRejected 발화 · ConnectAsync 가 UnauthorizedAccessException.
+        /// 미설정이면 CurrentUserOnly(서버 소유자 = 현재 사용자)만 강제.
+        /// </summary>
+        public Func<int, bool>? ServerIdentityVerifier { get; set; }
+        public event Action<int>? ServerIdentityRejected;
+        private long _identityRejections;
+        public long IdentityRejections => Interlocked.Read(ref _identityRejections);
+
         // ── 이벤트 ────────────────────────────────────────────────────────────
         public event Action<TickPayload>?    TickReceived;
         public event Action<FillPayload>?    FillReceived;
@@ -111,10 +122,28 @@ namespace MS2E.Infrastructure
 
         public async Task ConnectAsync(string serverName = ".", CancellationToken ct = default)
         {
+            // [사전 검증] CurrentUserOnly — 다른 사용자 계정 소유 서버(파이프 선점)에는 연결 자체를 거부
             _pipe = new NamedPipeClientStream(
                 serverName, _pipeName,
-                PipeDirection.InOut, PipeOptions.Asynchronous);
+                PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             await _pipe.ConnectAsync(ct);
+            if (ServerIdentityVerifier is { } verify)
+            {
+                bool ok;
+                int pid = -1;
+                try { ok = PipeServerIdentity.TryGetServerProcessId(_pipe.SafePipeHandle, out pid) && verify(pid); }
+                catch (Exception) { ok = false; }
+                if (!ok)
+                {
+                    // 같은 사용자 세션의 다른 프로세스가 프록시 이름을 선점 — 첫 바이트도 주고받기 전에 파괴(fail-closed)
+                    try { _pipe.Dispose(); } catch { }
+                    _pipe = null;
+                    _alive = false;
+                    Interlocked.Increment(ref _identityRejections);
+                    try { ServerIdentityRejected?.Invoke(pid); } catch { }
+                    throw new UnauthorizedAccessException($"키움 프록시 파이프 서버 신원 불일치(pid={pid}) — 연결 거부");
+                }
+            }
             _alive = true;
             MarkHeartbeat(_now());
         }

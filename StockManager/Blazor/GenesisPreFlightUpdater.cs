@@ -69,10 +69,16 @@ namespace StockManager.Blazor
 
         private void Loop()
         {
-            while (!_stop.Wait(_intervalMs))
+            // [실결함 교정] Start(_thread 대입 전) ↔ Dispose 경합 시 Dispose 가 _thread=null 을 보고 _stop 을 처분할 수 있다 —
+            //   처분된 이벤트 Wait 의 ObjectDisposedException 이 백그라운드 스레드 미처리 예외(프로세스 종료)가 되지 않게 흡수.
+            try
             {
-                try { Recertify(); } catch { /* 콜드 수집 실패 → 다음 주기 재시도(핫패스 무영향) */ }
+                while (!_stop.Wait(_intervalMs))
+                {
+                    try { Recertify(); } catch { /* 콜드 수집 실패 → 다음 주기 재시도(핫패스 무영향) */ }
+                }
             }
+            catch (ObjectDisposedException) { /* 처분 = 정지 */ }
         }
 
         /// <summary>1회 재인증(콜드). 서브시스템에서 입력 수집 → Certify → 인증∧무장 시 lease.Renew. 테스트 직접 호출 가능.</summary>

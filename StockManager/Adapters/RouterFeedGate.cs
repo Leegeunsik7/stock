@@ -107,6 +107,8 @@ namespace StockManager.Adapters
         private readonly Func<long, long>? _basePriceRaw;
         private readonly AccountStateSyncAdapter? _account;
         private long _accountRejects;
+        private readonly StockManager.Engines.PortfolioExposureGate? _exposure;
+        private long _exposureRejects;
         private long _admitted, _staleRejects, _feedRejects, _routeRejects, _fractionalRejects, _trackRejects, _notSent;
         private long _marketConverted, _depthRejects, _depthReduced, _protectionRejects, _slippageRejects;
         private int _lastVerdict;
@@ -118,7 +120,8 @@ namespace StockManager.Adapters
         public RouterFeedGate(ResilientOrderRouter router, ReferencePriceFeedAdapter price, OrderExecutionFeedAdapter exec, FeedDisconnectCircuitBreaker breaker,
                               StockManager.Engines.ProtectiveLimitOrderConverter? converter = null, StockManager.Engines.DepthBook? depth = null,
                               bool requireDepthForMarket = true, Func<long, long>? basePriceRaw = null,
-                              AccountStateSyncAdapter? account = null)
+                              AccountStateSyncAdapter? account = null,
+                              StockManager.Engines.PortfolioExposureGate? exposure = null)
         {
             _router = router ?? throw new ArgumentNullException(nameof(router));
             _price = price ?? throw new ArgumentNullException(nameof(price));
@@ -129,7 +132,11 @@ namespace StockManager.Adapters
                 throw new ArgumentException($"보호 offset {_converter.OffsetBps}bps > 라우터 슬리피지 한도 {router.MaxSlippageBps}bps — 모든 시장가가 자가 거부됨", nameof(converter));
             _depth = depth; _requireDepthForMarket = requireDepthForMarket; _basePriceRaw = basePriceRaw;
             _account = account;
+            _exposure = exposure;
         }
+
+        /// <summary>[포트폴리오] 단일 종목/섹터 익스포저 상한 · 평가 미상으로 거부한 누계.</summary>
+        public long ExposureRejects => Interlocked.Read(ref _exposureRejects);
 
         /// <summary>[계좌] 주문가능금액/보유수량/스냅샷 만료로 거부한 누계.</summary>
         public long AccountRejects => Interlocked.Read(ref _accountRejects);
@@ -225,6 +232,26 @@ namespace StockManager.Adapters
                 }
             }
 
+            // ②-d [포트폴리오] 단일 종목 · 섹터 익스포저 상한(총자산 대비) — 매수만(매도는 익스포저 축소). 평가 미상 = 거부.
+            long exposureWon = 0;
+            if (side == OrderSide.Buy && _exposure is { Enabled: true } ex)
+            {
+                long notional = reservedWon != 0 ? reservedWon : NotionalWonCeil(limit, shares);
+                var ev = ex.TryAdmitBuy(p.SymbolCode, notional);
+                if (ev != StockManager.Engines.ExposureVerdict.Ok)
+                {
+                    if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);   // 계좌 예약 반환(미송출)
+                    _exec.ReportGateEvent(ReconciliationKind.ExposureRejected, p.OrderId, shares);
+                    return Reject(ev switch
+                    {
+                        StockManager.Engines.ExposureVerdict.SingleNameExceeded => OrderRouteVerdict.ExposureLimit,
+                        StockManager.Engines.ExposureVerdict.SectorExceeded => OrderRouteVerdict.SectorConcentration,
+                        _ => OrderRouteVerdict.ExposureUnknown,
+                    }, ref _exposureRejects);
+                }
+                exposureWon = notional;
+            }
+
             // ③ 라우터(슬리피지 · Disarm · 블랙리스트 · 추적)
             UInt128 key = KeyFor(p.OrderId);
             var r = _router.Route(key, limit, reference, 0.0);
@@ -232,6 +259,7 @@ namespace StockManager.Adapters
             if (!r.Accepted)
             {
                 if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);   // 미송출 — 예약 반환
+                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
                 Interlocked.Increment(ref _routeRejects);
                 if (r.Verdict == OrderRouteVerdict.SlippageExceeded)
                 {
@@ -243,12 +271,13 @@ namespace StockManager.Adapters
             if (!_exec.TryTrack(p.OrderId, key, r.Broker, shares, side == OrderSide.Buy, reference))
             {
                 if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);
+                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
                 _router.Abort(key);
                 Interlocked.Increment(ref _trackRejects);
                 return false;
             }
             Interlocked.Increment(ref _admitted);
-            admission = new OrderAdmission(1, limit, shares * QtyScale, basisAgeMicros);   // ★송출 Kind 는 항상 지정가 · 참조가 틱 나이 동봉
+            admission = new OrderAdmission(1, limit, shares * QtyScale, basisAgeMicros, r.Broker);   // [다중 브로커] 라우팅 결과 브로커 동봉   // ★송출 Kind 는 항상 지정가 · 참조가 틱 나이 동봉
             return true;
         }
 

@@ -797,3 +797,46 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - `release/RELEASE_MANIFEST.json` — v12.14.1-GM @7681aa50ec · 피어 QuantumVault@57b18226ae(읽기 전용 관측)
 - 독립 재수검: `--verify-seal`(Sealed · 앵커 일치) · `--verify-zip`(Ok 무추출) · `--release-handshake`(Ok) 전부 exit 0.
 - 구 산출물(작업 트리 빌드 · 태그 불일치)은 `release/superseded-9f3b7ef-worktree-build/` 로 보관(삭제 아님).
+
+---
+
+## 20. 차기: 사전 검증 · 포트폴리오 리스크 인터락 (2026-10-06 · 미커밋)
+
+### 20.1 전제 검증
+- 지시서의 `StockManager/Security/GenesisPreFlightUpdater.cs` · `StockManager/Engines/PortfolioRiskUpdater.cs` 는 실제 `StockManager/Blazor/` 에 존재. 대기 패치 = 처분 경합 흡수(§19.2 후속).
+- 이미 있던 것: 사전 인증(GenesisPreFlightCertifier) 거부 · VaR 한도 초과 · 무장 임대 만료는 liveArmed 술어로 무장 차단. **없던 것**: 단일 종목/섹터 편중 송출 차단 · 시계 역행 · 안전 설정 런타임 변조 · 프록시 파이프 서버 신원 검증.
+- 이 호스트에는 운용자가 인터락을 재무장(TryRearm)하는 UI 경로가 없다 → sticky 비트 복구 = 원인 제거 후 재시작.
+
+### 20.2 구현
+- `StockManager/Security/BootPreFlightSentinel.cs` — ①부팅 시계 앵커(`%LOCALAPPDATA%\MS2E\preflight.clock` · 절대 뒤로 쓰지 않음 · 허용 2분) ②런타임 벽시계↔QPC 역행(정방향 점프는 재기준) ③안전 핵심 키 15종 지문(SHA-256) 부팅 봉인 후 5초 주기 재계산 — 실행 중 변경 = 변조(해당 키를 쓰는 UI 없음) ④프록시 신원 거부 보고 → `ArmingInterlockSource.PreFlightBoot`(16 · 필수) + killPurger/발주 토큰 즉시 0x00.
+- `src/02_Infrastructure/Security/PipeServerIdentity.cs` + `KiwoomBridgeClient.ServerIdentityVerifier` — 연결 직후 GetNamedPipeServerProcessId → QueryFullProcessImageNameW 경로를 설치 레이아웃의 `proxy/MS2E.KiwoomProxyHost.exe`(또는 `Kiwoom.ProxyPath`)와 대조. 불일치 = 첫 프레임 전 파괴 + UnauthorizedAccessException. 클라이언트·프록시 서버 모두 `PipeOptions.CurrentUserOnly`.
+  - ★프로덕션 호스트에는 `ConnectAsync` 호출부가 없다(브리지 미연결 상태) — 향후 실결선 시 자동 적용.
+- `StockManager/Engines/PortfolioExposureGate.cs` — 총자산 = 예수금 + Σ 보유 × 마크가(키움 체결 틱). 매수 1건: (종목 보유 평가 + 승인 대기 + 명목) ≤ 단일 상한(기본 2,000bps) × 총자산, 섹터 합 ≤ 섹터 상한(기본 4,000bps). 평가 미상 · 스냅샷 잘림 = 거부. 섹터표 = `Exposure.SectorTablePath`("코드,섹터" UTF-8 · Utf8Parser 무할당) · 미등재 = 미분류 버킷. RouterFeedGate 판정 ExposureLimit 18 · SectorConcentration 19 · ExposureUnknown 20(계좌 예약 반환 · 라우터 슬롯 확보 전).
+- `StockManager/Engines/CorrelationCrashInterlock.cs`(방향 B) — 보유 종목 세션 고점 대비 낙폭 ≥ 300bps 종목 수가 최소 3 ∧ 보유의 60% 이상 → `CorrelationCrash`(17 · 필수) + 브로커 접수 미체결 일괄 취소(OrderExecutionFeedAdapter.CopyOpenBrokerOrders → ExecutionBridgeBroker.Cancel).
+- 대기 패치 정식화: GenesisPreFlightUpdater(Start↔Dispose 경합) · PortfolioRiskUpdater(Join 2초 타임아웃 후 처분) 루프 ObjectDisposedException 흡수.
+
+### 20.3 검증
+- `PortfolioRiskPreFlightTests.cs` 17건(방어 끔 Red 13건) · GenesisPreFlightUpdater 수정 전 코드 = 테스트 호스트 3/3 크래시(동일 예외) 실측 · 전체 3,374 Pass ×2 · 오중 빌드 -warnaserror 0W/0E.
+- 한계: PortfolioRiskUpdater 패치는 DB/시세 의존이 커 전용 테스트 없음(동일 패턴 흡수) · 취소/거부된 매수의 승인 대기분은 자동 반환하지 않음(과대 = 안전 측 · `ResetPending`) · 지시서의 ReadOnlySpan<byte> 요구는 섹터표 수집에 적용(PortfolioRiskUpdater 는 콜드 DB 로더 유지).
+
+---
+
+## 21. 차기: KIS OpenAPI · 다중 브로커 라우팅 (2026-10-06 · 미커밋)
+
+### 21.1 전제 검증 · 실결함
+- **다중 브로커 미배선**: 호스트 스위치보드 브로커 1개 · `OrderAdmission` 에 브로커 인덱스 없음 · `OrderDrainWorker` 는 항상 단일 `IBroker` — 라우터/센티널의 브로커 선택·페일오버가 실제 송출 대상을 바꾸지 못했다.
+  → `OrderAdmission.Broker`(RouterFeedGate 가 `r.Broker` 동봉) + `OrderDrainWorker(brokersByIndex:)` — 직접 경로·게이트웨이 봉인 사출(PlaceSealed) 양쪽. 미매핑 인덱스는 기본 브로커로 대체하지 않고 거부(슬롯 롤백).
+- **KisLiveBroker 결함**: ①정적 단일 토큰(모의/실 도메인·AppKey 공유) ②로컬 시각 +23시간 추정 만료 ③`Contains("\"rt_cd\":\"0\"")` 성공 판정(공백 있는 정상 응답을 실패로) ④성공 msg 가 한글 안내문(IBroker 계약 = 주문번호 — 라우터 게이트 결속 실패 → 슬롯 TTL → OrderSlotAge Disarm) ⑤소수 수량 `(int)` 절단 ⑥Cancel 미구현 → 전부 교정(KIS TR ID 는 상수화 · 2024 신규 체계 공지 대조 필요).
+- **KIS AppSecret 로그 평문**: FinancialPiiMasker 패턴(JWT · PS+34 AppKey)이 무구조 장문 AppSecret 을 못 잡음 → `RegisterSecret` 정확 일치 마스킹(⑦ · 최우선 적용).
+- **PINGPONG 판별**: tr_id 판독 즉시 true → 잘린 JSON 도 반송. 완결 문서만 인정.
+
+### 21.2 구현
+- `src/02_Infrastructure/Adapters/Brokers/KisProtocol.cs` — `KisOrderIdSpace`(KIS 주문번호 = 비트 48 | ODNO · 키움 ID 와 충돌 0) · `KisNoticeCipher`(체결통보 AES-256-CBC: BCL 원샷 `Aes.TryDecryptCbc` 가 건당 184B 할당 → ECB 블록 복호기 1회 생성 + 수동 CBC·PKCS7 = 0B) · `KisProtocol`(실시간 헤더 · H0STCNT0 46필드 다건 · H0STCNI0 · 주문 응답 · 토큰 응답 — Utf8Parser/Utf8JsonReader · JsonException 만 catch).
+- `StockManager/Adapters/KisOpenApiAdapter.cs` — `KisTokenLifecycle`(pinned 바이트 · 서버 만료와 KST 만료 중 이른 쪽 · 만료 5분 전 구간 갱신 실패/만료 = `KisAuth` 18 · 검증 통과 후에만 교체 · `TryWriteBearer` δ=0 · 새 토큰 마스커/유출 감지 등록) · `KisSessionInterlock`(방향 B: 미연결·침묵 타임아웃·끊김 = `KisSession` 19 + `BrokerFailoverSentinel.ReportFault(Disconnect)`) · `KisOpenApiAdapter`(프레임 → TickPayload/FillPayload · PINGPONG 반송).
+- ★의도적 미구현: 지시서의 '장애 브로커 미체결 잔량 원자 재라우팅'·'KIS 전용 추적 슬롯 회수' — 끊긴 브로커의 주문은 살아 있을 수 있어 재송출 = 이중 체결, 회수 = 노출 상실(CLAUDE.md §2). 기존 센티널 설계도 장애 = 라우터 sticky Disarm(페일오버는 재무장 후 대상 선지정).
+- 분할 송출(Split Dispatch) 미구현 — OrderExecutionFeedAdapter 가 제안 1건 = 슬롯 1개 · 라우터는 활성 브로커 1개로만 라우팅 → 자식 주문별 슬롯 + 브로커 지정 라우팅 설계 결정 필요.
+- 호스트 결선 없음 — KIS 자격증명·WebSocket/HTTP 전송 계층이 없다(가짜 결선 금지 원칙).
+
+### 21.3 검증
+- `KisMultiBrokerRoutingTests.cs` 21건(방어 끔 Red 6건 · PINGPONG 수정 전 Red · Contains 판정 오판 실증) · 프레임 판독·AES 복호·통보 사상·Bearer·세션 판정 δ=0 실측 · 전체 3,395 Pass ×2 · 오중 빌드 -warnaserror 0W/0E.
+- 한계: KIS 필드 순서·TR ID·응답 키는 공개 문서 기준(이 저장소에 VTS 실측 이력 없음) · KisLiveBroker 는 동기 HttpClient(네트워크 테스트 없음 · 소스 회귀 테스트만).

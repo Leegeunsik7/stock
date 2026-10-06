@@ -43,6 +43,7 @@ namespace StockManager.Adapters
         ModifyApplied = 20,        // [정정] 브로커 접수 잔량 = 정정 수량 확인 — 추적 주문 수량 재기준(Qty = 정정 수량)
         AccountDivergence = 21,    // [계좌 · 방향 B] 브로커 잔고 ↔ 호스트 추정 보유 불일치(Qty = 브로커 수량)
         AccountRejected = 22,      // [계좌] 주문가능금액/보유수량 부족·스냅샷 만료 — 송출 전 거부(Qty = 요청 수량)
+        ExposureRejected = 23,     // [포트폴리오] 단일 종목/섹터 상한·평가 미상 — 송출 전 거부(Qty = 요청 수량)
     }
 
     public readonly record struct ReconciliationRecord(long Micros, ReconciliationKind Kind, long ProposalId, long BrokerOrderId, long Qty);
@@ -104,6 +105,21 @@ namespace StockManager.Adapters
         }
 
         public long AmendBlocked => Interlocked.Read(ref _amendBlocked);
+
+        /// <summary>
+        /// [포트폴리오 · 방향 B] 브로커 접수 확인(번호 결속)된 미체결 주문번호 복사(δ=0 · 호출측 버퍼) — 일괄 취소 대상.
+        /// 반환 = 복사 수(버퍼 부족이면 버퍼 크기만큼만 · 잘림 여부는 Tracked 와 비교).
+        /// </summary>
+        public int CopyOpenBrokerOrders(Span<long> brokerOrderIds)
+        {
+            lock (_gate)
+            {
+                int n = 0;
+                for (int i = 0; i < _state.Length && n < brokerOrderIds.Length; i++)
+                    if (_state[i] == Accepted && _brokerOrderId[i] != 0 && _orderQty[i] - _filled[i] > 0) brokerOrderIds[n++] = _brokerOrderId[i];
+                return n;
+            }
+        }
         public long CancelRaceFilled => Interlocked.Read(ref _cancelRaceFilled);
         public long ModifyApplied => Interlocked.Read(ref _modifyApplied);
         /// <summary>정정/취소 진행 중 잔량 불일치를 Disarm 대신 유예한 누계(구 번호 확인 통보 · 정정 반영 전 경합).</summary>

@@ -15,7 +15,8 @@ namespace MS2E.Infrastructure
 {
     /// <summary>게이트가 승인한 실제 송출 형태(값 타입 · δ=0). KindByte 0=시장가 · 1=지정가 / PriceRaw·QtyRaw = QPrice·QQty raw(10^8).</summary>
     /// <summary>[저지연] BasisAgeMicros = 판정에 쓴 참조가 틱의 나이(µs · −1 = 미상) — Tick-to-Trade 의 '틱 → 판정' 구간.</summary>
-    public readonly record struct OrderAdmission(byte KindByte, long PriceRaw, long QtyRaw, long BasisAgeMicros = -1);
+    /// <param name="Broker">[다중 브로커] 라우터가 고른 브로커 인덱스(LockFreeBrokerSwitchboard) — OrderDrainWorker 가 이 인덱스의 IBroker 로 송출.</param>
+    public readonly record struct OrderAdmission(byte KindByte, long PriceRaw, long QtyRaw, long BasisAgeMicros = -1, int Broker = 0);
 
     /// <summary>
     /// [저지연] 주문 1건 Tick-to-Trade 계측 프로브(δ=0). OrderDrainWorker 실전 경로가 호출:

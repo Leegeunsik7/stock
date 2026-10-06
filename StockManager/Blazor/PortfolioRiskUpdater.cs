@@ -54,6 +54,13 @@ namespace StockManager.Blazor
         private void Loop()
         {
             // 최초 대기 후 주기 갱신(부팅 안정화). _stop.Wait 가 true 면 정지 신호.
+            // [실결함 교정] Dispose 는 Join(2000) 타임아웃 후에도 _stop 을 처분한다 — 갱신(DB 로드)이 2초를 넘기면 다음 Wait 가
+            //   ObjectDisposedException(백그라운드 미처리 = 앱 종료 시 프로세스 크래시). 처분 = 정지로 흡수.
+            try { LoopCore(); } catch (ObjectDisposedException) { /* 처분 = 정지 */ }
+        }
+
+        private void LoopCore()
+        {
             while (!_stop.Wait(_intervalMs))
             {
                 try

@@ -1,17 +1,19 @@
 # Current Project Status
 
-- **Active Milestone**: [출하 · 추천 A] v12.14.1-GM Production Golden Master 최종 커밋 · 태그 재지정 · release-package.ps1 전 단계 통과 출하 (태그 v12.14.1-GM = 7681aa5)
-- **Build Status**: 클린 체크아웃 오중 빌드 Release -warnaserror 0/0(Default · WebOnly · PrimesBench · x86 KiwoomProxy · KiwoomComShim), 3,357/3,357 Pass(작업 트리 2회 + packaging [3/10]), infra-scan coupling 0, RatchetCeiling 통과
-- **Updated At**: 2026-10-06 12:25
+- **Active Milestone**: [KIS · 추천 A] KIS OpenAPI 프로토콜 무할당 판독 · OAuth 토큰 수명주기 Disarm · 다중 브로커 라우팅 실배선 · KIS 세션 단절 인터락(방향 B) (기준 태그 v12.14.1-GM · 미커밋 — 직전 사전 검증/포트폴리오 작업 포함)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,395/3,395 Pass(2회 연속), infra-scan coupling 0, RatchetCeiling 통과
+- **Updated At**: 2026-10-06 15:10
 
 ## Completed Deliverables
-- 커밋 09070c7(21파일 선별 스테이징 · 타 세션 파일 0) + 7681aa5(출하 차단 결함 교정) · 태그 9f3b7ef → 7681aa5 재지정(원격 없음)
-- [실결함 · 출하 차단] 감시 스레드 시작↔처분 경합 → 테스트 호스트/앱 프로세스 크래시(이벤트 로그 1026 실측) — lifecycle 락 + 핸드셰이크 자가 처분(핸들 누수 동반 교정) · 수정 전 3/3 크래시 재현 테스트
-- release-package.ps1 [0/10]~[10/10] 통과(클린 worktree): zip 2,903,759 B · SHA-256 E7C73D63…D2D1B31 · masterSeal 03898135…D3A5EBFE · 아티팩트 38
-- 독립 재수검 --verify-seal(Sealed·앵커 일치) · --verify-zip(Ok) · --release-handshake(Ok · 피어 QuantumVault@57b18226ae 읽기 전용)
-- release/ 에 출하 산출물 배치 · 구 작업 트리 빌드 zip 은 release/superseded-9f3b7ef-worktree-build/ 보관 · HANDOVER.md §19
+- [실결함] 다중 브로커 미배선 — 라우터가 브로커를 골라도 OrderDrainWorker 는 단일 IBroker 고정 → OrderAdmission.Broker · brokersByIndex(직접·봉인 사출 양 경로) · 미매핑 = 거부
+- [실결함] KisLiveBroker: 정적 단일 토큰 캐시(도메인/키 공유) · 23시간 추정 만료 · Contains 성공 판정 · msg=한글(주문번호 아님 → 슬롯 TTL Disarm) · 소수 절단 · 취소 미구현 → 전부 교정
+- [실결함] KIS AppSecret 로그 평문 통과(마스커 패턴 미해당) → 등록 비밀 정확 일치 마스킹 · [실결함] PINGPONG 판별이 잘린 JSON 도 true(반송) → 완결 문서만
+- KisProtocol(δ=0): 실시간 헤더 · H0STCNT0 다건 · H0STCNI0 통보 · 주문 응답 · 토큰 응답 · KisNoticeCipher(BCL 원샷 AES 184B/건 → ECB 블록 + 수동 CBC/PKCS7 0B)
+- KisTokenLifecycle: pinned 바이트 보관 · 서버 만료(KST 만료가 이르면 우선) · 5분 선행 구간 갱신 실패/만료 = KisAuth(18) · 검증 후 교체 · Bearer δ=0
+- 방향 B KisSessionInterlock: 미연결/침묵/끊김 → KisSession(19) + 기존 센티널 ReportFault(라우터 Disarm · 블랙리스트 · 페일오버 선지정) · 슬롯 회수·잔량 재송출 없음
+- KisOrderIdSpace(비트 48): 키움 클라이언트 ID 와 KIS ODNO 충돌 0 · KisMultiBrokerRoutingTests.cs 21건(Red 6건 + PINGPONG 수정 전 Red)
 
 ## 정직 스코핑
-- ★테스트 호스트 무출력 종료 1회 미해명(교정 후 첫 packaging · 243건 · 이벤트/WER/덤프 0 · 재현 0/24 · 이후 packaging 통과) — 방화벽 프롬프트 동시 관측(0.0.0.0 UDP 멀티캐스트 테스트) · 외부 요인 가능성
-- GenesisPreFlightUpdater/PortfolioRiskUpdater 처분 경합 흡수 패치는 태그 이후 작업 트리 미커밋(출하본 미포함 · 다음 버전 대상)
-- Next: 위 2건 후속 · 원격 저장소 미구성(백업 푸시 경로 없음)
+- ★지시서 '잔량 원자 재라우팅'·'KIS 슬롯 회수'는 미구현(의도) — 장애 브로커 주문이 살아 있을 수 있어 이중 체결/노출 상실(CLAUDE.md §2 위반) · 기존 설계도 장애 = 전면 Disarm
+- 분할 송출(Split Dispatch) 미구현 — 자식 주문별 추적 슬롯·브로커 지정 라우팅 설계 결정 필요 · KIS 필드 순서/TR ID 는 공개 문서 기준(VTS 실측 전) · 호스트 KIS 결선 0(자격증명·전송 계층 없음)
+- Next: 커밋 대기(사전 검증/포트폴리오 + KIS) · 분할 송출 설계 방향 수령

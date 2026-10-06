@@ -81,6 +81,25 @@ namespace StockManager.Adapters
         public long RejectPosition => Interlocked.Read(ref _rejectPosition);
         public long SinkFaults => Interlocked.Read(ref _faults);
 
+        /// <summary>
+        /// [포트폴리오 리스크] 호스트 추정 보유 스냅샷 복사(δ=0 · 호출측 버퍼). 반환 = 복사한 종목 수(버퍼보다 많으면 -1 = 잘림 → 호출측 fail-closed).
+        /// 수량 0 종목은 제외.
+        /// </summary>
+        public int CopyPositions(Span<long> symbols, Span<long> quantities)
+        {
+            lock (_gate)
+            {
+                int n = 0;
+                for (int i = 0; i < _count; i++)
+                {
+                    if (_qty[i] == 0) continue;
+                    if (n >= symbols.Length || n >= quantities.Length) return -1;
+                    symbols[n] = _sym[i]; quantities[n] = _qty[i]; n++;
+                }
+                return n;
+            }
+        }
+
         /// <summary>호스트 추정 보유수량(미보유 = 0).</summary>
         public long PositionOf(long symbolCode)
         {

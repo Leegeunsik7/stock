@@ -37,7 +37,13 @@ namespace MS2E.Infrastructure
         private long _interlockVetoes;
         private readonly IOrderRouteGate? _routeGate;   // [피드 연동] 참조가·추적 슬롯 라우터 게이트(옵션 · 실전 경로 전용)
         private long _routeVetoes;
-        private readonly ITickToTradeProbe? _latencyProbe;   // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 지연 폭주 veto(옵션)
+        private readonly ITickToTradeProbe? _latencyProbe;
+        // [다중 브로커] 라우터 브로커 인덱스 → IBroker. 수정 전: 라우터가 브로커를 골라도 송출은 항상 단일 _broker(인덱스 무시 —
+        //   스위치보드 페일오버가 실제 송출 대상을 바꾸지 못했다). 미주입/범위 밖/null 슬롯 = 송출 거부(GatedOut · fail-closed).
+        private readonly IBroker?[]? _brokersByIndex;
+        private IBroker _sendBroker;   // 드레인 단일 스레드 — 봉인 사출(PlaceSealed) 경로로 선택 브로커 전달
+        private long _brokerIndexVetoes;
+        public long BrokerIndexVetoes => System.Threading.Interlocked.Read(ref _brokerIndexVetoes);   // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 지연 폭주 veto(옵션)
         private long _latencyVetoes;
         // [실배선 δ=0 교정] Drain(Dispatch) 메서드 그룹 변환이 드레인 사이클마다 Func 델리게이트(64B)를 새로 할당했다
         //   (50ms 주기 = 초당 20회 상시 GC 압력 · ProductionPipelineWiringTests 실측). ctor 에서 1회 캐시.
@@ -77,11 +83,14 @@ namespace MS2E.Infrastructure
                                 MicroCapitalCanaryGovernor? canaryGov = null,
                                 MS2E.Core.ArmingInterlockBitmask? interlocks = null,
                                 IOrderRouteGate? routeGate = null,
-                                ITickToTradeProbe? latencyProbe = null)
+                                ITickToTradeProbe? latencyProbe = null,
+                                IBroker?[]? brokersByIndex = null)
         {
+            _brokersByIndex = brokersByIndex;
             _latencyProbe  = latencyProbe;
             _dispatcher    = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _broker        = broker     ?? throw new ArgumentNullException(nameof(broker));
+            _sendBroker    = _broker;
             _att           = attestation;
             _dualKeyIntact = dualKeyIntact;
             _gateway       = gateway;   // v10.0.0 — 주입 시 실물 사출을 최종 빗장(이중키∧방어선∧펄스∧봉인) 경유
@@ -207,6 +216,7 @@ namespace MS2E.Infrastructure
             // ★[피드 연동] 라우터 게이트 — 카나리까지 통과한 실전 주문만 참조가·라우터 판정 + 추적 슬롯 확보. 실패 = 미송출.
             // [보호 지정가] 송출 형태 = 게이트 승인값(시장가 → 보호 지정가 · 잔량 부족 시 수량 축소). 게이트 미주입이면 원 제안 그대로.
             byte sendKind = p.KindByte; long sendPrice = p.PriceRaw, sendQty = p.QtyRaw, basisAge = -1;
+            IBroker target = _broker;
             if (_routeGate is { } rg)
             {
                 if (!rg.TryAdmit(in p, out var adm))
@@ -215,7 +225,19 @@ namespace MS2E.Infrastructure
                     return false;
                 }
                 sendKind = adm.KindByte; sendPrice = adm.PriceRaw; sendQty = adm.QtyRaw; basisAge = adm.BasisAgeMicros;
+                if (_brokersByIndex is { } map)
+                {
+                    // ★라우팅 결과 브로커로 송출 — 매핑 없는 인덱스는 '기본 브로커로 대체'하지 않는다(라우터 판정 우회 = fail-open)
+                    if ((uint)adm.Broker >= (uint)map.Length || map[adm.Broker] is not { } chosen)
+                    {
+                        System.Threading.Interlocked.Increment(ref _brokerIndexVetoes);
+                        rg.OnNotSent(p.OrderId);
+                        return false;
+                    }
+                    target = chosen;
+                }
             }
+            _sendBroker = target;
 
             // ★[저지연 · 방향 B] 송출 직전 지연 폭주 veto — 디스패치 진입 이후 GC 정지/스레드 선점으로 임계를 넘겼으면 그 주문은
             //   이미 낡은 판단 위에 있다 → 미송출(슬롯 롤백) + 프로브가 회로 Disarm. '보낸 뒤 취소' 대신 '보내기 전 원자 중단'.
@@ -242,7 +264,7 @@ namespace MS2E.Infrastructure
             var qty        = new QQty(sendQty).ToDecimal();
             var limitPrice = new QPrice(sendPrice).ToDecimal();
 
-            var (ok, msg) = _broker.Place(
+            var (ok, msg) = target.Place(
                 PaperAsset.Stock, symbol, symbol,
                 side, kind, qty, limitPrice, limitPrice);
 
@@ -265,7 +287,7 @@ namespace MS2E.Infrastructure
             var qty        = new QQty(t.QtyRaw).ToDecimal();
             var limitPrice = new QPrice(t.PriceRaw).ToDecimal();
 
-            var (ok, msg) = _broker.Place(
+            var (ok, msg) = _sendBroker.Place(
                 PaperAsset.Stock, symbol, symbol,
                 side, kind, qty, limitPrice, limitPrice);
 

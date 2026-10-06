@@ -146,18 +146,39 @@ namespace MS2E.Infrastructure
     }
 
     /// <summary>KIS 실주문/잔고 — 토큰 + 해시키 + 주문. 기본 모의(VTS) 도메인.</summary>
+    /// <remarks>[KIS · 실결함 교정 4건]
+    /// ① 토큰 캐시가 '정적 단일 슬롯'이었다 — 모의(VTS)/실 도메인·서로 다른 AppKey 가 같은 토큰을 공유(도메인 전환 시 타 도메인 토큰 송신).
+    ///    → (도메인, AppKey) 키 캐시. 만료도 '로컬 시각 + 23시간 추정' → 서버 expires_in/access_token_token_expired(5분 선행 갱신).
+    /// ② 성공 판정이 본문 문자열 Contains(""rt_cd":"0"") — 공백/필드 순서에 취약 → Utf8JsonReader 판독(KisProtocol.TryParseOrderAck).
+    /// ③ 성공 시 반환 msg 가 한글 안내문이었다 — IBroker 계약(키움 ExecutionBridgeBroker 와 동일)은 'msg = 브로커 주문번호'.
+    ///    라우터 게이트(OnBrokerAccepted)가 번호를 못 읽어 추적 슬롯이 TTL 까지 미결 → OrderSlotAge sticky Disarm. → KIS 네임스페이스 번호 반환.
+    /// ④ 소수 수량을 (int) 절단해 송출(요청 ≠ 송출) → 거부. Cancel 미구현 → 원 조직번호 보관 후 order-rvsecncl 취소 구현.
+    /// 비밀값(AppKey/AppSecret/토큰)은 FinancialPiiMasker·RawCredentialLeakInterlock 에 등록 — 오류 본문도 마스킹 후 반환.</remarks>
     public class KisLiveBroker : IBroker
     {
         private static readonly HttpClient Http = new();
         private readonly string _appKey, _appSecret, _account;
         private readonly bool _real;
-        private static string? _token;
-        private static DateTime _tokenExp;
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, DateTime ExpiresUtc)> s_tokens = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<long, long> _orgNoByOdno = new();   // ODNO → KRX_FWDG_ORD_ORGNO(취소용)
+        // ★TR ID(공개 문서 기존 표기). KIS 는 2024 년 일부 주문 TR ID 신규 체계를 공지했다 — 실 연동 전 공지 대조 필요.
+        public const string TrBuyReal = "TTTC0802U", TrSellReal = "TTTC0801U", TrCancelReal = "TTTC0803U";
+        public const string TrBuyVts = "VTTC0802U", TrSellVts = "VTTC0801U", TrCancelVts = "VTTC0803U";
 
         public KisLiveBroker(LocalDatabase db)
         {
             (_appKey, _appSecret, _account) = ApiKeyVault.GetKis(db);
             _real = db.GetSetting("Kis.UseRealDomain") == "1";
+            RegisterSecrets(_appKey, _appSecret);
+        }
+
+        private static void RegisterSecrets(params string?[] secrets)
+        {
+            foreach (var x in secrets)
+            {
+                try { FinancialPiiMasker.RegisterSecret(x); RawCredentialLeakInterlock.Shared.RegisterCredential(x); }
+                catch (Exception) { /* 등록 실패 — 마스커 패턴 규칙이 2차 방어 */ }
+            }
         }
 
         private string Domain => _real ? "https://openapi.koreainvestment.com:9443"
@@ -175,6 +196,8 @@ namespace MS2E.Infrastructure
         {
             if (string.IsNullOrWhiteSpace(_appKey) || string.IsNullOrWhiteSpace(_account))
                 return (false, "KIS API 키/계좌가 설정되지 않았습니다.");
+            if (qty <= 0 || qty != decimal.Truncate(qty) || qty > int.MaxValue)
+                return (false, $"KIS 주문 수량은 1 이상의 정수여야 합니다(요청 {qty}) — 절단 송출 금지");
             try
             {
                 var token = EnsureToken();
@@ -188,18 +211,46 @@ namespace MS2E.Infrastructure
                     ["ORD_DVSN"] = ordDvsn, ["ORD_QTY"] = ((int)qty).ToString(), ["ORD_UNPR"] = unpr
                 };
                 var bodyJson = JsonSerializer.Serialize(bodyObj);
-                var trId = (_real ? "TTTC080" : "VTTC080") + (side == PaperSide.Buy ? "2U" : "1U");
+                var trId = side == PaperSide.Buy ? (_real ? TrBuyReal : TrBuyVts) : (_real ? TrSellReal : TrSellVts);
                 using var req = NewReq(HttpMethod.Post, "/uapi/domestic-stock/v1/trading/order-cash", token, trId, GetHashKey(bodyJson, token));
                 req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
                 var (ok, body) = SendRead(req);
-                return ok && body.Contains("\"rt_cd\":\"0\"")
-                    ? (true, $"{Name} 주문 접수: {symbol} {(side == PaperSide.Buy ? "매수" : "매도")} {(int)qty}주")
-                    : (false, $"{Name} 주문 실패: {Trunc(body)}");
+                if (ok && KisProtocol.TryParseOrderAck(Encoding.UTF8.GetBytes(body), out var ack) && ack.Ok)
+                {
+                    if (ack.OrgNo > 0) _orgNoByOdno[ack.OrderNo] = ack.OrgNo;
+                    return (true, KisOrderIdSpace.Encode(ack.OrderNo).ToString(System.Globalization.CultureInfo.InvariantCulture));   // ★msg = 브로커 주문번호
+                }
+                return (false, $"{Name} 주문 실패: {FinancialPiiMasker.Mask(Trunc(body))}");
             }
-            catch (Exception ex) { return (false, "KIS 주문 오류: " + ex.Message); }
+            catch (Exception ex) { return (false, "KIS 주문 오류: " + FinancialPiiMasker.Mask(ex.Message)); }
         }
 
-        public void Cancel(string orderId) { /* order-rvsecncl: 원주문번호 필요 — 별도 조회 후 구현 예정 */ }
+        /// <summary>전량 취소(order-rvsecncl · 정정취소구분 02 · 잔량전부). orderId = Place 가 반환한 KIS 네임스페이스 번호.
+        /// 원 조직번호(KRX_FWDG_ORD_ORGNO)를 모르는 주문(다른 세션 발주)은 송신하지 않는다(잘못된 원주문 취소 방지).</summary>
+        public void Cancel(string orderId)
+        {
+            if (!long.TryParse(orderId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long id)) return;
+            long odno = KisOrderIdSpace.Decode(id);
+            if (odno <= 0 || !_orgNoByOdno.TryGetValue(odno, out long orgNo)) return;
+            try
+            {
+                var token = EnsureToken();
+                if (token == null) return;
+                var (cano, prdt) = Acct();
+                var bodyJson = JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    ["CANO"] = cano, ["ACNT_PRDT_CD"] = prdt,
+                    ["KRX_FWDG_ORD_ORGNO"] = orgNo.ToString("D5", System.Globalization.CultureInfo.InvariantCulture),
+                    ["ORGN_ODNO"] = odno.ToString("D10", System.Globalization.CultureInfo.InvariantCulture),
+                    ["ORD_DVSN"] = "00", ["RVSE_CNCL_DVSN_CD"] = "02", ["ORD_QTY"] = "0", ["ORD_UNPR"] = "0", ["QTY_ALL_ORD_YN"] = "Y",
+                });
+                using var req = NewReq(HttpMethod.Post, "/uapi/domestic-stock/v1/trading/order-rvsecncl", token, _real ? TrCancelReal : TrCancelVts, GetHashKey(bodyJson, token));
+                req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+                var (ok, body) = SendRead(req);
+                if (ok && KisProtocol.TryParseOrderAck(Encoding.UTF8.GetBytes(body), out var ack) && ack.Ok) _orgNoByOdno.TryRemove(odno, out _);
+            }
+            catch (Exception) { /* 취소 실패 — 체결 통보/장기 TTL 대사로 노출 확인(재시도 루프 없음) */ }
+        }
 
         /// <summary>실잔고: 종목코드 보유수량(hldg_qty).</summary>
         public decimal HeldQty(PaperAsset asset, string symbol)
@@ -236,19 +287,34 @@ namespace MS2E.Infrastructure
             return req;
         }
 
+        private string TokenKey => Domain + "\n" + _appKey;
+
         private string? EnsureToken()
         {
-            if (_token != null && DateTime.Now < _tokenExp) return _token;
+            string key = TokenKey;
+            if (s_tokens.TryGetValue(key, out var cached) && DateTime.UtcNow < cached.ExpiresUtc) return cached.Token;
             var json = JsonSerializer.Serialize(new Dictionary<string, string>
             { ["grant_type"] = "client_credentials", ["appkey"] = _appKey, ["appsecret"] = _appSecret });
             using var req = new HttpRequestMessage(HttpMethod.Post, Domain + "/oauth2/tokenP")
             { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             var (ok, body) = SendRead(req);
             if (!ok) return null;
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("access_token", out var at)) return null;
-            _token = at.GetString(); _tokenExp = DateTime.Now.AddHours(23);
-            return _token;
+            byte[] tok = new byte[4096];
+            if (!KisProtocol.TryParseToken(Encoding.UTF8.GetBytes(body), tok, out int len, out long expiresIn, out long expiredAtKst)) return null;
+            DateTime nowUtc = DateTime.UtcNow;
+            DateTime exp = nowUtc.AddSeconds(expiresIn);
+            if (expiredAtKst > 0)
+            {
+                var kstAsUtc = new DateTime(expiredAtKst, DateTimeKind.Utc).AddHours(-9);
+                if (kstAsUtc < exp) exp = kstAsUtc;
+            }
+            exp = exp.AddMinutes(-5);                                               // 만료 5분 전 선행 갱신
+            if (exp <= nowUtc) return null;
+            string token = Encoding.ASCII.GetString(tok, 0, len);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(tok);
+            RegisterSecrets(token);
+            s_tokens[key] = (token, exp);
+            return token;
         }
 
         private string? GetHashKey(string bodyJson, string token)
