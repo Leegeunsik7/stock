@@ -1672,6 +1672,9 @@ namespace StockManager.Blazor
                     reconciled: () => openOrderRecon.IsConfirmed(MS2E.Infrastructure.OpenOrderVenueKind.Kiwoom),
                     linkProbe: () => bridge.IsProductionProxy, autoReconnect: false)
                 : null;
+            // [Long-Soak · 방향 A] 세션 복구 상태 전이(체류 Stopwatch 틱) · 격리 작동 표류(2 펌프 지속) → MMF 블랙박스(100/101). 관리자 펌프 '뒤'에 펌프.
+            var recoveryMonitor = new StockManager.Adapters.RecoveryStateDriftMonitor(blackbox, limitFeed, null, kiwoomRecovery, kisRecovery);
+            services.AddSingleton(recoveryMonitor);
             // [KIS 미체결 대사 · 추천 A] TTTC8001R 실배선 — 전용 1초 타이머(HTTP 블로킹)가 당일 미체결 페이지를 대사기 KIS venue 로 공급.
             //   KIS 한도 0 = 최초 확정 전 · 미확정(재접속 RequestReconcile) · 유령 · 불일치. 확정 = 복구 관리자 즉시 해제 통지.
             //   불일치/유령 = 비트 22(대사기 sticky) + 영구 래치 + 블랙리스트 + 자식 매트릭스 KIS 격리(비트 23) · [방향 B] 유령 = 패스당 ≤4건 비상 취소(TTTC0803U).
@@ -1726,6 +1729,7 @@ namespace StockManager.Blazor
                 try { kisRecovery?.Pump(); } catch { }                                  // [세션 복구 · 방향 A] 침묵 강제 종료 · 백오프 허가 · 대사 → 격리 해제
                 try { kiwoomRecovery?.Pump(); } catch { }                               // [세션 복구] 키움 링크 감시 · 복귀 시 대사
                 try { kisOpenOrders?.RefreshGate(); } catch { }                         // [KIS 미체결 대사] 재접속 확정 철회 → KIS 한도 0(δ=0)
+                try { recoveryMonitor.Pump(); } catch { }                              // [Long-Soak · 방향 A] 복구 전이 · 작동 표류 블랙박스
                 try { kiwoomLink.Evaluate(); } catch { }                                // [키움 실배선] 링크(하트비트 단절 포함) 재평가
             }, null, 50, 50);
             FormClosed += (_, _) => ShutdownTrace.Step("childMatrix", () =>

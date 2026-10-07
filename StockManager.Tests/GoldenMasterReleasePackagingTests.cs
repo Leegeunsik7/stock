@@ -1,13 +1,16 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.17.0-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.17.1-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.0(출하 zip 이름 · 태그 v12.17.0-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.1(출하 zip 이름 · 태그 v12.17.1-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
 //     인터락 29종(0~27 + StartupSanity) = 태그 소스 열거 · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
 //  §4 오중 빌드 회귀.
+//  §7 [v12.17.1-GM · 방향 A 확장] ★마스터 플래그 IL 판독: 빌드 산출 DLL = 마스터 플래그 생성 ≥1(ShadowMetricsBridge liveArmed 리터럴 false) ·
+//     newobj 직전 ldc.i4.0→ldc.i4.1 1바이트 패치 = 거부 · get_LiveArmed 본문 ldc.i4.0→ldc.i4.1 = 거부 · Func<bool> 술어 매개변수 = 대상 아님 ·
+//     스크립트 [6/10] 소스 가드도 마스터 플래그 대조.
 //  §6 [v12.17.0-GM · 방향 B] zip 항목 정규화 · 중복 가드: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 비바이너리 runtimeconfig) = 수검 Ok ·
 //     IL 판독 Ok · manifest.sig 2개 / 봉인 비바이너리 대소문자 변형 사본 / 구분자 · 대소문자 변형 바이너리 사본 = 전부 거부(Windows 해제 시 덮어쓰기 모호성).
 //  §5 [v12.16.1-GM · 방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독(ShippedBinaryLiveArmedGuard — 추출·로드·실행 0):
@@ -61,13 +64,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_17_0_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_17_1_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 17, 0, 0), v);
-            Assert.Equal("12.17.0", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 17, 1, 0), v);
+            Assert.Equal("12.17.1", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.17.0</Version>", csproj);
+            Assert.Contains("<Version>12.17.1</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -88,7 +91,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.17.0-GM Production Golden Master", s);
+            Assert.Contains("v12.17.1-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -177,7 +180,7 @@ namespace StockManager.Tests
                 Assert.Contains("<TreatWarningsAsErrors>true</TreatWarningsAsErrors>", File.ReadAllText(Path.Combine(root, proj)));
             }
             Assert.True(PureShellFitnessSentinel.RatchetCeiling <= 40);
-            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // 0~27 + StartupSanity — v12.17.0-GM 출하본(태그 소스)도 29
+            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // 0~27 + StartupSanity — v12.17.1-GM 출하본(태그 소스)도 29
         }
 
         // ════════════ §5 [방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독 ════════════
@@ -297,7 +300,7 @@ namespace StockManager.Tests
                 var empty = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(File.ReadAllBytes(typeof(FactAttribute).Assembly.Location)));
                 Assert.Equal(0, empty.Sites);
                 Assert.False(empty.Ok);
-                Assert.Equal(2, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));
+                Assert.Equal(3, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM)
             }
             finally { foreach (var z in new[] { wrongEntry, truncated, notZip }) File.Delete(z); }
         }
@@ -369,6 +372,85 @@ namespace StockManager.Tests
                 Assert.Contains(g.Violations, x => x.Contains("중복", StringComparison.Ordinal));
             }
             finally { try { Directory.Delete(root, true); } catch (IOException) { } }
+        }
+
+        // ════════════ §7 [v12.17.1-GM · 방향 A 확장] 마스터 플래그 IL 판독 ════════════
+
+        private static (MethodDefinitionHandle Ctor, MethodDefinitionHandle Getter, int GetterOffset) FindMasterTargets(byte[] dll)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            MethodDefinitionHandle ctor = default, getter = default;
+            int getterOffset = -1;
+            foreach (var th in md.TypeDefinitions)
+            {
+                var t = md.GetTypeDefinition(th);
+                string tn = md.GetString(t.Name);
+                foreach (var mh in t.GetMethods())
+                {
+                    var m = md.GetMethodDefinition(mh);
+                    string mn = md.GetString(m.Name);
+                    if (tn == "ShadowMetricsBridge" && mn == ".ctor") ctor = mh;
+                    if (tn == "DualBrokerStatusAdapter" && mn == "get_LiveArmed")
+                    {
+                        getter = mh;
+                        Assert.True(pe.PEHeaders.TryGetDirectoryOffset(new DirectoryEntry(m.RelativeVirtualAddress, 1), out getterOffset));
+                    }
+                }
+            }
+            Assert.False(ctor.IsNil);
+            Assert.False(getter.IsNil);
+            return (ctor, getter, getterOffset);
+        }
+
+        [Fact]
+        public void MasterFlag_BuiltHost_LiteralFalse_OneBytePatches_Rejected()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            var ok = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(dll));
+            _out.WriteLine($"[방향 A] 키 조회 {ok.Sites} · 마스터 플래그 생성 {ok.MasterSites} · 위반 {ok.Violations.Count}");
+            Assert.True(ok.Ok, string.Join(" | ", ok.Violations));
+            Assert.True(ok.MasterSites >= 1);                                                    // BlazorHomeForm: new ShadowMetricsBridge(..., liveArmed: false)
+
+            var (ctor, _, getterOffset) = FindMasterTargets(dll);
+            // ① 마스터 플래그 리터럴 false → true(newobj 직전 ldc.i4.0)
+            int token = MetadataTokens.GetToken(ctor);
+            var bad = (byte[])dll.Clone();
+            int patched = 0;
+            for (int i = 1; i + 4 < bad.Length; i++)
+                if (bad[i] == 0x73 && BitConverter.ToInt32(bad, i + 1) == token && bad[i - 1] == 0x16) { bad[i - 1] = 0x17; patched++; }
+            Assert.True(patched >= 1, "마스터 플래그 생성 지점 패치 0");
+            var r1 = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(bad));
+            foreach (var v in r1.Violations) _out.WriteLine("[방향 A] 위반: " + v);
+            Assert.False(r1.Ok);
+            Assert.Equal(patched, r1.Violations.Count(v => v.Contains("마스터 플래그", StringComparison.Ordinal) && v.Contains("ldc.i4.1", StringComparison.Ordinal)));
+            string zip = ZipWithHost(bad);
+            try { Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, zip }, TextWriter.Null)); }
+            finally { File.Delete(zip); }
+
+            // ② get_LiveArmed 상수 getter(tiny 헤더 + ldc.i4.0; ret) → 항상 true
+            var g = (byte[])dll.Clone();
+            Assert.Equal(0x16, g[getterOffset + 1]);
+            Assert.Equal(0x2A, g[getterOffset + 2]);
+            g[getterOffset + 1] = 0x17;
+            var r2 = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(g));
+            Assert.False(r2.Ok);
+            Assert.Contains(r2.Violations, v => v.Contains("DualBrokerStatusAdapter.get_LiveArmed", StringComparison.Ordinal) && v.Contains("항상 true", StringComparison.Ordinal));
+
+            // ③ Func<bool> 술어 매개변수(liveArmed/isLiveArmed)는 '플래그'가 아니다 — 원본에서 위반 0 이 곧 증거(SecurityAssetVault · LiveArmedEgressSentinel)
+            Assert.DoesNotContain(ok.Violations, v => v.Contains("SecurityAssetVault", StringComparison.Ordinal) || v.Contains("LiveArmedEgressSentinel", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void PackageScript_Step6_SourceGuardsMasterFlag()
+        {
+            string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
+            Assert.Contains("new ShadowMetricsBridge\\([^;]*?liveArmed:\\s*(\\w+)\\s*\\)", s);
+            Assert.Contains("마스터 플래그", s);
+            string form = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "Blazor", "BlazorHomeForm.cs"));
+            var m = Regex.Matches(form, @"new ShadowMetricsBridge\([^;]*?liveArmed:\s*(\w+)\s*\)");
+            Assert.True(m.Count >= 1);
+            Assert.All(m, x => Assert.Equal("false", x.Groups[1].Value));
         }
 
         [Fact]

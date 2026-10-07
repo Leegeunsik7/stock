@@ -58,6 +58,7 @@ namespace MS2E.Infrastructure
         InterlockRaised = 93, InterlockCleared = 94, EgressBypassBlocked = 95, // [E2E 스트레스] 집계어 비트 전이 · 무장 우회 송출 차단
         ChaosInjected = 96, StormFreeze = 97,                            // [카오스 스톰] 장애 주입 사건 · 연쇄 격발 증거 동결
         KisBookRejected = 98, KisBookQuarantine = 99,                    // [KIS 호가] H0STASP0 형식 이탈 틱(사유 코드) · 피드 격리/복귀
+        SessionRecoveryTransition = 100, SessionRecoveryDrift = 101,     // [세션 복구] 브로커 복구 상태 전이(체류 틱) · 격리 작동 표류
         OpenOrderReconciled = 73, OpenOrderDivergence = 74, GhostOrderCancel = 75, // [미체결 대사] 대사 패스 판정 · 원장 불일치 건 · 유령 주문 비상 취소
         LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
         StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어

@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.17.0-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.17.1-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -180,6 +180,13 @@ foreach ($c in $allCalls) {
     if ($c.Groups[2].Value.Trim() -ne 'false') { Fail "liveArmed 가드: 기본값이 false 가 아닌 조회 발견 → $($c.Value)" }
 }
 Write-Host "  OK: 물리 이중키 조회 $($allCalls.Count)건 전부 기본값 false(소스) — 바이너리 IL 은 [7/8] 에서 재검증" -ForegroundColor DarkGreen
+# [v12.17.1-GM] 마스터 플래그(ShadowMetricsBridge liveArmed 생성자 인자) = 리터럴 false — 바이너리는 [9/10] --verify-live-armed 가 재판독
+$masterCalls = [regex]::Matches($homeFormSrc, 'new ShadowMetricsBridge\([^;]*?liveArmed:\s*(\w+)\s*\)')
+if ($masterCalls.Count -eq 0) { Fail "liveArmed 가드: 마스터 플래그 생성 0건 — 가드 대상 소실(구조 변경 확인 필요)" }
+foreach ($c in $masterCalls) {
+    if ($c.Groups[1].Value -ne 'false') { Fail "liveArmed 가드: 마스터 플래그가 false 가 아님 → $($c.Value)" }
+}
+Write-Host "  OK: 마스터 플래그 생성 $($masterCalls.Count)건 전부 liveArmed: false(소스)" -ForegroundColor DarkGreen
 
 # ── [7/8] 스테이징 + SHA-256 리스트 + v2 manifest.sig(파이프라인 모드 테스트로 생성·검증) ──
 Step 7 "아티팩트 스테이징 + SHA-256 리스트 + genesis v2 manifest.sig + 출하 바이너리 IL 가드..."

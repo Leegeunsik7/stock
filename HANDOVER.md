@@ -1297,3 +1297,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 태그 v12.17.0-GM → 57a5954(신규 · 미푸시) · 형제 작업 트리 D:/PROGRAM/SM_GM_wt 에서 release-package.ps1 -NoPeer [0/10]~[10/10] 1회 통과(스크립트 내부 스위트 3,607 Pass) · 작업 트리 제거.
 - release-v12.17.0-GM.zip 3,020,925B · SHA-256 C7BA6657829F923A3D4CA3723AB2A423ADC31711140B2A6843D36B39B5BC5101 · masterSeal 4636F2B239D2CD178CA176B1556E9FE378E2BEE9C2C949FABAA83FE2435D28B0 · 아티팩트 38 · 인터락 29 · liveArmed false · 피어 기록 없음(-NoPeer).
 - [9/10] --verify-zip Ok · --verify-live-armed Ok(지점 16 · 위반 0) · [10/10] sync/handshake Ok. primary release/ 로 5종 복사 · v12.16.1-GM 산출물은 release/superseded-v12.16.1-GM/ · 출하 체인 테스트 28/28(무추출 재수검 41ms).
+
+## 45. 차기: 다중 브로커 단절 · 자동 복구 · 미체결 대사 24h 가속 Long-Soak · 복구 상태 포렌식 모니터 (2026-10-08 · 미커밋)
+
+### 45.1 전제 검증
+- LongSoakProfileHarness 실재 — 단일 경로 모의투자(7계층 · 정량 엔진 · 관제) 24h 가속이며 세션 복구 사슬은 없음 → 같은 원칙(주입 모의 시계 · 시드 결정론 · 고정 버퍼)의 동반 하니스를 신설(기존 하니스 · 그 테스트 무변경).
+- 거부/한정(정직): '0.1ns' 기록 불가 — 단조 시계(Stopwatch/QPC) 해상도는 Stopwatch.Frequency(일반 100ns) · 원시 틱 기록. 실 키움 COM/KIS VTS 연결 없음(모의 소켓/파이프/REST — 비동기 실소켓 경로는 SessionAutoRecoveryTests 가 별도 실측). 방향 B(연쇄 소진 전역 Disarm)는 기존재로 판정 — KIS 재접속 소진 = IsolateBroker(1) → 비트 23 전역 sticky Disarm · 키움 파이프 단절 = 브리지 하트비트 ForceFreeze 전역 동결 → 중복 구현하지 않음.
+- 실결함(방향 A 근거): SessionRecoveryManager 전이(단절 · 백오프 · 재접속 · 대사 · 해제 · 소진/불일치)가 카운터로만 남고 블랙박스 기록 0 — 사고 후 격리 시점 · 체류 재구성 불가.
+
+### 45.2 구현
+- `StockManager/Adapters/RecoveryStateDriftMonitor.cs` — 브로커별 상태 묶음(상태 · Held · Isolated · Exhausted · Discrepancy · 연속 실패) 전이 = SessionRecoveryTransition(100 · 직전/새 묶음 · 체류 Stopwatch 틱) · Held 최장 체류 · 작동 표류(한도 피드 세션 격리 비트 ≠ 관리자 Isolated 가 2 펌프 지속) = SessionRecoveryDrift(101) 1회. δ=0. 호스트 50ms 평가 타이머에서 관리자 펌프 뒤에 결선.
+- `StockManager/Simulation/MultiBrokerRecoverySoakHarness.cs` — 실 구성요소(복구 관리자 2 · KIS 세션 인터락 3초 · 대사기[키움 venue = 하니스 · KIS = KisOpenOrderQuery] · 한도 피드 · 모니터 · 호스트 미체결 원장 4건) + 모의 브로커(KIS 소켓 · 서버 장애 · REST 재접속 후 2초 지연 · 키움 파이프 · 운용자 복구 · 원장 페이지/행 고정 버퍼). ★진실 독립 발주 탐침(매 초): 발주 가능(한도 Available ∧ 비트 22 해제)인데 진실(연결 ∧ 접속/복구 후 대사 확정 ∧ 오염 증거 없음)이 더러우면 위반. 주입 오염은 원장이 호스트에 조회된 순간부터 더러움(그 전은 탐지 지연 — 정직).
+
+### 45.3 검증 · 한계
+- MultiBrokerRecoverySoakTests.cs 7건. 24h(86,400 모의 초 + 워밍업 1h): KIS 침묵 57 · 강제 종료 57 · 재접속 57(재구독 2,320 = 58 × 40) · 대사 후 해제 57 · 서버 장애 실패 51(1·2·4·8 수열 관측) · 키움 파이프 파기/복구/대사 해제 12/12/12 · ★오발주 0 · 더러운 구간 차단 4,586 · 정상 발주 2,929 · 표류 0 · 소진 0 · 24 시간 창 관리 힙 전부 0B. 초 단위 추적(대사 전 Reconciling/up/held 3초) · 소진 래치(서버 복구 · 대사 확정에도 0 · 이중키 후 개방) · KIS 유령(비트 22 · TTTC0803U 취소 · 래치) · KIS 원가 괴리(비트 22 · 취소 0) · 키움 유령(비트 22 · 키움 취소) · 모니터(전이 3건 체류 · 고장 작동기 표류 1회 · δ=0) · 결선/이벤트 코드 유일/오중 빌드. 방어 끔 7종 7/7 Red(무효 변이 1건 교정 후). 전체 3,614 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40.
+- 한계: 모의 브로커(실 네트워크 지연 분포 · 서버 동작 아님) · 원장 오염 탐지 지연 = 평시 KIS 30초 주기(재접속 직후는 즉시) — 그 사이 브로커 측 변화는 호스트가 알 수 없다 · 비트 19(KIS 세션 sticky)는 프로덕션에선 재무장 전 전역 차단이지만 탐침에선 제외(최악 가정: 재무장 후에도 브로커별 게이트만으로 차단되는지 검증).
+
+## 46. v12.17.1-GM Production Golden Master 출하 — 세션 복구 Long-Soak(§45) · 포렌식 모니터(이벤트 100/101) · 인터락 29종 · 마스터 플래그 IL 판독 (2026-10-08)
+
+### 46.1 전제 검증
+- 지시서의 'HANDOVER §44' 갱신 = §44 는 이미 v12.17.0-GM 출하 기록 → 이번 출하는 §46(§45 Long-Soak 미커밋분을 이번 출하 커밋에 포함). v12.17.1-DEV 태그 없음 · 버전 원천 12.17.0 → 12.17.1 · 태그 v12.17.1-GM 사전 부재.
+- [방향 B] zip 구분자 정규화 · 중복 가드는 기존재(§41 · §44) — 재사용.
+- [방향 A] ★실결함: 출하 바이너리 IL 판독기 · 스크립트 [6/10] 소스 가드 모두 물리 이중키 GetBool 기본값만 대조 — 실제 마스터 플래그 `new ShadowMetricsBridge(..., liveArmed: false)`(BlazorHomeForm)는 어느 쪽도 보지 않았다(리터럴 true 로 바뀌어도 출하 통과).
+
+### 46.2 구현
+- ShippedBinaryLiveArmedGuard 확장: ① newobj 대상 생성자의 bool 형식 liveArmed/isLiveArmed 매개변수 = 리터럴 false(ldc.i4.0) 필수 · 마지막 위치 아니면 판독 불가 = 위반 · 생성 지점 수 MasterSites ≥ 1(비공허성) ② 일반 호출의 마지막 liveArmed 인자 리터럴 true = 위반 ③ get_LiveArmed/get_IsLiveArmed 본문 'ldc.i4.1; ret' = 위반. 형식 판독 = System.Reflection.Metadata 최소 시그니처 디코더(bool 여부) — Func<bool> 술어(SecurityAssetVault · LiveArmedEgressSentinel)는 플래그가 아니므로 제외(설계 검토 중 오탐 실측 → 교정). CLI 출력에 마스터 플래그 생성 수.
+- release-package.ps1 [6/10]: 마스터 플래그 소스 대조(생성 0건 = 구조 변경 거부 · false 아님 = 거부) · 머리말 v12.17.1-GM(BOM 유지). 버전 핀 갱신(Freeze · ReleasePackaging).
+- GoldenMasterReleasePackagingTests §7: 빌드 DLL 마스터 생성 1 · 위반 0 · newobj 직전 1바이트 패치 = 거부(CLI 포함) · get_LiveArmed 1바이트 패치 = 거부 · 술어 매개변수 오탐 0 · 스크립트 [6/10] 대조. 방어 끔 6종 6/6 Red(★실 소스 BlazorHomeForm liveArmed: true 뒤집기 = 소스 가드 + 바이너리 판독 모두 Red).
