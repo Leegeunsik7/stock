@@ -323,6 +323,61 @@ namespace MS2E.Infrastructure
             catch (Exception) { return null; }
         }
 
+        /// <summary>
+        /// [미체결 대사] 주식일별주문체결조회(TTTC8001R · 모의 VTTC8001R · inquire-daily-ccld · 당일 · CCLD_DVSN=02 미체결) 1페이지 원문.
+        /// continuation = 다음 페이지(헤더 tr_cont "N" + 직전 응답의 ctx_area_fk100/nk100). more = 응답 헤더 tr_cont F/M(다음 페이지 있음).
+        /// 실패(미설정 · 토큰 · HTTP · TR 이탈) = null. ★필드/TR 은 공개 문서 기준 — 실계좌 미검증. HTTP 할당은 전송 몫(콜드).
+        /// </summary>
+        public byte[]? QueryOpenOrdersJson(string ctxFk, string ctxNk, bool continuation, out bool more)
+        {
+            more = false;
+            if (!Configured) return null;
+            try
+            {
+                var token = EnsureToken();
+                if (token == null) return null;
+                var (cano, prdt) = Acct();
+                string day = DateTime.UtcNow.AddHours(9).ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);   // KST 당일
+                var q = $"CANO={cano}&ACNT_PRDT_CD={prdt}&INQR_STRT_DT={day}&INQR_END_DT={day}&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO="
+                      + "&CCLD_DVSN=02&ORD_GNO_BRNO=&ODNO=&INQR_DVSN_3=00&INQR_DVSN_1=&CTX_AREA_FK100=" + Uri.EscapeDataString(ctxFk ?? "")
+                      + "&CTX_AREA_NK100=" + Uri.EscapeDataString(ctxNk ?? "");
+                using var req = NewReq(HttpMethod.Get, "/uapi/domestic-stock/v1/trading/inquire-daily-ccld?" + q, token, _real ? "TTTC8001R" : "VTTC8001R", null);
+                if (continuation) req.Headers.TryAddWithoutValidation("tr_cont", "N");
+                var (ok, body, cont) = SendReadCont(req);
+                if (!ok) return null;
+                more = cont is "F" or "M";
+                return Encoding.UTF8.GetBytes(body);
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// [미체결 대사 · 유령 정리] 브로커 원장 번호 직접 전량 취소(TTTC0803U · RVSE_CNCL_DVSN_CD=02 · QTY_ALL_ORD_YN=Y).
+        /// orgNo = 미체결 조회 행의 ord_gno_brno(KRX_FWDG_ORD_ORGNO). 반환 = 브로커 접수 성공. 재시도 없음(다음 대사 패스가 상태 구동).
+        /// </summary>
+        public bool CancelOpenOrder(long odno, long orgNo)
+        {
+            if (!Configured || odno <= 0 || orgNo <= 0) return false;
+            try
+            {
+                var token = EnsureToken();
+                if (token == null) return false;
+                var (cano, prdt) = Acct();
+                var bodyJson = JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    ["CANO"] = cano, ["ACNT_PRDT_CD"] = prdt,
+                    ["KRX_FWDG_ORD_ORGNO"] = orgNo.ToString("D5", System.Globalization.CultureInfo.InvariantCulture),
+                    ["ORGN_ODNO"] = odno.ToString("D10", System.Globalization.CultureInfo.InvariantCulture),
+                    ["ORD_DVSN"] = "00", ["RVSE_CNCL_DVSN_CD"] = "02", ["ORD_QTY"] = "0", ["ORD_UNPR"] = "0", ["QTY_ALL_ORD_YN"] = "Y",
+                });
+                using var req = NewReq(HttpMethod.Post, "/uapi/domestic-stock/v1/trading/order-rvsecncl", token, _real ? TrCancelReal : TrCancelVts, GetHashKey(bodyJson, token));
+                req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+                var (ok, body) = SendRead(req);
+                return ok && KisProtocol.TryParseOrderAck(Encoding.UTF8.GetBytes(body), out var ack) && ack.Ok;
+            }
+            catch (Exception) { return false; }
+        }
+
         /// <summary>실시간(WebSocket) 접속키 발급(POST /oauth2/Approval · appkey/secretkey). 실패 = null. 접속키는 마스커/유출 인터락에 등록.</summary>
         public string? RequestApprovalKey()
         {
@@ -408,6 +463,13 @@ namespace MS2E.Infrastructure
 
         private (bool ok, string body) SendRead(HttpRequestMessage req)
         {
+            var (ok, body, _) = SendReadCont(req);
+            return (ok, body);
+        }
+
+        /// <summary>SendRead + 응답 헤더 tr_cont(연속 조회 F/M · 마지막 D/E · 없음 = "").</summary>
+        private (bool ok, string body, string cont) SendReadCont(HttpRequestMessage req)
+        {
             var res = Http.Send(req);
             var body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             // [KIS VTS] 요청에 tr_id 를 실었는데 응답 tr_id 헤더가 다르다 = 다른 TR/도메인의 응답 → 성공 판정 금지 + 통지.
@@ -419,10 +481,11 @@ namespace MS2E.Infrastructure
                 {
                     System.Threading.Interlocked.Increment(ref _trHeaderDivergences);
                     try { ResponseDivergence?.Invoke(s); } catch (Exception) { }
-                    return (false, "");
+                    return (false, "", "");
                 }
             }
-            return (res.IsSuccessStatusCode, body);
+            string cont = res.Headers.TryGetValues("tr_cont", out var c) ? (System.Linq.Enumerable.FirstOrDefault(c) ?? "") : "";
+            return (res.IsSuccessStatusCode, body, cont);
         }
         private static string Trunc(string s) => s.Length > 180 ? s[..180] : s;
     }

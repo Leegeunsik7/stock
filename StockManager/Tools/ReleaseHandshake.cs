@@ -77,6 +77,10 @@ namespace StockManager.Tools
                 for (int i = 0; i < n; i++) { names[i] = entries[i].Name; entries[i].Sha.CopyTo(expected, i * HashLen); }
                 var actual = new byte[n * HashLen];
                 var seen = new bool[n];
+                // [v12.17.0-GM · 방향 B] 항목 정규화 중복 가드 — 모든 파일 항목(manifest.sig 포함)을 '\\'→'/' + 대소문자 무시로 대조.
+                //   기존 검사는 매니페스트 '기재' 항목의 서수 중복만 잡았다: ① manifest.sig 2개(어느 쪽이 쓰일지 모호) ② 기재 비바이너리
+                //   (runtimeconfig/deps.json 등)의 대소문자 변형 사본 — Windows(대소문자 무시 파일시스템) 압축 해제 시 봉인 항목을 덮어쓴다.
+                var allNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkBytes);
                 try
                 {
@@ -84,7 +88,9 @@ namespace StockManager.Tools
                     foreach (var e in zip.Entries)
                     {
                         string name = e.FullName.Replace('\\', '/');
-                        if (name.Length == 0 || name[^1] == '/' || name == "manifest.sig") continue;
+                        if (name.Length == 0 || name[^1] == '/') continue;
+                        if (!allNames.Add(name)) { detail = "중복 항목(구분자 · 대소문자 정규화 후): " + name; return ZipSealVerdict.DuplicateEntry; }
+                        if (name == "manifest.sig") continue;
                         if (name[0] == '/' || name.Contains("..", StringComparison.Ordinal) || name.IndexOf(':') >= 0)
                         { detail = "경로 이탈 항목: " + name; return ZipSealVerdict.PathEscape; }
                         int idx = Array.BinarySearch(names, name, StringComparer.Ordinal);

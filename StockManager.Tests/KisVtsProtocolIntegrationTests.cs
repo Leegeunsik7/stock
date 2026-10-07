@@ -186,7 +186,7 @@ namespace StockManager.Tests
             Assert.DoesNotContain("Mask(Trunc(", src);
             Assert.Equal(2, Regex.Matches(src, Regex.Escape("Trunc(FinancialPiiMasker.Mask(body))")).Count);   // KIS · 업비트 오류 본문
             Assert.Contains("if (!KisProtocol.ResponseTrIdConsistent(s, g))", src);              // 응답 tr_id 헤더 대조
-            Assert.Contains("return (false, \"\");", src);                                       // 이탈 응답 본문 미반환
+            Assert.Contains("return (false, \"\", \"\");", src);                                   // 이탈 응답 본문 미반환(SendReadCont — SendRead 도 경유)
             Assert.Contains("응답 TR 이탈({trId}) — 주문 상태 미확정", src);
         }
 

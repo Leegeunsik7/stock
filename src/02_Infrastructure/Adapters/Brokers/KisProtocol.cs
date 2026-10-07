@@ -466,7 +466,8 @@ namespace MS2E.Infrastructure
 
         /// <summary>
         /// [미체결 대사] REST 응답 1페이지 → 정규화 행(δ=0). output1 배열의 각 객체: odno · orgn_odno · pdno · ord_qty · rmn_qty · ord_unpr ·
-        /// sll_buy_dvsn_cd("01" 매도 · "02" 매수) · cncl_yn("Y" = 취소 주문 행 — 제외). 잔량 0 행 제외.
+        /// sll_buy_dvsn_cd("01" 매도 · "02" 매수) · cncl_yn("Y" = 취소 주문 행 — 제외) · ord_gno_brno(주문채번지점번호 → Reserved —
+        /// 유령 취소(TTTC0803U)의 KRX_FWDG_ORD_ORGNO · 공개 샘플 기준 · 실계좌 미검증). 잔량 0 행 제외.
         /// 반환 = 행 수 · −1 형식 이탈/rt_cd≠"0"(fail-closed) · −2 버퍼 부족. 연속 조회(tr_cont)는 HTTP 헤더라 호출측이 last 로 전달.
         /// </summary>
         public static int ParseOpenOrders(ReadOnlySpan<byte> json, Span<BrokerOpenOrderRow> dst)
@@ -516,6 +517,7 @@ namespace MS2E.Infrastructure
                                 else if (r.ValueTextEquals("pdno"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String || !ParseCode(r.ValueSpan, out row.SymbolCode)) return -1; }
                                 else if (r.ValueTextEquals("ord_qty"u8)) { if (!ReadDigits(ref r, out row.OrderQty)) return -1; }
                                 else if (r.ValueTextEquals("rmn_qty"u8)) { if (!ReadDigits(ref r, out row.RemainingQty)) return -1; }
+                                else if (r.ValueTextEquals("ord_gno_brno"u8)) { if (!ReadDigits(ref r, out row.Reserved)) return -1; }
                                 else if (r.ValueTextEquals("ord_unpr"u8)) { if (!ReadWon(ref r, out row.PriceWon)) return -1; }
                                 else if (r.ValueTextEquals("sll_buy_dvsn_cd"u8))
                                 {
@@ -534,6 +536,41 @@ namespace MS2E.Infrastructure
             }
             catch (JsonException) { return -1; }
             return rtSeen && rtOk ? n : -1;
+        }
+
+        /// <summary>
+        /// [미체결 대사] 연속 조회 키(최상위 ctx_area_fk100 · ctx_area_nk100) → 고정 버퍼(δ=0). 반환 = 둘 다 판독(없으면 길이 0).
+        /// 형식 이탈 · 버퍼 초과 = false(호출측 = 배치 폐기). 다음 페이지 요청은 이 키 + 헤더 tr_cont "N".
+        /// </summary>
+        public static bool TryParseContinuation(ReadOnlySpan<byte> json, Span<byte> fk, out int fkLen, Span<byte> nk, out int nkLen)
+        {
+            fkLen = 0; nkLen = 0;
+            try
+            {
+                var r = new Utf8JsonReader(json);
+                int depth = 0;
+                while (r.Read())
+                {
+                    switch (r.TokenType)
+                    {
+                        case JsonTokenType.StartObject: case JsonTokenType.StartArray: depth++; break;
+                        case JsonTokenType.EndObject: case JsonTokenType.EndArray: depth--; break;
+                        case JsonTokenType.PropertyName:
+                            if (depth != 1) break;
+                            bool isFk = r.ValueTextEquals("ctx_area_fk100"u8), isNk = !isFk && r.ValueTextEquals("ctx_area_nk100"u8);
+                            if (!isFk && !isNk) break;
+                            if (!r.Read() || r.TokenType != JsonTokenType.String || r.ValueIsEscaped) return false;
+                            var v = r.ValueSpan;
+                            var dst = isFk ? fk : nk;
+                            if (v.Length > dst.Length) return false;
+                            v.CopyTo(dst);
+                            if (isFk) fkLen = v.Length; else nkLen = v.Length;
+                            break;
+                    }
+                }
+            }
+            catch (JsonException) { return false; }
+            return true;
         }
 
         // 원 금액 문자열 — 정수 또는 소수부 0("71000" · "71000.00"). 소수부 비영 = 형식 이탈(호가 단위 위반).

@@ -1245,3 +1245,49 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - [9/10] --verify-zip Ok · --verify-live-armed Ok(지점 16 · 위반 0) · [10/10] sync/handshake Ok · 스크립트 내부 스위트 3,583 Pass.
 - primary release/ 로 5종 복사 · v12.15.0-GM 산출물은 release/superseded-v12.15.0-GM/ 로 이동 · 출하 체인 테스트 27/27(zip 무추출 재수검 38ms · 1비트 변조 거부 · 실 zip IL 판독 Ok).
 - 첫 실행(4d4d7a1)은 [9/10] 역슬래시 결함으로 거부 · 산출물 원자 폐기 확인 — 불완전 zip 잔존 0.
+
+## 42. 차기: 다중 브로커 세션 자동 복구 — 침묵 단절 강제 종료 · 지수 백오프 · 재구독 · 대사 결속 · 소진 래치 (2026-10-08 · 미커밋)
+
+### 42.1 전제 검증
+- SessionRecoveryManager 부재 → 신설. ProcessRolloverGuard · BrokerOpenOrderReconciler · KisRealtimeSession(재접속 시 재구독 기존재 · 고정 5초 무한 재시도) · KiwoomBridgeLink 실재.
+- ★실결함 3건: ① 장중 3초 침묵 시 KisSessionInterlock 이 Disarm 비트만 올리고 소켓은 아무도 닫지 않음 → half-open 연결의 ReceiveAsync 무한 대기 · 재접속/재구독 없음. ② 백오프 · 소진 판정 없음. ③ 대사기 확정 비트가 재접속 후에도 남아 단절 동안의 미체결 원장을 다시 대조하지 않음.
+- 거부/한정(정직): 키움 파이프 자동 재접속은 하지 않는다 — KiwoomProxySupervisor 는 브리지 1회용 설계(하트비트 단절 = 전역 동결 · 재기동 운용자 몫)이므로 감지 · 격리 · 복귀 시 대사만. KIS 미체결 조회(TTTC8001R)는 호스트에 미결선(파서 · OnKisPage 만 존재) → 재접속 후 KIS 대사 확정 불가 → KIS 격리 유지(fail-closed). 프로덕션엔 소프트웨어 재무장 경로가 없다(TryRearm 호출부 0) — 자동 복구가 되살리는 것은 '가시성'(체결 · 호가 · 대사)이지 무장이 아니다. 소켓 재접속 자체(ClientWebSocket · 구독 JSON)는 BCL 할당 — δ=0 범위는 감지 · 백오프 · 전이 · 격리 · 동기 허가.
+
+### 42.2 구현
+- `StockManager/Adapters/SessionRecoveryManager.cs` — 브로커당 상태기계(Connecting · Connected · Backoff · Reconciling). 단절/침묵 = 즉시 격리(한도 피드 세션 격리 = 한도 0 + 스위치보드 블랙리스트) · [방향 A] 50ms 평가 타이머의 Pump 가 단조 시각 스캔으로 백오프(1·2·4·8·16s) 기한 도래 시 재사용 ManualResetValueTaskSourceCore 완료(재시도마다 Timer/Task.Delay 0) · 재접속 = 대사 확정 철회를 먼저 끝낸 뒤 Reconciling · 요청 이후 확정 전까지 격리 유지 · [방향 B] 재접속 연속 5회 실패(대사 전 재단절 포함) = 소진 래치 → 자식 매트릭스 IsolateBroker(비트 23 sticky) · 이중키 TryReset. 최초 접속 전 실패는 백오프만(격리 · 소진 없음 — 블랙리스트는 재무장으로만 지워짐).
+- ★설계 검토 중 실측 결함: 격리 작동을 락 밖에서 하면 펌프의 해제(false)가 동시 단절의 격리(true) 뒤에 적용돼 단절된 브로커가 한 주기 열림 → 격리는 상태 락 안에서 현재 상태 반영(ActuateLocked) · 매 펌프 재주장.
+- KisRealtimeSession: recovery 결속 시 펌프 허가 대기 · 연결별 취소원 · AbortConnection(침묵 강제 종료) · 미결속 = 기존 동작. KisSessionInterlock: SilentNow(판정만) · SetRearmHold(대사 미확정/소진 = 재무장 거부). BrokerOpenOrderReconciler: RequestReconcile(venue)(확정 철회 · 진행 배치 무효화 · 즉시 조회) · IsConfirmed. BrokerLimitFeedProvider: SetSessionIsolated(한도 0).
+- 결선(BlazorHomeForm): KIS = 자동(침묵 · 백오프 · `Kis.ReconnectMaxFailures` 기본 5 · 소진 = IsolateBroker(1)) · 키움 = 수동(링크 프로브 · 복귀 시 OPT10075 대사 · 비트 22) · 둘 다 50ms 평가 타이머에서 Pump.
+
+### 42.3 검증 · 한계
+- SessionAutoRecoveryTests.cs 14건(호스트 결선 · 오중 빌드 회귀 · 상태기계 · 백오프 수열 · 소진 래치/재래치 · 플래핑 · 수동 모드 · 해제↔단절 경합 스트레스 20,000 사이클 위반 0 · δ=0 · 통합: half-open → 침묵 강제 종료 → 1s 재접속 · 재구독 40건 동일 → 낡은 확정 철회 → 확정 전 한도 0 · 재무장 거부 → KIS 대사 패스 → 해제 · 접속키 장애 소진). 방어 끔 11종 11/11 Red(락 밖 해제 경합 재현 포함). 전체 3,597 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40 · CrossBrokerSignalTests 결선 핀 갱신(recovery 인자).
+- 한계: 실 KIS/키움 네트워크 단절 미실측(전송 대역) · KIS 대사 수단 미결선이라 프로덕션 KIS 는 재접속 후 격리 유지 · 비동기 허가(대기자 깨움)는 스레드 풀 큐잉 할당 가능(재시도당 1회).
+
+## 43. 차기: KIS 미체결 조회(TTTC8001R) 실배선 · 재접속 후 대사 확정 해제 · 불일치 래치 · 유령 비상 취소 (2026-10-08 · 미커밋)
+
+### 43.1 전제 검증
+- v12.17.0-DEV 태그 없음 — §42 세션 복구는 미커밋 상태로 이어서 작업. 지시서의 'Bit 22(ReconciliationDiscrepancy)' = 실제 이름 OpenOrderDivergence(비트 22). SessionRecoveryManager.OnReconciliationCompleted 부재(펌프 폴링 해제만) → 신설.
+- KIS 판독 경로는 기존재(KisProtocol.ParseOpenOrders · 대사기 OnKisPage) — 결손은 ① 조회 호출부 0(TTTC8001R REST 없음) ② 연속 조회(tr_cont 헤더 · ctx_area 키) 미처리 ③ KIS 유령 취소 경로 '미배선 — 차단만' ④ 대사기 진행 배치가 venue 공용 1개라 KIS 조회가 키움 OPT10075 대기 배치를 덮어쓸 수 있음.
+
+### 43.2 구현
+- KisLiveBroker: QueryOpenOrdersJson(inquire-daily-ccld · TTTC8001R/VTTC8001R · KST 당일 · CCLD_DVSN=02 · 연속 = 헤더 tr_cont N + ctx 키 · 응답 tr_cont F/M = 다음 페이지) · CancelOpenOrder(odno, ord_gno_brno → TTTC0803U 전량 취소) · SendReadCont(응답 tr_cont). ★공개 문서/샘플 기준 — 실계좌 미검증.
+- KisProtocol: ord_gno_brno → 행 Reserved(취소 조직번호) · TryParseContinuation(ctx_area_fk100/nk100 → 고정 버퍼 · 초과/이스케이프/깨짐 = 거부).
+- `StockManager/Adapters/KisOpenOrderQuery.cs` — 전용 1초 타이머(HTTP 블로킹 — 50ms 평가 타이머 분리) · 30초/미확정 3초 · 대사 요청 계수 변화 = 즉시 · TryBeginSnapshot(진행 배치 덮어쓰기 0) · 페이지 루프(상한 20 · 실패 = AbortSnapshot · 재시도 루프 없음) · 게이트(한도 피드 대사 격리 마스크 = 조회 수단 없음 ∨ 미확정 ∨ 유령 ∨ 불일치 ∨ 래치 · 생성 즉시 닫힘) · OnPass 라우팅(확정 = 복구 관리자 즉시 해제 통지 · 불일치/유령 = 게이트 + 영구 래치 + 호스트 격리 1회).
+- 대사기: TryBeginSnapshot · AbortSnapshot · AttachKisCanceller(★[방향 B] KIS 유령 = 패스당 ≤4건 · 5초 중복 억제 · 지점번호 미상 = 송신 안 함). SessionRecoveryManager: OnReconciliationCompleted(락 안 확정 프로브 재확인 후 즉시 Connected) · OnDiscrepancy(영구 래치 · Held 포함 · 이중키 TryReset). 한도 피드: SetReconcileIsolated(세션 격리와 별개 마스크 — 두 구동자 비트 덮어쓰기 0).
+- 결선: KIS 설정 시 조회기 + 취소 결속 + 패스 훅 · 불일치 = 블랙리스트 + 자식 매트릭스 IsolateBroker(1)(비트 23) · 미설정 = KIS 대사 격리 고정.
+
+### 43.3 검증 · 한계
+- KisOpenOrderReconciliationTests.cs 9건(판독 δ=0 · 페이지 키 전달 · 실패 4종 + 바쁨 + 미설정 · 재접속 즉시 해제 · 오발 통지 무시 · 불일치 래치/가격 괴리/이중키 · 유령 취소 상한/억제/지점번호 · 낡은 스냅샷 경합 · δ=0 판독+대사+게이트+라우팅 · 결선/오중 빌드). 방어 끔 13종 13/13 Red(래치 무감 테스트 1건 발견 → 연결 상태에서 Held 단언으로 보강). 전체 3,606 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40 · KisVtsProtocolIntegrationTests 이탈 응답 핀 갱신(SendReadCont 3-튜플 — 본문 미반환 불변).
+- 한계: 실 KIS 계좌 미검증(TR · 필드 · tr_cont 의미 · ord_gno_brno 를 KRX_FWDG_ORD_ORGNO 로 쓰는 것은 공개 샘플 기준) · 유령 비상 취소는 '호스트가 모르는 KIS 미체결' 전부가 대상 — 같은 계좌로 HTS/MTS 수동 주문을 내면 취소된다(키움 경로와 같은 기존 설계 · 전용 계좌 전제) · 방향 A(SHA-256 해시 스트리머)는 미구현 — 기존 대사기 패스 해시 체인 감사 + MMF 블랙박스 기록이 패스 판정 단위로 이미 존재.
+
+## 44. v12.17.0-GM Production Golden Master 출하 — 세션 자동 복구(§42) · KIS TTTC8001R/0803U 대사 결선(§43) · 인터락 29종 (2026-10-08)
+
+### 44.1 전제 검증
+- v12.17.0-DEV 태그 없음 — §42 · §43 은 이번 출하 커밋에 함께 포함(미커밋 상태였음). 버전 원천 csproj 12.16.1 → 12.17.0(Assembly/File 12.17.0.0 · 태그 v12.17.0-GM · zip release-v12.17.0-GM.zip). 태그 사전 부재.
+- [방향 A] 출하 zip 호스트 IL 정적 판독은 기존재(ShippedBinaryLiveArmedGuard · §41 · 스크립트 [9/10] --verify-live-armed) — 재사용. '16 지점'은 실측 조회 지점 수(Dispatch.ValveWired/LiveArmingWired GetBool · ldc.i4.0).
+- [방향 B] ★실결함 2건(무추출 수검기 ZipSealDryRunVerifier): ① manifest.sig 항목 2개 = 미검출(루프가 중복 검사 전에 건너뜀 · 어느 쪽이 쓰일지 모호) ② 매니페스트 기재 비바이너리(runtimeconfig/deps.json 등)의 대소문자 변형 사본 = 무시(Windows 대소문자 무시 파일시스템에서 해제 시 봉인 항목을 덮어씀). 기존 중복 검사는 기재 항목의 서수 일치만 대상.
+
+### 44.2 구현
+- ZipSealDryRunVerifier: 모든 파일 항목(manifest.sig 포함)을 '\\'→'/' 정규화 + 대소문자 무시 집합으로 대조 · 두 번째 = DuplicateEntry. ShippedBinaryLiveArmedGuard: 호스트 항목 대조를 대소문자 무시로(대소문자 변형 사본 = 중복 거부).
+- 버전 핀 갱신: GoldenMasterFreezeTests · GoldenMasterReleasePackagingTests(12.17.0 · 스크립트 머리말 v12.17.0-GM) · release-package.ps1 머리말(BOM 유지).
+- GoldenMasterReleasePackagingTests §6: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 runtimeconfig) = 수검 Ok + IL 판독 Ok · manifest.sig 2개 / 봉인 비바이너리 대소문자 변형 / 구분자 변형 바이너리 / 대소문자 변형 바이너리 = 전부 DuplicateEntry · IL 판독기 모호 항목 = 거부. 방어 끔 3종 3/3 Red.

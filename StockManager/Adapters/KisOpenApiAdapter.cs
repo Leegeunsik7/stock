@@ -272,9 +272,29 @@ namespace StockManager.Adapters
             if (_nowMicros() - Volatile.Read(ref _lastActivity) > limit) Trip();
         }
 
+        /// <summary>[세션 복구] 연결 중 침묵 임계 초과인가(트립 없이 판정만 · δ=0) — 복구 관리자가 죽은 소켓을 닫는 근거.</summary>
+        public bool SilentNow()
+        {
+            if (Volatile.Read(ref _connected) != 1) return false;
+            bool market;
+            try { market = _marketHours?.Invoke() ?? false; } catch { market = true; }
+            long limit = market ? _marketSilenceMicros : _silenceMicros;
+            return _nowMicros() - Volatile.Read(ref _lastActivity) > limit;
+        }
+
+        private Func<bool>? _rearmHold;
+        /// <summary>[세션 복구] 재무장 보류 조건 결속(참 = 재무장 거부 — 재접속 후 미체결 대사 미확정 · 소진 래치).</summary>
+        public void SetRearmHold(Func<bool> hold) => Volatile.Write(ref _rearmHold, hold ?? throw new ArgumentNullException(nameof(hold)));
+
         public bool TryRearm(bool valveWired, bool liveArmingWired)
         {
             if (!(valveWired && liveArmingWired) || Volatile.Read(ref _connected) == 0) return false;
+            if (Volatile.Read(ref _rearmHold) is { } hold)
+            {
+                bool held;
+                try { held = hold(); } catch { held = true; }                       // 판정 불가 = 보류(fail-closed)
+                if (held) return false;
+            }
             Volatile.Write(ref _tripped, 0);
             Volatile.Write(ref _lastActivity, _nowMicros());
             Volatile.Read(ref _link)?.Resync();

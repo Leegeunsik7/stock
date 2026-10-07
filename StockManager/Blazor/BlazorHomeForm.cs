@@ -1119,6 +1119,7 @@ namespace StockManager.Blazor
             // [미체결 대사 · 추천 A] 브로커 미체결 원장(OPT10075) ↔ 호스트 추적 원장 1:1 대사 — 최초 확정 전 신규 발주 차단(비트 22) ·
             //   모든 승계 슬롯 번호·잔량 일치 = Rollover 비트(20) 0ms 해제 · 유령 주문(브로커에만 존재) = Disarm + 비상 일괄 취소(패스당 ≤4건).
             //   조회 TR: 미확정/유령 정리 중 3초 · 평시 30초(계좌 조회 12건/분 + 미체결 ≤20건/분 ≪ 100).
+            Action<StockManager.Adapters.OpenOrderPassResult>? kisPassHook = null;     // [KIS 미체결 대사] 패스 결과 라우팅(조회기는 뒤에서 생성)
             var openOrderRecon = new StockManager.Adapters.BrokerOpenOrderReconciler(execFeed, broker, rolloverGuard.MarkReconciled,
                 requireKiwoom: true,
                 maxCancelsPerPass: cfg.GetInt("OpenOrder.MaxCancelsPerPass", StockManager.Adapters.BrokerOpenOrderReconciler.DefaultMaxCancelsPerPass, 1, 4),
@@ -1126,6 +1127,7 @@ namespace StockManager.Blazor
                 {
                     if (r.Verdict >= StockManager.Adapters.OpenOrderVerdict.Divergence)
                         try { Log.Warn($"[OpenOrder] 대사 {r.Verdict} — 브로커 {r.Rows}행 · 원장 {r.Ledger}건 · 불일치 {r.Mismatched} · 유령 {r.Ghosts} · 취소 {r.CancelsSent}건 송신"); } catch { }
+                    Volatile.Read(ref kisPassHook)?.Invoke(r);
                 },
                 interval: TimeSpan.FromSeconds(cfg.GetInt("OpenOrder.IntervalSeconds", 30, 5, 600)));
             openOrderRecon.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OpenOrderDivergence);
@@ -1603,6 +1605,8 @@ namespace StockManager.Blazor
             StockManager.Adapters.KisRealtimeSession? kisRealtime = null;
             System.Threading.CancellationTokenSource? kisRealtimeCts = null;
             StockManager.Adapters.KisSessionInterlock? kisSession = null;
+            StockManager.Adapters.BrokerLimitFeedProvider? limitRef = null;               // [세션 복구] 한도 피드는 뒤에서 생성 — 지연 참조
+            StockManager.Adapters.SessionRecoveryManager? kisRecovery = null;
             // [KIS VTS] 프로토콜 이탈 인터락(비트 26 필수 · 항상 결속 — 미설정 배포는 이탈이 없으므로 비차단). 실/모의 도메인 핀:
             //   교차 도메인 실시간 TR · 구독 응답 · REST 응답 tr_id 헤더 이탈 = sticky Disarm + 최초 1회 KIS 슬롯 격리
             //   (자식 매트릭스: KIS 미송출 회수 + 송출분 0ms 취소 · 세션 단절 보고 = 라우터 KIS 장애). 보안 로그 = 종류 + 상수 라벨만.
@@ -1618,6 +1622,24 @@ namespace StockManager.Blazor
                     marketHours: () => StockManager.Adapters.KisSessionInterlock.IsKrxRegularSession(DateTime.UtcNow),
                     marketSilenceMicros: cfg.GetInt("Kis.MarketSilenceMs", 3000, 500, 60_000) * 1000L);
                 kisSession.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.KisSession);
+                // [세션 자동 복구 · 추천 A] 단절/침묵(장중 3초) = KIS 한도 0 + 블랙리스트 · 죽은 소켓 강제 종료 · 지수 백오프(1·2·4·8·16s) 재접속 ·
+                //   재구독 후 미체결 대사 확정 전까지 격리 유지 + 비트 19 재무장 거부 · 재접속 연속 5회 실패 = 소진 래치(KIS 슬롯 격리 · 비트 23).
+                //   재접속 후 해제 = KIS 미체결 조회(TTTC8001R · KisOpenOrderQuery) 새 패스 확정 통지(OnReconciliationCompleted) · 불일치/유령 = 영구 래치.
+                var kisSessionRef = kisSession;
+                kisRecovery = new StockManager.Adapters.SessionRecoveryManager(1,
+                    isolate: on => { Volatile.Read(ref limitRef)?.SetSessionIsolated(1, on); if (on) routerBoard.Blacklist(1); },
+                    requestReconcile: () => openOrderRecon.RequestReconcile(MS2E.Infrastructure.OpenOrderVenueKind.Kis),
+                    reconciled: () => openOrderRecon.IsConfirmed(MS2E.Infrastructure.OpenOrderVenueKind.Kis),
+                    silent: kisSessionRef.SilentNow,
+                    onExhausted: () =>
+                    {
+                        try { childMatrix.IsolateBroker(1); } catch { }
+                        try { Log.Warn("[SessionRecovery] KIS 재접속 연속 실패 소진 — KIS 슬롯 영구 격리 · Disarm(이중키 재무장 필요)"); } catch { }
+                    },
+                    maxFailures: cfg.GetInt("Kis.ReconnectMaxFailures", StockManager.Adapters.SessionRecoveryManager.DefaultMaxFailures, 1, 20));
+                var kisRecoveryRef = kisRecovery;
+                kisSession.SetRearmHold(() => kisRecoveryRef.Held);
+                services.AddSingleton(kisRecovery);
                 StockManager.Adapters.KisRealtimeSession? rtRef = null;
                 var kisWsAdapter = new StockManager.Adapters.KisOpenApiAdapter(kisSession,
                     send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
@@ -1628,7 +1650,8 @@ namespace StockManager.Blazor
                     onBookQuarantine: q => Volatile.Read(ref quantRef)?.SetFeedQuarantined(StockManager.Engines.QuantSignalProvider.FeedKis, q));
                 kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
                     kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"),
-                    bookSymbols: kisBookSymbols);
+                    bookSymbols: kisBookSymbols, recovery: kisRecovery);
+                kisRecovery.BindAbort(kisRealtime.AbortConnection);
                 Volatile.Write(ref rtRef, kisRealtime);
                 kisRealtimeCts = new System.Threading.CancellationTokenSource();
                 _ = Task.Run(() => kisRealtime.RunAsync(kisRealtimeCts.Token));
@@ -1639,6 +1662,42 @@ namespace StockManager.Blazor
                 brokerViews,
                 new long[] { cfg.GetInt("Routing.KiwoomMaxSharesPerOrder", 0, 0, 10_000_000), cfg.GetInt("Routing.KisMaxSharesPerOrder", 0, 0, 10_000_000) });
             services.AddSingleton(limitFeed);
+            Volatile.Write(ref limitRef, limitFeed);
+            // [세션 자동 복구] 키움: 파이프 링크(하트비트) 감시 · 격리만 — 자동 재기동 없음(브리지 1회용 · 단절 = 전역 동결 · 재기동은 운용자 몫).
+            //   운용자가 프록시를 다시 붙이면 링크 복귀 → 미체결 대사 즉시 요청(OPT10075) → 확정 전까지 키움 한도 0 + 비트 22 차단.
+            StockManager.Adapters.SessionRecoveryManager? kiwoomRecovery = kiwoomConnect
+                ? new StockManager.Adapters.SessionRecoveryManager(0,
+                    isolate: on => { limitFeed.SetSessionIsolated(0, on); if (on) routerBoard.Blacklist(0); },
+                    requestReconcile: () => openOrderRecon.RequestReconcile(MS2E.Infrastructure.OpenOrderVenueKind.Kiwoom),
+                    reconciled: () => openOrderRecon.IsConfirmed(MS2E.Infrastructure.OpenOrderVenueKind.Kiwoom),
+                    linkProbe: () => bridge.IsProductionProxy, autoReconnect: false)
+                : null;
+            // [KIS 미체결 대사 · 추천 A] TTTC8001R 실배선 — 전용 1초 타이머(HTTP 블로킹)가 당일 미체결 페이지를 대사기 KIS venue 로 공급.
+            //   KIS 한도 0 = 최초 확정 전 · 미확정(재접속 RequestReconcile) · 유령 · 불일치. 확정 = 복구 관리자 즉시 해제 통지.
+            //   불일치/유령 = 비트 22(대사기 sticky) + 영구 래치 + 블랙리스트 + 자식 매트릭스 KIS 격리(비트 23) · [방향 B] 유령 = 패스당 ≤4건 비상 취소(TTTC0803U).
+            StockManager.Adapters.KisOpenOrderQuery? kisOpenOrders = null;
+            System.Threading.Timer? kisOpenOrderTimer = null;
+            if (kisLive is not null)
+            {
+                var kisLiveRef = kisLive;
+                openOrderRecon.AttachKisCanceller((odno, orgNo) => kisLiveRef.CancelOpenOrder(odno, orgNo));
+                kisOpenOrders = new StockManager.Adapters.KisOpenOrderQuery(openOrderRecon,
+                    (string fk, string nk, bool cont, out bool more) => kisLiveRef.QueryOpenOrdersJson(fk, nk, cont, out more),
+                    limits: limitFeed, recovery: kisRecovery,
+                    onDiscrepancy: () =>
+                    {
+                        routerBoard.Blacklist(1);
+                        try { childMatrix.IsolateBroker(1); } catch { }
+                        try { Log.Warn("[OpenOrder] KIS 미체결 원장 불일치/유령 — KIS 슬롯 영구 격리 · Disarm(이중키 재무장 필요)"); } catch { }
+                    },
+                    interval: TimeSpan.FromSeconds(cfg.GetInt("Kis.OpenOrderIntervalSeconds", 30, 5, 600)));
+                var kisOpenOrdersRef = kisOpenOrders;
+                Volatile.Write(ref kisPassHook, kisOpenOrdersRef.OnPass);
+                kisOpenOrderTimer = new System.Threading.Timer(_ => { try { kisOpenOrdersRef.Pump(); } catch { } }, null, 1500, 1000);
+                services.AddSingleton(kisOpenOrders);
+                FormClosed += (_, _) => ShutdownTrace.Step("kisOpenOrders", () => kisOpenOrderTimer.Dispose());
+            }
+            else limitFeed.SetReconcileIsolated(1, true);                              // KIS 미설정 = 대사 수단 없음 = KIS 한도 0
             // ★분할은 명시 설정으로만(기본 꺼짐 — 활성 시 모든 실전 주문이 1~3호가 × 브로커 한도로 나뉜다). 분할 가능 브로커 0 = 전방 거부 + 비트 23.
             bool splitEnabled = cfg.GetBool("Routing.SplitEnabled", false);
             if (splitEnabled) routerGate.EnableSplit(limitFeed, childMatrix.TripExternal);
@@ -1664,6 +1723,9 @@ namespace StockManager.Blazor
                 try { childMatrix.Evaluate(); } catch { }
                 try { childMatrix.ReleaseConverged(); } catch { }
                 try { kisSession?.Evaluate(); } catch { }                               // [KIS 방향 B] 장중 3초 침묵 판정
+                try { kisRecovery?.Pump(); } catch { }                                  // [세션 복구 · 방향 A] 침묵 강제 종료 · 백오프 허가 · 대사 → 격리 해제
+                try { kiwoomRecovery?.Pump(); } catch { }                               // [세션 복구] 키움 링크 감시 · 복귀 시 대사
+                try { kisOpenOrders?.RefreshGate(); } catch { }                         // [KIS 미체결 대사] 재접속 확정 철회 → KIS 한도 0(δ=0)
                 try { kiwoomLink.Evaluate(); } catch { }                                // [키움 실배선] 링크(하트비트 단절 포함) 재평가
             }, null, 50, 50);
             FormClosed += (_, _) => ShutdownTrace.Step("childMatrix", () =>

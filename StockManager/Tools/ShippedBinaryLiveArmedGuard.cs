@@ -55,7 +55,7 @@ namespace StockManager.Tools
                 ZipArchiveEntry? entry = null;
                 foreach (var e in zip.Entries)
                 {
-                    if (!string.Equals(e.FullName.Replace('\\', '/'), entryName, StringComparison.Ordinal)) continue;
+                    if (!string.Equals(e.FullName.Replace('\\', '/'), entryName, StringComparison.OrdinalIgnoreCase)) continue;   // Windows 대소문자 무시 — 대소문자 변형도 같은 파일(모호 = 중복 거부)
                     if (entry is not null) return Fail("zip 항목 중복(정규화 후): " + entryName);
                     entry = e;
                 }

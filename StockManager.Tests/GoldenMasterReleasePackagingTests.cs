@@ -1,13 +1,15 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.16.1-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.17.0-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.16.1(출하 zip 이름 · 태그 v12.16.1-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.0(출하 zip 이름 · 태그 v12.17.0-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
 //     인터락 29종(0~27 + StartupSanity) = 태그 소스 열거 · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
 //  §4 오중 빌드 회귀.
+//  §6 [v12.17.0-GM · 방향 B] zip 항목 정규화 · 중복 가드: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 비바이너리 runtimeconfig) = 수검 Ok ·
+//     IL 판독 Ok · manifest.sig 2개 / 봉인 비바이너리 대소문자 변형 사본 / 구분자 · 대소문자 변형 바이너리 사본 = 전부 거부(Windows 해제 시 덮어쓰기 모호성).
 //  §5 [v12.16.1-GM · 방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독(ShippedBinaryLiveArmedGuard — 추출·로드·실행 0):
 //     빌드 산출 DLL = 조회 지점 ≥2 · 위반 0 · ldc.i4.0→ldc.i4.1 1바이트 패치 사본 = 거부 · 손상/항목 누락 zip = 거부 · 스크립트 [9] 결선.
 // ============================================================================
@@ -20,6 +22,7 @@ using System.Linq;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using MS2E.Core;
@@ -58,13 +61,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_16_1_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_17_0_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 16, 1, 0), v);
-            Assert.Equal("12.16.1", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 17, 0, 0), v);
+            Assert.Equal("12.17.0", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.16.1</Version>", csproj);
+            Assert.Contains("<Version>12.17.0</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -85,7 +88,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.16.1-GM Production Golden Master", s);
+            Assert.Contains("v12.17.0-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -174,7 +177,7 @@ namespace StockManager.Tests
                 Assert.Contains("<TreatWarningsAsErrors>true</TreatWarningsAsErrors>", File.ReadAllText(Path.Combine(root, proj)));
             }
             Assert.True(PureShellFitnessSentinel.RatchetCeiling <= 40);
-            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // 0~27 + StartupSanity — v12.16.1-GM 출하본(태그 소스)도 29
+            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // 0~27 + StartupSanity — v12.17.0-GM 출하본(태그 소스)도 29
         }
 
         // ════════════ §5 [방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독 ════════════
@@ -297,6 +300,75 @@ namespace StockManager.Tests
                 Assert.Equal(2, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));
             }
             finally { foreach (var z in new[] { wrongEntry, truncated, notZip }) File.Delete(z); }
+        }
+
+        // ════════════ §6 [v12.17.0-GM · 방향 B] zip 항목 정규화 · 중복 가드 ════════════
+
+        /// <summary>실 호스트 DLL + 봉인 비바이너리(runtimeconfig)를 봉인한 zip — 항목 이름은 PS 5.1 Compress-Archive 처럼 역슬래시.</summary>
+        private static (string Zip, string Seal) SealedPs51Zip(string dir, Action<ZipArchive>? extra = null)
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "host"));
+            var files = new[]
+            {
+                ("host/MS2E.StockSuite.dll", File.ReadAllBytes(HostDll())),
+                ("host/MS2E.StockSuite.runtimeconfig.json", Encoding.UTF8.GetBytes("{\"runtimeOptions\":{\"tfm\":\"net8.0\"}}")),
+            };
+            var arts = new List<ReleasePackager.ReleaseArtifact>();
+            foreach (var (rel, bytes) in files)
+            {
+                string path = Path.Combine(dir, rel.Replace('/', Path.DirectorySeparatorChar));
+                File.WriteAllBytes(path, bytes);
+                arts.Add(new ReleasePackager.ReleaseArtifact(rel, path));
+            }
+            string manifest = ReleasePackager.GenerateManifestJson(ReleasePackager.DefaultVersion + "-GM", arts);
+            Assert.True(BootIntegrityGate.TryParse(manifest, out _, out string seal, out _));
+            string zip = Path.Combine(dir, "pkg.zip");
+            using (var za = ZipFile.Open(zip, ZipArchiveMode.Create))
+            {
+                using (var w = new StreamWriter(za.CreateEntry("manifest.sig").Open(), new UTF8Encoding(false))) w.Write(manifest);
+                foreach (var (rel, bytes) in files) using (var e = za.CreateEntry(rel.Replace('/', '\\')).Open()) e.Write(bytes);
+                extra?.Invoke(za);
+            }
+            return (zip, seal);
+        }
+
+        private static void AddEntry(ZipArchive za, string name, byte[] bytes) { using var e = za.CreateEntry(name).Open(); e.Write(bytes); }
+
+        [Fact]
+        public void ZipEntryGuard_Ps51BackslashSealedZip_VerifiesAndIlInspects_AmbiguousDuplicatesRejected()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "ms2e_zipguard_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var ok = SealedPs51Zip(Path.Combine(root, "ok"));
+                Assert.Equal(ZipSealVerdict.Ok, ZipSealDryRunVerifier.Verify(ok.Zip, ok.Seal, out string d));    // 역슬래시 항목 = 정규화 후 봉인 일치
+                _out.WriteLine("[방향 B] PS5.1 역슬래시 실봉인 zip: " + d);
+                Assert.True(ShippedBinaryLiveArmedGuard.ScanZip(ok.Zip).Ok);                                        // 같은 zip 의 호스트 IL 판독
+
+                byte[] dll = File.ReadAllBytes(HostDll());
+                byte[] cfgEvil = Encoding.UTF8.GetBytes("{\"runtimeOptions\":{\"configProperties\":{\"evil\":true}}}");
+                var cases = new (string Name, Action<ZipArchive> Extra)[]
+                {
+                    ("manifest.sig 2개", za => AddEntry(za, "manifest.sig", Encoding.UTF8.GetBytes("{}"))),
+                    ("봉인 비바이너리 대소문자 변형", za => AddEntry(za, "HOST/ms2e.stocksuite.RUNTIMECONFIG.json", cfgEvil)),
+                    ("구분자 변형 바이너리 사본", za => AddEntry(za, "host/MS2E.StockSuite.dll", dll)),
+                    ("대소문자 변형 바이너리 사본", za => AddEntry(za, "Host\\ms2e.stocksuite.DLL", dll)),
+                };
+                int i = 0;
+                foreach (var (name, extra) in cases)
+                {
+                    var bad = SealedPs51Zip(Path.Combine(root, "bad" + i++), extra);
+                    var v = ZipSealDryRunVerifier.Verify(bad.Zip, bad.Seal, out string why);
+                    _out.WriteLine($"[방향 B] {name} → {v} · {why}");
+                    Assert.Equal(ZipSealVerdict.DuplicateEntry, v);
+                }
+                // IL 판독기도 모호한(정규화 · 대소문자 무시 후 2개) 호스트 항목 = 거부
+                var amb = SealedPs51Zip(Path.Combine(root, "amb"), za => AddEntry(za, "HOST/MS2E.StockSuite.dll", dll));
+                var g = ShippedBinaryLiveArmedGuard.ScanZip(amb.Zip);
+                Assert.False(g.Ok);
+                Assert.Contains(g.Violations, x => x.Contains("중복", StringComparison.Ordinal));
+            }
+            finally { try { Directory.Delete(root, true); } catch (IOException) { } }
         }
 
         [Fact]

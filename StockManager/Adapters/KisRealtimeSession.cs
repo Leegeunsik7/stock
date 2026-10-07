@@ -10,6 +10,9 @@
 //      체결통보는 어댑터 onFill(실행 피드 · 자식 매트릭스)로 디스패치. 버퍼 초과 메시지 = 끝까지 폐기(오판독 0).
 //   ④ PINGPONG 반송: 수신 버퍼는 다음 수신에 재사용되므로 반송 전용 버퍼로 복사 후 송신 직렬화(동시 송신 금지 계약).
 //   ⑤ 단절/예외 = KisSessionInterlock.MarkDisconnected(Trip · 라우터 KIS 장애 보고 · sticky) → 대기 후 재접속(체결 대사 지속용 · 무장은 이중키 재무장 전 차단).
+//  ⑥ [세션 복구] SessionRecoveryManager 결속 시: 고정 지연 대신 펌프 구동 지수 백오프 허가(1·2·4·8·16s) · 연결마다 별도 취소원 —
+//     침묵(half-open) 판정 시 관리자가 AbortConnection 으로 죽은 소켓을 닫아 재접속 · 재구독(체결통보 · 심박 · 호가 ≤38) → 대사 결속.
+//     미결속(null) = 기존 고정 지연 동작 그대로(하위 호환).
 //  ★liveArmed:false 무관 — 이 세션은 수신 전용(주문 송신 0).
 // ============================================================================
 using System;
@@ -62,12 +65,16 @@ namespace StockManager.Adapters
         private readonly byte[] _rx = GC.AllocateArray<byte>(256 * 1024, pinned: true), _echo = GC.AllocateArray<byte>(4096, pinned: true);
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private IKisWsTransport? _transport;
+        private readonly SessionRecoveryManager? _recovery;
+        private CancellationTokenSource? _conn;                                      // 현재 연결 전용 취소원(침묵 강제 종료)
+        private long _aborts;
         private long _connects, _disconnects, _approvalFailures, _faults, _oversized, _framesIn, _echoes;
 
         public KisRealtimeSession(KisOpenApiAdapter adapter, KisSessionInterlock session, Func<IKisWsTransport> transportFactory, Func<string?> approvalKey,
                                   string htsId, bool vts, string heartbeatSymbol = "005930", Uri? uri = null, TimeSpan? reconnectDelay = null,
-                                  string[]? bookSymbols = null)
+                                  string[]? bookSymbols = null, SessionRecoveryManager? recovery = null)
         {
+            _recovery = recovery;
             _bookSymbols = bookSymbols ?? Array.Empty<string>();
             if (_bookSymbols.Length > MaxBookSymbols) throw new ArgumentOutOfRangeException(nameof(bookSymbols), "호가 구독 종목 상한 " + MaxBookSymbols);
             foreach (var b in _bookSymbols) if (b is null || b.Length != 6) throw new ArgumentException("종목코드 6자리", nameof(bookSymbols));
@@ -89,41 +96,68 @@ namespace StockManager.Adapters
         public long FramesIn => Interlocked.Read(ref _framesIn);
         public long Echoes => Interlocked.Read(ref _echoes);
         public string NoticeTrId => _vts ? "H0STCNI9" : "H0STCNI0";
+        public long Aborts => Interlocked.Read(ref _aborts);
+        /// <summary>재접속마다 송신하는 구독 수(체결통보 + 심박 + 호가 종목).</summary>
+        public int SubscriptionCount => 2 + _bookSymbols.Length;
+
+        /// <summary>[세션 복구] 현재 연결 강제 종료(침묵 단절) — 수신 루프가 깨어나 단절 처리 → 백오프 재접속. 연결 없음 = 무동작.</summary>
+        public void AbortConnection()
+        {
+            var c = Volatile.Read(ref _conn);
+            if (c is null) return;
+            try { c.Cancel(); Interlocked.Increment(ref _aborts); } catch (ObjectDisposedException) { }
+        }
 
         /// <summary>수신 루프(재접속 포함). 취소 토큰으로 종료.</summary>
         public async Task RunAsync(CancellationToken ct)
         {
+            var rec = _recovery;
+            using var shutdownReg = rec is null ? default : ct.Register(static s => ((SessionRecoveryManager)s!).Shutdown(), rec);   // 실행당 1회 등록
             while (!ct.IsCancellationRequested)
             {
+                if (rec is not null && !await rec.WaitForAttemptAsync().ConfigureAwait(false)) break;   // [방향 A] 펌프 허가(무할당 대기)
                 string? key = null;
                 try { key = _approval(); } catch (Exception) { key = null; }
                 if (string.IsNullOrWhiteSpace(key))
                 {
                     Interlocked.Increment(ref _approvalFailures);
+                    if (rec is not null) { rec.OnAttemptFailed(); continue; }
                     if (!await DelayAsync(ct).ConfigureAwait(false)) break;
                     continue;
                 }
                 var t = _factory();
+                var conn = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                Volatile.Write(ref _conn, conn);
                 bool connected = false;
                 try
                 {
-                    await t.ConnectAsync(_uri, ct).ConfigureAwait(false);
+                    var tk = conn.Token;
+                    await t.ConnectAsync(_uri, tk).ConfigureAwait(false);
                     Volatile.Write(ref _transport, t);
-                    await t.SendTextAsync(BuildSubscribe(key!, NoticeTrId, _htsId), ct).ConfigureAwait(false);
-                    await t.SendTextAsync(BuildSubscribe(key!, "H0STCNT0", _heartbeatSymbol), ct).ConfigureAwait(false);
-                    foreach (var sym in _bookSymbols) await t.SendTextAsync(BuildSubscribe(key!, "H0STASP0", sym), ct).ConfigureAwait(false);   // [교차 피드]
+                    await t.SendTextAsync(BuildSubscribe(key!, NoticeTrId, _htsId), tk).ConfigureAwait(false);
+                    await t.SendTextAsync(BuildSubscribe(key!, "H0STCNT0", _heartbeatSymbol), tk).ConfigureAwait(false);
+                    foreach (var sym in _bookSymbols) await t.SendTextAsync(BuildSubscribe(key!, "H0STASP0", sym), tk).ConfigureAwait(false);   // [교차 피드]
                     connected = true;
                     Interlocked.Increment(ref _connects);
                     _session.MarkConnected();
-                    await ReceiveLoopAsync(t, ct).ConfigureAwait(false);
+                    rec?.OnConnected();                                                   // 재접속이면 대사 요청 → 확정 전까지 격리 유지
+                    await ReceiveLoopAsync(t, tk).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
                 catch (Exception) { Interlocked.Increment(ref _faults); }
                 finally
                 {
+                    Volatile.Write(ref _conn, null);
+                    conn.Dispose();
                     Volatile.Write(ref _transport, null);
                     try { t.Dispose(); } catch (Exception) { }
                     if (connected) { Interlocked.Increment(ref _disconnects); _session.MarkDisconnected(); }   // ★단절 = 인터락 Trip(sticky)
+                }
+                if (rec is not null)
+                {
+                    if (connected) rec.OnConnectionLost();
+                    else if (!ct.IsCancellationRequested) rec.OnAttemptFailed();
+                    continue;
                 }
                 if (ct.IsCancellationRequested || !await DelayAsync(ct).ConfigureAwait(false)) break;
             }

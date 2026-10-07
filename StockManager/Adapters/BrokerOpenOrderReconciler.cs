@@ -110,6 +110,30 @@ namespace StockManager.Adapters
         public long RowsIngested => Interlocked.Read(ref _rowsIngested);
         public long RowsRejected => Interlocked.Read(ref _rowsRejected);
         public bool AdoptMappingSent => Volatile.Read(ref _adoptMapped) == 1;
+        private long _reconcileRequests, _invalidatedBatches;
+        public long ReconcileRequests => Interlocked.Read(ref _reconcileRequests);
+        public long InvalidatedBatches => Interlocked.Read(ref _invalidatedBatches);
+        /// <summary>그 venue 의 대사가 (마지막 RequestReconcile 이후) 확정됐는가.</summary>
+        public bool IsConfirmed(int venue) => (uint)venue < 32 && (Volatile.Read(ref _confirmedMask) & (1 << venue)) != 0;
+
+        /// <summary>
+        /// [세션 복구] 브로커 세션 재접속 직후 호출 — 그 venue 의 확정 철회(필수 venue 면 비트 22 즉시 차단) · 진행 중 배치(재접속 '전'
+        /// 스냅샷) 무효화 · 키움이면 다음 Pump 에서 즉시 빠른 조회. 단절 동안 발생한 체결/취소를 브로커 원장과 다시 1:1 대조하기 전엔
+        /// 그 venue 로 신규 발주가 나갈 수 없다(Zero Stale Order). δ=0(락 + 정수 필드).
+        /// </summary>
+        public void RequestReconcile(int venue)
+        {
+            if (venue != OpenOrderVenueKind.Kiwoom && venue != OpenOrderVenueKind.Kis) throw new ArgumentOutOfRangeException(nameof(venue));
+            lock (_gate)
+            {
+                Interlocked.Increment(ref _reconcileRequests);
+                int prev = Volatile.Read(ref _confirmedMask);
+                Volatile.Write(ref _confirmedMask, prev & ~(1 << venue));
+                if (_pending && _activeVenue == venue) { _pending = false; Interlocked.Increment(ref _invalidatedBatches); }
+                _nextQueryTicks = 0;
+            }
+            Volatile.Read(ref _link)?.Resync();
+        }
 
         public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
         {
@@ -162,6 +186,37 @@ namespace StockManager.Adapters
                 return sent;
             }
         }
+
+        /// <summary>
+        /// [KIS 미체결 결선] 진행 중 배치가 없을 때만 스냅샷 시작(true). ★대사기의 진행 배치는 venue 공용 1개 — 키움 OPT10075 응답 대기 중
+        /// KIS 조회를 시작하면 키움 배치가 덮여 오판독된다. 진행 중 = false(다음 주기 재시도 · 덮어쓰기 0).
+        /// </summary>
+        public bool TryBeginSnapshot(int venue)
+        {
+            if (venue != OpenOrderVenueKind.Kiwoom && venue != OpenOrderVenueKind.Kis) throw new ArgumentOutOfRangeException(nameof(venue));
+            lock (_gate)
+            {
+                if (_pending) return false;
+                BeginSnapshotLocked(venue, _nowTicks());
+                return true;
+            }
+        }
+
+        /// <summary>[KIS 미체결 결선] 외부 조회 실패(HTTP · 연속 조회 키 이탈 · 페이지 상한) — 그 venue 의 진행 배치 폐기(Incomplete · 차단 유지).</summary>
+        public void AbortSnapshot(int venue)
+        {
+            OpenOrderPassResult result;
+            lock (_gate)
+            {
+                if (!_pending || _activeVenue != venue) return;
+                result = AbortBatchLocked();
+            }
+            Emit(result);
+        }
+
+        private Func<long, long, bool>? _kisCancel;
+        /// <summary>[방향 B] KIS 유령 주문 비상 취소 결속(odno · ord_gno_brno → 브로커 접수 여부). 미결속 = KIS 유령은 차단만.</summary>
+        public void AttachKisCanceller(Func<long, long, bool> cancel) => Volatile.Write(ref _kisCancel, cancel ?? throw new ArgumentNullException(nameof(cancel)));
 
         /// <summary>외부 조회(KIS REST 등) 송신 직전 호출 — 스냅샷 시퀀스 기록 · 행 버퍼 초기화.</summary>
         public void BeginSnapshot(int venue)
@@ -402,7 +457,9 @@ namespace StockManager.Adapters
         // [방향 B] 미체결 전 행 비상 취소 — 패스당 상한 · 같은 번호 5초 내 중복 억제(상태 구동 · 대기열 없음)
         private int CancelRowsLocked(int rows, int venue, MmfFlightRecorder? flight)
         {
-            if (venue != OpenOrderVenueKind.Kiwoom || _kiwoom is not { } v) return 0;      // KIS 취소 송신 경로 미배선(정직 스코핑) — 차단만
+            var v = _kiwoom;
+            var kisCancel = Volatile.Read(ref _kisCancel);
+            if (venue == OpenOrderVenueKind.Kiwoom ? v is null : kisCancel is null) return 0;   // 취소 경로 미결속 — 차단만
             long now = _nowTicks();
             int sent = 0;
             for (int r = 0; r < rows && sent < _maxCancels; r++)
@@ -410,7 +467,9 @@ namespace StockManager.Adapters
                 ref var row = ref _rows[r];
                 if (row.RemainingQty <= 0 || RecentlyCancelled(row.VenueOrderNo, now)) continue;
                 bool ok;
-                try { ok = v.CancelByVenueNo(row.VenueOrderNo, row.SymbolCode, row.Side, row.RemainingQty); }
+                // [방향 B] KIS = 원장 번호(ODNO) + 주문채번지점번호(행 Reserved) 전량 취소(TTTC0803U) · 지점번호 미상 = 송신 불가(실패 계수)
+                try { ok = venue == OpenOrderVenueKind.Kiwoom ? v!.CancelByVenueNo(row.VenueOrderNo, row.SymbolCode, row.Side, row.RemainingQty)
+                                                              : row.Reserved > 0 && kisCancel!(row.VenueOrderNo, row.Reserved); }
                 catch (Exception) { ok = false; }
                 if (!ok) { Interlocked.Increment(ref _cancelFaults); continue; }
                 int m = _memoNext; _memoNext = (m + 1) % CancelMemo;

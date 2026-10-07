@@ -74,6 +74,28 @@ namespace StockManager.Adapters
         public long Fills => Interlocked.Read(ref _fills);
         public int LastAvailable => Volatile.Read(ref _lastAvailable);
 
+        // [세션 복구] 세션 단절 · 재접속 후 대사 미확정 · 소진 래치 동안 그 브로커 한도 = 0(분할 대상 제외). SessionRecoveryManager 가 구동.
+        private long _sessionIsolatedMask, _sessionIsolatedSamples;
+        public long SessionIsolatedMask => Interlocked.Read(ref _sessionIsolatedMask);
+        public long SessionIsolatedSamples => Interlocked.Read(ref _sessionIsolatedSamples);
+        // [KIS 미체결 대사] 대사 미확정 · 불일치 · 유령 동안 그 브로커 한도 = 0(세션 격리와 별개 마스크 — 두 구동자가 같은 비트를 덮어쓰지 않는다).
+        private long _reconcileIsolatedMask, _reconcileIsolatedSamples;
+        public long ReconcileIsolatedMask => Interlocked.Read(ref _reconcileIsolatedMask);
+        public long ReconcileIsolatedSamples => Interlocked.Read(ref _reconcileIsolatedSamples);
+        public void SetReconcileIsolated(int broker, bool isolated)
+        {
+            if ((uint)broker >= (uint)_views.Length) throw new ArgumentOutOfRangeException(nameof(broker));
+            long bit = 1L << broker;
+            if (isolated) Interlocked.Or(ref _reconcileIsolatedMask, bit); else Interlocked.And(ref _reconcileIsolatedMask, ~bit);
+        }
+
+        public void SetSessionIsolated(int broker, bool isolated)
+        {
+            if ((uint)broker >= (uint)_views.Length) throw new ArgumentOutOfRangeException(nameof(broker));
+            long bit = 1L << broker;
+            if (isolated) Interlocked.Or(ref _sessionIsolatedMask, bit); else Interlocked.And(ref _sessionIsolatedMask, ~bit);
+        }
+
         public int Fill(Span<BrokerSplitCap> dst, long symbolCode, OrderSide side, long limitPriceRaw, long parentReservedWon)
         {
             Interlocked.Increment(ref _fills);
@@ -81,6 +103,8 @@ namespace StockManager.Adapters
             for (int b = 0; b < n; b++)
             {
                 dst[b] = new BrokerSplitCap { Broker = b, MaxShares = 0, Available = false };
+                if ((Interlocked.Read(ref _sessionIsolatedMask) & (1L << b)) != 0) { Interlocked.Increment(ref _sessionIsolatedSamples); continue; }   // ★세션 격리 = 한도 0
+                if ((Interlocked.Read(ref _reconcileIsolatedMask) & (1L << b)) != 0) { Interlocked.Increment(ref _reconcileIsolatedSamples); continue; }   // ★대사 미확정/불일치 = 한도 0
                 var v = _views[b];
                 if (v is null || !v.Bound) { Interlocked.Increment(ref _unboundSamples); continue; }   // ★미결속 = 자식 0
                 long shares;

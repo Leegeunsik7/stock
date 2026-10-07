@@ -262,7 +262,7 @@ namespace StockManager.Tests
             string root = d!.FullName;
             string form = File.ReadAllText(Path.Combine(root, "StockManager", "Blazor", "BlazorHomeForm.cs"));
             Assert.Contains("onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis)", form);
-            Assert.Contains("bookSymbols: kisBookSymbols);", form);
+            Assert.Contains("bookSymbols: kisBookSymbols, recovery: kisRecovery);", form);   // [세션 복구] 재접속마다 같은 호가 구독 재송신
             Assert.Contains("crossConfirm: kisBookSymbols.Length > 0,", form);
             Assert.Contains("Volatile.Write(ref quantRef, quantSignals);", form);
             Assert.Contains("cfg.GetString(\"Kis.BookSymbols\", \"\")", form);
