@@ -88,13 +88,14 @@ namespace StockManager.Tests
             Assert.Equal((Sym, 42L), (b.SymbolCode, b.TimestampTicks));
             Assert.Equal((Px + Tick, Px + 10 * Tick, Px, Px - 9 * Tick), (b.AskPrice[0], b.AskPrice[9], b.BidPrice[0], b.BidPrice[9]));
             Assert.Equal((100L, 109L, 200L, 209L), (b.AskQty[0], b.AskQty[9], b.BidQty[0], b.BidQty[9]));
-            Assert.True(KisOrderBookParser.TryParse(U8(AspBody(fields: 43)), 1, out _));                       // 최소 필드
-            Assert.False(KisOrderBookParser.TryParse(U8(AspBody(fields: 42)), 1, out _));                      // 잘림
+            Assert.True(KisOrderBookParser.TryParse(U8(AspBody(fields: 45)), 1, out _));                       // 최소 필드(0~44 · 총잔량 포함)
+            Assert.False(KisOrderBookParser.TryParse(U8(AspBody(fields: 44)), 1, out _));                      // 잘림
             Assert.False(KisOrderBookParser.TryParse(U8(AspBody(overrideField: "7x", overrideAt: 25)), 1, out _));   // 비숫자
             Assert.False(KisOrderBookParser.TryParse(U8(AspBody(overrideField: "-5", overrideAt: 34)), 1, out _));   // 음수
             Assert.False(KisOrderBookParser.TryParse(U8(AspBody(overrideField: "0", overrideAt: 3)), 1, out _));     // 최우선 매도 결측
             Assert.False(KisOrderBookParser.TryParse(U8(AspBody(overrideField: "5930", overrideAt: 0)), 1, out _));  // 코드 6자리 아님
-            Assert.True(KisOrderBookParser.TryParse(U8(AspBody(overrideField: "", overrideAt: 12)), 1, out var e) && e.AskPrice[9] == 0);   // 빈 단계 = 0
+            var blank = AspBody().Split('^'); blank[12] = ""; blank[32] = "";                                    // 10단계 가격 · 잔량 모두 비움
+            Assert.True(KisOrderBookParser.TryParse(U8(string.Join('^', blank)), 1, out var e) && e.AskPrice[9] == 0);   // 빈 단계 = 0
             Assert.Equal(KisTrDomain.Neutral, KisProtocol.ClassifyTr(U8("H0STASP0")));                         // 실/모의 공통 TR
         }
 

@@ -47,6 +47,7 @@ namespace StockManager.Engines
         CrossedFeed = 12,     // [교차 피드] 키움 ↔ KIS 호가 꼬임(같은 호가창 — 한쪽 노후/오염)
         CrossDisagree = 13,   // [교차 피드] 두 피드 신호 방향 불일치
         SingleSource = 14,    // [교차 피드] 한 피드만 신선(다른 피드 미수신 · 시각 이탈) — 확신 ½
+        CrossSkewVeto = 15,   // [교차 피드 · 방향 B] 두 피드 수신 시각 격차 > 하드 임계(기본 1초) = 동시성 붕괴 — 확신 0
     }
 
     public enum StrategyAnomalyKind : byte { None = 0, NonFinite = 1, OutOfRange = 2, NonPositiveQty = 3, ComputeStall = 4, CrossFeedCrossed = 5 }
@@ -151,6 +152,20 @@ namespace StockManager.Engines
         public const long DefaultCrossMaxSkewMicros = 500_000;
         public const int DefaultCrossedStreakToTrip = 3;
         public const double SingleSourceDecay = 0.5;
+        public const long DefaultCrossHardSkewMicros = 1_000_000;
+        private readonly long _crossHardSkewMicros;
+        private int _quarantine0, _quarantine1;
+        private long _skewVetoes, _quarantinedInputs;
+        public long CrossSkewVetoes => Interlocked.Read(ref _skewVetoes);
+        public long QuarantinedInputs => Interlocked.Read(ref _quarantinedInputs);
+        public bool IsFeedQuarantined(int feed) => feed == FeedKiwoom ? Volatile.Read(ref _quarantine0) == 1 : Volatile.Read(ref _quarantine1) == 1;
+
+        /// <summary>[KIS 호가 경계 방어] 피드 격리/복귀(어댑터 연속 이탈 통지). 격리 피드 = 입력 무시 · 교차 판정에서 제외(→ 남은 피드 단일 출처 ½).</summary>
+        public void SetFeedQuarantined(int feed, bool quarantined)
+        {
+            if (feed == FeedKiwoom) Volatile.Write(ref _quarantine0, quarantined ? 1 : 0);
+            else if (feed == FeedKis) Volatile.Write(ref _quarantine1, quarantined ? 1 : 0);
+        }
         private readonly bool _crossConfirm;
         private readonly long _crossMaxSkewMicros;
         private readonly int _crossedStreakToTrip;
@@ -164,8 +179,11 @@ namespace StockManager.Engines
                                    double confidenceThreshold = DefaultConfidenceThreshold, long maxSignalAgeMicros = DefaultMaxSignalAgeMicros,
                                    long stallMicros = DefaultStallMicros, double volSpikeBp = DefaultVolSpikeBp, double vwapStretchBp = DefaultVwapStretchBp,
                                    long publishIntervalMicros = DefaultPublishIntervalMicros,
-                                   bool crossConfirm = false, long crossMaxSkewMicros = DefaultCrossMaxSkewMicros, int crossedStreakToTrip = DefaultCrossedStreakToTrip)
+                                   bool crossConfirm = false, long crossMaxSkewMicros = DefaultCrossMaxSkewMicros, int crossedStreakToTrip = DefaultCrossedStreakToTrip,
+                                   long crossHardSkewMicros = DefaultCrossHardSkewMicros)
         {
+            if (crossHardSkewMicros < crossMaxSkewMicros) throw new ArgumentOutOfRangeException(nameof(crossHardSkewMicros), "하드 임계 ≥ 신선 임계");
+            _crossHardSkewMicros = crossHardSkewMicros;
             if (crossMaxSkewMicros <= 0) throw new ArgumentOutOfRangeException(nameof(crossMaxSkewMicros));
             if (crossedStreakToTrip < 1) throw new ArgumentOutOfRangeException(nameof(crossedStreakToTrip));
             _crossConfirm = crossConfirm; _crossMaxSkewMicros = crossMaxSkewMicros; _crossedStreakToTrip = crossedStreakToTrip;
@@ -218,6 +236,7 @@ namespace StockManager.Engines
         {
             long t0 = _nowMicros();
             if ((uint)feed > 1u) { Interlocked.Increment(ref _invalidBooks); return; }
+            if (IsFeedQuarantined(feed)) { Interlocked.Increment(ref _quarantinedInputs); return; }   // 격리 피드 입력 = 상태 갱신 0
             long bestBid = b.BidPrice[0], bestAsk = b.AskPrice[0];
             if (b.SymbolCode <= 0 || bestBid <= 0 || bestAsk <= 0 || bestAsk <= bestBid) { Interlocked.Increment(ref _invalidBooks); return; }
             long bid5 = 0, ask5 = 0, bid10 = 0, ask10 = 0;
@@ -264,11 +283,19 @@ namespace StockManager.Engines
                     }
                     else
                     {
-                        bool fresh0 = x.F0.RxMicros != 0 && nowRx - x.F0.RxMicros <= _crossMaxSkewMicros;
-                        bool fresh1 = x.F1.RxMicros != 0 && nowRx - x.F1.RxMicros <= _crossMaxSkewMicros;
-                        x.CrossSkewMicros = x.F0.RxMicros != 0 && x.F1.RxMicros != 0 ? Math.Abs(x.F0.RxMicros - x.F1.RxMicros) : -1;
+                        bool has0 = x.F0.RxMicros != 0 && !IsFeedQuarantined(FeedKiwoom), has1 = x.F1.RxMicros != 0 && !IsFeedQuarantined(FeedKis);
+                        bool fresh0 = has0 && nowRx - x.F0.RxMicros <= _crossMaxSkewMicros;
+                        bool fresh1 = has1 && nowRx - x.F1.RxMicros <= _crossMaxSkewMicros;
+                        x.CrossSkewMicros = has0 && has1 ? Math.Abs(x.F0.RxMicros - x.F1.RxMicros) : -1;
                         x.Sources = (fresh0 ? 1 : 0) + (fresh1 ? 1 : 0);
-                        if (fresh0 && fresh1)
+                        if (x.CrossSkewMicros > _crossHardSkewMicros)
+                        {
+                            // ★[방향 B] 두 피드 모두 살아 있는데 수신 시각 격차 > 하드 임계 = 동시성 붕괴 → 교차 확신 원자적 0(격리된 피드는 제외 — 단일 출처 경로)
+                            score = 0; conf = 0; side = 0; micro = 0; x.Imb5 = 0; reason = (int)QuantReason.CrossSkewVeto;
+                            x.CrossedStreak = 0;
+                            Interlocked.Increment(ref _skewVetoes);
+                        }
+                        else if (fresh0 && fresh1)
                         {
                             x.Imb5 = (x.F0.Imb5 + x.F1.Imb5) * 0.5; micro = (x.F0.Micro + x.F1.Micro) * 0.5;
                             if (x.F0.Ask < x.F1.Bid || x.F1.Ask < x.F0.Bid)

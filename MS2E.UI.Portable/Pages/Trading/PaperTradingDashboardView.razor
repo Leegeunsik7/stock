@@ -2,7 +2,10 @@
    IPaperDashboardPort(읽기 전용 — 주문/무장/취소 명령 경로 없음)의 3중 버퍼 프레임을 리스(Acquire→렌더→Release)로 읽는다.
    렌더 병합 = SnapshotRenderGovernor(50ms 창 · 선행/후행 에지 · 버전 불변 생략 · 부하/동결 적응). 허브 FrameReady 는 펌프 스레드에서
    Signal(δ=0)만 호출 — 렌더는 InvokeAsync 로 UI 디스패처에 넘긴다(UI 가 늦거나 예외를 던져도 허브 · 매매 경로 무영향).
-   UI 문자열 생성은 렌더 시점(초당 최대 20회)에만 — 무할당 불변식은 생산자 · 허브 펌프 구간 대상(정직). *@
+   UI 문자열 생성은 렌더 시점(초당 최대 20회)에만 — 무할당 불변식은 생산자 · 허브 펌프 구간 대상(정직).
+   [UX Polish] 코드 → 한글 라벨 · 확신도 텍스트 = SignalLabelMapper 정적 문자열(조회 0B) · 확신도 배지/진행률(0.85 게이트 선) ·
+   점멸 경고(헬스 21 · 전략 이상/호가 꼬임 27 · 송출 우회 15 · 자격증명 1) · [방향 A] 확신도 스파크라인(고정 char 버퍼 작성 · 프레임 버전당 1회 문자열) ·
+   [방향 B] 렌더 지연 열화 모드(지연 EWMA &gt; 250ms 연속 3회 = 차트/스파크라인/점멸 끔 · &lt; 100ms 연속 10회 = 복귀). *@
 @implements IDisposable
 @inject IPaperDashboardPort Dash
 @inject StateAwareRenderGovernor RenderGov
@@ -20,6 +23,7 @@
 }
 @{
     var f = Dash.Acquire();
+    _renderBuilt = f?.BuiltTicks ?? 0;                                   // [방향 B] 이번 렌더가 그린 프레임의 허브 조립 시각
 }
 @if (f is null)
 {
@@ -29,6 +33,10 @@ else
 {
     try
     {
+        @if (_degrade.Degraded)
+        {
+            <div class="pd-note pd-degraded">⚡ 경량 모드 — 렌더 지연 @(_degrade.LagEwmaMs.ToString("0"))ms · 차트 · 스파크라인 · 점멸을 끄고 핵심 텍스트만 표시합니다.</div>
+        }
         <div class="pd-kpis">
             <div class="pd-kpi"><span>평가 손익</span><b style="color:@Tone(f.EquityWon)">@Won(f.EquityWon)</b></div>
             <div class="pd-kpi"><span>실현</span><b style="color:@Tone(f.RealizedPnlWon)">@Won(f.RealizedPnlWon)</b></div>
@@ -43,7 +51,11 @@ else
         <div class="pd-grid">
             <section class="pd-card pd-wide">
                 <h3>누적 손익 곡선 <small>(1초 표본 · 최근 @(f.EquityCount)점)</small></h3>
-                @if (f.EquityCount < 2)
+                @if (_degrade.Degraded)
+                {
+                    <div class="pd-empty">경량 모드 — 곡선 생략 · 현재 평가 손익 @Won(f.EquityWon)</div>
+                }
+                else if (f.EquityCount < 2)
                 {
                     <div class="pd-empty">표본 수집 중</div>
                 }
@@ -64,8 +76,8 @@ else
                         if (b < f.BitNames.Length && !string.IsNullOrEmpty(f.BitNames[b]))
                         {
                             var bit = b;
-                            <span class="pd-led @LedClass(f, bit)" title="@LedTitle(f, bit)">
-                                <i></i>@(bit) @f.BitName(bit)
+                            <span class="pd-led @LedClass(f, bit) @FlashClass(f.IsRaised(bit) && SignalLabelMapper.IsFlashBit(bit))" title="@LedTitle(f, bit)">
+                                <i></i>@(bit) @SignalLabelMapper.Interlock(bit)
                             </span>
                         }
                     }
@@ -75,7 +87,7 @@ else
                     @for (int i = 0; i < f.EventCount; i++)
                     {
                         var e = f.Events[i];
-                        <li>
+                        <li class="@FlashClass(SignalLabelMapper.HasFlash(e.Raised))">
                             <code>@Time(e.Ticks)</code>
                             @if (e.Raised != 0) { <span class="pd-up">▲ @Bits(f, e.Raised)</span> }
                             @if (e.Cleared != 0) { <span class="pd-down">▼ @Bits(f, e.Cleared)</span> }
@@ -125,12 +137,25 @@ else
             </section>
 
             <section class="pd-card pd-wide">
-                <h3>AI 판단 근거 라이브 로그 <small>(최근 @(f.DecisionCount)건 · 유실 @(f.DecisionsLost))</small></h3>
+                <h3>AI 판단 근거 라이브 로그 <small>(최근 @(f.DecisionCount)건 · 유실 @(f.DecisionsLost) · 확신 게이트 85%)</small></h3>
+                @if (!_degrade.Degraded && f.DecisionCount >= 2)
+                {
+                    <svg viewBox="0 0 @(SparkW) @(SparkH)" preserveAspectRatio="none" class="pd-spark" aria-label="확신도 추이">
+                        <line x1="0" x2="@(SparkW)" y1="@(SparklineWriter.GateY(SparkH))" y2="@(SparklineWriter.GateY(SparkH))" stroke="#f9a825" stroke-dasharray="3 3" />
+                        <polyline fill="none" stroke="#9fa8da" stroke-width="1.4" points="@SparkPoints(f)" />
+                    </svg>
+                }
                 <div class="pd-stream">
                     @for (int i = 0; i < f.DecisionCount; i++)
                     {
                         var d = f.Decisions[i];
-                        <div><code>@Time(d.Ticks)</code> [@DashDecisionKind.Label(d.Kind)] @d.Symbol.ToString("D6") · 비중 @Bp(d.ScaleBp) · 변동성 @Bp(d.VolatilityBp) · 값 @d.Value.ToString("N0") · 사유 @(d.Reason)</div>
+                        <div class="pd-dec @FlashClass(d.Reason == 12)">
+                            <code>@Time(d.Ticks)</code>
+                            <span class="pd-badge @SignalLabelMapper.BadgeClass(d.Kind, d.ScaleBp, d.Reason)">@SignalLabelMapper.BadgeText(d.Kind, d.ScaleBp, d.Reason)</span>
+                            @d.Symbol.ToString("D6")
+                            <span class="pd-conf" title="확신도 @SignalLabelMapper.ConfidenceText(d.ScaleBp)"><i class="@SignalLabelMapper.BadgeClass(d.Kind, d.ScaleBp, d.Reason)" style="width:@SignalLabelMapper.ConfidenceWidth(d.ScaleBp)"></i><em></em></span>
+                            @SignalLabelMapper.ConfidenceText(d.ScaleBp) · @SignalLabelMapper.Reason(d.Reason) · 변동성 @Bp(d.VolatilityBp)
+                        </div>
                     }
                     @if (f.DecisionCount == 0) { <div class="pd-empty">판단 기록 없음 — 전략 계층이 PublishDecision 을 호출할 때 표시됩니다.</div> }
                 </div>
@@ -166,11 +191,54 @@ else
     .pd-bar { height: 4px; background: #2a3040; border-radius: 2px; margin: 4px 0; } .pd-bar i { display: block; height: 100%; background: #43a047; border-radius: 2px; }
     .pd-stream { font-size: 11.5px; max-height: 220px; overflow: auto; background: #0f1219; padding: 8px; border-radius: 8px; margin: 0; font-family: Consolas, monospace; }
     .pd-empty { color: var(--sub); font-size: 12px; }
+    .pd-degraded { color: #f9a825; }
+    .pd-spark { width: 100%; height: 40px; margin-bottom: 6px; }
+    .pd-dec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 1px 0; }
+    .pd-badge { font-size: 10.5px; padding: 1px 6px; border-radius: 6px; font-family: inherit; }
+    .pd-badge.up { background: #E53935; color: #fff; } .pd-badge.down { background: #1E88E5; color: #fff; }
+    .pd-badge.hold { background: #3a3f4b; color: #ccc; } .pd-badge.warn { background: #f9a825; color: #111; }
+    .pd-conf { position: relative; display: inline-block; width: 70px; height: 6px; background: #2a3040; border-radius: 3px; }
+    .pd-conf i { position: absolute; left: 0; top: 0; height: 100%; border-radius: 3px; background: #757575; }
+    .pd-conf i.up { background: #E53935; } .pd-conf i.down { background: #1E88E5; } .pd-conf i.warn { background: #f9a825; }
+    .pd-conf em { position: absolute; left: 85%; top: -2px; width: 1px; height: 10px; background: #f9a825; }
+    .pd-flash { animation: pd-blink 0.8s steps(2, start) infinite; }
+    .pd-led.pd-flash { outline: 1px solid #E53935; }
+    @@keyframes pd-blink { to { background-color: rgba(229, 57, 53, 0.35); } }
 </style>
 
 @code {
     private SnapshotRenderGovernor? _gov;
     private Action<long>? _onFrame;
+    // [방향 B] 렌더 지연 열화 · [방향 A] 스파크라인 버퍼(프레임 버전당 1회 문자열)
+    private readonly DashboardDegradationGovernor _degrade = new();
+    private long _renderBuilt, _observedBuilt;
+    private const int SparkW = 300, SparkH = 40;
+    private readonly long[] _sparkVals = new long[PaperDashboardFrame.MaxDecisions];
+    private readonly char[] _sparkBuf = new char[PaperDashboardFrame.MaxDecisions * 12];
+    private long _sparkVersion = -1;
+    private string _sparkPoints = "";
+
+    private string FlashClass(bool on) => on && !_degrade.Degraded ? "pd-flash" : "";
+
+    private string SparkPoints(PaperDashboardFrame f)
+    {
+        if (f.Version == _sparkVersion) return _sparkPoints;
+        int n = f.DecisionCount;
+        for (int i = 0; i < n; i++) _sparkVals[i] = f.Decisions[n - 1 - i].ScaleBp;   // 과거 → 최신
+        int len = SparklineWriter.Write(_sparkVals.AsSpan(0, n), _sparkBuf, SparkW, SparkH);
+        _sparkPoints = len > 0 ? new string(_sparkBuf, 0, len) : "";
+        _sparkVersion = f.Version;
+        return _sparkPoints;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // [방향 B] 허브 조립 시각 → 렌더 완료 지연(같은 UTC 틱 시계). 모드 전환 시 1회 재렌더.
+        long built = _renderBuilt;
+        if (built <= 0 || built == _observedBuilt) return;                // 같은 프레임 재렌더 = 표본 아님
+        _observedBuilt = built;
+        if (_degrade.Observe((DateTime.UtcNow.Ticks - built) / 10_000.0)) { try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { } }
+    }
 
     protected override void OnInitialized()
     {
@@ -202,9 +270,11 @@ else
 
     private static string Bits(PaperDashboardFrame f, long bits)
     {
+        // 단일 비트(대부분) = 정적 한글 라벨 그대로(할당 0) · 복수 비트만 결합
+        if (bits != 0 && (bits & (bits - 1)) == 0) return SignalLabelMapper.Interlock(System.Numerics.BitOperations.TrailingZeroCount((ulong)bits));
         var sb = new System.Text.StringBuilder();
         for (int b = 0; b < 64; b++)
-            if ((bits & (1L << b)) != 0) { if (sb.Length > 0) sb.Append(", "); sb.Append(f.BitName(b)); }
+            if ((bits & (1L << b)) != 0) { if (sb.Length > 0) sb.Append(", "); sb.Append(SignalLabelMapper.Interlock(b)); }
         return sb.ToString();
     }
 

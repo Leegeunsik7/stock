@@ -1,15 +1,16 @@
 # Current Project Status
 
-- **Active Milestone**: [QA · 커밋] v12.16.0-DEV — infra-scan/Phase114 재검증 · StepUpTierGovernor 단계/한도 경합 교정 · §34~§38 선별 커밋 + 태그 v12.16.0-DEV
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,565 Pass(최종 3회 중 2회 전원 · 1회 기존 MMF 실스레드 간헐 · 단독 5/5), infra-scan coupling 0, Phase114 coupled 40 = ratchet 40
-- **Updated At**: 2026-10-08 02:00
+- **Active Milestone**: v12.16.1-GM Production Golden Master 출하 — 인터락 29종 · KIS L2 경계 방어 · 대시보드 한글 UX · 출하 바이너리 liveArmed IL 직접 판독
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,582/3,582 Pass ×2, infra-scan coupling 0, Phase114 coupled 40 = ratchet 40
+- **Updated At**: 2026-10-08 05:00
 
 ## Completed Deliverables
-- 재검증: coupling 0 ≤ 117 · PureShell total 82 / coupled 40 / shell 42 · Stage4 단독 5/5
-- [실결함] StepUpTierGovernor — 단계 CAS 뒤 한도 별도 기록 → 늦은 승격이 이전 한도로 덮음(실측 Full 에 5%) · 롤백 겹침 시 fail-open 가능 → 한도 = 단계 순수 함수
-- Soak GC 측정 창 기준선 보강 · HANDOVER.md §38 · 커밋 + 주석 태그(로컬)
+- 버전 12.16.1 승격(csproj · ReleasePackager · 태그 v12.16.1-GM) · 출하 매니페스트 인터락 29종(+StrategyAnomaly) 대조
+- 방향 A: zip 무추출 봉인 재수검(--verify-zip) 재사용 · 실측 시간 기록
+- 방향 B: ShippedBinaryLiveArmedGuard — 출하 zip 호스트 DLL IL 직접 판독(추출·로드·실행 0) · CLI --verify-live-armed · 스크립트 [9/10] 결선
+- 기존 BlazorHomeForm 한정 가드 사각(InfraLiberationSlice2) 실증 · 신규 가드 지점 16 · 1바이트 패치 16/16 거부
+- GoldenMasterReleasePackagingTests §5 4건 · 방어 끔 4/5 Red · HANDOVER.md §41
 
 ## 정직 스코핑
-- 경합 회귀 테스트는 스트레스형 — 나노초 창이라 수정 전 코드 결정론 재현 불가(근거 = 실측값 + 코드 분석)
-- 기존 간헐: MmfIpcFabricTests 실스레드 백프레셔(본 변경 무관) · 원격 push 안 함
-- Next: KIS VTS 실프레임 대조(H0STASP0 · H0STCNI9) · 피어 QuantumVault 커밋 후 피어 포함 출하
+- stelem 정지 조건은 중복 방어(독립 미검증) · 피어 QuantumVault 읽기 전용(-NoPeer)
+- Next: 태그 기준 작업 트리에서 release-package.ps1 -NoPeer 집행 · 산출물 기록

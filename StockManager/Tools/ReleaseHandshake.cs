@@ -529,11 +529,12 @@ namespace StockManager.Tools
     public static class ReleaseHandshakeCli
     {
         public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
+        public const string VerifyLiveArmedFlag = "--verify-live-armed";
         public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -562,6 +563,16 @@ namespace StockManager.Tools
                     var v = ZipSealDryRunVerifier.Verify(zip, File.ReadAllText(sealFile), out string d);
                     output.WriteLine($"[verify-zip] {v}: {d}");
                     return v == ZipSealVerdict.Ok ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], VerifyLiveArmedFlag))
+                {
+                    // [v12.16.1-GM · 방향 B] 출하 zip 안 호스트 DLL 의 이중 물리 키 기본값을 IL 로 직접 판독(추출 · 로드 · 실행 0)
+                    string? zip = Arg(args, 1);
+                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip>"); return ExitUsage; }
+                    var r = ShippedBinaryLiveArmedGuard.ScanZip(zip);
+                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 위반 {r.Violations.Count}");
+                    foreach (var v in r.Violations) output.WriteLine("  " + v);
+                    return r.Ok ? ExitOk : ExitRejected;
                 }
                 string? releaseDir = o.GetValueOrDefault("--release-dir"), repo = o.GetValueOrDefault("--repo"), shim = o.GetValueOrDefault("--shim");
                 if (releaseDir is null || repo is null || shim is null) { output.WriteLine("[handshake] 사용: --release-dir <dir> --repo <root> --shim <dll> [--peer <root>] [--peer-manifest <rel>] [--out|--manifest <json>]"); return ExitUsage; }

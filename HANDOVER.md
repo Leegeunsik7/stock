@@ -1188,3 +1188,52 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 38.2 커밋
 - 선별 스테이징: §34~§38 변경만 · 제외 = StockManager/Blazor/Pages/BrokerSettingsPage.razor · StockManager/Blazor/Pages/InstallerBuildPanel.razor · .claude/*(타 세션).
 - 커밋 "v12.16.0-DEV — KIS L2 Depth Parser, Cross-Broker Signal Validation & Interlock Bit 27 Complete" + 주석 태그 v12.16.0-DEV(로컬 · push 안 함).
+
+## 39. 차기: KIS H0STASP0 공식 레이아웃 대조 · 호가 경계 방어 · 피드 격리 · 시각 이탈 거부 (2026-10-08 · 미커밋)
+
+### 39.1 전제 검증
+- ★VTS 실수신 패킷 캡처 · 실계좌 연결 없음 → '실데이터 1:1 대조'는 불가. 대신 KIS 공식 공개 예제(koreainvestment/open-trading-api · examples_llm/domestic_stock/asking_price_krx)의 컬럼 정의(현행 63필드 · 실전/모의 같은 TR)와 파서 인덱스를 대조 → 0~44 완전 일치(0 종목 · 2 시간구분 · 3~12 매도호가 · 13~22 매수호가 · 23~32 매도잔량 · 33~42 매수잔량 · 43/44 총잔량).
+- ★[실결함] HOUR_CLS_CODE(필드 2) 미판독 — 장전/장후 예상 · VI · 시간외 예상 호가가 연속매매 호가처럼 시그널 엔진에 유입(예상 잔량이 불균형/교차 판정 오염). 이제 '0'(장중)만 피드 · 나머지 무시 계수.
+- 방향 A(0.1ns 프레임 분석) 불가 — Stopwatch 분해능 수십~100ns(이 호스트) · 실패킷 부재. 방향 B 채택.
+
+### 39.2 구현
+- KisOrderBookParser: 최소 45필드 · 사유 코드(KisBookReject: 잘림 · 종목코드 · 숫자 아님 · 음수 · 최우선 결측 · 단조성 · 구멍/가격 없는 잔량 · 연속매매 최우선 교차 · 시간구분 · 프레임 헤더) · 총잔량/시간구분 노출 · δ=0.
+- KisOpenApiAdapter: 이탈 틱 무시 + 블랙박스 KisBookRejected(98 · 사유 · 종목 · 연속 수) · 연속 5회 = KIS 호가 격리(전달 0 · KisBookQuarantine 99) · 정상 20회 = 복귀 · 예상 호가 제외.
+- QuantSignalProvider: 피드 격리(SetFeedQuarantined — 입력 무시 · 교차 판정 제외 → 키움 단일 출처 ½ 유지 · Zero Single-Source Bias 계승) · [방향 B] 두 피드 수신 시각 격차 > 1초(`Strategy.CrossHardSkewMs`) = 교차 확신 원자적 0(CrossSkewVeto) · 0.5~1초 = 단일 출처 ½.
+- 지시서 '격리 시 키움 단독 모드 전환'은 단일 출처 감쇄 유지로 해석(감쇄 없는 단독 전환 = 교차 확인 모드의 보수성 후퇴).
+
+### 39.3 검증 · 한계
+- KisVtsOrderBookParserTests.cs 6건(공식 63컬럼 사상 · 경계 사유 19종 · 격리 5회/복귀 20회 · 이탈 데이터 엔진 유입 0 · 블랙박스 사유 기록 · 시각 이탈 1.1초 = 0 · δ=0) · 방어 9종 끔 9/9 Red · CrossBrokerSignalTests 최소 필드 기대값 갱신(43→45). 전체 3,571 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40.
+- 한계: 대조 기준 = 공식 예제 정의(실패킷 아님) · KIS 연결 끊김(무수신) 상태에서 키움만 갱신되면 1초 뒤 교차 확신 0(교차 모드 의도된 fail-closed — KIS 피드 복구 또는 교차 모드 해제 필요).
+
+## 40. 차기: AI 대시보드 UX — 한글 라벨 매핑 · 확신도 배지 · 점멸 경고 · 스파크라인 · 경량 모드 (2026-10-08 · 미커밋)
+
+### 40.1 전제 검증
+- `MS2E.UI.Portable/Helpers` 부재 → 신설. RCL 은 엔진 열거형(QuantReason · ArmingInterlockSource) 참조 불가 → 코드 표를 Portable 에 정적 배열로 복제하고 호스트 테스트가 열거형 전수 대조로 동기화 강제(코드 추가/재번호 시 실패).
+- ★정직: Blazor 렌더 트리 · 속성 문자열화는 프레임워크 할당 — '렌더 루프 0B' 는 보증 불가. 0B 보증 범위 = 라벨 조회 · 확신도 텍스트(101개 정적 캐시) · 배지 판정 · 스파크라인 좌표 작성(고정 char 버퍼). 스파크라인 DOM 속성 문자열은 프레임 버전당 1회.
+- §31 판단 로그의 '사유 N' 숫자 표기가 이번 개선 대상(§35 한계).
+
+### 40.2 구현
+- `MS2E.UI.Portable/Helpers/SignalLabelMapper.cs` — 판단 근거 16 · 인터락 29(0~27 + 63) 한글 · 경고 근거(변동성 거부 · 전략 이상 · 호가 꼬임 · 시각 이탈) · 점멸 비트(헬스 21 · 전략 이상 27 · 송출 우회 15 · 자격증명 1) · 확신도 배지(0.85 게이트: 매수 적 · 매도 청 · 보류 회색 · 거부 경고).
+- `MS2E.UI.Portable/Helpers/DashboardRenderHelpers.cs` — [방향 A] SparklineWriter(정수 좌표 · 고정 버퍼 · 85% 게이트 선) · [방향 B] DashboardDegradationGovernor(지연 EWMA > 250ms 연속 3회 = 경량 · < 100ms 연속 10회 = 복귀 · 무효 표본 무시).
+- PaperTradingDashboardView: LED/포렌식 한글 · 점멸(경량 모드에선 끔) · 판단 로그 배지 + 확신도 진행률(85% 표식) + 한글 사유 · 확신도 스파크라인 · 렌더 지연(허브 조립 시각 → 렌더 완료) 관측 → 경량 모드(곡선/스파크라인/점멸 생략). @inject 2개 불변 · 호스트 shim Inject 0.
+
+### 40.3 검증 · 한계
+- DashboardUxLabelMappingTests.cs 7건(열거형 전수 대조 · 0B · 게이트 경계 · 스파크라인 · 히스테리시스 · 허브 꼬임 판단 → 경고 라벨/점멸 · 래칫 · RCL 순수성) · 방어 8종 끔 8/8 Red · 전체 3,578 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40(UI 고도화 후 불변).
+- 한계: 브라우저 실렌더/점멸 육안 미확인(WinForms WebView 호스트) · 스파크라인 = 프레임의 최근 판단 48건(종목 혼합) · 경량 모드 지연은 서버 측 렌더 완료 기준(브라우저 페인트 시각 아님).
+
+## 41. v12.16.1-GM Production Golden Master 출하 (2026-10-08)
+
+### 41.1 전제 검증
+- 출하 버전 원천 = 호스트 csproj `<Version>` → 12.15.0 → 12.16.1 승격(Assembly/File 12.16.1.0 · ReleasePackager.DefaultVersion · zip 이름 · 태그 v12.16.1-GM). 태그 v12.16.1-GM 은 사전 부재(-f 불요 — 신규 주석 태그).
+- [방향 A] zip 무추출 봉인 재수검은 기존재(`--verify-zip` · ZipSealDryRunVerifier, §33) — 재사용 · 실측 시간만 기록.
+- [방향 B] 기존 [7/10] IL 가드는 테스트 프로세스가 '로드한' 어셈블리를 리플렉션으로 검사하고 범위가 BlazorHomeForm 트리 한정 → 출하 zip 자체의 바이너리는 직접 판독하지 않았고, BlazorHomeForm 밖 조회 지점(InfraLiberationSlice2 의 RuntimeConfigSnapshot.Capture)은 사각.
+
+### 41.2 구현
+- `StockManager/Tools/ShippedBinaryLiveArmedGuard.cs` — 출하 zip 의 `host/MS2E.StockSuite.dll` 항목 스트림을 메모리로만 읽어(추출 · 로드 · 실행 0) System.Reflection.Metadata 로 어셈블리 전체 메서드 IL 판독. 조회 지점 = 키 ldstr 이후 GetBool 소비(배열 초기화 등 조회 아닌 사용 제외) · 판정 = ldstr → ldc.i4.0 → GetBool 직결 · 두 키 각각 지점 ≥1(비공허성) · 손상 zip/PE · 항목 누락 = 거부(못 읽음 ≠ 위반 없음).
+- 콜드 CLI `--verify-live-armed <zip>`(ReleaseHandshakeCli) · release-package.ps1 [9/10] 에서 `--verify-zip` 직후 실행 · 거부 = 출하 산출물 전량 폐기 후 중단(Remove-ReleaseOutputs 5곳).
+- 버전 핀 갱신: GoldenMasterFreezeTests · GoldenMasterReleasePackagingTests(12.16.1 · 스크립트 머리말 v12.16.1-GM · 출하 인터락 29종 + StrategyAnomaly) · QuantumVaultPipelineIntegrationTests(폐기 분기 4 → 5).
+
+### 41.3 검증
+- GoldenMasterReleasePackagingTests §5 4건: 빌드 산출 DLL 지점 16 · 위반 0 · ~50ms · ldc.i4.0→ldc.i4.1 1바이트 패치 사본 16/16 거부 · 항목 누락/잘린 PE/zip 아님/부재 파일 = 거부 · 스크립트 [9] 결선 순서.
+- 방어 끔 5종 중 4종 Red: 리터럴 false 판정 제거 · 키별 비공허성 제거 · 스크립트 미결선 · ★InfraLiberationSlice2 소스 기본값 true 로 뒤집기(기존 BlazorHomeForm 가드는 Green 유지 = 사각 실증, 신규 가드 Red). stelem 정지 조건 제거는 Green — 현 코드에선 다음 ldstr 정지가 배열 초기화를 이미 차단(중복 방어 · 독립 미검증).

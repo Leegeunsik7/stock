@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.15.0-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.16.1-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -23,6 +23,8 @@
 #           + [봉인 운영] 최종 zip 을 수검 CLI 로 재수검(추출 → 앵커 대조) — 통과해야만 .sha256·master-seal.txt 발행.
 #     [9/10] [방향 A] 출하 zip 무추출 수검(--verify-zip) — 항목 스트림 SHA-256 · 내장 manifest.sig ↔ master-seal.txt ·
 #            실측 해시 재계산 봉인 ↔ 앵커 · 미등재/누락/경로 이탈 0. 실패 = zip·.sha256·master-seal.txt 삭제 후 중단.
+#            + [v12.16.1-GM] 출하 zip 안 호스트 DLL 이중 물리 키 기본값 IL 직접 판독(--verify-live-armed · 추출·로드·실행 0)
+#              ldstr "Dispatch.ValveWired|LiveArmingWired" → ldc.i4.0 → GetBool 아니면(또는 조회 지점 0) = 전량 폐기 후 중단.
 #     [10/10] [방향 B] 다중 저장소 핸드셰이크 — RELEASE_MANIFEST.json(태그·소스 커밋·manifest.sig·masterSeal·아티팩트·zip·쉼 해시·
 #            liveArmed=false·인터락 + 피어 QuantumVault HEAD/봉인 매니페스트 해시 '읽기 전용')을 원자 기록 후 독립 재수검.
 #            불일치 = 모든 출하 산출물 삭제 후 중단. 피어 저장소에는 쓰지 않는다.
@@ -264,6 +266,8 @@ Set-Content -LiteralPath "$zipOut.sha256" -Value ("{0}  {1}" -f $zipSha, (Split-
 Step 9 "출하 zip 무추출 수검(--verify-zip · 항목 스트림 해시 · 재계산 봉인 ↔ master-seal.txt)..."
 $zipVerify = Invoke-HostCli @('--verify-zip', ('"' + $zipOut + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"')) "verify-zip"
 if ($zipVerify -ne 0) { Remove-ReleaseOutputs; Fail "zip 무추출 수검 실패(exit=$zipVerify) — 출하 산출물 전량 폐기" }
+$armVerify = Invoke-HostCli @('--verify-live-armed', ('"' + $zipOut + '"')) "verify-live-armed"
+if ($armVerify -ne 0) { Remove-ReleaseOutputs; Fail "출하 바이너리 liveArmed 기본값 판독 거부(exit=$armVerify) — 출하 산출물 전량 폐기" }
 
 # ── [10/10] [방향 B] 다중 저장소 핸드셰이크(피어 읽기 전용) ──
 Step 10 "다중 저장소 매니페스트 원자 기록 + 독립 핸드셰이크..."

@@ -1623,7 +1623,9 @@ namespace StockManager.Blazor
                     send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
                     onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); kisBalance.OnKisFill(f); dashHub.OnFill(f, 1); },   // [방향 B] 포지션 원장
                     validator: kisProtocol, accountCano: kisLive!.AccountCano,                               // [KIS VTS] 도메인 · 계좌 핀
-                    onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis));   // [교차 피드]
+                    onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis),   // [교차 피드]
+                    blackbox: blackbox,                                                                       // [KIS 호가] 이탈 틱 포렌식
+                    onBookQuarantine: q => Volatile.Read(ref quantRef)?.SetFeedQuarantined(StockManager.Engines.QuantSignalProvider.FeedKis, q));
                 kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
                     kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"),
                     bookSymbols: kisBookSymbols);
@@ -1650,7 +1652,8 @@ namespace StockManager.Blazor
             var quantSignals = new StockManager.Engines.QuantSignalProvider(strategyAnomaly, dashHub,
                 confidenceThreshold: cfg.GetInt("Strategy.ConfidenceThresholdBp", 8_500, 5_000, 10_000) / 10_000.0,
                 crossConfirm: kisBookSymbols.Length > 0,
-                crossMaxSkewMicros: cfg.GetInt("Strategy.CrossMaxSkewMs", 500, 50, 10_000) * 1000L);
+                crossMaxSkewMicros: cfg.GetInt("Strategy.CrossMaxSkewMs", 500, 50, 10_000) * 1000L,
+                crossHardSkewMicros: cfg.GetInt("Strategy.CrossHardSkewMs", 1_000, 50, 60_000) * 1000L);   // [방향 B] 시각 격차 > 1초 = 교차 확신 0
             Volatile.Write(ref quantRef, quantSignals);
             bridge.OrderBookReceived += b => quantSignals.OnBook(in b);
             bridge.TickReceived += t => quantSignals.OnTrade(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);

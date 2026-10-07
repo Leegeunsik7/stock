@@ -298,6 +298,17 @@ namespace StockManager.Adapters
         private readonly Action<TickPayload>? _onTick;
         private readonly Action<FillPayload>? _onFill;
         private readonly Action<OrderBookPayload>? _onBook;                          // [교차 피드] H0STASP0 10호가
+        // [KIS 호가 경계 방어] 형식 이탈 연속 QuarantineAfter 회 = KIS 호가 피드 격리(전달 0 · 엔진 피드 1 격리 통지) · 정상 연속 ReleaseAfter 회 = 복귀.
+        //   이탈 틱은 사유 코드로 블랙박스에 무할당 기록. 예상 호가(HOUR_CLS_CODE ≠ '0')는 정상 판독이되 연속매매 아님 → 무시 계수(형식 이탈 아님).
+        public const int BookQuarantineAfter = 5, BookReleaseAfter = 20;
+        private readonly MmfFlightRecorder? _blackbox;
+        private readonly Action<bool>? _onBookQuarantine;
+        private int _bookBadStreak, _bookGoodStreak, _bookQuarantined;
+        private long _bookRejects, _bookNonContinuous, _bookQuarantines;
+        public bool BookQuarantined => Volatile.Read(ref _bookQuarantined) == 1;
+        public long BookRejects => Interlocked.Read(ref _bookRejects);
+        public long BookNonContinuous => Interlocked.Read(ref _bookNonContinuous);
+        public long BookQuarantines => Interlocked.Read(ref _bookQuarantines);
         private long _booksEmitted;
         public long BooksEmitted => Interlocked.Read(ref _booksEmitted);
         private readonly Func<long> _nowTicks;
@@ -320,9 +331,10 @@ namespace StockManager.Adapters
         /// <param name="accountCano">[KIS VTS] 체결통보 계좌 핀(종합계좌 앞 8자리). 통보 계좌 필드가 이 값으로 시작하지 않으면 폐기.</param>
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
                                  Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
-                                 KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null)
+                                 KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null,
+                                 MmfFlightRecorder? blackbox = null, Action<bool>? onBookQuarantine = null)
         {
-            _onBook = onBook;
+            _onBook = onBook; _blackbox = blackbox; _onBookQuarantine = onBookQuarantine;
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _validator = validator;
             if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
@@ -376,8 +388,11 @@ namespace StockManager.Adapters
             if (KisOrderBookParser.IsBookTr(trId))
             {
                 // [교차 피드] KIS 실시간 10호가(평문 · 1레코드) → 정량 엔진 피드 1
-                if (encrypted || count != 1) return Bad();
-                if (!KisOrderBookParser.TryParse(body, _nowTicks(), out var book)) return Bad();
+                if (encrypted || count != 1) return BookBad(KisBookReject.FrameHeader, 0);
+                if (!KisOrderBookParser.TryParse(body, _nowTicks(), out var book, out var rej, out byte hourCls, out _, out _)) return BookBad(rej, book.SymbolCode);
+                BookGood();
+                if (hourCls != KisOrderBookParser.ContinuousSession) { Interlocked.Increment(ref _bookNonContinuous); return true; }   // 예상 호가 = 피드 제외
+                if (BookQuarantined) return true;                                  // 격리 중 = 전달 0(복귀 판정만)
                 try { _onBook?.Invoke(book); } catch (Exception) { }
                 Interlocked.Increment(ref _booksEmitted);
                 return true;
@@ -435,6 +450,34 @@ namespace StockManager.Adapters
         }
 
         private bool Bad() { Interlocked.Increment(ref _malformed); return false; }
+
+        // [KIS 호가 경계 방어] 이탈 1틱 = 무시 + 블랙박스(사유 · 종목 · 연속 수) · 연속 5 = 격리
+        private bool BookBad(KisBookReject reason, long symbol)
+        {
+            Interlocked.Increment(ref _bookRejects);
+            Volatile.Write(ref _bookGoodStreak, 0);
+            int streak = Interlocked.Increment(ref _bookBadStreak);
+            try { _blackbox?.Record(FlightEventKind.KisBookRejected, symbol, (long)reason, streak); } catch (Exception) { }
+            if (streak >= BookQuarantineAfter && Interlocked.CompareExchange(ref _bookQuarantined, 1, 0) == 0)
+            {
+                Interlocked.Increment(ref _bookQuarantines);
+                try { _blackbox?.Record(FlightEventKind.KisBookQuarantine, 0, 1, streak); } catch (Exception) { }
+                try { _onBookQuarantine?.Invoke(true); } catch (Exception) { }
+            }
+            return Bad();
+        }
+
+        private void BookGood()
+        {
+            Volatile.Write(ref _bookBadStreak, 0);
+            if (!BookQuarantined) return;
+            if (Interlocked.Increment(ref _bookGoodStreak) >= BookReleaseAfter && Interlocked.CompareExchange(ref _bookQuarantined, 0, 1) == 1)
+            {
+                Volatile.Write(ref _bookGoodStreak, 0);
+                try { _blackbox?.Record(FlightEventKind.KisBookQuarantine, 0, 0, BookReleaseAfter); } catch (Exception) { }
+                try { _onBookQuarantine?.Invoke(false); } catch (Exception) { }
+            }
+        }
 
         public void Dispose()
         {
