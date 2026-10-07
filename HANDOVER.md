@@ -1103,3 +1103,9 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 33.3 검증
 - GoldenMasterReleasePackagingTests.cs 4건(버전 · 롤백 가드 순서 · -warnaserror · 실 출하 체인: 자기 해시 · sig · 앵커 · zip · 무추출 재수검 · 소스 커밋 = 태그 커밋 · 인터락 28 = 태그 소스 · 1비트 변조 거부 · δ=0) · 방어 3종 끔 3/3 Red.
+- 출하 실행(태그 기준 형제 worktree · -NoPeer): [0/10]~[10/10] 전원 통과 — WebOnly/sln -warnaserror 0W/0E · 3,535 Pass · infra 0 · Phase114 · liveArmed 이중키 조회 14건 기본 false · IL 가드 · verify-seal · 무추출 수검 · 매니페스트 원자 기록 + 핸드셰이크 Ok.
+
+### 33.4 출하 기록
+- 태그 v12.15.0-GM → f5e1bca(코드 bfeb265 + 출하 테스트 피어 선택화) · release-v12.15.0-GM.zip SHA-256 69D0E902B25F0BE9817EDF14011909881C45B3C035B97A15A40C74F6043C5DE5 · 2,991,569B · 아티팩트 38 · masterSeal 4A2EE5AFF0E4788757968DF09A1AE65C8C90EDE9B3CCE4DE3AAF479B23B82055 · 인터락 28 · 피어 기록 없음.
+- release/ 로 복사 · 이전 v12.14.1-GM 산출물은 release/superseded-v12.14.1-GM/ 으로 이동(삭제 0) · worktree 제거. 태그/커밋 원격 push 안 함.
+- 피어 정렬 미완: QuantumVault 의 봉인 도구 작업이 커밋되고 깨끗한 작업 트리에서 봉인 매니페스트가 재생성되면 `release-package.ps1`(피어 포함)로 재패키징해 피어 고정값을 기록.
