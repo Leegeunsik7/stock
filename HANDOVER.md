@@ -1094,7 +1094,7 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - ★[실결함] 롤백 가드 공백 — [1]~[6](빌드·테스트·infra·래칫·liveArmed) 실패 시 직전 실행이 남긴 같은 이름 zip/.sha256/master-seal.txt 가 잔존(지금 소스와 다른 봉인이 '통과한 출하물'처럼 보임) → [0/10] 통과 직후 같은 버전 산출물 전량 폐기.
 - ★[실결함] 출하 빌드에 `-warnaserror` 부재 — 프로젝트 TreatWarningsAsErrors 는 컴파일러 경고만, MSBuild 경고(MSB/NETSDK)는 게이트(-warnaserror)와 달리 통과 → 같은 판정으로 정렬.
 - 호스트 버전이 12.14.1 그대로 → 12.15.0(출하 zip 이름 · 태그 원천).
-- 피어 QuantumVault 작업 트리에 타 세션 미커밋 코드(Services/Security · Tests · Tools) → 피어 사전 점검이 정당하게 거부. 피어는 읽기 전용 원칙(쓰기 · stash · 커밋 0) — 피어 HEAD 커밋을 독립 클론해 커밋된 상태로 핸드셰이크(기록 필드 = 이름 · 커밋 · 상대 매니페스트 경로 · 해시 — 절대경로 없음).
+- 피어 QuantumVault 작업 트리에 타 세션 미커밋 봉인 도구(Tools/QvSeal · ReleasePackager · seal 스크립트 · Services/Security) → 피어 사전 점검이 정당하게 거부. 피어 봉인 매니페스트(release/offline-bundle)는 git 무시 산출물이라 HEAD 클론에도 없다 — 작업 트리 사본을 고정하면 '미커밋 피어 고정 금지' 우회. 따라서 -NoPeer 명시 생략(피어 쓰기 · stash · 커밋 0).
 - 지시서의 'QuantumVault/RELEASE_MANIFEST.json 동기화(피어 쓰기)'는 하지 않는다 — StockManager 쪽 release/RELEASE_MANIFEST.json 에 28 인터락 · 38 아티팩트 · 피어 고정값 기록.
 
 ### 33.2 출하 범위(v12.14.1-GM 이후)

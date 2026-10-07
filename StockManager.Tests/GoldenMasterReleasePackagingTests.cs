@@ -6,7 +6,7 @@
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
-//     인터락 28종 = 태그 소스 열거 · 아티팩트 38 · liveArmed 기본 false · 피어 기록 · 1비트 변조 zip = 거부 · 스트리머 δ=0.
+//     인터락 28종 = 태그 소스 열거 · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
 //  §4 오중 빌드 회귀.
 // ============================================================================
 using System;
@@ -96,8 +96,9 @@ namespace StockManager.Tests
             Assert.Equal((ver + "-GM", tag, "release-" + tag + ".zip"), (m.Version, m.Tag, m.ZipName));
             Assert.False(m.LiveArmedDefault);
             Assert.Equal(38, m.Artifacts.Count);
-            Assert.NotNull(m.Peer);
-            Assert.Equal("QuantumVault", m.Peer!.Name);
+            // 피어 기록: 있으면 QuantumVault 여야 한다 · 없으면 -NoPeer 명시 생략(피어 작업 트리에 미커밋 코드 = 고정 거부 — 우회 금지)
+            if (m.Peer is { } peer) Assert.Equal("QuantumVault", peer.Name);
+            else _out.WriteLine("[출하] 피어 기록 없음(-NoPeer) — 피어 미커밋 상태에선 핸드셰이크 고정을 하지 않는다");
             // ★소스 커밋 = 태그 커밋(태그 재지정 후 1비트라도 어긋나면 거부)
             string? tagCommit = GitRepoProbe.Git(root, "rev-list", "-n", "1", tag)?.Trim();
             Assert.False(string.IsNullOrEmpty(tagCommit), "태그 없음: " + tag);
