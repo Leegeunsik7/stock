@@ -75,6 +75,9 @@ namespace MS2E.Core
         KisSession      = 19,  // [KIS · 방향 B] 실시간 WebSocket PINGPONG/수신 침묵 타임아웃 → KIS 블랙리스트 + Disarm
         Rollover        = 20,  // [롤오버] 승계 슬롯 불일치(체크섬·건수·충돌) 또는 승계 후 브로커 대사 미완료 → 신규 발주 차단
         HealthAgent     = 21,  // [헬스] Working Set 폭주 · 스레드풀 정체(큐 지연) · GC 정지 폭주 → Disarm
+        OpenOrderDivergence = 22, // [미체결 대사] 브로커 미체결 원장 미대사(최초) · 승계/추적 주문 불일치 · 유령 주문(브로커에만 존재) → Disarm(+ 비상 일괄 취소)
+        ChildSlotRejection = 23, // [자식 슬롯 분할] 자식 주문 송출 거부/실패(미송출 형제 회수) · 자식 간 체결 불균형(잔여 일괄 취소) → Disarm
+        KisLimitFeed    = 24,  // [KIS 실배선] REST 잔고/주문가능 조회 연속 3회 실패 → KIS 한도 0 격리 + Disarm(미설정 = 비차단)
         StartupSanity   = 63,
     }
 

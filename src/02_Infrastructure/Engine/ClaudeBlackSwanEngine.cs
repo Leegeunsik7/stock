@@ -36,14 +36,16 @@ namespace MS2E.Infrastructure
         private long* _lattice;                 // LatticeSlots × 8 longs, 64B 정렬 네이티브
         private readonly int _lockThreshold;
         private int  _consecutiveHits, _locked, _disposed;
+        // [크래시 트리아지] 수명 게이트(진행 중 연산 배수 후에만 해제 · 미배수 = 누수) + 전/후방 카나리 경계 가드
+        private int _gate, _canaryFaults, _leaked;
+        private readonly nuint _bytes;
         private long _hits, _misses, _primes;
 
         public ClaudeBlackSwanEngine(int lockThreshold = 8)
         {
             _lockThreshold = lockThreshold < 1 ? 1 : lockThreshold;
-            nuint bytes = (nuint)(LatticeSlots * SlotLongs * sizeof(long));
-            _lattice = (long*)NativeMemory.AlignedAlloc(bytes, (nuint)CacheLine);   // ★캐시라인 정렬
-            NativeMemory.Clear(_lattice, bytes);
+            _bytes = (nuint)(LatticeSlots * SlotLongs * sizeof(long));
+            _lattice = (long*)NativeCanaryBlock.Alloc(_bytes);   // ★캐시라인 정렬(64B 가드 뒤) · 0 초기화 · 앞/뒤 카나리
         }
 
         public bool PrecognitionLocked => Volatile.Read(ref _locked) == 1;   // 분기 없는 직선 핫패스 신호
@@ -60,9 +62,13 @@ namespace MS2E.Infrastructure
                           ReadOnlySpan<long> askPx, ReadOnlySpan<long> askQty,
                           in SimdRiskLimits limits)
         {
-            if ((uint)slot >= LatticeSlots || _lattice == null) return false;
+            if ((uint)slot >= LatticeSlots || !NativeLifetimeGate.TryEnter(ref _gate)) return false;
+            try
+            {
+            long* lat = _lattice;                // ★필드 재판독 금지 — 게이트 안에서 1회 스냅샷(해제와 경합 불가)
+            if (lat == null) return false;
             SimdRiskVerdict v = SimdRiskInterlock.ValidateCore(bidPx, bidQty, askPx, askQty, limits);   // ★리스크 선행 판정
-            long* s = _lattice + slot * SlotLongs;
+            long* s = lat + slot * SlotLongs;
             // ★seqlock 발행(단일 라이터): F_SEQ 를 홀수(쓰기 중)로 올리고 → 필드 기입 → 짝수(완료·세대 전진). 리더가
             //   seq 를 전후 비교해 '새 fingerprint + 이전 판정' 을 짝짓는 찢긴 읽기(torn read·fail-open)를 폐기한다.
             //   (VALID/FP 재검증만으론 세대 A→B→A 중간상태를 못 걸러 부족 — 세대 카운터가 정답. 초기 0=짝수=미기입.)
@@ -79,6 +85,8 @@ namespace MS2E.Infrastructure
             Interlocked.Increment(ref _primes);  // 통계(별도 카운터)
             if (Sse.IsSupported) Sse.Prefetch0((void*)s);   // ★판정 라인 L1 예열(캐시 선행)
             return true;
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>
@@ -88,6 +96,9 @@ namespace MS2E.Infrastructure
         public bool TryPrecognize(long fingerprint, out bool riskOk, out int reasonCode)
         {
             riskOk = false; reasonCode = 0;
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) return false;
+            try
+            {
             long* lat = _lattice;
             if (lat == null) return false;
             for (int i = 0; i < LatticeSlots; i++)
@@ -114,13 +125,18 @@ namespace MS2E.Infrastructure
             Volatile.Write(ref _consecutiveHits, 0);
             Volatile.Write(ref _locked, 0);                       // ★Black Swan → 락 해제(안전 낙하)
             return false;
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>격자 무효화(레짐 급변). δ=0.</summary>
         public void Reset()
         {
-            long* lat = _lattice;
-            if (lat != null) for (int i = 0; i < LatticeSlots; i++) lat[i * SlotLongs + F_VALID] = 0L;
+            if (NativeLifetimeGate.TryEnter(ref _gate))
+            {
+                try { long* lat = _lattice; if (lat != null) for (int i = 0; i < LatticeSlots; i++) lat[i * SlotLongs + F_VALID] = 0L; }
+                finally { NativeLifetimeGate.Exit(ref _gate); }
+            }
             Volatile.Write(ref _consecutiveHits, 0);
             Volatile.Write(ref _locked, 0);
         }
@@ -128,8 +144,25 @@ namespace MS2E.Infrastructure
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            // ★수정 전: 즉시 해제 — 다른 스레드가 Prime 의 null 확인과 기록 사이에 있으면 해제된 힙에 기록(use-after-free).
+            if (!NativeLifetimeGate.CloseAndDrain(ref _gate, NativeLifetimeGate.DefaultDrainTimeout)) { Volatile.Write(ref _leaked, 1); return; }
             long* lat = _lattice; _lattice = null;
-            if (lat != null) NativeMemory.AlignedFree(lat);
+            if (lat != null && !NativeCanaryBlock.Free(lat, _bytes)) Interlocked.Increment(ref _canaryFaults);   // 파열 = 해제 보류(손상 증폭 차단)
         }
+
+        /// <summary>격자 경계 카나리 무결성(δ=0). 해제 후 = false.</summary>
+        public bool VerifyBoundaries()
+        {
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) return false;
+            try { long* lat = _lattice; return lat != null && NativeCanaryBlock.Verify(lat, _bytes); }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
+        }
+
+        public int CanaryFaults => Volatile.Read(ref _canaryFaults);
+        /// <summary>미배수로 해제를 포기(누수)했는가 — 진단용.</summary>
+        public bool LeakedOnDispose => Volatile.Read(ref _leaked) == 1;
+        internal bool NativeReleased => _lattice == null;
+        internal bool HoldForTest() => NativeLifetimeGate.TryEnter(ref _gate);
+        internal void ReleaseHoldForTest() => NativeLifetimeGate.Exit(ref _gate);
     }
 }

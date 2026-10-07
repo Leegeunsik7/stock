@@ -375,12 +375,15 @@ namespace StockManager.Tests
                     {
                         long sig = gate.OnQuote(5930, 100, 10);
                         if (sig < 0 || sig > reloadCount) bad = true;   // torn-ref면 쓰레기값
-                        observed++;
+                        Interlocked.Increment(ref observed);
                     }
                 }
                 catch (Exception e) { readerErr = e; }
             });
             reader.Start();
+            // [크래시 트리아지 · 하네스 결함] 수정 전엔 리더가 실제로 회전을 시작했는지 확인하지 않아, 전체 스위트 CPU 경합 시
+            //   40회 리로드가 리더 첫 스케줄 전에 끝나 observed=0(간헐 실패 — 50회 연속 실행 14회차 실측). 시작 배리어로 '리로드 중 회전'을 보장.
+            Assert.True(SpinWait.SpinUntil(() => Interlocked.Read(ref observed) > 0, 10_000));
             for (int g = 1; g <= reloadCount; g++)
                 Assert.True(gate.Reload(new FakeStrategy("v" + g, g, signal: g),
                                         new AssemblyLoadContext("alc" + g, isCollectible: true)));

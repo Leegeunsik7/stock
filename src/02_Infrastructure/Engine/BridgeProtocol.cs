@@ -31,6 +31,8 @@ namespace MS2E.Infrastructure
         OrderRequest   = 10,  // BridgeClient → ProxyHost 방향
         AccountCash    = 11,  // [계좌] ProxyHost → BridgeClient: OPW00001 예수금상세(예수금·D+2·주문가능금액)
         Position       = 12,  // [계좌] ProxyHost → BridgeClient: OPW00018 보유 종목 1행(배치 번호·행 번호·행 수)
+        OpenOrder      = 13,  // [미체결 대사] ProxyHost → BridgeClient: OPT10075 미체결 1행(배치 번호·행 번호·행 수)
+        OrderMapped    = 14,  // [미체결 대사] ProxyHost → BridgeClient: 클라이언트 ID ↔ 키움 주문번호 사상 통지(TR 응답·정정 시)
     }
 
     // ── 주문 종류 ─────────────────────────────────────────────────────────────
@@ -43,6 +45,10 @@ namespace MS2E.Infrastructure
         SubscribeTick   = 5,
         UnsubscribeTick = 6,
         ModifyOrder     = 7,   // [정정] Price = 정정가 · Quantity = 정정수량(키움 SendOrder 5 매수정정 / 6 매도정정)
+        // [미체결 대사] — 아래 3종은 필드 재사용(레이아웃 불변 · 와이어 호환): GenomeId = 키움 주문번호(VenueOrderNo) · Pad = 매매방향(+1/−1)
+        QueryOpenOrders = 8,   // OPT10075 미체결 조회(필드 미사용)
+        AdoptMapping    = 9,   // 승계 확정 주문 사상 재등록: OrderId = 클라이언트 ID · SymbolCode · Quantity = 미체결 · Price = 주문가 · GenomeId = 키움 번호 · Pad = 방향
+        CancelByVenueNo = 10,  // 키움 번호로 직접 전량 취소(호스트 미추적 유령 주문 비상 취소): GenomeId = 키움 번호 · SymbolCode · Quantity · Pad = 방향
     }
 
     // ── 페이로드 구조체 (전부 Blittable) ──────────────────────────────────────
@@ -83,6 +89,33 @@ namespace MS2E.Infrastructure
     {
         public int  ErrorCode;
         public int  Pad;
+        public long TimestampTicks;
+    }
+
+    /// <summary>[미체결 대사] OPT10075 미체결 1행(80B). RowCount 0 = 미체결 없음(VenueOrderNo 0).</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct OpenOrderPayload
+    {
+        public long BatchId;
+        public int  RowIndex;
+        public int  RowCount;
+        public long VenueOrderNo;      // 주문번호
+        public long OrigVenueOrderNo;  // 원주문번호(정정/취소 주문이면 원 번호 · 신규 = 0)
+        public long SymbolCode;
+        public long OrderQty;          // 주문수량
+        public long RemainingQty;      // 미체결수량
+        public long OrderPriceWon;     // 주문가격(시장가 = 0)
+        public int  Side;              // +1 매수 · −1 매도
+        public int  Pad;
+        public long TimestampTicks;
+    }
+
+    /// <summary>[미체결 대사] 클라이언트 ID ↔ 키움 주문번호 사상 통지(24B).</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct OrderMappedPayload
+    {
+        public long ClientId;
+        public long VenueOrderNo;
         public long TimestampTicks;
     }
 
@@ -284,6 +317,6 @@ namespace MS2E.Infrastructure
         public static long ParseSymbol(string? code)
             => long.TryParse(code, out var v) ? v : 0L;
 
-        private static bool IsValidWireType(int t) => t is >= 0 and <= 12;   // [L2] 8·9 · [계좌] 11 AccountCash · 12 Position
+        private static bool IsValidWireType(int t) => t is >= 0 and <= 14;   // [L2] 8·9 · [계좌] 11·12 · [미체결 대사] 13 OpenOrder · 14 OrderMapped
     }
 }

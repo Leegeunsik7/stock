@@ -93,7 +93,7 @@ namespace StockManager.Adapters
         }
     }
 
-    public sealed class RouterFeedGate : IOrderRouteGate
+    public sealed class RouterFeedGate : IChildSplitRouteGate
     {
         private const long QtyScale = 100_000_000L;   // QQty raw(10^8) → 주
 
@@ -164,6 +164,51 @@ namespace StockManager.Adapters
         public bool TryAdmit(in OrderProposal p, out OrderAdmission admission)
         {
             admission = default;
+            if (!TryAdmitPrefix(in p, out var ctx)) return false;
+            long reference = ctx.Reference, basisAgeMicros = ctx.BasisAgeMicros, shares = ctx.Shares, limit = ctx.Limit;
+            long reservedWon = ctx.ReservedWon, exposureWon = ctx.ExposureWon;
+            var side = ctx.Side;
+
+            // ③ 라우터(슬리피지 · Disarm · 블랙리스트 · 추적)
+            UInt128 key = KeyFor(p.OrderId);
+            var r = _router.Route(key, limit, reference, 0.0);
+            Volatile.Write(ref _lastVerdict, (int)r.Verdict);
+            if (!r.Accepted)
+            {
+                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);   // 미송출 — 예약 반환
+                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
+                Interlocked.Increment(ref _routeRejects);
+                if (r.Verdict == OrderRouteVerdict.SlippageExceeded)
+                {
+                    Interlocked.Increment(ref _slippageRejects);
+                    _exec.ReportGateEvent(ReconciliationKind.SlippageRejected, p.OrderId, shares);
+                }
+                return false;
+            }
+            if (!_exec.TryTrack(p.OrderId, key, r.Broker, shares, side == OrderSide.Buy, reference, p.SymbolCode, limit / 100_000_000))   // [미체결 대사] 종목 · 지정가(원) 기록
+            {
+                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);
+                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
+                _router.Abort(key);
+                Interlocked.Increment(ref _trackRejects);
+                return false;
+            }
+            Interlocked.Increment(ref _admitted);
+            admission = new OrderAdmission(1, limit, shares * QtyScale, basisAgeMicros, r.Broker);   // [다중 브로커] 라우팅 결과 브로커 동봉   // ★송출 Kind 는 항상 지정가 · 참조가 틱 나이 동봉
+            return true;
+        }
+
+        // [자식 슬롯 분할] 부모 단위 전방 판정 결과(값 타입)
+        private struct AdmitContext
+        {
+            public long Reference, BasisAgeMicros, Shares, Limit, ReservedWon, ExposureWon;
+            public OrderSide Side;
+        }
+
+        // 부모 단위 전방 판정(피드 · 참조가 · 수량 · 보호 지정가 · 깊이 · 계좌 예약 · 익스포저) — 단일/분할 경로 공용(판정 동일성 보장)
+        private bool TryAdmitPrefix(in OrderProposal p, out AdmitContext ctx)
+        {
+            ctx = default;
             if (_breaker.Evaluate()) return Reject(OrderRouteVerdict.FeedDisconnected, ref _feedRejects);
             long symHash = ReferencePriceFeedAdapter.SymbolHashForCode(p.SymbolCode);
             if (_price.TryGetReference(symHash, out long reference, out long basisAgeMicros) != ReferencePriceVerdict.Fresh)
@@ -252,34 +297,103 @@ namespace StockManager.Adapters
                 exposureWon = notional;
             }
 
-            // ③ 라우터(슬리피지 · Disarm · 블랙리스트 · 추적)
-            UInt128 key = KeyFor(p.OrderId);
-            var r = _router.Route(key, limit, reference, 0.0);
-            Volatile.Write(ref _lastVerdict, (int)r.Verdict);
-            if (!r.Accepted)
-            {
-                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);   // 미송출 — 예약 반환
-                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
-                Interlocked.Increment(ref _routeRejects);
-                if (r.Verdict == OrderRouteVerdict.SlippageExceeded)
-                {
-                    Interlocked.Increment(ref _slippageRejects);
-                    _exec.ReportGateEvent(ReconciliationKind.SlippageRejected, p.OrderId, shares);
-                }
-                return false;
-            }
-            if (!_exec.TryTrack(p.OrderId, key, r.Broker, shares, side == OrderSide.Buy, reference))
-            {
-                if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);
-                if (exposureWon != 0) _exposure!.ReleasePending(p.SymbolCode, exposureWon);
-                _router.Abort(key);
-                Interlocked.Increment(ref _trackRejects);
-                return false;
-            }
-            Interlocked.Increment(ref _admitted);
-            admission = new OrderAdmission(1, limit, shares * QtyScale, basisAgeMicros, r.Broker);   // [다중 브로커] 라우팅 결과 브로커 동봉   // ★송출 Kind 는 항상 지정가 · 참조가 틱 나이 동봉
+            ctx = new AdmitContext { Reference = reference, BasisAgeMicros = basisAgeMicros, Shares = shares, Limit = limit,
+                                     ReservedWon = reservedWon, ExposureWon = exposureWon, Side = side };
             return true;
         }
+
+        // ── [자식 슬롯 분할 라우팅] ─────────────────────────────────────────────
+
+        private IBrokerLimitFeed? _splitCaps;
+        private Action? _onSplitUnavailable;
+        private long _splitUnavailable;
+        /// <summary>분할 가능한 브로커 0(미결속·만료·소진)으로 거부한 누계 — 콜백(분할 회로 Disarm) 동반.</summary>
+        public long SplitUnavailable => Interlocked.Read(ref _splitUnavailable);
+        private readonly BrokerSplitCap[] _capBuf = new BrokerSplitCap[16];
+        private long _splitAdmitted, _splitRejects, _splitRollbacks, _splitExcessReleasedWon;
+        public long SplitAdmitted => Interlocked.Read(ref _splitAdmitted);
+        public long SplitRejects => Interlocked.Read(ref _splitRejects);
+        public long SplitRollbacks => Interlocked.Read(ref _splitRollbacks);
+        public long SplitExcessReleasedWon => Interlocked.Read(ref _splitExcessReleasedWon);
+        public bool SplitEnabled => Volatile.Read(ref _splitCaps) is not null;
+
+        /// <summary>분할 활성화 — 한도 공급자(IBrokerLimitFeed) · onUnavailable = 분할 가능한 브로커 0 일 때 호출(예: 매트릭스 TripExternal → 비트 23).</summary>
+        public void EnableSplit(IBrokerLimitFeed feed, Action? onUnavailable = null)
+        {
+            _onSplitUnavailable = onUnavailable;
+            Volatile.Write(ref _splitCaps, feed ?? throw new ArgumentNullException(nameof(feed)));
+        }
+
+        /// <summary>
+        /// 부모 1건 → 자식 N건 승인(IChildSplitRouteGate). ① 부모 전방 판정 1회 ② ChildSlotOrderSplitter(1~3호가 × 브로커 한도) ③ 자식마다
+        /// 지정 브로커 라우팅(RouteTo · 128비트 추적 ID) + 실행 피드 추적 슬롯(ChildId · 종목 · 자식 지정가). 하나라도 실패 = 이미 확보한 자식
+        /// 전부 롤백(라우터 Abort · 슬롯 반납) + 계좌/익스포저 예약 반환 → false(부분 확보 0). 깊이·한도로 부모보다 적게 나뉘면 초과 예약분 즉시 반환.
+        /// </summary>
+        public bool TryAdmitSplit(in OrderProposal p, Span<ChildOrderPlan> children, out int count)
+        {
+            count = 0;
+            var capsFn = Volatile.Read(ref _splitCaps);
+            if (capsFn is null) return false;
+            if (!TryAdmitPrefix(in p, out var ctx)) return false;
+            int nb;
+            try { nb = capsFn.Fill(_capBuf, p.SymbolCode, ctx.Side, ctx.Limit, ctx.ReservedWon); } catch (Exception) { nb = 0; }
+            nb = Math.Clamp(nb, 0, _capBuf.Length);
+            long symHash = ReferencePriceFeedAdapter.SymbolHashForCode(p.SymbolCode);
+            L2Depth depth = default;
+            bool hasDepth = _depth is { } db && db.TryGetFreshDepth(symHash, out depth);
+            var v = StockManager.Engines.ChildSlotOrderSplitter.Split(p.OrderId, ctx.Side, ctx.Shares, ctx.Limit, in depth, hasDepth,
+                                                                       _capBuf.AsSpan(0, nb), children, out int n, out long total);
+            if (v != StockManager.Engines.SplitVerdict.Ok)
+            {
+                ReleaseReservations(p.SymbolCode, ctx.ReservedWon, ctx.ExposureWon);
+                if (v == StockManager.Engines.SplitVerdict.NoBroker)
+                {
+                    // ★[Fail-Closed 미결속] 분할 가능한 브로커 0(어댑터 미결속 · 한도 피드 만료 · 전 브로커 소진) = 전방 거부 + 분할 회로 Disarm
+                    Interlocked.Increment(ref _splitUnavailable);
+                    try { _onSplitUnavailable?.Invoke(); } catch (Exception) { }
+                }
+                Interlocked.Increment(ref _splitRejects);
+                return Reject(v == StockManager.Engines.SplitVerdict.NothingFillable ? OrderRouteVerdict.DepthInsufficient : OrderRouteVerdict.TrackingFull, ref _trackRejects);
+            }
+            bool isBuy = ctx.Side == OrderSide.Buy;
+            for (int i = 0; i < n; i++)
+            {
+                ref var c = ref children[i];
+                UInt128 key = c.TrackingId;
+                var r = _router.RouteTo(key, c.Broker, c.LimitRaw, ctx.Reference, 0.0);
+                if (!r.Accepted || !_exec.TryTrack(c.ChildId, key, c.Broker, c.Shares, isBuy, ctx.Reference, p.SymbolCode, c.LimitRaw / QtyScale))
+                {
+                    if (r.Accepted) _router.Abort(key);
+                    for (int j = 0; j < i; j++)
+                        if (_exec.Untrack(children[j].ChildId, out UInt128 k2)) _router.Abort(k2);   // ★원자 롤백 — 부분 확보 0
+                    ReleaseReservations(p.SymbolCode, ctx.ReservedWon, ctx.ExposureWon);
+                    Interlocked.Increment(ref _splitRollbacks);
+                    Volatile.Write(ref _lastVerdict, (int)(r.Accepted ? OrderRouteVerdict.TrackingFull : r.Verdict));
+                    Interlocked.Increment(ref _routeRejects);
+                    return false;
+                }
+            }
+            // 깊이/한도로 부모보다 적게 나뉜 경우 — 초과 예약(계좌 · 익스포저) 반환(자식 명목 합 기준)
+            if (ctx.ReservedWon != 0 || ctx.ExposureWon != 0)
+            {
+                long childNotional = 0;
+                for (int i = 0; i < n; i++) childNotional = SatAdd(childNotional, NotionalWonCeil(children[i].LimitRaw, children[i].Shares));
+                if (ctx.ReservedWon > childNotional) { _account!.ReleaseBuy(ctx.ReservedWon - childNotional); Interlocked.Add(ref _splitExcessReleasedWon, ctx.ReservedWon - childNotional); }
+                if (ctx.ExposureWon > childNotional) _exposure!.ReleasePending(p.SymbolCode, ctx.ExposureWon - childNotional);
+            }
+            count = n;
+            Interlocked.Increment(ref _admitted);
+            Interlocked.Increment(ref _splitAdmitted);
+            return true;
+        }
+
+        private void ReleaseReservations(long symbolCode, long reservedWon, long exposureWon)
+        {
+            if (reservedWon != 0) _account!.ReleaseBuy(reservedWon);
+            if (exposureWon != 0) _exposure!.ReleasePending(symbolCode, exposureWon);
+        }
+
+        private static long SatAdd(long a, long b) { long r = a + b; return ((a ^ r) & (b ^ r)) < 0 ? long.MaxValue : r; }
 
         private bool AccountReject(long proposalId, long shares, OrderRouteVerdict v)
         {

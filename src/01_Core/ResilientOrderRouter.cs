@@ -256,8 +256,31 @@ namespace MS2E.Core
                 SlippageBps(limitPriceRaw, referencePriceRaw) > _maxSlippageBps ? OrderRouteVerdict.SlippageExceeded :
                 OrderRouteVerdict.Routed;
             if (v != OrderRouteVerdict.Routed) return Reject(v, -1);
+            return Commit(orderId, _board.Active);
+        }
 
-            int broker = _board.Active;
+        /// <summary>
+        /// [자식 슬롯 분할] 지정 브로커로 라우팅(δ=0) — 분할 엔진이 브로커별 한도로 자식 주문을 나눴을 때 사용. 판정 순서·부작용은 Route 와 동일하되
+        /// 브로커는 호출측 지정. 범위 밖 인덱스 = InvalidOrderId 가 아니라 BrokerBlacklisted(미지 브로커 = 송출 불가 · fail-closed).
+        /// </summary>
+        [ZeroAllocHotPath]
+        public OrderRouteResult RouteTo(UInt128 orderId, int broker, long limitPriceRaw, long referencePriceRaw, double regimeSignal)
+        {
+            OrderRouteVerdict v =
+                orderId == UInt128.Zero ? OrderRouteVerdict.InvalidOrderId :
+                _sentinel.DualBreakdown ? OrderRouteVerdict.DualBreakdown :
+                _sentinel.IsDisarmed ? OrderRouteVerdict.Disarmed :
+                !double.IsFinite(regimeSignal) ? OrderRouteVerdict.InvalidRegimeSignal :
+                limitPriceRaw <= 0 || referencePriceRaw <= 0 ? OrderRouteVerdict.InvalidPrice :
+                SlippageBps(limitPriceRaw, referencePriceRaw) > _maxSlippageBps ? OrderRouteVerdict.SlippageExceeded :
+                (uint)broker >= (uint)_board.BrokerCount || _sentinel.IsBrokerFaulted(broker) ? OrderRouteVerdict.BrokerBlacklisted :
+                OrderRouteVerdict.Routed;
+            if (v != OrderRouteVerdict.Routed) return Reject(v, broker);
+            return Commit(orderId, broker);
+        }
+
+        private OrderRouteResult Commit(UInt128 orderId, int broker)
+        {
             if (_board.IsBlacklisted(broker)) return Reject(OrderRouteVerdict.BrokerBlacklisted, broker);
 
             long handle = _pending.Register(broker);

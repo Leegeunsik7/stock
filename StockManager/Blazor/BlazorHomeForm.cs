@@ -390,6 +390,9 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.PreFlightBoot, // [사전 검증] 시계 역행 · 안전 설정 런타임 변조 · 프록시 파이프 신원 불일치 → Disarm + 키 소거
                 MS2E.Core.ArmingInterlockSource.CorrelationCrash, // [포트폴리오 · 방향 B] 보유 종목 동시 하락 → 미체결 일괄 취소 + Disarm
                 MS2E.Core.ArmingInterlockSource.Rollover,        // [롤오버] 승계 슬롯 불일치 · 승계 후 브로커 대사 미완료 → 신규 발주 차단
+                MS2E.Core.ArmingInterlockSource.OpenOrderDivergence, // [미체결 대사] 최초 브로커 미체결 대사 미확정 · 원장 불일치 · 유령 주문 → Disarm(+ 비상 취소)
+                MS2E.Core.ArmingInterlockSource.ChildSlotRejection, // [분할 라우팅] 자식 거부(미송출 형제 회수) · 체결 불균형 · 분할 가능 브로커 0(미결속/소진) → Disarm
+                MS2E.Core.ArmingInterlockSource.KisLimitFeed,     // [KIS 실배선] REST 잔고/주문가능 연속 3회 실패 → KIS 한도 0 + Disarm(미설정 = 비차단)
                 MS2E.Core.ArmingInterlockSource.HealthAgent);    // [헬스] Working Set 폭주 · 스레드풀 정체 · GC 정지 폭주 → Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
@@ -917,7 +920,13 @@ namespace StockManager.Blazor
             //   OrderDrainWorker 실전 경로에서 참조가·라우터 판정·추적 확보를 강제(드라이런 미러 경로 무영향 · liveArmed:false 불변).
             var refPriceFeed  = new StockManager.Adapters.ReferencePriceFeedAdapter(
                 maxAgeMicros: cfg.GetInt("Router.RefPriceMaxAgeMs", 3000, 100, 600_000) * 1000L);
-            var routerBoard   = new MS2E.Core.LockFreeBrokerSwitchboard(1);
+            // [실전 결선 · 다중 브로커] 브로커 인덱스: 0 = 키움(ExecutionBridgeBroker · 프록시 파이프) · 1 = KIS(KisLiveBroker · OAuth2 App Key/Secret).
+            //   KIS 자격증명(ApiKeyVault KIS.AppKey/AppSecret/Account)이 없으면 인덱스 1 을 부팅 시 블랙리스트 — 라우터가 절대 선택하지 않는다
+            //   (단일 브로커와 동일 동작 · 장애 전환 대상 없음 = 기존과 같은 이중 붕괴 판정).
+            var kisCreds      = ApiKeyVault.GetKis(db);
+            bool kisConfigured = !string.IsNullOrWhiteSpace(kisCreds.key) && !string.IsNullOrWhiteSpace(kisCreds.secret) && !string.IsNullOrWhiteSpace(kisCreds.account);
+            var routerBoard   = new MS2E.Core.LockFreeBrokerSwitchboard(2);
+            if (!kisConfigured) routerBoard.Blacklist(1);
             var routerPending = new MS2E.Core.PendingOrderCascadeCanceller(1024);
             var routerSentinel = new MS2E.Core.BrokerFailoverSentinel(routerBoard, pendingOrders: routerPending);
             var orderRouter   = new MS2E.Core.ResilientOrderRouter(routerBoard, routerSentinel, routerPending,
@@ -1104,6 +1113,30 @@ namespace StockManager.Blazor
                 return answer == DialogResult.Yes;
             };
             FormClosed += (_, _) => ShutdownTrace.Step("rolloverGuard", () => rolloverGuard.Dispose());
+            // [미체결 대사 · 추천 A] 브로커 미체결 원장(OPT10075) ↔ 호스트 추적 원장 1:1 대사 — 최초 확정 전 신규 발주 차단(비트 22) ·
+            //   모든 승계 슬롯 번호·잔량 일치 = Rollover 비트(20) 0ms 해제 · 유령 주문(브로커에만 존재) = Disarm + 비상 일괄 취소(패스당 ≤4건).
+            //   조회 TR: 미확정/유령 정리 중 3초 · 평시 30초(계좌 조회 12건/분 + 미체결 ≤20건/분 ≪ 100).
+            var openOrderRecon = new StockManager.Adapters.BrokerOpenOrderReconciler(execFeed, broker, rolloverGuard.MarkReconciled,
+                requireKiwoom: true,
+                maxCancelsPerPass: cfg.GetInt("OpenOrder.MaxCancelsPerPass", StockManager.Adapters.BrokerOpenOrderReconciler.DefaultMaxCancelsPerPass, 1, 4),
+                onPass: r =>
+                {
+                    if (r.Verdict >= StockManager.Adapters.OpenOrderVerdict.Divergence)
+                        try { Log.Warn($"[OpenOrder] 대사 {r.Verdict} — 브로커 {r.Rows}행 · 원장 {r.Ledger}건 · 불일치 {r.Mismatched} · 유령 {r.Ghosts} · 취소 {r.CancelsSent}건 송신"); } catch { }
+                },
+                interval: TimeSpan.FromSeconds(cfg.GetInt("OpenOrder.IntervalSeconds", 30, 5, 600)));
+            openOrderRecon.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OpenOrderDivergence);
+            Action<OpenOrderPayload> onOpenOrderRow = openOrderRecon.OnKiwoomRow;
+            Action<OrderMappedPayload> onOrderMapped = execFeed.OnOrderMapped;
+            bridge.OpenOrderReceived   += onOpenOrderRow;
+            bridge.OrderMappedReceived += onOrderMapped;
+            var openOrderPump = new System.Threading.Timer(_ => { try { openOrderRecon.Pump(); } catch { } }, null, 1000, 1000);
+            services.AddSingleton(openOrderRecon);
+            FormClosed += (_, _) => ShutdownTrace.Step("openOrderRecon", () =>
+            {
+                openOrderPump.Dispose();
+                bridge.OpenOrderReceived -= onOpenOrderRow; bridge.OrderMappedReceived -= onOrderMapped;
+            });
             // [헬스 · 추천 A] 무할당 헬스 에이전트(전용 스레드 50ms) — Working Set · 스레드풀 정체 · GC 정지 폭주 → HealthAgent 비트(0ms).
             //   [방향 A+B] 스캔마다 비관리 고정 하트비트(MMF)를 사상 → 키움 프록시가 주문 송신 직전 판독(박동 200ms 초과/트립 = 송신 거부).
             //   기동 유예(기본 30초) — 부팅 초기화의 스레드풀 점유를 sticky 트립으로 오판하지 않도록.
@@ -1339,6 +1372,7 @@ namespace StockManager.Blazor
             services.AddSingleton(interlockRecorder);
             services.AddSingleton(forensicStream);
             bootIntegrityRef?.AttachForensicStream(forensicStream);
+            openOrderRecon.AttachForensics(forensicStream, blackbox);   // [미체결 대사 · 방향 A] 대사 패스 판정 해시 체인 + MMF 블랙박스
             execFeed.AttachForensicStream(forensicStream);   // [키움 프로토콜 · 방향 A] 대사 이력(거부·부분체결·취소·불일치) 해시 체인 각인   // [봉인 운영 · 방향 B] 봉인 변조 증거(기대/실측 해시) 해시 체인 각인
             try
             {
@@ -1480,6 +1514,82 @@ namespace StockManager.Blazor
             services.AddSingleton(egressSentinel);
             if (!interlockMask.Seal(out long missingInterlocks))
                 System.Diagnostics.Trace.WriteLine($"[InterlockSanity] 필수 인터락 미결속 mask=0x{missingInterlocks:X} — 무장 영구 차단");
+            // [실전 결선 · 다중 브로커] KIS 송출 브로커 — 자격증명이 있을 때만 생성(생성 자체는 네트워크 0 · Place 시 OAuth2 토큰 자체 관리 ·
+            //   5분 선행 갱신). 키움과 같은 백업 인터락(물리 이중키 미충족 시 실 송출 0)으로 감싼다. 비트(EgressBypass)는 키움 센티널이 보유 —
+            //   KIS 센티널은 같은 동결 콜백으로 Disarm.
+            IBroker? kisEgress = null;
+            KisLiveBroker? kisLive = kisConfigured ? new KisLiveBroker(db) : null;
+            if (kisLive is not null)
+                kisEgress = new StockManager.Adapters.LiveArmedEgressSentinel(kisLive,
+                    () => cfg.GetBool("Dispatch.ValveWired", false) && cfg.GetBool("Dispatch.LiveArmingWired", false),
+                    blackbox, why => attestation.ForceFreeze(why));
+            var brokerMap = new IBroker?[] { egressSentinel, kisEgress };
+            // [실전 결선 · 분할 라우팅] 자식 슬롯 추적 매트릭스(비트 23 필수) — 체결/취소/거부 통보(키움 브리지) 수렴 · 500ms 불균형 시 실 브로커 취소.
+            var childMatrix = new StockManager.Engines.ChildSlotTrackingMatrix(256,
+                imbalanceMicros: cfg.GetInt("Routing.ImbalanceMs", 500, 50, 60_000) * 1000L,
+                cancel: (b, oid) => { if ((uint)b < (uint)brokerMap.Length && brokerMap[b] is { } cb) cb.Cancel(oid.ToString(System.Globalization.CultureInfo.InvariantCulture)); });
+            childMatrix.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.ChildSlotRejection);
+            services.AddSingleton(childMatrix);
+            Action<FillPayload> onChildFill = childMatrix.OnFill;
+            bridge.FillReceived += onChildFill;
+            // [KIS 실배선] REST 주문가능현금/보유 → 한도 뷰(인덱스 1) — 실패 즉시 한도 0 · 연속 3회 = 비트 24 Disarm. 미설정 = 미결속(자식 0 · 비차단).
+            var kisBalance = new StockManager.Adapters.KisBalanceQueryAdapter(
+                kisLive is null ? null : q => q == StockManager.Adapters.KisQuery.Buyable ? kisLive.QueryBuyableJson() : kisLive.QueryBalanceJson(),
+                kisConfigured,
+                staleMicros: cfg.GetInt("Kis.BalanceStaleSeconds", 30, 5, 600) * 1_000_000L);
+            kisBalance.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.KisLimitFeed);
+            services.AddSingleton(kisBalance);
+            int kisPollBusy = 0;
+            var kisBalanceTimer = kisConfigured
+                ? new System.Threading.Timer(_ =>
+                  {
+                      if (Interlocked.Exchange(ref kisPollBusy, 1) != 0) return;     // 동기 HTTP 중첩 금지
+                      try { kisBalance.PollOnce(); } catch { } finally { Volatile.Write(ref kisPollBusy, 0); }
+                  }, null, 2_000, cfg.GetInt("Kis.BalancePollSeconds", 10, 3, 600) * 1000)
+                : null;
+            // [KIS 실배선] 실시간 체결통보(H0STCNI0) WebSocket — 명시 설정(Kis.RealtimeEnabled) + HTS ID(체결통보 구독 키) 있을 때만 접속(수신 전용).
+            //   체결 = 실행 피드(KIS 추적 슬롯 대사) + 자식 매트릭스(가중평균가 수렴). 단절/장중 3초 침묵 = 비트 19(KisSession) + 라우터 KIS 장애 보고.
+            string? kisHtsId = db.GetSecret("KIS.HtsId");
+            StockManager.Adapters.KisRealtimeSession? kisRealtime = null;
+            System.Threading.CancellationTokenSource? kisRealtimeCts = null;
+            StockManager.Adapters.KisSessionInterlock? kisSession = null;
+            if (kisLive is not null && cfg.GetBool("Kis.RealtimeEnabled", false) && !string.IsNullOrWhiteSpace(kisHtsId))
+            {
+                kisSession = new StockManager.Adapters.KisSessionInterlock(routerSentinel, 1,
+                    marketHours: () => StockManager.Adapters.KisSessionInterlock.IsKrxRegularSession(DateTime.UtcNow),
+                    marketSilenceMicros: cfg.GetInt("Kis.MarketSilenceMs", 3000, 500, 60_000) * 1000L);
+                kisSession.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.KisSession);
+                StockManager.Adapters.KisRealtimeSession? rtRef = null;
+                var kisWsAdapter = new StockManager.Adapters.KisOpenApiAdapter(kisSession,
+                    send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
+                    onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); });
+                kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
+                    kisLive.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"));
+                Volatile.Write(ref rtRef, kisRealtime);
+                kisRealtimeCts = new System.Threading.CancellationTokenSource();
+                _ = Task.Run(() => kisRealtime.RunAsync(kisRealtimeCts.Token));
+                services.AddSingleton(kisRealtime);
+            }
+            // 실시간 한도 피드 — 0 = 키움 계좌 동기화(OPW00001 주문가능금액 · OPW00018 보유 · 30초 만료) · 1 = KIS(계좌 조회 미결선 → 미결속)
+            var limitFeed = new StockManager.Adapters.BrokerLimitFeedProvider(
+                new StockManager.Adapters.IBrokerAccountView?[] { new StockManager.Adapters.AccountSyncBrokerView(accountSync, () => bridge.IsProxyAlive), kisBalance },
+                new long[] { cfg.GetInt("Routing.KiwoomMaxSharesPerOrder", 0, 0, 10_000_000), cfg.GetInt("Routing.KisMaxSharesPerOrder", 0, 0, 10_000_000) });
+            services.AddSingleton(limitFeed);
+            // ★분할은 명시 설정으로만(기본 꺼짐 — 활성 시 모든 실전 주문이 1~3호가 × 브로커 한도로 나뉜다). 분할 가능 브로커 0 = 전방 거부 + 비트 23.
+            bool splitEnabled = cfg.GetBool("Routing.SplitEnabled", false);
+            if (splitEnabled) routerGate.EnableSplit(limitFeed, childMatrix.TripExternal);
+            var childEvalTimer = new System.Threading.Timer(_ =>
+            {
+                try { childMatrix.Evaluate(); } catch { }
+                try { childMatrix.ReleaseConverged(); } catch { }
+                try { kisSession?.Evaluate(); } catch { }                               // [KIS 방향 B] 장중 3초 침묵 판정
+            }, null, 50, 50);
+            FormClosed += (_, _) => ShutdownTrace.Step("childMatrix", () =>
+            {
+                childEvalTimer.Dispose(); kisBalanceTimer?.Dispose(); bridge.FillReceived -= onChildFill;
+                try { kisRealtimeCts?.Cancel(); } catch { }
+                kisRealtimeCts?.Dispose(); kisRealtime?.Dispose();
+            });
             var drainWorker = new OrderDrainWorker(ringDispatcher, egressSentinel,   // [E2E · 방향 B] 실 브로커 앞 백업 인터락 경유
                 wired: cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런도 드레인 가동(미러 급전)
                 periodMs: 50,
@@ -1492,7 +1602,9 @@ namespace StockManager.Blazor
                 canaryGov: canaryGovernor,   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
                 interlocks: interlockMask,   // [실배선] 판정↔송출 사이 인터락 Trip → 송출 직전 veto(GatedOut)
                 routeGate: routerGate,       // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백
-                latencyProbe: t2tProfiler);  // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 정지 veto
+                latencyProbe: t2tProfiler,   // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 정지 veto
+                brokersByIndex: brokerMap);  // [실전 결선 · 다중 브로커] 라우터 판정 브로커로 송출(미결선 인덱스 = 대체 송출 금지)
+            if (splitEnabled) drainWorker.EnableChildSplit(childMatrix);   // [분할 라우팅] 게이트웨이 경유 자식 봉인 사출 · 거부 시 형제 회수 + Disarm
             services.AddSingleton(drainWorker);
             FormClosed += (_, _) => ShutdownTrace.Step("drainWorker", () => drainWorker.Dispose());
             // 200ms 주기 샘플러 타이머 — UI 폴링(150ms)보다 약간 빠름. 단일 라이터(ringPublisher·latencyPublisher) 보장.

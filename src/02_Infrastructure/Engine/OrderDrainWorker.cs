@@ -213,6 +213,10 @@ namespace MS2E.Infrastructure
                 if (!canary.TryAdmitOrder(notionalRaw)) return false;   // 캡 초과/강등/미상 명목 → veto(GatedOut·fail-closed)
             }
 
+            // ★[자식 슬롯 분할] 분할 원장 + 분할 게이트 + 다중 브로커 맵이 모두 결선된 경우만(게이트웨이 봉인 사출 경로는 단일 토큰 계약이라 제외)
+            if (_childLedger is { } ledger && _routeGate is IChildSplitRouteGate sg && _brokersByIndex is { } bmap)
+                return DispatchSplit(in p, sg, ledger, bmap, t0);
+
             // ★[피드 연동] 라우터 게이트 — 카나리까지 통과한 실전 주문만 참조가·라우터 판정 + 추적 슬롯 확보. 실패 = 미송출.
             // [보호 지정가] 송출 형태 = 게이트 승인값(시장가 → 보호 지정가 · 잔량 부족 시 수량 축소). 게이트 미주입이면 원 제안 그대로.
             byte sendKind = p.KindByte; long sendPrice = p.PriceRaw, sendQty = p.QtyRaw, basisAge = -1;
@@ -276,6 +280,119 @@ namespace MS2E.Infrastructure
             _routeGate?.OnBrokerAccepted(p.OrderId, msg);
             _latencyProbe?.RecordSent(t0, basisAge);   // [저지연] 송출 완료 시점 Tick-to-Trade 기록
             return true;
+        }
+
+        // ── [자식 슬롯 분할 라우팅] ────────────────────────────────────────────
+
+        private IChildSlotLedger? _childLedger;
+        private readonly ChildOrderPlan[] _childBuf = new ChildOrderPlan[ChildIdSpace.MaxChildren];
+        private long _splitParents, _childOrdersSent, _childReclaimed;
+        public long SplitParents => System.Threading.Interlocked.Read(ref _splitParents);
+        public long ChildOrdersSent => System.Threading.Interlocked.Read(ref _childOrdersSent);
+        public long ChildReclaimed => System.Threading.Interlocked.Read(ref _childReclaimed);
+
+        /// <summary>분할 송출 활성화(원장 = ChildSlotTrackingMatrix). 분할 게이트 + 브로커 맵이 함께 결선돼야 동작.</summary>
+        public void EnableChildSplit(IChildSlotLedger ledger) => _childLedger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+
+        /// <summary>
+        /// 부모 1건 → 자식 N건 순차 송출(드레인 단일 스레드). 동시 비동기 송출 대신 순차인 이유: 자식 k 가 거부되면 k+1.. 은 '아직 보내지 않은'
+        /// 상태여야 0ms 회수가 의미를 가진다(동시 송출이면 거부 판정 시점에 형제가 이미 브로커에 있다 = 회수 불가 노출).
+        /// 거부(ok=false) = 해당 자식 슬롯 롤백 + 미송출 형제 전부 롤백(OnNotSent) + 원장 회수·Disarm(MarkSendFailed) → throw(Mission-A 벽 · 동결).
+        /// Place 예외 = 도달 모호 → 그 자식은 추적 유지(TTL 회수) · 미송출 형제만 롤백 + Disarm 후 재throw.
+        /// </summary>
+        private bool DispatchSplit(in OrderProposal p, IChildSplitRouteGate sg, IChildSlotLedger ledger, IBroker?[] map, long t0)
+        {
+            var kids = _childBuf.AsSpan();
+            if (!sg.TryAdmitSplit(in p, kids, out int n) || n <= 0)
+            {
+                System.Threading.Interlocked.Increment(ref _routeVetoes);
+                return false;
+            }
+            for (int i = 0; i < n; i++)
+                if ((uint)kids[i].Broker >= (uint)map.Length || map[kids[i].Broker] is null)
+                {
+                    for (int j = 0; j < n; j++) sg.OnNotSent(kids[j].ChildId);           // 미결선 브로커 = 전 자식 미송출(라우터 판정 우회 금지)
+                    System.Threading.Interlocked.Increment(ref _brokerIndexVetoes);
+                    return false;
+                }
+            if (_latencyProbe is { } lp && !lp.AdmitBeforeSend(t0))
+            {
+                for (int j = 0; j < n; j++) sg.OnNotSent(kids[j].ChildId);
+                System.Threading.Interlocked.Increment(ref _latencyVetoes);
+                return false;
+            }
+            if (!ledger.Open(p.OrderId, kids.Slice(0, n)))
+            {
+                for (int j = 0; j < n; j++) sg.OnNotSent(kids[j].ChildId);           // 원장 개설 불가(포화·초과 합) = 송출 0
+                return false;
+            }
+            var symbol = KseSymbolText.D6(p.SymbolCode);
+            var side = p.Side == OrderSide.Buy ? PaperSide.Buy : PaperSide.Sell;
+            for (int i = 0; i < n; i++)
+            {
+                ref var c = ref kids[i];
+                var target = map[c.Broker]!;
+                bool ok; string msg;
+                try
+                {
+                    if (_gateway is { } gw)
+                    {
+                        // ★게이트웨이 경유(실전 결선) — 자식마다 이중키∧방어선∧펄스 재검 + 자식 전용 exactly-once 봉인 사출
+                        _sendBroker = target; _childSealedOk = false; _childSealedMsg = "";
+                        if (!gw.EmitChild(c.ChildId, p.SymbolCode, p.SideByte, 1, c.LimitRaw, c.Shares * 100_000_000L, _placeSealedChild!))
+                        {
+                            sg.OnNotSent(c.ChildId);
+                            ReclaimFrom(sg, kids, i + 1, n);
+                            if (i == 0) ledger.Abandon(p.OrderId);                       // 송출 0 — 거부 아님(무장 veto) · Disarm 없음
+                            else ledger.MarkSendFailed(c.ChildId);                       // 일부 송출 후 veto = 불완전 분할 → Disarm
+                            System.Threading.Interlocked.Increment(ref _routeVetoes);
+                            return false;
+                        }
+                        ok = _childSealedOk; msg = _childSealedMsg;
+                    }
+                    else
+                        (ok, msg) = target.Place(PaperAsset.Stock, symbol, symbol, side, PaperKind.Limit,
+                                                 new QQty(c.Shares * 100_000_000L).ToDecimal(), new QPrice(c.LimitRaw).ToDecimal(), new QPrice(c.LimitRaw).ToDecimal());
+                }
+                catch (Exception)
+                {
+                    ReclaimFrom(sg, kids, i + 1, n);                                     // 도달 모호 자식은 추적 유지 · 이후 형제만 회수
+                    ledger.MarkSendFailed(c.ChildId);
+                    throw;
+                }
+                if (!ok)
+                {
+                    sg.OnNotSent(c.ChildId);
+                    ReclaimFrom(sg, kids, i + 1, n);                                     // ★미송출 형제 0ms 회수
+                    int reclaimed = ledger.MarkSendFailed(c.ChildId);                    // ★원장 회수 + Disarm(sticky)
+                    throw new InvalidOperationException($"자식 주문 {i + 1}/{n} Broker.Place 거부: {msg} — 미송출 형제 {reclaimed}건 회수 · 분할 회로 Disarm");
+                }
+                sg.OnBrokerAccepted(c.ChildId, msg);
+                ledger.MarkSent(c.ChildId, long.TryParse(msg, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long bid) ? bid : 0);
+                System.Threading.Interlocked.Increment(ref _childOrdersSent);
+            }
+            _latencyProbe?.RecordSent(t0, -1);
+            System.Threading.Interlocked.Increment(ref _splitParents);
+            return true;
+        }
+
+        private bool _childSealedOk;
+        private string _childSealedMsg = "";
+        private SealedSend? _placeSealedChildCache;
+        private SealedSend? _placeSealedChild => _placeSealedChildCache ??= PlaceSealedChild;
+
+        // 자식 봉인 사출 — 결과만 기록(슬롯 결속/롤백 · 거부 처리는 DispatchSplit 이 형제 회수와 함께 수행)
+        private void PlaceSealedChild(in SealedOrderToken t)
+        {
+            var symbol = KseSymbolText.D6(t.SymbolCode);
+            var side = t.SideByte == 0 ? PaperSide.Buy : PaperSide.Sell;
+            var px = new QPrice(t.PriceRaw).ToDecimal();
+            (_childSealedOk, _childSealedMsg) = _sendBroker.Place(PaperAsset.Stock, symbol, symbol, side, PaperKind.Limit, new QQty(t.QtyRaw).ToDecimal(), px, px);
+        }
+
+        private void ReclaimFrom(IChildSplitRouteGate sg, Span<ChildOrderPlan> kids, int from, int n)
+        {
+            for (int j = from; j < n; j++) { sg.OnNotSent(kids[j].ChildId); System.Threading.Interlocked.Increment(ref _childReclaimed); }
         }
 
         // ★v10.0.0 봉인 사출: 게이트웨이가 봉인한 불변 토큰만 소켓으로. 거부 시 throw → 상류 Mission-A 벽(ForceFreeze).

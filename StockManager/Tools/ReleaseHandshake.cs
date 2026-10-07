@@ -10,6 +10,11 @@
 //     COM 쉼 산출물·liveArmed 기본값·인터락 목록)과 피어 저장소(QuantumVault) 관측값(HEAD·봉인 매니페스트 해시·rootHash)을
 //     RELEASE_MANIFEST.json 하나로 묶고, 정규화 문자열의 SHA-256(manifestHash)으로 자기 봉인한다.
 //     Verify 는 기록값 ↔ 실측값을 대조해 하나라도 어긋나면 거부(어느 항목이 왜 어긋났는지 판정값으로 반환).
+//     ★[다중 저장소 봉인 감사 · 실결함 교정] manifestHash 는 무키 SHA-256 — 본문을 고친 뒤 재계산하면 자기 봉인은 통과한다.
+//       따라서 모든 기록 필드가 '독립 실측'에 묶여 있어야 한다. 수정 전 genesisHeadHash(manifest.sig 와 미대조) · interlocks(무대조) ·
+//       peer.manifestPath/name(관측 경로와 미대조)은 위조 후 재봉인하면 그대로 통과했다 → 각각 manifest.sig 제네시스 · 태그 소스의
+//       ArmingInterlockSource 열거(git show <태그>:ArmingInterlockBitmask.cs) · 관측한 피어 경로/이름과 대조(GenesisMismatch ·
+//       InterlockSetMismatch · PeerIdentityMismatch). 관측값 부재 = 거부(fail-closed).
 //     ★피어 저장소는 읽기 전용 — 쓰기 0(QuantumVault 는 별도 제품 · v2.7.0 봉인 동결 · 사용자 결정 2026-10-06).
 //  ③ GitRepoProbe — git 을 셸 없이(ArgumentList) 호출해 HEAD·태그 커밋·작업 트리 변경·태그↔HEAD 코드 이탈을 관측.
 //     문서(*.md)·docs/·release/·.claude/·graphify-out/ 변경은 코드 이탈로 보지 않는다(출하 바이너리에 영향 없음).
@@ -187,18 +192,21 @@ namespace StockManager.Tools
 
     public sealed record RepoObservation(string? Head, string? TagCommit, IReadOnlyList<string> DirtyPaths, IReadOnlyList<string> DriftPaths);
 
-    public sealed record PeerObservation(string? Head, IReadOnlyList<string> DirtyPaths, string? ManifestSha256, string? RootHash);
+    public sealed record PeerObservation(string? Head, IReadOnlyList<string> DirtyPaths, string? ManifestSha256, string? RootHash,
+                                         string? ManifestPath = null, string? Name = null);
 
     public sealed record HandshakeObservation(
         RepoObservation Repo, string? ManifestSigSha256, string? ManifestSigVersion, string? ManifestSigMasterSeal,
         IReadOnlyList<(string Name, string Sha256)> ManifestSigArtifacts, string? ZipSha256, string? AnchorSeal, string? ShimSha256,
-        PeerObservation? Peer);
+        PeerObservation? Peer, string? ManifestSigGenesis = null, IReadOnlyList<string>? TagInterlocks = null);
 
     public enum ReleaseHandshakeVerdict : byte
     {
         Ok = 0, Malformed = 1, SelfHashMismatch = 2, LiveArmedViolation = 3, TagMissing = 4, SourceCommitMismatch = 5,
         HeadDrift = 6, DirtyTree = 7, ManifestSigMismatch = 8, MasterSealMismatch = 9, ArtifactSetMismatch = 10,
         ZipMismatch = 11, ShimMismatch = 12, PeerMissing = 13, PeerDirty = 14, PeerCommitMismatch = 15, PeerManifestMismatch = 16,
+        GenesisMismatch = 17, InterlockSetMismatch = 18, PeerIdentityMismatch = 19,   // [다중 저장소 봉인 감사] 무대조 필드 교정
+        ParserDifferential = 20,   // 독립 무할당 판독기(ManifestSealStreamer)가 거부 — 중복 키 · 이스케이프 등 판독기마다 달리 보이는 매니페스트
     }
 
     public static class MultiRepoReleaseManifest
@@ -302,6 +310,13 @@ namespace StockManager.Tools
             if (!TryParse(json, out var m, out string stored, out string why)) { detail = why; return ReleaseHandshakeVerdict.Malformed; }
             if (!HexEq(stored, CanonicalHash(m))) { detail = "manifestHash ≠ 정규화 재계산(매니페스트 변조)"; return ReleaseHandshakeVerdict.SelfHashMismatch; }
             if (m.LiveArmedDefault) { detail = "liveArmedDefault=true — Fail-Closed 불변식 위반"; return ReleaseHandshakeVerdict.LiveArmedViolation; }
+            {
+                // [방향 A] 두 번째 독립 판독(고정 버퍼 · 무할당) — 기준 판독(JsonDocument)과 같은 자기 봉인을 재계산하지 못하면 거부
+                byte[] bytes = Encoding.UTF8.GetBytes(json);
+                var st = new ManifestSealStreamer(Math.Max(1024, bytes.Length));
+                var sv = st.Load(bytes) ? st.Verify(default) : ManifestStreamVerdict.TooLarge;
+                if (sv != ManifestStreamVerdict.Ok) { detail = "독립 판독기 거부: " + sv + "(판독기 차이 — 중복 키/이스케이프/비정규 형식)"; return ReleaseHandshakeVerdict.ParserDifferential; }
+            }
             var repo = obs.Repo;
             if (repo.TagCommit is null) { detail = $"태그 {m.Tag} 없음"; return ReleaseHandshakeVerdict.TagMissing; }
             if (!string.Equals(repo.TagCommit, m.SourceCommit, StringComparison.OrdinalIgnoreCase))
@@ -315,10 +330,16 @@ namespace StockManager.Tools
             if (!SameArtifacts(m.Artifacts, obs.ManifestSigArtifacts, out string diff)) { detail = "아티팩트 집합 불일치: " + diff; return ReleaseHandshakeVerdict.ArtifactSetMismatch; }
             if (obs.ZipSha256 is null || !HexEq(obs.ZipSha256, m.ZipSha256)) { detail = "zip SHA-256 불일치/없음"; return ReleaseHandshakeVerdict.ZipMismatch; }
             if (obs.ShimSha256 is null || !HexEq(obs.ShimSha256, m.ShimSha256)) { detail = "COM 쉼 산출물 해시 불일치/없음(쉼 게이트 미통과 빌드)"; return ReleaseHandshakeVerdict.ShimMismatch; }
+            if (obs.ManifestSigGenesis is null || !HexEq(obs.ManifestSigGenesis, m.GenesisHeadHash))
+            { detail = "genesisHeadHash(기록 ≠ manifest.sig) — 제네시스 계보 위조/불일치"; return ReleaseHandshakeVerdict.GenesisMismatch; }
+            if (!SameSequence(m.Interlocks, obs.TagInterlocks, out string idiff))
+            { detail = "인터락 목록 ≠ 태그 소스 ArmingInterlockSource: " + idiff; return ReleaseHandshakeVerdict.InterlockSetMismatch; }
             if (m.Peer is { } p)
             {
                 var po = obs.Peer;
                 if (po?.Head is null) { detail = $"피어 {p.Name} 저장소 관측 불가"; return ReleaseHandshakeVerdict.PeerMissing; }
+                if (!string.Equals(po.Name, p.Name, StringComparison.Ordinal) || !string.Equals(po.ManifestPath, p.ManifestPath, StringComparison.Ordinal))
+                { detail = $"피어 이름/매니페스트 경로(기록 {p.Name}:{p.ManifestPath} ≠ 관측 {po.Name}:{po.ManifestPath})"; return ReleaseHandshakeVerdict.PeerIdentityMismatch; }
                 if (po.DirtyPaths.Count > 0) { detail = $"피어 {p.Name} 미커밋 코드 {po.DirtyPaths.Count}건(예: {po.DirtyPaths[0]})"; return ReleaseHandshakeVerdict.PeerDirty; }
                 if (!string.Equals(po.Head, p.Commit, StringComparison.OrdinalIgnoreCase)) { detail = $"피어 {p.Name} HEAD {Short(po.Head)} ≠ 기록 {Short(p.Commit)}"; return ReleaseHandshakeVerdict.PeerCommitMismatch; }
                 if (po.ManifestSha256 is null || !HexEq(po.ManifestSha256, p.ManifestSha256) || po.RootHash != p.RootHash)
@@ -326,6 +347,16 @@ namespace StockManager.Tools
             }
             detail = $"{m.Tag} @{Short(m.SourceCommit)} · artifacts={m.Artifacts.Count} · seal={m.MasterSeal[..16]}…" + (m.Peer is { } pp ? $" · peer {pp.Name}@{Short(pp.Commit)}" : "");
             return ReleaseHandshakeVerdict.Ok;
+        }
+
+        private static bool SameSequence(IReadOnlyList<string> recorded, IReadOnlyList<string>? observed, out string diff)
+        {
+            diff = "";
+            if (observed is null) { diff = "태그 소스 인터락 열거 관측 불가"; return false; }
+            if (recorded.Count != observed.Count) { diff = $"개수 {recorded.Count} ≠ {observed.Count}"; return false; }
+            for (int i = 0; i < recorded.Count; i++)
+                if (!string.Equals(recorded[i], observed[i], StringComparison.Ordinal)) { diff = $"#{i} {recorded[i]} ≠ {observed[i]}"; return false; }
+            return true;
         }
 
         private static bool SameArtifacts(IReadOnlyList<(string Name, string Sha256)> a, IReadOnlyList<(string Name, string Sha256)> b, out string diff)
@@ -393,6 +424,49 @@ namespace StockManager.Tools
             return new RepoObservation(head, tagCommit, dirty, drift);
         }
 
+        public const string InterlockSourcePath = "src/01_Core/ArmingInterlockBitmask.cs";
+
+        /// <summary>
+        /// 태그 커밋의 ArmingInterlockSource 열거 이름(값 오름차순 = Enum.GetNames 순서)을 소스에서 판독(git show · 콜드).
+        /// 실패/형식 이탈(열거 블록 없음 · 값 중복 · 0개) = null(호출측 fail-closed).
+        /// </summary>
+        public static IReadOnlyList<string>? TagInterlockNames(string repoRoot, string? commit)
+        {
+            if (commit is null || commit.Length is < 7 or > 64) return null;
+            foreach (char c in commit) if (!char.IsAsciiHexDigit(c)) return null;
+            string? src = Git(repoRoot, "show", commit + ":" + InterlockSourcePath);
+            return src is null ? null : ParseInterlockEnum(src);
+        }
+
+        public static IReadOnlyList<string>? ParseInterlockEnum(string source)
+        {
+            int at = source.IndexOf("enum ArmingInterlockSource", StringComparison.Ordinal);
+            if (at < 0) return null;
+            int open = source.IndexOf('{', at), close = open < 0 ? -1 : source.IndexOf('}', open);
+            if (open < 0 || close < 0) return null;
+            var items = new List<(long Value, string Name)>();
+            foreach (var rawLine in source.AsSpan(open + 1, close - open - 1).ToString().Split('\n'))
+            {
+                string line = rawLine;
+                int cm = line.IndexOf("//", StringComparison.Ordinal);
+                if (cm >= 0) line = line[..cm];
+                line = line.Trim().TrimEnd(',').Trim();
+                if (line.Length == 0) continue;
+                int eq = line.IndexOf('=');
+                if (eq <= 0) return null;                                              // 명시 값 없는 멤버 = 형식 이탈
+                string name = line[..eq].Trim();
+                if (name.Length == 0 || !long.TryParse(line[(eq + 1)..].Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long v)) return null;
+                foreach (char c in name) if (!(char.IsAsciiLetterOrDigit(c) || c == '_')) return null;
+                foreach (var it in items) if (it.Value == v || it.Name == name) return null;
+                items.Add((v, name));
+            }
+            if (items.Count == 0) return null;
+            items.Sort(static (a, b) => a.Value.CompareTo(b.Value));
+            var names = new List<string>(items.Count);
+            foreach (var it in items) names.Add(it.Name);
+            return names;
+        }
+
         public static List<string> StatusPaths(string repoRoot)
         {
             var list = new List<string>();
@@ -415,7 +489,11 @@ namespace StockManager.Tools
         {
             try
             {
-                var psi = new ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = repoRoot };
+                // [실결함 교정] 출력 인코딩 미지정 = 콘솔 코드페이지(한국어 Windows CP949)로 디코딩 — git 은 UTF-8 을 내보내므로 한글 바이트열의
+                //   끝 바이트가 뒤따르는 줄바꿈을 2바이트 문자로 삼켜 줄이 병합됐다(태그 소스 열거 판독 시 한글 주석 다음 멤버 소실 ·
+                //   core.quotepath=false porcelain 의 한글 경로 손상). UTF-8(BOM 없음)로 고정.
+                var psi = new ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = repoRoot,
+                                                        StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false) };
                 psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("core.quotepath=false");
                 foreach (var a in args) psi.ArgumentList.Add(a);
                 using var p = Process.Start(psi);
@@ -481,10 +559,12 @@ namespace StockManager.Tools
                     string outPath = o.GetValueOrDefault("--out") ?? Path.Combine(releaseDir, MultiRepoReleaseManifest.FileName);
                     if (!TryCollect(releaseDir, repo, shim, peer, peerRel, out var obs, out var sig, out string why)) { output.WriteLine("[sync] 수집 실패: " + why); return ExitRejected; }
                     if (obs.Repo.TagCommit is null) { output.WriteLine($"[sync] 태그 v{sig.Version} 없음 — 기록 거부"); return ExitRejected; }
-                    PeerRecord? pr = obs.Peer is { Head: { } ph } po ? new PeerRecord(Path.GetFileName(Path.GetFullPath(peer!).TrimEnd('\\', '/')), ph, peerRel, po.ManifestSha256 ?? "", po.RootHash ?? "") : null;
+                    PeerRecord? pr = obs.Peer is { Head: { } ph } po ? new PeerRecord(po.Name ?? "", ph, peerRel, po.ManifestSha256 ?? "", po.RootHash ?? "") : null;
                     if (peer is not null && pr is null) { output.WriteLine("[sync] 피어 저장소 관측 불가 — 기록 거부"); return ExitRejected; }
+                    if (obs.TagInterlocks is null) { output.WriteLine("[sync] 태그 소스 인터락 열거 판독 실패 — 기록 거부"); return ExitRejected; }
+                    // [다중 저장소 봉인 감사] 인터락 목록 = 태그 소스 열거(실행 바이너리 Enum.GetNames 아님 — 검증 시 같은 출처로 재대조)
                     var m = new ReleaseManifestInput(sig.Version, "v" + sig.Version, obs.Repo.TagCommit, obs.ManifestSigSha256!, sig.MasterSeal, sig.Genesis,
-                        obs.ManifestSigArtifacts, sig.ZipName, obs.ZipSha256 ?? "", obs.ShimSha256 ?? "", false, Enum.GetNames<MS2E.Core.ArmingInterlockSource>(), pr);
+                        obs.ManifestSigArtifacts, sig.ZipName, obs.ZipSha256 ?? "", obs.ShimSha256 ?? "", false, obs.TagInterlocks, pr);
                     string json = MultiRepoReleaseManifest.Build(m);
                     // 원자적 기록: 임시 파일 → 즉시 핸드셰이크 → 통과 시에만 교체(실패 = 기존 파일 보존 · 임시 삭제)
                     string tmp = outPath + ".tmp";
@@ -543,12 +623,15 @@ namespace StockManager.Tools
                     try { using var pd = JsonDocument.Parse(File.ReadAllText(pm)); root = pd.RootElement.TryGetProperty("rootHash", out var rh) ? rh.GetString() : null; }
                     catch (JsonException) { root = null; }
                 }
-                po = new PeerObservation(GitRepoProbe.Git(peer, "rev-parse", "HEAD"), GitRepoProbe.StatusPaths(peer), File.Exists(pm) ? FileSha(pm) : null, root);
+                po = new PeerObservation(GitRepoProbe.Git(peer, "rev-parse", "HEAD"), GitRepoProbe.StatusPaths(peer), File.Exists(pm) ? FileSha(pm) : null, root,
+                                         peerRel, Path.GetFileName(Path.GetFullPath(peer).TrimEnd('\\', '/')));
             }
             sig = new SigFacts(version, seal, genesis, zipName);
-            obs = new HandshakeObservation(GitRepoProbe.Observe(repo, "v" + version), FileSha(sigPath), version, seal, arts,
+            var repoObs = GitRepoProbe.Observe(repo, "v" + version);
+            obs = new HandshakeObservation(repoObs, FileSha(sigPath), version, seal, arts,
                 File.Exists(zipPath) ? FileSha(zipPath) : null, File.Exists(anchorPath) ? File.ReadAllText(anchorPath).Trim() : null,
-                File.Exists(shim) ? FileSha(shim) : null, po);
+                File.Exists(shim) ? FileSha(shim) : null, po,
+                genesis.Length > 0 ? genesis : null, GitRepoProbe.TagInterlockNames(repo, repoObs.TagCommit));
             return true;
         }
 

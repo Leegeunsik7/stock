@@ -235,6 +235,7 @@ namespace StockManager.Tests
         private const string Src = "9f3b7ef08456c9b30a1d29aaa2233a9f28116d43";
         private const string PeerHead = "6023a30aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         private static readonly string Seal = new string('7', 64);
+        private const string QvPath = "release/offline-bundle/RELEASE_MANIFEST.json";
         private static readonly string SigSha = new string('5', 64), ZipSha = new string('8', 64), ShimSha = new string('C', 64), PeerSha = new string('2', 64);
 
         private static ReleaseManifestInput Input(PeerRecord? peer = null) => new(
@@ -247,7 +248,8 @@ namespace StockManager.Tests
                                                 IReadOnlyList<(string, string)>? arts = null, string? zip = null, string? anchor = null, string? shim = null, PeerObservation? peer = null, bool noPeer = false)
             => new(repo ?? new RepoObservation(Src, Src, Array.Empty<string>(), Array.Empty<string>()), sigSha ?? SigSha, version, sigSeal ?? Seal,
                    arts ?? Input().Artifacts, zip ?? ZipSha, anchor ?? Seal, shim ?? ShimSha,
-                   noPeer ? null : peer ?? new PeerObservation(PeerHead, Array.Empty<string>(), PeerSha, "2018f926"));
+                   noPeer ? null : peer ?? new PeerObservation(PeerHead, Array.Empty<string>(), PeerSha, "2018f926", QvPath, "QuantumVault"),
+                   new string('6', 64), Input().Interlocks);   // [다중 저장소 봉인 감사] manifest.sig 제네시스 · 태그 소스 인터락 관측
 
         [Fact]
         public void Handshake_Genuine_Ok_CanonicalUnderReformat()
@@ -278,10 +280,10 @@ namespace StockManager.Tests
             V(ReleaseHandshakeVerdict.ZipMismatch, Obs(zip: FlipBit(ZipSha)));
             V(ReleaseHandshakeVerdict.ShimMismatch, Obs(shim: FlipBit(ShimSha)));
             V(ReleaseHandshakeVerdict.PeerMissing, Obs(noPeer: true));
-            V(ReleaseHandshakeVerdict.PeerDirty, Obs(peer: new PeerObservation(PeerHead, new[] { "Core/x.cs" }, PeerSha, "2018f926")));
-            V(ReleaseHandshakeVerdict.PeerCommitMismatch, Obs(peer: new PeerObservation("1111111", Array.Empty<string>(), PeerSha, "2018f926")));
-            V(ReleaseHandshakeVerdict.PeerManifestMismatch, Obs(peer: new PeerObservation(PeerHead, Array.Empty<string>(), FlipBit(PeerSha), "2018f926")));
-            V(ReleaseHandshakeVerdict.PeerManifestMismatch, Obs(peer: new PeerObservation(PeerHead, Array.Empty<string>(), PeerSha, "deadbeef")));
+            V(ReleaseHandshakeVerdict.PeerDirty, Obs(peer: new PeerObservation(PeerHead, new[] { "Core/x.cs" }, PeerSha, "2018f926", QvPath, "QuantumVault")));
+            V(ReleaseHandshakeVerdict.PeerCommitMismatch, Obs(peer: new PeerObservation("1111111", Array.Empty<string>(), PeerSha, "2018f926", QvPath, "QuantumVault")));
+            V(ReleaseHandshakeVerdict.PeerManifestMismatch, Obs(peer: new PeerObservation(PeerHead, Array.Empty<string>(), FlipBit(PeerSha), "2018f926", QvPath, "QuantumVault")));
+            V(ReleaseHandshakeVerdict.PeerManifestMismatch, Obs(peer: new PeerObservation(PeerHead, Array.Empty<string>(), PeerSha, "deadbeef", QvPath, "QuantumVault")));
         }
 
         [Fact]

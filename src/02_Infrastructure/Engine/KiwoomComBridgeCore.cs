@@ -340,6 +340,9 @@ namespace MS2E.Infrastructure
         private readonly Action<int>? _onServerError;
         private readonly Action<AccountCashPayload>? _onCash;
         private readonly Action<PositionPayload>? _onPosition;
+        private readonly Action<OpenOrderPayload>? _onOpenOrder;     // [미체결 대사] OPT10075 행
+        private readonly Action<OrderMappedPayload>? _onMapped;      // [미체결 대사] 클라이언트 ID ↔ 키움 번호 통지
+        private long _openOrderBatch, _ghostCancels, _adoptedMappings;
         private readonly Func<long> _nowTicks;
         private string _screenNo = "5001", _accountNo = "";
         private long _batchId, _amendSent, _amendBlocked, _amendFailed, _cancelDeferredExecuted;
@@ -355,9 +358,11 @@ namespace MS2E.Infrastructure
         public KiwoomComEventCore(IKiwoomOcx ocx, Action<TickPayload>? onTick, Action<FillPayload>? onFill, Action<OrderBookPayload>? onBook,
                                   Action<ReferencePricePayload>? onBase, Action<int>? onServerError,
                                   Func<long>? nowTicks = null, int mapCapacityPow2 = 4096, long pendingTtlMillis = 2_000,
-                                  Action<AccountCashPayload>? onCash = null, Action<PositionPayload>? onPosition = null)
+                                  Action<AccountCashPayload>? onCash = null, Action<PositionPayload>? onPosition = null,
+                                  Action<OpenOrderPayload>? onOpenOrder = null, Action<OrderMappedPayload>? onMapped = null)
         {
             _onCash = onCash; _onPosition = onPosition;
+            _onOpenOrder = onOpenOrder; _onMapped = onMapped;
             _ocx = ocx ?? throw new ArgumentNullException(nameof(ocx));
             _onTick = onTick; _onFill = onFill; _onBook = onBook; _onBase = onBase; _onServerError = onServerError;
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
@@ -409,6 +414,7 @@ namespace MS2E.Infrastructure
             if (rqName is null) return;
             if (rqName == RqAccountBalance) { OnAccountBalanceTr(trCode, rqName); return; }
             if (rqName == RqAccountCash) { OnAccountCashTr(trCode, rqName); return; }
+            if (rqName == RqOpenOrders) { OnOpenOrdersTr(trCode, rqName); return; }
             if (!KiwoomServerMessage.TryParseTagged(rqName, out char tag, out long clientId)) return;
             if (tag != 'Q') { OnAmendTr(tag, clientId, trCode, rqName); return; }
             string noText = _ocx.GetCommData(trCode, rqName, 0, "주문번호");
@@ -420,6 +426,7 @@ namespace MS2E.Infrastructure
                 return;
             }
             _map.Map(clientId, kiwoomNo);
+            EmitMapped(clientId, kiwoomNo);                                     // [미체결 대사] 호스트가 키움 번호를 알아야 OPT10075 와 1:1 대사 가능
             FlushPendingFor(kiwoomNo, clientId);                                // ③ 보류 체결 통보 사상 방출
             // ⑥ 사상 전에 들어온 취소 요청 — 지금 집행(원주문번호 확보)
             if (_map.TryGetOrder(clientId, out _, out _, out _, out _, out long flags) && (flags & KiwoomOrderNumberMap.FlagCancelDeferred) != 0)
@@ -445,6 +452,7 @@ namespace MS2E.Infrastructure
             }
             if (!ok) { _map.ClearFlag(clientId, KiwoomOrderNumberMap.FlagModifyInFlight); Interlocked.Increment(ref _amendFailed); return; }
             _map.Map(clientId, newNo);                                           // 정정 주문은 새 주문번호 — 이후 체결 통보 사상
+            EmitMapped(clientId, newNo);
             _map.ClearFlag(clientId, KiwoomOrderNumberMap.FlagModifyInFlight);
             FlushPendingFor(newNo, clientId);
         }
@@ -499,7 +507,83 @@ namespace MS2E.Infrastructure
 
         // ── ⑥ 계좌 조회(OPW00018 보유 · OPW00001 예수금) ─────────────────────
 
-        public const string RqAccountBalance = "ACCBAL", RqAccountCash = "ACCCASH";
+        public const string RqAccountBalance = "ACCBAL", RqAccountCash = "ACCCASH", RqOpenOrders = "OPENORD";
+
+        public long OpenOrderBatches => Interlocked.Read(ref _openOrderBatch);
+        public long GhostCancels => Interlocked.Read(ref _ghostCancels);
+        public long AdoptedMappings => Interlocked.Read(ref _adoptedMappings);
+
+        /// <summary>[미체결 대사] OPT10075 미체결 조회(조회 TR 1건 — 레이트: 호출측 주기 관리).</summary>
+        public int QueryOpenOrders(string accountNo, string screenNo)
+        {
+            if (string.IsNullOrWhiteSpace(accountNo)) return -1;
+            _accountNo = accountNo; _screenNo = screenNo;
+            _ocx.SetInputValue("계좌번호", accountNo);
+            _ocx.SetInputValue("전체종목구분", "0");
+            _ocx.SetInputValue("매매구분", "0");
+            _ocx.SetInputValue("종목코드", "");
+            _ocx.SetInputValue("체결구분", "1");                               // 1 = 미체결
+            return _ocx.CommRqData(RqOpenOrders, "opt10075", 0, screenNo);
+        }
+
+        /// <summary>[미체결 대사] 승계 확정 주문을 이 프록시의 사상표에 재등록 — 이후 체결/취소 통보가 호스트 클라이언트 ID 로 사상된다.</summary>
+        public bool AdoptMapping(long clientId, long kiwoomNo, long symbolCode, int side, long remaining)
+        {
+            if (clientId <= 0 || kiwoomNo <= 0 || remaining <= 0) return false;
+            _map.RegisterPending(clientId, symbolCode, side, remaining);
+            if (!_map.Map(clientId, kiwoomNo)) return false;
+            _map.SetRemaining(clientId, remaining);
+            Interlocked.Increment(ref _adoptedMappings);
+            FlushPendingFor(kiwoomNo, clientId);
+            return true;
+        }
+
+        /// <summary>[미체결 대사 · 방향 B] 키움 번호로 직접 전량 취소(호스트 미추적 유령 주문 · 사상표 무관). rqName 'RX' = 응답 무시.</summary>
+        public KiwoomAmendResult CancelByVenueNo(long kiwoomNo, long symbolCode, int side, long qty)
+        {
+            if (string.IsNullOrWhiteSpace(_accountNo)) return Blocked(KiwoomAmendResult.NoAccount);
+            if (kiwoomNo <= 0 || qty <= 0 || symbolCode <= 0) return Blocked(KiwoomAmendResult.InvalidQuantity);
+            int rc = _ocx.SendOrder("RX" + kiwoomNo.ToString(System.Globalization.CultureInfo.InvariantCulture), _screenNo, _accountNo, side > 0 ? 3 : 4,
+                                    symbolCode.ToString("D6", System.Globalization.CultureInfo.InvariantCulture), (int)Math.Min(qty, int.MaxValue), 0, "00",
+                                    kiwoomNo.ToString("D7", System.Globalization.CultureInfo.InvariantCulture));
+            if (rc != 0) { Interlocked.Increment(ref _amendFailed); return KiwoomAmendResult.SendFailed; }
+            Interlocked.Increment(ref _ghostCancels);
+            return KiwoomAmendResult.Sent;
+        }
+
+        private void OnOpenOrdersTr(string trCode, string rqName)
+        {
+            long batch = Interlocked.Increment(ref _openOrderBatch);
+            int rows = Math.Max(0, _ocx.GetRepeatCnt(trCode, rqName));
+            long now = _nowTicks();
+            if (rows == 0)
+            {
+                try { _onOpenOrder?.Invoke(new OpenOrderPayload { BatchId = batch, RowIndex = 0, RowCount = 0, TimestampTicks = now }); } catch { }
+                return;
+            }
+            for (int i = 0; i < rows; i++)
+            {
+                string kind = _ocx.GetCommData(trCode, rqName, i, "주문구분");
+                int side = kind.Contains("매수", StringComparison.Ordinal) ? 1 : kind.Contains("매도", StringComparison.Ordinal) ? -1 : 0;
+                var p = new OpenOrderPayload
+                {
+                    BatchId = batch, RowIndex = i, RowCount = rows,
+                    VenueOrderNo = KiwoomRealFids.ParseQty(_ocx.GetCommData(trCode, rqName, i, "주문번호")),
+                    OrigVenueOrderNo = KiwoomRealFids.ParseQty(_ocx.GetCommData(trCode, rqName, i, "원주문번호")),
+                    SymbolCode = ParseCode(_ocx.GetCommData(trCode, rqName, i, "종목코드")),
+                    OrderQty = KiwoomRealFids.ParseQty(_ocx.GetCommData(trCode, rqName, i, "주문수량")),
+                    RemainingQty = KiwoomRealFids.ParseQty(_ocx.GetCommData(trCode, rqName, i, "미체결수량")),
+                    OrderPriceWon = KiwoomRealFids.ParsePrice(_ocx.GetCommData(trCode, rqName, i, "주문가격")),
+                    Side = side, TimestampTicks = now,
+                };
+                try { _onOpenOrder?.Invoke(p); } catch { }
+            }
+        }
+
+        private void EmitMapped(long clientId, long kiwoomNo)
+        {
+            try { _onMapped?.Invoke(new OrderMappedPayload { ClientId = clientId, VenueOrderNo = kiwoomNo, TimestampTicks = _nowTicks() }); } catch { }
+        }
 
         /// <summary>계좌 조회 2 TR 요청(조회 TR 레이트: 호출측이 주기 ≥ 10초 유지 — 초당 5 · 분당 100 한도 내).</summary>
         public int QueryAccount(string accountNo, string screenNo)

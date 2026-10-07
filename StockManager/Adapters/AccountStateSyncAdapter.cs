@@ -219,6 +219,33 @@ namespace StockManager.Adapters
             }
         }
 
+        /// <summary>[분할 한도] 매수 여유(주문가능금액 − 스냅샷 이후 예약) — 현금 스냅샷 부재/만료 = false(fail-closed · 거부 계수 무변경).</summary>
+        public bool TryGetBuyHeadroom(out long won)
+        {
+            long now = _nowMicros();
+            lock (_gate)
+            {
+                won = 0;
+                if (_cashAt == 0 || now - _cashAt > _staleMicros) return false;
+                won = Math.Max(0, _orderable - _buySinceSnapshot);
+                return true;
+            }
+        }
+
+        /// <summary>[분할 한도] 매도 가능 추정 보유수량 — 기준선 부재/만료 = false.</summary>
+        public bool TryGetSellable(long symbolCode, out long shares)
+        {
+            long now = _nowMicros();
+            lock (_gate)
+            {
+                shares = 0;
+                if (!_seeded || now - _positionsAt > _staleMicros) return false;
+                int i = Find(_sym, _count, symbolCode);
+                shares = i >= 0 ? Math.Max(0, _qty[i]) : 0;
+                return true;
+            }
+        }
+
         /// <summary>승인 후 미송출(라우터 거부·추적 포화) — 예약 반환.</summary>
         public void ReleaseBuy(long notionalWon)
         {

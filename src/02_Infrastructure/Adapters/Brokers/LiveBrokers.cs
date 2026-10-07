@@ -276,6 +276,66 @@ namespace MS2E.Infrastructure
             catch { return 0m; }
         }
 
+        // ── [KIS 실배선] 분할 한도 피드용 REST 조회(콜드 · 응답 원문 바이트 → KisProtocol δ=0 판독은 호출측) ──
+
+        public bool IsRealDomain => _real;
+        public bool Configured => !string.IsNullOrWhiteSpace(_appKey) && !string.IsNullOrWhiteSpace(_appSecret) && !string.IsNullOrWhiteSpace(_account);
+
+        /// <summary>매수가능조회(TTTC8908R · inquire-psbl-order) 원문. 실패 = null. ★필드/TR 은 공개 문서 기준 — 실계좌 미검증.</summary>
+        public byte[]? QueryBuyableJson()
+        {
+            if (!Configured) return null;
+            try
+            {
+                var token = EnsureToken();
+                if (token == null) return null;
+                var (cano, prdt) = Acct();
+                var q = $"CANO={cano}&ACNT_PRDT_CD={prdt}&PDNO=&ORD_UNPR=&ORD_DVSN=01&CMA_EVLU_AMT_ICLD_YN=N&OVRS_ICLD_YN=N";
+                using var req = NewReq(HttpMethod.Get, "/uapi/domestic-stock/v1/trading/inquire-psbl-order?" + q, token, _real ? "TTTC8908R" : "VTTC8908R", null);
+                var (ok, body) = SendRead(req);
+                return ok ? Encoding.UTF8.GetBytes(body) : null;
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>주식잔고조회(TTTC8434R · inquire-balance) 원문(1페이지). 실패 = null.</summary>
+        public byte[]? QueryBalanceJson()
+        {
+            if (!Configured) return null;
+            try
+            {
+                var token = EnsureToken();
+                if (token == null) return null;
+                var (cano, prdt) = Acct();
+                var q = $"CANO={cano}&ACNT_PRDT_CD={prdt}&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01"
+                      + "&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00&CTX_AREA_FK100=&CTX_AREA_NK100=";
+                using var req = NewReq(HttpMethod.Get, "/uapi/domestic-stock/v1/trading/inquire-balance?" + q, token, _real ? "TTTC8434R" : "VTTC8434R", null);
+                var (ok, body) = SendRead(req);
+                return ok ? Encoding.UTF8.GetBytes(body) : null;
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>실시간(WebSocket) 접속키 발급(POST /oauth2/Approval · appkey/secretkey). 실패 = null. 접속키는 마스커/유출 인터락에 등록.</summary>
+        public string? RequestApprovalKey()
+        {
+            if (!Configured) return null;
+            try
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, string>
+                { ["grant_type"] = "client_credentials", ["appkey"] = _appKey, ["secretkey"] = _appSecret });
+                using var req = new HttpRequestMessage(HttpMethod.Post, Domain + "/oauth2/Approval") { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+                var (ok, body) = SendRead(req);
+                if (!ok) return null;
+                using var doc = JsonDocument.Parse(body);
+                var key = doc.RootElement.TryGetProperty("approval_key", out var k) ? k.GetString() : null;
+                if (string.IsNullOrWhiteSpace(key)) return null;
+                RegisterSecrets(key);
+                return key;
+            }
+            catch (Exception) { return null; }
+        }
+
         private HttpRequestMessage NewReq(HttpMethod m, string path, string token, string trId, string? hash)
         {
             var req = new HttpRequestMessage(m, Domain + path);

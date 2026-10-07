@@ -114,6 +114,10 @@ namespace MS2E.Infrastructure
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Log(int code, long arg)
         {
+            // [크래시 트리아지] 수명 게이트 — 수정 전 Dispose 이후/도중 Log 가 해제된 _ring/_slotSeq 에 기록(use-after-free).
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) { Interlocked.Increment(ref _dropped); return; }
+            try
+            {
             long seq  = Interlocked.Increment(ref _head) - 1L;
             long slot = seq & _mask;
             Volatile.Write(ref _slotSeq[slot], long.MinValue);   // ★seqlock 무효화 — 데이터 덮어쓰기 前(랩어라운드 torn read 방지)
@@ -121,7 +125,14 @@ namespace MS2E.Infrastructure
             Volatile.Write(ref _slotSeq[slot], seq);   // 커밋 마커(소비자는 seq 일치 + 복사 후 재검증으로만 채택)
             Interlocked.Increment(ref _pushed);
             if (Interlocked.Read(ref _head) - Volatile.Read(ref _tail) > (_capacity >> 1)) _wake.Set();   // 반 이상 차면 드레인 재촉
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
+
+        private int _gate, _leaked;
+        public bool LeakedOnDispose => Volatile.Read(ref _leaked) == 1;
+        internal Action? DrainHookForTest;      // 테스트 전용 — IO 스레드 드레인 지연 주입(Join 타임아웃 재현)
+        internal bool IoThreadAlive => _io.IsAlive;
 
         /// <summary>테스트 전용 — 백그라운드 스레드 없이 드레인 1회 실행(드롭 계수·프레임 영속 결정론 검증).</summary>
         public void DrainOnceForTest() => DrainOnce();
@@ -133,8 +144,9 @@ namespace MS2E.Infrastructure
                 try { DrainOnce(); }
                 catch { Interlocked.Increment(ref _drainErrors); }
                 Interlocked.Exchange(ref _lastDrainTicks, Stopwatch.GetTimestamp());
-                _wake.Reset();
-                try { _wake.Wait(25); } catch { return; }   // 25ms 또는 신호 시 기상(인터럽터블)
+                // [크래시 트리아지 · 실결함] 수정 전 Reset 이 try 밖 — Dispose 의 Join 타임아웃 후 _wake 가 처분되면 ObjectDisposedException 이
+                //   이 백그라운드 스레드에서 미처리 → 테스트 호스트/앱 프로세스 종료(이벤트 로그 1026 'ManualResetEventSlim' 패턴과 동형).
+                try { _wake.Reset(); _wake.Wait(25); } catch (ObjectDisposedException) { return; }   // 25ms 또는 신호 시 기상(인터럽터블)
             }
             try { DrainOnce(); } catch { }   // 종료 최종 드레인
             try { _fs?.Flush(true); _fs?.Dispose(); } catch { }
@@ -143,6 +155,7 @@ namespace MS2E.Infrastructure
         /// <summary>커밋 이벤트를 배치 차출 → 직렬화 → Brotli 압축 → XOR 난독 → CRC32 프레임 → .ms2log append(콜드).</summary>
         private void DrainOnce()
         {
+            DrainHookForTest?.Invoke();
             // ★적대검증 교정(D6) — 로거 자체 디스크 fault 시에만 억제(전역 동결 무관 — 동결 중 로깅은 포렌식 가치·종료 최종 드레인도 허용).
             if (_diskFaulted) return;
             long head = Interlocked.Read(ref _head);
@@ -259,8 +272,11 @@ namespace MS2E.Infrastructure
             //   를 읽는 중일 수 있어 해제하면 use-after-free. 그 경우 누수 허용(종료 시 OS 가 회수·무한 대기로 종료 지연 재유발 회피).
             bool joined = true;
             try { joined = !_io.IsAlive || _io.Join(2000); } catch { }
+            // ★수정 전: 미종료(joined=false)여도 _wake 를 처분 → 살아 있는 IO 스레드의 Reset/Wait 가 ODE 로 프로세스를 죽였다.
+            //   미종료면 처분하지 않는다(핸들 1개 누수 — 스레드가 나중에 _stop 을 보고 스스로 종료).
+            bool producersDrained = NativeLifetimeGate.CloseAndDrain(ref _gate, NativeLifetimeGate.DefaultDrainTimeout);
+            if (!joined || !producersDrained) { Volatile.Write(ref _leaked, 1); return; }   // 소비자 또는 생산자 미배수 — 해제 금지(UAF 대신 누수)
             try { _wake.Dispose(); } catch { }
-            if (!joined) return;   // IO 스레드 미종료(디스크 stall) — 해제 금지(UAF 대신 누수)
             try { NativeMemory.AlignedFree(_ring); } catch { }
             try { NativeMemory.AlignedFree(_slotSeq); } catch { }
         }

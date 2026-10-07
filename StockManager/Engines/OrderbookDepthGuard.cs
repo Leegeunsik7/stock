@@ -94,6 +94,10 @@ namespace StockManager.Engines
             return DepthVerdict.Reduced;
         }
 
+        /// <summary>[자식 슬롯 분할] 신선한(maxAge 이내) 깊이 사본(δ=0). 미등록/만료/경합 = false.</summary>
+        public bool TryGetFreshDepth(long symbolHash, out L2Depth depth)
+            => TryRead(symbolHash, out depth, out long age) && age <= _maxAgeMicros;
+
         private bool TryRead(long symbolHash, out L2Depth depth, out long ageMicros)
         {
             ageMicros = long.MaxValue;

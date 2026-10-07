@@ -87,7 +87,7 @@ namespace MS2E.Core
         private long _running;
         private long _pending;
         private int _reason;
-        private long _fires;
+        private long _fires, _callbackFaults;
         private readonly Action<KillSwitchReason> _onFire;
         private Thread? _thread;
 
@@ -107,11 +107,15 @@ namespace MS2E.Core
             if (Volatile.Read(ref _pending) != 1) return false;
             Volatile.Write(ref _pending, 0);
             Interlocked.Increment(ref _fires);
-            _onFire((KillSwitchReason)Volatile.Read(ref _reason));
+            // [크래시 트리아지] 수정 전 콜백 예외가 전용 스핀 스레드(SpinLoop)에서 미처리 → 프로세스 종료. 격발은 계수됐으므로
+            //   콜백 실패는 계수하고 감시를 지속한다(다음 격발 신호도 처리 — 킬스위치 자체가 죽으면 이후 Disarm 경로가 사라진다).
+            try { _onFire((KillSwitchReason)Volatile.Read(ref _reason)); }
+            catch (Exception) { Interlocked.Increment(ref _callbackFaults); }
             return true;
         }
 
         public long Fires => Volatile.Read(ref _fires);
+        public long CallbackFaults => Interlocked.Read(ref _callbackFaults);
 
         /// <summary>전용 최고우선순위 백그라운드 스레드 기동 — SpinWait(스핀-후-양보)로 코어 점유 없이 초저지연 감시.</summary>
         public void Start()

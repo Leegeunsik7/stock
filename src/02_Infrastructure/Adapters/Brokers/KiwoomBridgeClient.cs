@@ -72,6 +72,8 @@ namespace MS2E.Infrastructure
         public event Action<ReferencePricePayload>? ReferencePriceReceived;  // [L2] 기준가(전일종가)
         public event Action<AccountCashPayload>? AccountCashReceived;        // [계좌] OPW00001 예수금상세
         public event Action<PositionPayload>? PositionReceived;              // [계좌] OPW00018 보유 1행
+        public event Action<OpenOrderPayload>? OpenOrderReceived;            // [미체결 대사] OPT10075 미체결 1행
+        public event Action<OrderMappedPayload>? OrderMappedReceived;        // [미체결 대사] 클라이언트 ID ↔ 키움 주문번호
         public event Action<ErrorPayload>?   ErrorReceived;
         /// <summary>하트비트 타임아웃 또는 파이프 단절 시 발행.</summary>
         public event Action?                 ProxyLost;
@@ -316,6 +318,12 @@ namespace MS2E.Infrastructure
                 case BridgeMessageType.AccountState:
                     AccountReceived?.Invoke(BridgeSerializer.Unpack<AccountPayload>(env.Payload));
                     break;
+                case BridgeMessageType.OpenOrder:
+                    OpenOrderReceived?.Invoke(BridgeSerializer.Unpack<OpenOrderPayload>(env.Payload));
+                    break;
+                case BridgeMessageType.OrderMapped:
+                    OrderMappedReceived?.Invoke(BridgeSerializer.Unpack<OrderMappedPayload>(env.Payload));
+                    break;
                 case BridgeMessageType.ErrorReport:
                     ErrorReceived?.Invoke(BridgeSerializer.Unpack<ErrorPayload>(env.Payload));
                     break;
@@ -379,6 +387,19 @@ namespace MS2E.Infrastructure
                         if (pos.RowCount < 0 || pos.RowCount > 10_000 || pos.Quantity < 0) return false;
                         if (pos.RowCount == 0) return pos.RowIndex == 0;
                         return pos.RowIndex >= 0 && pos.RowIndex < pos.RowCount && pos.SymbolCode > 0 && pos.SymbolCode <= 999_999;
+
+                    case BridgeMessageType.OpenOrder:
+                        // [미체결 대사] 행 번호/행 수 정합 · 행은 번호/종목/방향/수량 형식 — 형식 오류 행 폐기 = 배치 미완 = 대사 보류(안전 측 · 차단 유지)
+                        if (payload.Length < Unsafe.SizeOf<OpenOrderPayload>()) return false;
+                        var oo = BridgeSerializer.Unpack<OpenOrderPayload>(payload);
+                        if (oo.RowCount < 0 || oo.RowCount > 10_000) return false;
+                        if (oo.RowCount == 0) return oo.RowIndex == 0;
+                        return oo.RowIndex >= 0 && oo.RowIndex < oo.RowCount && BrokerOpenOrderRow.TryFromKiwoom(in oo, out _);
+
+                    case BridgeMessageType.OrderMapped:
+                        if (payload.Length < Unsafe.SizeOf<OrderMappedPayload>()) return false;
+                        var om = BridgeSerializer.Unpack<OrderMappedPayload>(payload);
+                        return om.ClientId > 0 && om.VenueOrderNo > 0;
 
                     case BridgeMessageType.ReferencePrice:
                         if (payload.Length < Unsafe.SizeOf<ReferencePricePayload>()) return false;

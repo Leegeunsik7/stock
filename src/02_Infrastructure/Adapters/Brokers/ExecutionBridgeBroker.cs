@@ -19,7 +19,7 @@ using System.Threading;
 
 namespace MS2E.Infrastructure
 {
-    public sealed class ExecutionBridgeBroker : IBroker, IDisposable
+    public sealed class ExecutionBridgeBroker : IBroker, IDisposable, IOpenOrderVenue
     {
         private readonly KiwoomBridgeClient      _bridge;
         private readonly LiveAuditService        _audit;
@@ -189,6 +189,41 @@ namespace MS2E.Infrastructure
         {
             var req = new OrderRequest { Type = OrderRequestType.QueryAccount };
             _ = _bridge.SendOrderAsync(req);
+        }
+
+        // ── [미체결 대사] IOpenOrderVenue(키움) ────────────────────────────────
+
+        public int VenueKind => OpenOrderVenueKind.Kiwoom;
+
+        /// <summary>OPT10075 미체결 조회(조회 TR 1건 — 호출측 주기 ≥ 수 초). 프록시 미연결 = false.</summary>
+        public bool RequestOpenOrders()
+        {
+            if (!_bridge.IsProxyAlive) return false;
+            _ = _bridge.SendOrderAsync(new OrderRequest { Type = OrderRequestType.QueryOpenOrders });
+            return true;
+        }
+
+        /// <summary>승계 확정 주문을 프록시 사상표에 재등록(키움 송신 없음).</summary>
+        public bool AdoptMapping(long clientId, long venueOrderNo, long symbolCode, int side, long remaining, long priceWon)
+        {
+            if (!_bridge.IsProxyAlive || clientId <= 0 || venueOrderNo <= 0 || remaining <= 0) return false;
+            _ = _bridge.SendOrderAsync(new OrderRequest
+            {
+                Type = OrderRequestType.AdoptMapping, OrderId = clientId, SymbolCode = symbolCode, Quantity = remaining,
+                Price = priceWon, GenomeId = venueOrderNo, Pad = side > 0 ? 1 : -1,
+            });
+            return true;
+        }
+
+        /// <summary>[방향 B] 키움 번호로 직접 전량 취소(유령 주문 비상 취소 — 취소는 노출 축소라 무장 상태와 무관하게 집행).</summary>
+        public bool CancelByVenueNo(long venueOrderNo, long symbolCode, int side, long qty)
+        {
+            if (!_bridge.IsProxyAlive || venueOrderNo <= 0 || symbolCode <= 0 || qty <= 0) return false;
+            _ = _bridge.SendOrderAsync(new OrderRequest
+            {
+                Type = OrderRequestType.CancelByVenueNo, SymbolCode = symbolCode, Quantity = qty, GenomeId = venueOrderNo, Pad = side > 0 ? 1 : -1,
+            });
+            return true;
         }
 
         // ── IBroker.HeldQty ───────────────────────────────────────────────────

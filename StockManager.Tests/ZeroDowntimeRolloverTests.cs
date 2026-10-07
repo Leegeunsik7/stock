@@ -413,7 +413,7 @@ namespace StockManager.Tests
             Assert.Contains("!gate.AllowOrder()", proxyHost);
             Assert.Contains(@"src\02_Infrastructure\Engine\HostHealthHeartbeat.cs", File.ReadAllText(Path.Combine(root, "StockManager.KiwoomProxy", "StockManager.KiwoomProxy.csproj")));
             Assert.Equal((20, 21), ((int)ArmingInterlockSource.Rollover, (int)ArmingInterlockSource.HealthAgent));
-            Assert.Equal(80, Marshal.SizeOf<HandoffSlot>());
+            Assert.Equal(96, Marshal.SizeOf<HandoffSlot>());                    // [미체결 대사] 레이아웃 v2(원장 번호 · 종목 · 지정가)
             string sln = File.ReadAllText(Path.Combine(root, "StockManager.sln"));
             foreach (var p in new[] { @"StockManager.PrimesBench\StockManager.PrimesBench.csproj", @"StockManager.KiwoomProxy\StockManager.KiwoomProxy.csproj", @"tools\KiwoomComShim\KiwoomComShim.csproj" })
                 Assert.Contains(p, sln);

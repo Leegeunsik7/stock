@@ -32,6 +32,7 @@ namespace MS2E.Infrastructure
         private long   _pushes;
         private long   _alignedLoads;
         private int    _disposed;
+        private int    _gate, _leaked;   // [크래시 트리아지] 수명 게이트 — 앱 종료 시 링 샘플 타이머가 해제 후 판독하던 경로 차단
 
         public SimdAlignedRingVectorizer()
         {
@@ -41,14 +42,23 @@ namespace MS2E.Infrastructure
 
         public long Pushes       => Interlocked.Read(ref _pushes);
         public long AlignedLoads => Interlocked.Read(ref _alignedLoads);
+        public bool LeakedOnDispose => Volatile.Read(ref _leaked) == 1;
+        internal bool NativeReleased => _buf == null;
+        internal bool HoldForTest() => NativeLifetimeGate.TryEnter(ref _gate);
+        internal void ReleaseHoldForTest() => NativeLifetimeGate.Exit(ref _gate);
 
         /// <summary>틱 1건 적재(δ=0·단일 라이터). 링 물리 순서로 순환 기록.</summary>
         public void Push(float tick)
         {
-            float* b = _buf; if (b == null) return;
-            long idx = Interlocked.Read(ref _pushes);
-            b[(int)(idx & (Window - 1))] = tick;
-            Interlocked.Increment(ref _pushes);
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) return;
+            try
+            {
+                float* b = _buf; if (b == null) return;
+                long idx = Interlocked.Read(ref _pushes);
+                b[(int)(idx & (Window - 1))] = tick;
+                Interlocked.Increment(ref _pushes);
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>
@@ -56,6 +66,13 @@ namespace MS2E.Infrastructure
         /// ★Avx512F.LoadAlignedVector512(64B 정렬 로드) 직접 바인딩 — 비정렬 페널티 박멸. 미지원 → YMM/스칼라.
         /// </summary>
         public float WeightedMomentum(ReadOnlySpan<float> weights)
+        {
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) return 0f;   // 해제됨 = 0(fail-closed)
+            try { return WeightedMomentumCore(weights); }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
+        }
+
+        private float WeightedMomentumCore(ReadOnlySpan<float> weights)
         {
             float* b = _buf;
             if (b == null || weights.Length < Window) return 0f;
@@ -99,6 +116,7 @@ namespace MS2E.Infrastructure
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            if (!NativeLifetimeGate.CloseAndDrain(ref _gate, NativeLifetimeGate.DefaultDrainTimeout)) { Volatile.Write(ref _leaked, 1); return; }
             float* b = _buf; _buf = null;
             if (b != null) NativeMemory.AlignedFree(b);
         }

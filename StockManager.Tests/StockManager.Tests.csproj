@@ -9,6 +9,7 @@
 
     <!-- v4.0.0 골드 마스터 빌드 가드레일: 단 하나의 경고도 빌드를 차단 -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>   <!-- [크래시 트리아지] NativeCanaryBlock 경계 가드 포인터 검증 -->
     <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
 

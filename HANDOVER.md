@@ -861,3 +861,147 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 22.3 검증 · 한계
 - `ZeroDowntimeRolloverTests.cs` 12건(방어 끔 Red 9건) · 발행→승계→Ack 왕복·스캔·하트비트·게이트 δ=0 · 전체 3,407 Pass ×2 · 오중 빌드 -warnaserror 0W/0E.
 - 한계: 승계는 '가시성' 승계다 — 브로커 미체결 조회(OPT10075 등) 대사기 미구현이라 승계 후 신규 발주는 계속 차단. 프록시 게이트는 프록시 측 단위 테스트가 없다(테스트 프로젝트가 프록시를 참조하지 않음 — 게이트 클래스는 공유 소스라 호스트 측에서 검증 · 프록시 결선은 소스 회귀).
+
+## 23. 차기: 브로커 미체결 원장 대사 · 롤오버 주문 확정 (2026-10-06 · 미커밋)
+
+### 23.1 전제 검증
+- 지시서의 `BrokerOpenOrderReconciler.cs` · `OpenOrderReconciliationTests.cs` 는 부재(신규 작성). 승계 슬롯(HandoffSlot)에는 키움 주문번호가 없었다 — 번호는 프록시 사상표에만 있고 프록시와 함께 소멸 → OPT10075 행과 1:1 대사 불가.
+- v12.15.0 Rollover 비트(20)는 '대사 전 차단'만 했고 `MarkReconciled()` 를 부르는 주체가 없었다(운용자 수동). 승계 없이 크래시한 선행 프로세스의 브로커 미체결은 새 프로세스가 전혀 몰랐다(유령 노출).
+- v12.15.0 커밋(69026eb)에 프록시 송신 게이트 3파일(KiwoomProxyHost.cs · Program.cs · csproj)이 누락돼 미커밋 상태로 남아 있다 — HEAD 의 결선 테스트는 디스크 파일을 읽어 통과.
+
+### 23.2 구현
+- 프로토콜: `BridgeMessageType.OpenOrder(13)`(80B 행 · 배치/행 번호) · `OrderMapped(14)`(클라이언트 ID↔키움 번호) · `OrderRequestType.QueryOpenOrders(8)/AdoptMapping(9)/CancelByVenueNo(10)`(필드 재사용 · 레이아웃 불변).
+- 프록시 코어(`KiwoomComEventCore`): RQ/RM 사상 시 OrderMapped 통지 · `QueryOpenOrders`(OPT10075 · 체결구분 1) · `OnOpenOrdersTr`(빈 결과도 RowCount 0 통지) · `AdoptMapping`(새 프록시 사상표 재등록) · `CancelByVenueNo`(키움 번호 직접 3/4 취소 · rqName 'RX'). IKiwoomApi/Null/Production/ProxyHost 배선.
+- 원장: `HandoffSlot` v2 96B(원장 번호 · 종목 · 지정가 · 롤오버 MMF Version 2 — v1 맵 거부). 실행 피드에 종목/지정가/원장 번호/정정가 · `LedgerSequence`+슬롯별 변경 시퀀스 · 최근 해제 링(256) · 결속 전 사상 보류표(64) · `CopyOpenOrderLedger`/`WasFreedSince`/`OnOrderMapped`. RouterFeedGate 가 종목·지정가(원) 기록.
+- `StockManager/Adapters/BrokerOpenOrderReconciler.cs`: 조회 송신 시점 시퀀스 스냅샷 → 키움 배치(행 번호 무결성 · 요청 없는 응답 폐기 · 배치 교체 · 10초 시한 · 페이지 상한 100 보류) / KIS 페이지(`KisProtocol.ParseOpenOrders` TTTC8001R) → 1:1 대사(번호 · 방향 · 종목 · 잔량 · 지정가 ±1원). 스냅샷 이후 변경·정정 진행·최근 종결·번호 미상 후보는 보류(오판 0). 판정 Ghost > Divergence > Inconclusive > Confirmed.
+  - Confirmed(최초) = 승계 슬롯 전량 확정 → AdoptMapping → `rolloverGuard.MarkReconciled`(Bit 20 해제). Divergence = sticky. Ghost = 비트 22 Raise 후 브로커 미체결 전 행 비상 취소(패스당 ≤4 · 5초 중복 억제 · 대기열 없이 다음 조회 상태로 재판정).
+  - 방향 A: 패스마다 `ZeroAllocForensicAuditStream`(Reconciliation · 판정/브로커/유령/불일치/행 수 태그) + MMF 블랙박스 73 OpenOrderReconciled · 74 OpenOrderDivergence · 75 GhostOrderCancel.
+- 인터락 `OpenOrderDivergence = 22`(필수) — 유령 ∨ 불일치 ∨ 최초 대사 미확정. 재무장 = 물리 이중키 + 새 대사 확정. 호스트: 1초 펌프 · 조회 주기 미확정/유령 3초 · 평시 `OpenOrder.IntervalSeconds`(30) · `OpenOrder.MaxCancelsPerPass`(4).
+
+### 23.3 검증 · 한계
+- `OpenOrderReconciliationTests.cs` 17건(방어 15종 끔 Red 12건) · 정상 패스(조회+8행+대사+감사) δ=0 · KIS 파서 δ=0 · 전체 3,424 Pass ×2 · 오중 빌드 -warnaserror 0W/0E · infra-scan 0 · Phase114 통과.
+- 한계: 프로덕션 호스트 브리지 미연결 · 프록시 진입점 NullKiwoomApi → 실 경로 비활성(현재 최초 대사 불가 = 비트 22 상시 차단 · liveArmed:false 와 정합). OPT10075 연속 조회(prevNext=2) 미지원 → 100행 도달 시 보류. KIS 는 파서/대사만 — REST 조회·취소 송신 미배선(유령은 차단만). HTS 수동 주문도 유령으로 취소된다(운용 공지 필요). 필드명(OPT10075 · TTTC8001R)은 공개 문서 기준 · 실계좌 미검증.
+
+## 24. 차기: 다중 저장소 봉인 감사 · 인터락 전수 명세 (2026-10-06 · 미커밋)
+
+### 24.1 전제 검증
+- 지시서 경로 이탈: `StockManager/Services/ReleasePackager.cs` 부재(실재 = `src/02_Infrastructure/Engine/ReleasePackager.cs` · v6.2.0 masterSeal 산출기) · `QuantumVault/RELEASE_MANIFEST.json` 부재 — StockManager 다중 저장소 매니페스트는 `release/RELEASE_MANIFEST.json`(git 무시 폴더)이고 QuantumVault 쪽은 자체 `release/offline-bundle/RELEASE_MANIFEST.json`(ML-DSA-87 서명 · v2.8.0)이다.
+- ★QuantumVault 쓰기 거부: 피어는 읽기 전용(2026-10-06 사용자 결정 · ReleaseHandshake 헤더). 피어 매니페스트에 StockManager 필드를 넣으면 피어 자체 서명이 깨지고, 피어 작업 트리에는 타 세션 미커밋 코드(Tests/PqcSignedManifestTests.cs 등)가 있다.
+- ★v12.14.1-GM 출하 기록 불변: 기록 인터락은 17종(태그 소스 기준) — 현 HEAD 24종(비트 0~22 + StartupSanity)을 출하 매니페스트에 넣는 것은 출하 바이너리와 다른 사실의 위조라 하지 않았다. 지시서의 '22개'는 실측 23비트(0~22) + 63.
+- 현 상태 실측: `--release-handshake` = HeadDrift(태그↔HEAD 코드 이탈 26건) 거부 · 피어 QuantumVault HEAD 898052a ≠ 기록 57b1822(피어 매니페스트 파일 해시는 불변 6AB1F70C) · 피어 미커밋 코드 존재 → 새 출하는 새 태그 + 피어 정리 후에만 가능.
+
+### 24.2 실결함 · 구현
+- [실결함 1] `MultiRepoReleaseManifest.Verify` 가 genesisHeadHash · interlocks · peer.manifestPath/name 을 어떤 실측과도 대조하지 않았다 — manifestHash 는 무키 SHA-256 이라 본문 위조 후 재계산하면 통과. → manifest.sig 제네시스 · 태그 소스 `ArmingInterlockSource` 열거(git show <태그>) · 관측 피어 경로/이름과 대조(GenesisMismatch 17 · InterlockSetMismatch 18 · PeerIdentityMismatch 19 · 관측 부재 = 거부). sync 는 인터락을 실행 바이너리 Enum.GetNames 대신 태그 소스 열거로 기록.
+- [실결함 2] `GitRepoProbe.Git` 출력 인코딩 미지정 → CP949 디코딩이 UTF-8 한글 끝 바이트로 줄바꿈을 삼켜 줄 병합(태그 소스 판독 시 RouterFeed 한글 주석 다음 OrderSlotAge 소실 — 실 v12.14.1-GM 태그에서 재현 · porcelain 한글 경로 손상) → UTF-8 고정.
+- [방향 A] `StockManager/Tools/ManifestSealStreamer.cs` — POH pinned 입력/정규화 버퍼 · Utf8JsonReader 타입드 판독 · 정규화 문자열 직접 조립 · SHA256.HashData(정적) · FixedTimeEquals 앵커(masterSeal/zip/genesis) 대조. δ=0 · 1ms 미만 실측. 핸드셰이크에 '두 번째 독립 판독기'로 결선 — 중복 키·이스케이프 등 판독기 차이 = ParserDifferential(20).
+- release-package.ps1 [0/10] 피어 사전 점검(저장소 · 봉인 매니페스트 · 미커밋 코드 — Test-CodePath 동일 규칙 · 읽기 전용): 기존엔 수십 분 빌드 후 [10/10] 에서야 거부.
+- 방향 B(매니페스트 변조 → 런타임 Disarm·키 소거)는 미구현: RELEASE_MANIFEST.json 은 zip 에 포함되지 않는 출하 후 기록이라 실행 중 앱이 판독할 대상이 없다(가짜 결선 금지). 실행 바이너리 변조는 기존 BootIntegrity(비트 0 · manifest.sig/master-seal 대조)가 담당.
+
+### 24.3 인터락 전수 명세(현 HEAD · ArmingInterlockSource)
+| 비트 | 이름 | 차단 조건 |
+|---|---|---|
+| 0~5 | BootIntegrity · CredentialLeak · ForensicChain · MarketSpike · ChaosProgress · ExecutionImpact | 봉인 검증 · 자격증명 유출 · 포렌식 체인 · 시세 급변 · 카오스 진행 · 체결 충격 |
+| 6 | RouterFeed | 시세/체결 피드 단절 |
+| 7 | OrderSlotAge | 응답 타임아웃 슬롯 회수(미확인 노출) |
+| 8 | ExtremeSlippage | 체결가 극한 괴리 |
+| 9 | MmfFabric | MMF IPC 시퀀스 역전/찢김 |
+| 10 | BrokerStateMismatch | 추적 잔량 ≠ 브로커 미체결 잔량 |
+| 11 | OrderbookIlliquidity | 호가 교차/공백/극한 스프레드 |
+| 12 | LatencyStall | Tick-to-Trade 구간 정지 |
+| 13 | KiwoomServerError | 키움 중대 서버 오류 · STA 펌프 동결 |
+| 14 | AccountDivergence | OPW00018 보유 ≠ 추정 보유 |
+| 15 | EgressBypass | liveArmed:false 인데 실 브로커 도달 |
+| 16 | PreFlightBoot | 시계 역행 · 설정 변조 · 파이프 신원 불일치(+ 키 소거) |
+| 17 | CorrelationCrash | 보유 종목 동시 하락(+ 미체결 일괄 취소) |
+| 18 | KisAuth | KIS 토큰 갱신 실패/만료 |
+| 19 | KisSession | KIS WebSocket 침묵 |
+| 20 | Rollover | 승계 불일치 · 승계 후 브로커 대사 미완료(대사기가 확정 시 해제) |
+| 21 | HealthAgent | Working Set · 스레드풀 정체 · GC 정지 폭주 |
+| 22 | OpenOrderDivergence | 최초 미체결 대사 미확정 · 원장 불일치 · 유령 주문(+ 비상 취소 · HandoffSlot v2 96B) |
+| 63 | StartupSanity | 봉인 전 기동 위생 |
+
+### 24.4 검증 · 한계
+- `MultiRepoManifestAuditTests.cs` 9건 + `QuantumVaultPipelineIntegrationTests.cs` 헬퍼 갱신(방어 10종 끔 Red 7건) · 실 출하 기록(v12.14.1-GM) 매니페스트↔master-seal↔zip↔manifest.sig 제네시스↔태그 소스 인터락 17종 일치 · 오중 빌드 -warnaserror 0W/0E · 전체 3,433 Pass.
+- 한계: manifestHash · masterSeal 은 무키 해시 — 쓰기 권한 공격자는 모든 파일을 일관되게 재생성할 수 있다(무결성 ≠ 진본성). 진본성은 서명 키(예: 피어의 ML-DSA-87)가 필요 — 미구현. 실 출하 기록 테스트는 release/(git 무시)가 있는 작업 트리에서만 수검. 전체 스위트에 기존 간헐 테스트 호스트 크래시(무관 모듈 실행 중 중단)가 남아 있다.
+
+## 25. 차기: 간헐 테스트 호스트 크래시 트리아지 (2026-10-07 · 미커밋)
+
+### 25.1 전제 검증 · 진단 경로
+- 지시서의 UnmanagedOrderBookBuffer 는 SafeHandle(DangerousAddRef) 보호로 안전 — 원인 아님. dotnet-dump/procdump 미설치 · 런타임 미니덤프 env 는 Windows 에서 미생성(실측).
+- ★VSTest 콘솔엔 스택이 없어도 Windows 이벤트 '.NET Runtime 1026' 에 관리 스택이 남는다 — 2026-10-06 크래시 다수 = 백그라운드 스레드가 처분된 ManualResetEventSlim 을 Wait/Reset 하는 ObjectDisposedException(일부는 이전 마일스톤에서 교정됨).
+- 정적 전수 조사(서브에이전트 · 코드 확인): 네이티브 메모리 직접 소유 엔진의 Dispose 즉시 해제 vs 진행 중 연산 경합(use-after-free) · 예외 미포착 전용 스레드 다수.
+
+### 25.2 실결함 · 구현(Red→Green)
+- [실결함 1] ZeroAllocAsyncCompressedLogger — Dispose 의 Join 타임아웃(IO 스레드 기아) 후에도 _wake 처분 → IoLoop 의 try 밖 _wake.Reset() 이 ODE → 프로세스 종료(Red: 테스트 호스트 실제 종료 · 이벤트 1026 + 기록기 로그 'Ms2Logger' 스택). Log 는 해제 후 버퍼 기록 가능. → 미종료면 처분·해제 보류(누수) · Reset/Wait 예외 흡수 · Log 수명 게이트.
+- [실결함 2] HardwareInterruptSpinLock — _onFire 콜백 예외가 최고 우선순위 스핀 스레드에서 미처리 → 프로세스 종료(Red: 'HwKillSwitchSpin' 1026) → 계수(CallbackFaults) 후 감시 지속.
+- [실결함 3] ClaudeBlackSwanEngine · CacheLineCoherenceSentinel · SimdAlignedRingVectorizer · 로거 — null 확인 후 필드 재판독/즉시 해제 경합(use-after-free) · 운영 앱 종료 시 링 샘플 타이머가 해제 후 판독. → `src/02_Infrastructure/Engine/NativeMemoryGuards.cs` NativeLifetimeGate(int 1개 · 진행 중 연산 배수 후에만 해제 · 시한 2초 초과 = 누수 · 이중 해제 차단 · 연산당 Interlocked 2회 δ=0) 적용(Red: 진행 중 연산 보유 시 즉시 해제 3건 실패).
+- [방향 A] NativeCanaryBlock — 64B 가드 전/후방 16B 패턴 · Verify O(1) δ=0 · 파열 블록은 해제 보류(손상 증폭 차단) · BlackSwan/Coherence 아레나 적용(Coherence 는 AttestArena 에서 퓨즈 래치). '0.1ns 중단'은 측정 불가 — 검증 시점 탐지(정직).
+- [방향 B] TestHostExitSentinel(테스트 어셈블리 모듈 초기화) — %TEMP%\ms2e-testhost\<pid>.log 에 UnhandledException·ProcessExit·UnobservedTask 기록 → 종료가 내부(예외)/정상 종료/외부 강제 종료인지 판별. tools/crash-triage-loop.ps1 — N회 연속 + Internal/LowMemory/Silent 분류(PS 5.1 *> 인코딩 손상 회피: cmd 원시 리다이렉션 · 영어 CLI).
+- [하네스 결함] HotPathDuringUnload_NoTornReference_NoCrash — 리더 시작 배리어 부재로 CPU 경합 시 observed=0(50회 중 1회) → SpinUntil 시작 배리어.
+
+### 25.3 검증 · 결과(정직)
+- CrashTriageStressHarness.cs 10건(게이트·카나리·소유자 배수·누수·퓨즈·로거·킬스위치·50라운드 경합·δ=0·기록기) · 전체 3,443 Pass · 오중 빌드 -warnaserror 0W/0E · infra-scan 0 · Phase114 통과.
+- ★50회 연속(수정 후 · 하네스 수정 전 바이너리): 정상 46 · 실패 1(하네스 경합 — 교정) · 중단 3. 중단 3건 모두 프로세스 내부 증거 0(이벤트 1000/1026 무 · 기록기 UnhandledException 무): #18 = 스위트 끝까지 실행 후 ProcessExit(0) 정상 종료인데 VSTest 가 'crashed' 판정(통신 손실) · #32/#39 = 기록 전무 즉사(외부 TerminateProcess 서명). 동시각 다른 세션(MS2-E · AutoCAD_BOM2) 테스트 스위트 실행 관측 · 10:26 중단은 dwm.exe 0xC00001AD 종료·시스템 커밋 고갈(이벤트 2004 · python.exe 다수 ~100GB)과 동일 순간. 외부 종료 주체는 미특정.
+- 지시서 'Zero Crash(50회 0건)'는 공유 호스트 환경에서 미달 — 프로세스 내부 원인은 제거했으나 외부 종료는 이 저장소 코드로 막을 수 없다. 전용(격리) 머신/CI 에서 재측정 필요.
+
+## 26. 차기: 다중 브로커 자식 슬롯 분할 라우팅 (2026-10-07 · 미커밋)
+
+### 26.1 전제 검증
+- `ChildSlotOrderSplitter.cs`·`ChildSlotSplitRoutingTests.cs` 부재(신규). 기존 MicroLiquiditySlicer 는 단일 링 대상 시간 분할기(브로커 분할 아님).
+- ★키움·KIS 는 같은 KRX 호가창 — '브로커별 호가 잔량'은 없다. 분할 축 = 시장 깊이(1~3호가 즉시 체결 잔량) × 브로커별 한도.
+- 드레인 경로는 제안 1건 = 라우터 키 1 = 추적 슬롯 1 = 브로커 주문 1건 · 라우터는 항상 활성 브로커만 선택 · Place 거부 = throw(동결). 호스트는 브로커 맵을 결선하지 않음(단일 키움 브리지) · KIS 어댑터 미결선.
+
+### 26.2 구현
+- `ResilientOrderRouter.RouteTo`(지정 브로커 · 범위 밖/장애/블랙리스트 = BrokerBlacklisted) — Route 와 판정·부작용 공용(Commit).
+- 공용 계약(`IOrderRouteGate.cs`): BrokerSplitCap · ChildOrderPlan(128비트 TrackingId = 부모|자식) · ChildIdSpace(비트62 표지|부모56|순번6) · IChildSplitRouteGate · IChildSlotLedger. 인터락 `ChildSlotRejection = 23`.
+- `StockManager/Engines/ChildSlotOrderSplitter.cs` — 1~3호가 즉시 체결 단계 × 한도 비례 최대잉여법 · 자식 지정가 = 단계 호가(부모보다 불리 0) · 자식 합 ≤ min(부모, 깊이, 한도 합) · δ=0.
+- `RouterFeedGate.TryAdmitSplit` — 부모 전방 판정 공용화(TryAdmitPrefix: 단일/분할 판정 동일성) · 자식마다 RouteTo + 추적 슬롯(ChildId · 자식 지정가) · 실패 = 전 자식 원자 롤백 + 예약 반환 · 깊이/한도로 적게 나뉘면 초과 예약 즉시 반환. `EnableSplit(caps)`.
+- `OrderDrainWorker.DispatchSplit` — 분할 원장+분할 게이트+브로커 맵 결선 시에만(게이트웨이 봉인 경로 제외) · ★순차 송출(동시 송출이면 거부 시점에 형제가 이미 브로커에 있어 회수 불가) · 거부 = 자식 롤백 + 미송출 형제 전부 OnNotSent + 원장 회수·Disarm → throw(기존 동결 벽) · Place 예외 = 도달 모호 자식 추적 유지 · 이후 형제만 회수.
+- [방향 A] `ChildSlotTrackingMatrix` — POH 고정 ParentGroup[] × InlineArray(64) 자식 슬롯 · 그룹별 seqlock(작성 CAS 배타 · 판독 무락 재시도) · 수렴(AllFilled/PartialCancelled/ChildRejected/Open) · 송출 실패/거부 통보 = 미송출 형제 회수 + 비트 23 sticky · 과체결 차단 · Open 시 합 ≤ 부모 검증.
+- [방향 B] 같은 부모 최초 체결 후 500ms 넘게 체결 0 인 접수 형제 = 잔여 자식 일괄 취소(1회 · 콜백은 seqlock 밖) + 비트 23.
+
+### 26.3 검증 · 한계
+- `ChildSlotSplitRoutingTests.cs` 14건(방어 9종 끔 Red 7건 · 깊이 상한은 단계 상한이 이중 방어) · 퍼징 20,000건 불변식 · δ=0(분할 · 매트릭스 체결/판독/평가) · 전체 3,457 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: 호스트 미결선(브로커 맵 · KIS 어댑터 · 매트릭스 체결 피드 · 평가 타이머) → 프로덕션 분할 경로 비활성(liveArmed:false 정합). 브로커 한도 공급자(caps)는 호출측 구현 몫. 방향 B 취소 콜백 → 실 브로커 취소 결선 없음. 계좌 예약 초과 반환 경로는 단위 테스트 미포함.
+
+## 27. 차기: 실전 조합 뿌리 다중 브로커 결선 · 실시간 한도 피드 (2026-10-07 · 미커밋)
+
+### 27.1 전제 검증
+- 호스트: 스위치보드 브로커 1 · 드레인 단일 브로커(브로커 맵 없음) · ★게이트웨이(봉인 사출) 결선 상태라 §26 분할 경로(게이트웨이 시 제외)는 운영에서 도달 불가였다.
+- ★봉인 래치는 '슬롯별 단조 orderId'(slot = id & mask) — 자식 ID(비트 62)를 같은 래치에 넣으면 같은 슬롯 일반 주문이 영구 차단 → 자식 전용 래치 필요.
+- 지시서의 'KisOpenApiAdapter 를 브로커 맵에' = 불가: 그 클래스는 WebSocket 프레임 판독기(IBroker 아님). 송출 가능한 KIS 구현 = KisLiveBroker(OAuth2 토큰 자체 수명주기 · 5분 선행 갱신). PipeServerIdentity 는 §20 에서 이미 결선(bridge.ServerIdentityVerifier).
+- ★게이트는 분할 '전'에 부모 매수 명목을 계좌에 예약 — 같은 계좌 여유를 그대로 한도로 쓰면 이중 차감(부모 명목 = 주문가능금액이면 분할 불가).
+
+### 27.2 구현
+- 호스트(BlazorHomeForm): 스위치보드 2(0 = 키움 · 1 = KIS) · KIS 자격증명(ApiKeyVault) 없으면 인덱스 1 부팅 블랙리스트 · KisLiveBroker 를 키움과 같은 백업 인터락(LiveArmedEgressSentinel)으로 감싸 브로커 맵 결선 · ChildSlotTrackingMatrix(비트 23 필수) + 키움 체결 통보 + 50ms 평가 타이머 + 불균형 취소 콜백(브로커 맵 Cancel) · BrokerLimitFeedProvider · ★분할은 `Routing.SplitEnabled`(기본 false)로만.
+- 계약: IBrokerLimitFeed.Fill(dst, 종목, 방향, 지정가, parentReservedWon) · IChildSlotLedger.Abandon. AccountStateSyncAdapter.TryGetBuyHeadroom/TryGetSellable(만료 = false · 계수 무변경).
+- `StockManager/Adapters/BrokerLimitFeedProvider.cs` — 매수 = (여유 + 같은 계좌면 부모 예약 되돌림) / 지정가 · 매도 = 보유 · 주문당 상한 · 미결속/만료 = 자식 0 · [방향 B] 소진 브로커 격리(전이 1회)·회복 해제 → 잔여 한도 브로커로 우회.
+- RouterFeedGate.EnableSplit(feed, onUnavailable) — 분할 가능 브로커 0 = 전방 거부 + 콜백(매트릭스 TripExternal → 비트 23) + 예약 반환.
+- GenesisLiveIgnitionGateway.EmitChild — 같은 방어선 재검 + 자식 전용 exactly-once 래치(일반 래치 비오염) · 자식 ID 공간 밖 거부. OrderDrainWorker 분할 경로가 게이트웨이 경유로 동작 — 첫 자식 veto = Abandon(송출 0 · Disarm 없음) · 일부 송출 후 veto = 불완전 분할 Disarm.
+- 방향 A(비관리 타임스탬프 펌프 · '0.1ns') 미채택: 측정 불가 단위 · Timer 는 생성 시 1회 할당뿐(틱당 0) — 50ms Timer + δ=0 Evaluate.
+
+### 27.3 검증 · 한계
+- ProductionWiringMultiBrokerTests.cs 8건(방어 6종 끔 Red 7건) + 분할 테스트 갱신 · 전체 3,465 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: 키움 브리지 ConnectAsync 호출부 여전히 없음 + 프록시 NullKiwoomApi → 키움 경로 휴면 · KIS 계좌 조회(잔고 REST) 미결선 → KIS 한도 뷰 null(미결속) · KIS 체결통보 WebSocket(KisOpenApiAdapter) 미결선 → KIS 자식 체결은 매트릭스에 도달 안 함 · KisTokenLifecycle(별도 관리자)은 KisLiveBroker 내부 토큰과 중복이라 미결선. liveArmed:false · SplitEnabled=false 기본으로 운영 동작 불변.
+
+## 28. 차기: KIS 실배선 — REST 잔고/주문가능 · WebSocket 체결통보 파이프라인 (2026-10-07 · 미커밋)
+
+### 28.1 전제 검증
+- KisOpenApiAdapter 는 체결을 OrderId = KisOrderIdSpace.Encode(odno) 로 방출(KisLiveBroker.Place 반환과 동일 공간) → 실행 피드/자식 매트릭스에 그대로 사상 가능.
+- ★[실결함] 어댑터 제어 프레임 분기가 PINGPONG 만 처리 — 구독 응답의 체결통보 복호 key/iv 를 버렸고 운영에 SetNoticeKeys 호출부 없음 → 실연결 시 암호 체결통보 전량 '키 없음' 폐기.
+- 부재: KIS WebSocket 접속 클라이언트 · 접속키(/oauth2/Approval) · HTS ID(체결통보 구독 키) 보관 · REST 잔고 폴링. 지시서 '미체결 조회'는 §23 TTTC8001R 판독기로 기존재(대사기 KIS 경로).
+- ★체결통보만 구독하면 장중에도 대부분 침묵 — 방향 B(3초 침묵 차단)는 심박용 체결가(H0STCNT0) 구독이 전제.
+
+### 28.2 구현
+- KisProtocol: TryParseBuyable(TTTC8908R ord_psbl_cash) · ParseHoldings(TTTC8434R output1 · 보유 0 제외 · 매도가능 > 보유 = 형식 이탈) · TryParseSubscribeAck(header.tr_id · body.rt_cd · output.key/iv) — Utf8JsonReader δ=0.
+- KisLiveBroker: QueryBuyableJson/QueryBalanceJson(콜드 HTTP 원문) · RequestApprovalKey(접속키 · 마스커 등록) · Configured/IsRealDomain.
+- `StockManager/Adapters/KisBalanceQueryAdapter.cs` — IBrokerAccountView + 비트 24(KisLimitFeed): 실패 즉시 한도 0 · 연속 3회 sticky Disarm · 30초 만료 · 미설정 = 미결속·비차단 · 부모 예약 되돌림 비대상.
+- KisOpenApiAdapter: 구독 응답 → 체결통보 키 자동 장착 · 구독 거부 계수. KisSessionInterlock: [방향 B] 장중(KST 09:00~15:20 평일) 3초 침묵 임계 · 장외 60초 · 판정 예외 = 장중 취급.
+- `StockManager/Adapters/KisRealtimeSession.cs` — 접속키 → 접속 → 구독(체결통보 HTS ID + 심박 체결가) → POH 버퍼 조각 조립 → 어댑터 · PINGPONG 반송 복사·송신 직렬화 · 초과 메시지 폐기 · 단절 = MarkDisconnected(비트 19 · 라우터 KIS 장애) · 재접속(체결 대사 지속). IKisWsTransport + ClientWebSocketTransport.
+- ChildSlotTrackingMatrix: 체결 명목 누적 → 부모 가중평균 체결가(AvgFillPriceWon).
+- 호스트: KisBalanceQueryAdapter(인덱스 1 한도 뷰 · 10초 폴링 · 중첩 방지 · 비트 24 필수) · `Kis.RealtimeEnabled`(기본 false) ∧ `KIS.HtsId` 있을 때만 세션 + 비트 19 결속 · 체결 = 실행 피드 + 매트릭스 팬아웃 · 50ms 타이머가 세션 침묵 판정.
+- 방향 A(비관리 체결 링버퍼) 미채택: 매트릭스 OnFill 이 이미 무락 판독/CAS 작성 · 수신 스레드 1개라 경합 원천 없음.
+
+### 28.3 검증 · 한계
+- KisLivePipelineWiringTests.cs 9건(방어 7종 끔 Red 4건 — 다중 방어 테스트) · 전체 3,474 Pass(3회 중 1회 기존 IPC 타이밍 테스트 IpcChaosVerification 간헐 실패 · 단독 5/5 통과 · 본 변경 무관) · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: TR ID·필드명·WS URL 은 공개 문서 기준 · 실계좌/실서버 미검증(모의 도메인에서 프레임 대조 필수). KIS 잔고 1페이지만(연속 조회 미지원). HTS ID 는 vault 'KIS.HtsId' 수동 등록 필요(설정 UI 미반영). 키움 브리지 ConnectAsync 미호출 유지.

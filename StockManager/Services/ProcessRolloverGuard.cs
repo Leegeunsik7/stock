@@ -38,7 +38,7 @@ namespace StockManager.Services
     {
         public const string DefaultMapName = "Local\\MS2E_ROLLOVER_V1";
         private const long Magic = 0x3156_4F4C_4C4F_524D;   // "MROLLOV1"
-        private const int Version = 1;
+        private const int Version = 2;   // [미체결 대사] v2 = HandoffSlot 96B(원장 번호 · 종목 · 지정가) — v1 맵은 형식 불일치로 거부(sticky)
         private const int StateEmpty = 0, StateWriting = 1, StatePublished = 2, StateAcked = 3, StateAborted = 4;
         // 헤더 오프셋(128B)
         private const int OffMagic = 0, OffVersion = 8, OffState = 12, OffEpoch = 16, OffOldPid = 24, OffNewPid = 28, OffCount = 32,
@@ -190,7 +190,7 @@ namespace StockManager.Services
             return r;
         }
 
-        // SHA-256(epoch 8B ‖ count 8B ‖ 슬롯 n × 80B) — 사전 할당 버퍼 · 정적 Span 오버로드(δ=0)
+        // SHA-256(epoch 8B ‖ count 8B ‖ 슬롯 n × 96B) — 사전 할당 버퍼 · 정적 Span 오버로드(δ=0)
         private void ComputeChecksum(long epoch, int n, byte[] dst)
         {
             int len = n * _slotSize;

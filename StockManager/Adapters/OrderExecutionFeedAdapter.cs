@@ -48,14 +48,23 @@ namespace StockManager.Adapters
 
     public readonly record struct ReconciliationRecord(long Micros, ReconciliationKind Kind, long ProposalId, long BrokerOrderId, long Qty);
 
-    /// <summary>[롤오버] 프로세스 간 승계용 추적 슬롯 1건(고정 레이아웃 · MMF 직렬화 · 80B).</summary>
+    /// <summary>[롤오버] 프로세스 간 승계용 추적 슬롯 1건(고정 레이아웃 · MMF 직렬화 · 96B · 레이아웃 v2).</summary>
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
     public struct HandoffSlot
     {
         public long ProposalId, BrokerOrderId, RouterKeyLo, RouterKeyHi;
         public long OrderQty, Filled, ReferenceRaw, AgeMicros;
         public int Broker, Flags;                 // Flags: 1 = 매수 · 2 = 접수 확인(Accepted) · 4 = 응답 수신(acked)
-        public long Reserved;
+        public long VenueOrderNo;                 // [미체결 대사] 브로커 원장 주문번호(키움 = OrderMapped 통지 · KIS = 0 — BrokerOrderId 에서 복호)
+        public long SymbolCode, LimitPriceWon;    // [미체결 대사] 종목 · 지정가(원 · 0 = 미상) — OPT10075/TTTC8001R 행과 1:1 대조
+    }
+
+    /// <summary>[미체결 대사] 호스트 원장 1건(δ=0 · 호출측 버퍼). Flags: 1 승계 · 2 미결속(Admitted) · 4 정정/취소 진행 중.</summary>
+    public struct OpenOrderLedgerEntry
+    {
+        public long ProposalId, BrokerOrderId, VenueOrderNo, SymbolCode, Remaining, LimitPriceWon, TouchedSeq;
+        public int Side, Flags;
+        public const int FlagAdopted = 1, FlagUnbound = 2, FlagAmending = 4;
     }
 
     public sealed class OrderExecutionFeedAdapter : IArmingBlockSource, IOrderAmendGate
@@ -79,6 +88,16 @@ namespace StockManager.Adapters
         private readonly StockManager.Engines.ExtremeSlippageDisarmInterlock? _extreme;
         private readonly bool[] _accepted;
         private readonly bool[] _adopted;   // [롤오버] 이전 프로세스에서 승계한 슬롯 — 이 프로세스 라우터에는 기록이 없다(라우터 호출 생략)
+        // [미체결 대사] 슬롯별 종목 · 지정가(원) · 브로커 원장 번호 · 정정 대기가 · 최종 변경 시퀀스
+        private readonly long[] _symbol, _limitWon, _venueNo, _modPrice, _touched;
+        private long _ledgerSeq;
+        // 최근 해제 링(스냅샷 이후 종결된 주문을 유령으로 오판하지 않기 위해) · 사상 선도착 보류표(결속 전 OrderMapped)
+        private const int FreedCap = 256, PendingMapCap = 64;
+        private readonly long[] _freedBroker = new long[FreedCap], _freedVenue = new long[FreedCap], _freedSeq = new long[FreedCap];
+        private long _freedWrite;
+        private readonly long[] _pendMapClient = new long[PendingMapCap], _pendMapVenue = new long[PendingMapCap];
+        private int _pendMapNext;
+        private long _mappedApplied, _mappedPending;
         private readonly long _acceptedTtlMicros;
         private readonly BrokerStateMismatchInterlock? _mismatch;
         private MS2E.Core.ZeroAllocForensicAuditStream? _forensic;
@@ -114,7 +133,76 @@ namespace StockManager.Adapters
             _proposalId = new long[capacity]; _brokerOrderId = new long[capacity]; _orderQty = new long[capacity];
             _filled = new long[capacity]; _admittedMicros = new long[capacity]; _routerKey = new UInt128[capacity];
             _cancelAt = new long[capacity]; _modQty = new long[capacity]; _modAt = new long[capacity];
+            _symbol = new long[capacity]; _limitWon = new long[capacity]; _venueNo = new long[capacity]; _modPrice = new long[capacity]; _touched = new long[capacity];
         }
+
+        // ── [미체결 대사] 브로커 원장 대조용 호스트 원장(δ=0) ─────────────────────
+
+        /// <summary>원장 변경 시퀀스(추적·결속·체결·해제·사상·정정마다 증가) — 브로커 조회 송신 시점 값과 비교해 스냅샷 이후 변경분을 구분.</summary>
+        public long LedgerSequence { get { lock (_gate) return _ledgerSeq; } }
+        public long MappedApplied => Interlocked.Read(ref _mappedApplied);
+        public long MappedPending => Interlocked.Read(ref _mappedPending);
+
+        /// <summary>추적 중 전 슬롯(미결속 포함 · 잔량 &gt; 0) 복사. 반환 = 건수(버퍼 부족 −1 — 대사 불가 = 호출측 보류).</summary>
+        public int CopyOpenOrderLedger(Span<OpenOrderLedgerEntry> dst)
+        {
+            long now = _nowMicros();
+            lock (_gate)
+            {
+                int n = 0;
+                for (int i = 0; i < _state.Length; i++)
+                {
+                    if (_state[i] == Free) continue;
+                    long rem = _orderQty[i] - _filled[i];
+                    if (rem <= 0) continue;
+                    if (n >= dst.Length) return -1;
+                    dst[n++] = new OpenOrderLedgerEntry
+                    {
+                        ProposalId = _proposalId[i], BrokerOrderId = _brokerOrderId[i], VenueOrderNo = _venueNo[i], SymbolCode = _symbol[i],
+                        Remaining = rem, LimitPriceWon = _limitWon[i], TouchedSeq = _touched[i], Side = _isBuy[i] ? 1 : -1,
+                        Flags = (_adopted[i] ? OpenOrderLedgerEntry.FlagAdopted : 0) | (_state[i] == Admitted ? OpenOrderLedgerEntry.FlagUnbound : 0)
+                              | (AmendInFlight(i, now) ? OpenOrderLedgerEntry.FlagAmending : 0),
+                    };
+                }
+                return n;
+            }
+        }
+
+        /// <summary>sinceSeq 이후 종결(해제)된 주문 중 브로커 번호 또는 원장 번호가 일치하는 건이 있는가(최근 256건).</summary>
+        public bool WasFreedSince(long sinceSeq, long brokerOrderId, long venueOrderNo)
+        {
+            lock (_gate)
+            {
+                long end = _freedWrite, start = Math.Max(0, end - FreedCap);
+                for (long k = start; k < end; k++)
+                {
+                    int j = (int)(k % FreedCap);
+                    if (_freedSeq[j] <= sinceSeq) continue;
+                    if ((brokerOrderId != 0 && _freedBroker[j] == brokerOrderId) || (venueOrderNo != 0 && _freedVenue[j] == venueOrderNo)) return true;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// [미체결 대사] 프록시 사상 통지(클라이언트 ID ↔ 키움 주문번호) 반영(δ=0). 결속 전 선도착이면 보류표에 두고 BindBrokerOrder 에서 적용.
+        /// 정정 시 새 번호로 갱신된다(이후 OPT10075 는 새 번호로 조회됨).
+        /// </summary>
+        public void OnOrderMapped(OrderMappedPayload m)
+        {
+            if (m.ClientId <= 0 || m.VenueOrderNo <= 0) return;
+            lock (_gate)
+            {
+                int i = FindByBrokerOrder(m.ClientId);
+                if (i >= 0) { _venueNo[i] = m.VenueOrderNo; Touch(i); Interlocked.Increment(ref _mappedApplied); return; }
+                int k = _pendMapNext; _pendMapNext = (k + 1) % PendingMapCap;
+                _pendMapClient[k] = m.ClientId; _pendMapVenue[k] = m.VenueOrderNo;
+                _ledgerSeq++;
+                Interlocked.Increment(ref _mappedPending);
+            }
+        }
+
+        private void Touch(int i) => _touched[i] = ++_ledgerSeq;
 
         public long AmendBlocked => Interlocked.Read(ref _amendBlocked);
 
@@ -144,6 +232,7 @@ namespace StockManager.Adapters
                         RouterKeyLo = (long)(ulong)_routerKey[i], RouterKeyHi = (long)(ulong)(_routerKey[i] >> 64),
                         OrderQty = _orderQty[i], Filled = _filled[i], ReferenceRaw = _refRaw[i], AgeMicros = Math.Max(0, now - _admittedMicros[i]),
                         Broker = _broker[i], Flags = (_isBuy[i] ? 1 : 0) | (_accepted[i] ? 2 : 0) | (_acked[i] ? 4 : 0),
+                        VenueOrderNo = _venueNo[i], SymbolCode = _symbol[i], LimitPriceWon = _limitWon[i],
                     };
                 }
                 return n;
@@ -153,7 +242,8 @@ namespace StockManager.Adapters
         /// <summary>승계 슬롯 1건 가져오기(접수 확인 상태 · 라우터 호출 생략 표시). 같은 브로커 번호 중복·포화·형식 이탈 = false.</summary>
         public bool ImportSlot(in HandoffSlot s)
         {
-            if (s.BrokerOrderId == 0 || s.OrderQty <= 0 || s.Filled < 0 || s.Filled >= s.OrderQty || s.AgeMicros < 0) return false;
+            if (s.BrokerOrderId == 0 || s.OrderQty <= 0 || s.Filled < 0 || s.Filled >= s.OrderQty || s.AgeMicros < 0
+                || s.VenueOrderNo < 0 || s.SymbolCode < 0 || s.LimitPriceWon < 0) return false;
             long now = _nowMicros();
             lock (_gate)
             {
@@ -166,8 +256,10 @@ namespace StockManager.Adapters
                     _broker[i] = s.Broker; _orderQty[i] = s.OrderQty; _filled[i] = s.Filled; _refRaw[i] = s.ReferenceRaw;
                     _admittedMicros[i] = now - s.AgeMicros;
                     _isBuy[i] = (s.Flags & 1) != 0; _accepted[i] = (s.Flags & 2) != 0; _acked[i] = (s.Flags & 4) != 0;
-                    _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0;
+                    _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0; _modPrice[i] = 0;
+                    _venueNo[i] = s.VenueOrderNo; _symbol[i] = s.SymbolCode; _limitWon[i] = s.LimitPriceWon;
                     _adopted[i] = true;
+                    Touch(i);
                     _tracked++;
                     return true;
                 }
@@ -219,6 +311,7 @@ namespace StockManager.Adapters
                 if (i >= 0 && _orderQty[i] - _filled[i] > 0 && !InWindow(_cancelAt[i], now))
                 {
                     _cancelAt[i] = now == 0 ? 1 : now;
+                    Touch(i);
                     return true;
                 }
                 if (i >= 0) proposal = _proposalId[i];
@@ -239,7 +332,8 @@ namespace StockManager.Adapters
                 if (i >= 0 && newQtyShares > 0 && newPriceWon > 0 && newQtyShares <= _orderQty[i] - _filled[i]
                     && !InWindow(_cancelAt[i], now) && !InWindow(_modAt[i], now))
                 {
-                    _modQty[i] = newQtyShares; _modAt[i] = now == 0 ? 1 : now;
+                    _modQty[i] = newQtyShares; _modAt[i] = now == 0 ? 1 : now; _modPrice[i] = newPriceWon;
+                    Touch(i);
                     return true;
                 }
                 if (i >= 0) proposal = _proposalId[i];
@@ -313,6 +407,10 @@ namespace StockManager.Adapters
 
         /// <summary>송출 직전 추적 확보 + 판정 참조가 기록(체결가 극한 괴리 감시용 · δ=0).</summary>
         public bool TryTrack(long proposalId, UInt128 routerKey, int broker, long orderQty, bool isBuy, long referenceRaw)
+            => TryTrack(proposalId, routerKey, broker, orderQty, isBuy, referenceRaw, symbolCode: 0, limitPriceWon: 0);
+
+        /// <summary>[미체결 대사] 종목 · 지정가(원)까지 기록 — 브로커 미체결 원장과 종목/가격 대조 가능.</summary>
+        public bool TryTrack(long proposalId, UInt128 routerKey, int broker, long orderQty, bool isBuy, long referenceRaw, long symbolCode, long limitPriceWon)
         {
             long now = _nowMicros();
             lock (_gate)
@@ -323,6 +421,8 @@ namespace StockManager.Adapters
                     _state[i] = Admitted; _proposalId[i] = proposalId; _routerKey[i] = routerKey; _broker[i] = broker;
                     _orderQty[i] = orderQty; _filled[i] = 0; _brokerOrderId[i] = 0; _admittedMicros[i] = now; _acked[i] = false;
                     _isBuy[i] = isBuy; _refRaw[i] = referenceRaw; _accepted[i] = false;
+                    _symbol[i] = symbolCode > 0 ? symbolCode : 0; _limitWon[i] = limitPriceWon > 0 ? limitPriceWon : 0; _venueNo[i] = 0; _modPrice[i] = 0;
+                    Touch(i);
                     _tracked++;
                     return true;
                 }
@@ -340,6 +440,14 @@ namespace StockManager.Adapters
                 if (i < 0 || _state[i] != Admitted) return false;
                 _brokerOrderId[i] = brokerOrderId;
                 _state[i] = Accepted;
+                for (int k = 0; k < PendingMapCap; k++)
+                    if (_pendMapClient[k] == brokerOrderId && brokerOrderId != 0)
+                    {
+                        _venueNo[i] = _pendMapVenue[k]; _pendMapClient[k] = 0; _pendMapVenue[k] = 0;
+                        Interlocked.Increment(ref _mappedApplied);
+                        break;
+                    }
+                Touch(i);
                 return true;
             }
         }
@@ -381,6 +489,7 @@ namespace StockManager.Adapters
                 else
                 {
                     proposal = _proposalId[i];
+                    Touch(i);                                                         // [미체결 대사] 스냅샷 이후 변경 표지
                     if (fill.FillQty > 0)
                     {
                         // [방향 B] 체결가 ↔ 판정 참조가 괴리 감시(체결 단건마다) — 극한 괴리면 회로 Disarm + 대사 기록
@@ -450,7 +559,8 @@ namespace StockManager.Adapters
                             // [정정] 브로커가 정정 수량으로 접수 — 추적 주문 수량 재기준(누적 체결 + 정정 잔량)
                             modApplied = _modQty[i];
                             _orderQty[i] = _filled[i] + _modQty[i];
-                            _modQty[i] = 0; _modAt[i] = 0;
+                            if (_modPrice[i] > 0) _limitWon[i] = _modPrice[i];           // [미체결 대사] 정정가 재기준
+                            _modQty[i] = 0; _modAt[i] = 0; _modPrice[i] = 0;
                             WriteRing(ReconciliationKind.ModifyApplied, _proposalId[i], fill.OrderId, modApplied);
                         }
                         else if (brokerRemaining >= 0 && brokerRemaining != _orderQty[i] - _filled[i])
@@ -556,6 +666,9 @@ namespace StockManager.Adapters
 
         private void FreeSlot(int i)
         {
+            int f = (int)(_freedWrite % FreedCap);
+            _freedBroker[f] = _brokerOrderId[i]; _freedVenue[f] = _venueNo[i]; _freedSeq[f] = ++_ledgerSeq; _freedWrite++;
+            _symbol[i] = 0; _limitWon[i] = 0; _venueNo[i] = 0; _modPrice[i] = 0; _touched[i] = 0;
             _state[i] = Free; _proposalId[i] = 0; _brokerOrderId[i] = 0; _routerKey[i] = default; _acked[i] = false; _accepted[i] = false;
             _cancelAt[i] = 0; _modQty[i] = 0; _modAt[i] = 0; _adopted[i] = false;
             _tracked--;

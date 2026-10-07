@@ -201,13 +201,31 @@ namespace StockManager.Adapters
         private int _connected, _tripped;
 
         /// <param name="openKisOrders">트립 순간 KIS 미체결(추적 유지) 건수 — 증거용(회수·재송출 없음).</param>
+        /// <param name="marketHours">[방향 B] 장중 판정(예: KST 09:00~15:20 · 주말 제외) — 장중엔 marketSilenceMicros(기본 3초)로 단축.
+        ///   ★전제: 체결통보(H0STCNI0)만 구독하면 장중에도 대부분 침묵이다 — 심박용 체결가(H0STCNT0) 유동 종목 구독이 함께 있어야 의미가 있다.</param>
         public KisSessionInterlock(BrokerFailoverSentinel? failover, int kisBrokerIndex, Func<long>? nowMicros = null,
-                                   long silenceMicros = DefaultSilenceMicros, Func<int>? openKisOrders = null)
+                                   long silenceMicros = DefaultSilenceMicros, Func<int>? openKisOrders = null,
+                                   Func<bool>? marketHours = null, long marketSilenceMicros = DefaultMarketSilenceMicros)
         {
             if (silenceMicros <= 0) throw new ArgumentOutOfRangeException(nameof(silenceMicros));
+            if (marketSilenceMicros <= 0) throw new ArgumentOutOfRangeException(nameof(marketSilenceMicros));
             _failover = failover; _kisBroker = kisBrokerIndex; _silenceMicros = silenceMicros;
             _nowMicros = nowMicros ?? ReferencePriceFeedAdapter.MonotonicMicros;
             _openKisOrders = openKisOrders;
+            _marketHours = marketHours; _marketSilenceMicros = Math.Min(marketSilenceMicros, silenceMicros);
+        }
+
+        public const long DefaultMarketSilenceMicros = 3_000_000;
+        private readonly Func<bool>? _marketHours;
+        private readonly long _marketSilenceMicros;
+
+        /// <summary>KST 정규장(09:00~15:20 · 월~금) 판정 — 공휴일 미반영(정직: 휴장일엔 접속 자체가 없어야 정상).</summary>
+        public static bool IsKrxRegularSession(DateTime utcNow)
+        {
+            var kst = utcNow.AddHours(9);
+            if (kst.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+            int m = kst.Hour * 60 + kst.Minute;
+            return m >= 9 * 60 && m < 15 * 60 + 20;
         }
 
         public bool Tripped => Volatile.Read(ref _tripped) == 1;
@@ -247,7 +265,11 @@ namespace StockManager.Adapters
         /// <summary>주기 판정(δ=0) — 연결 상태에서 침묵 임계 초과 = 트립.</summary>
         public void Evaluate()
         {
-            if (Volatile.Read(ref _connected) == 1 && _nowMicros() - Volatile.Read(ref _lastActivity) > _silenceMicros) Trip();
+            if (Volatile.Read(ref _connected) != 1) return;
+            bool market;
+            try { market = _marketHours?.Invoke() ?? false; } catch { market = true; }   // 판정 불가 = 장중 취급(엄격 측)
+            long limit = market ? _marketSilenceMicros : _silenceMicros;
+            if (_nowMicros() - Volatile.Read(ref _lastActivity) > limit) Trip();
         }
 
         public bool TryRearm(bool valveWired, bool liveArmingWired)
@@ -279,7 +301,11 @@ namespace StockManager.Adapters
         private readonly KisTick[] _ticks = new KisTick[KisProtocol.MaxRecordsPerFrame];
         private readonly byte[] _cipher = GC.AllocateArray<byte>(8192, pinned: true), _plain = GC.AllocateArray<byte>(8192, pinned: true);
         private KisNoticeCipher? _cipherCtx;
-        private long _frames, _ticksEmitted, _fillsEmitted, _malformed, _echoes, _noKey;
+        private long _frames, _ticksEmitted, _fillsEmitted, _malformed, _echoes, _noKey, _subscribeAcks, _subscribeRejects;
+        private readonly byte[] _ackKey = new byte[32], _ackIv = new byte[16];
+        public long SubscribeAcks => Interlocked.Read(ref _subscribeAcks);
+        public long SubscribeRejects => Interlocked.Read(ref _subscribeRejects);
+        public bool HasNoticeKeys => Volatile.Read(ref _cipherCtx) is not null;
 
         /// <param name="send">PINGPONG 반송(받은 바이트 그대로 · 전송 계층 주입). 반환 = 송신 성공.</param>
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
@@ -315,6 +341,16 @@ namespace StockManager.Adapters
                 if (ping && _send is { } send)
                 {
                     try { if (send(frame)) Interlocked.Increment(ref _echoes); } catch (Exception) { }
+                    return true;
+                }
+                // [KIS 실배선 · 실결함 교정] 수정 전: 구독 응답(체결통보 복호 key/iv)을 버렸다 — 운영에 SetNoticeKeys 호출부가 없어
+                //   암호화 체결통보가 전량 '키 없음' 폐기(NoticeWithoutKey)됐다. 이제 체결통보 TR 구독 성공 응답이면 키를 자동 장착(콜드 1회).
+                if (!ping && KisProtocol.TryParseSubscribeAck(span, _ackKey, _ackIv, out bool ok, out bool isNotice, out bool hasKeys))
+                {
+                    if (!ok) { Interlocked.Increment(ref _subscribeRejects); return false; }
+                    Interlocked.Increment(ref _subscribeAcks);
+                    if (isNotice && hasKeys) SetNoticeKeys(_ackKey, _ackIv);
+                    return true;
                 }
                 return ping;
             }

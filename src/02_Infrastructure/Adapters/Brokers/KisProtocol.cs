@@ -36,6 +36,12 @@ namespace MS2E.Infrastructure
         public KisNoticeKind Kind;
     }
 
+    /// <summary>[KIS 잔고] TTTC8434R output1 1행 — 종목 · 보유수량(hldg_qty) · 주문가능수량(ord_psbl_qty).</summary>
+    public struct KisHolding
+    {
+        public long SymbolCode, HeldQty, SellableQty;
+    }
+
     public struct KisOrderAck
     {
         public bool Ok;
@@ -280,6 +286,239 @@ namespace MS2E.Infrastructure
             catch (JsonException) { return false; }
             ack.Ok = rtSeen && rtOk && ack.OrderNo > 0;
             return rtSeen;
+        }
+
+        // ── ⑦ 실시간 구독 응답(체결통보 복호 키) ──
+
+        /// <summary>
+        /// 구독 응답 제어 프레임 판독(δ=0): {"header":{"tr_id":..},"body":{"rt_cd":"0","output":{"key":"(32자)","iv":"(16자)"}}}.
+        /// 반환 = 구독 응답 형식(body.rt_cd 존재). success = rt_cd "0" · isNotice = 체결통보 TR(H0STCNI0/9) · hasKeys = key 32B + iv 16B 를 dst 에 복사.
+        /// </summary>
+        public static bool TryParseSubscribeAck(ReadOnlySpan<byte> json, Span<byte> key32, Span<byte> iv16, out bool success, out bool isNotice, out bool hasKeys)
+        {
+            success = false; isNotice = false; hasKeys = false;
+            bool rtSeen = false, keyOk = false, ivOk = false;
+            try
+            {
+                var r = new Utf8JsonReader(json);
+                int depth = 0; bool inHeader = false, inBody = false, inOutput = false;
+                while (r.Read())
+                {
+                    switch (r.TokenType)
+                    {
+                        case JsonTokenType.StartObject: depth++; break;
+                        case JsonTokenType.EndObject:
+                            if (depth == 3) inOutput = false;
+                            if (depth == 2) { inHeader = false; inBody = false; }
+                            depth--; break;
+                        case JsonTokenType.PropertyName:
+                            if (depth == 1) { inHeader = r.ValueTextEquals("header"u8); inBody = r.ValueTextEquals("body"u8); }
+                            else if (depth == 2 && inHeader && r.ValueTextEquals("tr_id"u8))
+                            {
+                                if (!r.Read() || r.TokenType != JsonTokenType.String) return false;
+                                isNotice = r.ValueTextEquals(TrNotice) || r.ValueTextEquals(TrNoticeVts);
+                            }
+                            else if (depth == 2 && inBody && r.ValueTextEquals("rt_cd"u8))
+                            {
+                                if (!r.Read() || r.TokenType != JsonTokenType.String) return false;
+                                rtSeen = true; success = r.ValueTextEquals("0"u8);
+                            }
+                            else if (depth == 2 && inBody && r.ValueTextEquals("output"u8)) inOutput = true;
+                            else if (depth == 3 && inOutput && (r.ValueTextEquals("key"u8) || r.ValueTextEquals("iv"u8)))
+                            {
+                                bool isKey = r.ValueTextEquals("key"u8);
+                                if (!r.Read() || r.TokenType != JsonTokenType.String || r.ValueIsEscaped) return false;
+                                var v = r.ValueSpan;
+                                if (isKey) { if (v.Length == key32.Length) { v.CopyTo(key32); keyOk = true; } }
+                                else if (v.Length == iv16.Length) { v.CopyTo(iv16); ivOk = true; }
+                            }
+                            break;
+                    }
+                }
+            }
+            catch (JsonException) { return false; }
+            hasKeys = keyOk && ivOk;
+            return rtSeen;
+        }
+
+        // ── ⑧ 잔고 · 주문가능(REST) ──
+
+        /// <summary>TTTC8908R(매수가능조회) → output.ord_psbl_cash(주문가능현금 · 원). rt_cd≠"0"/필드 없음/형식 이탈 = false(fail-closed).</summary>
+        public static bool TryParseBuyable(ReadOnlySpan<byte> json, out long orderableCash)
+        {
+            orderableCash = 0;
+            bool rtSeen = false, rtOk = false, cashSeen = false;
+            try
+            {
+                var r = new Utf8JsonReader(json);
+                int depth = 0; bool inOutput = false;
+                while (r.Read())
+                {
+                    switch (r.TokenType)
+                    {
+                        case JsonTokenType.StartObject: depth++; break;
+                        case JsonTokenType.EndObject: if (depth == 2) inOutput = false; depth--; break;
+                        case JsonTokenType.PropertyName:
+                            if (depth == 1)
+                            {
+                                if (r.ValueTextEquals("rt_cd"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String) return false; rtSeen = true; rtOk = r.ValueTextEquals("0"u8); }
+                                else if (r.ValueTextEquals("output"u8)) inOutput = true;
+                            }
+                            else if (depth == 2 && inOutput && r.ValueTextEquals("ord_psbl_cash"u8))
+                            {
+                                if (!ReadWon(ref r, out orderableCash)) return false;
+                                cashSeen = true;
+                            }
+                            break;
+                    }
+                }
+            }
+            catch (JsonException) { return false; }
+            return rtSeen && rtOk && cashSeen;
+        }
+
+        /// <summary>TTTC8434R(주식잔고조회) output1 → 보유 행(δ=0). 반환 = 행 수 · −1 형식 이탈/rt_cd≠"0" · −2 버퍼 부족. 보유 0 행 제외.</summary>
+        public static int ParseHoldings(ReadOnlySpan<byte> json, Span<KisHolding> dst)
+        {
+            bool rtSeen = false, rtOk = false;
+            int n = 0;
+            try
+            {
+                var r = new Utf8JsonReader(json);
+                int depth = 0; bool inArr = false, inRow = false;
+                KisHolding row = default;
+                while (r.Read())
+                {
+                    switch (r.TokenType)
+                    {
+                        case JsonTokenType.StartObject:
+                            depth++;
+                            if (inArr && depth == 2) { inRow = true; row = default; }
+                            break;
+                        case JsonTokenType.EndObject:
+                            if (inRow && depth == 2)
+                            {
+                                inRow = false;
+                                if (row.HeldQty > 0)
+                                {
+                                    if (row.SymbolCode <= 0 || row.SellableQty < 0 || row.SellableQty > row.HeldQty) return -1;
+                                    if (n >= dst.Length) return -2;
+                                    dst[n++] = row;
+                                }
+                            }
+                            depth--; break;
+                        case JsonTokenType.EndArray:
+                            if (inArr && depth == 1) inArr = false;
+                            break;
+                        case JsonTokenType.PropertyName:
+                            if (depth == 1)
+                            {
+                                if (r.ValueTextEquals("rt_cd"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String) return -1; rtSeen = true; rtOk = r.ValueTextEquals("0"u8); }
+                                else if (r.ValueTextEquals("output1"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.StartArray) return -1; inArr = true; }
+                            }
+                            else if (inRow && depth == 2)
+                            {
+                                if (r.ValueTextEquals("pdno"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String || !ParseCode(r.ValueSpan, out row.SymbolCode)) return -1; }
+                                else if (r.ValueTextEquals("hldg_qty"u8)) { if (!ReadDigits(ref r, out row.HeldQty)) return -1; }
+                                else if (r.ValueTextEquals("ord_psbl_qty"u8)) { if (!ReadDigits(ref r, out row.SellableQty)) return -1; }
+                            }
+                            break;
+                    }
+                }
+            }
+            catch (JsonException) { return -1; }
+            return rtSeen && rtOk ? n : -1;
+        }
+
+        // ── ⑥ 미체결 조회(TTTC8001R 주식일별주문체결조회 · CCLD_DVSN=02 미체결) ──
+
+        /// <summary>
+        /// [미체결 대사] REST 응답 1페이지 → 정규화 행(δ=0). output1 배열의 각 객체: odno · orgn_odno · pdno · ord_qty · rmn_qty · ord_unpr ·
+        /// sll_buy_dvsn_cd("01" 매도 · "02" 매수) · cncl_yn("Y" = 취소 주문 행 — 제외). 잔량 0 행 제외.
+        /// 반환 = 행 수 · −1 형식 이탈/rt_cd≠"0"(fail-closed) · −2 버퍼 부족. 연속 조회(tr_cont)는 HTTP 헤더라 호출측이 last 로 전달.
+        /// </summary>
+        public static int ParseOpenOrders(ReadOnlySpan<byte> json, Span<BrokerOpenOrderRow> dst)
+        {
+            bool rtSeen = false, rtOk = false;
+            int n = 0;
+            try
+            {
+                var r = new Utf8JsonReader(json);
+                int depth = 0; bool inArr = false, inRow = false, cancelled = false;
+                BrokerOpenOrderRow row = default;
+                while (r.Read())
+                {
+                    switch (r.TokenType)
+                    {
+                        case JsonTokenType.StartObject:
+                            depth++;
+                            if (inArr && depth == 2) { inRow = true; row = default; cancelled = false; }
+                            break;
+                        case JsonTokenType.EndObject:
+                            if (inRow && depth == 2)
+                            {
+                                inRow = false;
+                                if (!cancelled && row.RemainingQty > 0)
+                                {
+                                    if (row.VenueOrderNo <= 0 || row.SymbolCode <= 0 || row.Side == 0 || row.OrderQty < row.RemainingQty) return -1;
+                                    if (n >= dst.Length) return -2;
+                                    row.Venue = OpenOrderVenueKind.Kis;
+                                    dst[n++] = row;
+                                }
+                            }
+                            depth--;
+                            break;
+                        case JsonTokenType.EndArray:
+                            if (inArr && depth == 1) inArr = false;
+                            break;
+                        case JsonTokenType.PropertyName:
+                            if (depth == 1)
+                            {
+                                if (r.ValueTextEquals("rt_cd"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String) return -1; rtSeen = true; rtOk = r.ValueTextEquals("0"u8); }
+                                else if (r.ValueTextEquals("output1"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.StartArray) return -1; inArr = true; }
+                            }
+                            else if (inRow && depth == 2)
+                            {
+                                if (r.ValueTextEquals("odno"u8)) { if (!ReadDigits(ref r, out row.VenueOrderNo)) return -1; }
+                                else if (r.ValueTextEquals("orgn_odno"u8)) { if (!ReadDigits(ref r, out row.OrigVenueOrderNo)) return -1; }
+                                else if (r.ValueTextEquals("pdno"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String || !ParseCode(r.ValueSpan, out row.SymbolCode)) return -1; }
+                                else if (r.ValueTextEquals("ord_qty"u8)) { if (!ReadDigits(ref r, out row.OrderQty)) return -1; }
+                                else if (r.ValueTextEquals("rmn_qty"u8)) { if (!ReadDigits(ref r, out row.RemainingQty)) return -1; }
+                                else if (r.ValueTextEquals("ord_unpr"u8)) { if (!ReadWon(ref r, out row.PriceWon)) return -1; }
+                                else if (r.ValueTextEquals("sll_buy_dvsn_cd"u8))
+                                {
+                                    if (!r.Read() || r.TokenType != JsonTokenType.String) return -1;
+                                    row.Side = r.ValueTextEquals("02"u8) ? 1 : r.ValueTextEquals("01"u8) ? -1 : 0;
+                                }
+                                else if (r.ValueTextEquals("cncl_yn"u8))
+                                {
+                                    if (!r.Read() || r.TokenType != JsonTokenType.String) return -1;
+                                    cancelled = r.ValueTextEquals("Y"u8);
+                                }
+                            }
+                            break;
+                    }
+                }
+            }
+            catch (JsonException) { return -1; }
+            return rtSeen && rtOk ? n : -1;
+        }
+
+        // 원 금액 문자열 — 정수 또는 소수부 0("71000" · "71000.00"). 소수부 비영 = 형식 이탈(호가 단위 위반).
+        private static bool ReadWon(ref Utf8JsonReader r, out long v)
+        {
+            v = 0;
+            if (!r.Read() || r.TokenType != JsonTokenType.String) return false;
+            var s = r.ValueSpan;
+            if (s.IsEmpty) return true;
+            int dot = s.IndexOf((byte)'.');
+            if (dot >= 0)
+            {
+                for (int k = dot + 1; k < s.Length; k++) if (s[k] != (byte)'0') return false;
+                s = s[..dot];
+                if (s.IsEmpty) return true;
+            }
+            return Utf8Parser.TryParse(s, out v, out int c) && c == s.Length && v >= 0;
         }
 
         // ── ⑤ 토큰 ──

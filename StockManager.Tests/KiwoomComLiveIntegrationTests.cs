@@ -38,7 +38,7 @@ namespace StockManager.Tests
         public int RqRc { get; set; }
         public string GetCommData(string trCode, string recordName, int index, string itemName)
         {
-            if (itemName == "주문번호") return OrderNoReply;
+            if (itemName == "주문번호" && !(TrRows.TryGetValue(recordName, out var tr) && index < tr.Count && tr[index].ContainsKey(itemName))) return OrderNoReply;   // [미체결 대사] 다행 TR 표 우선
             return TrRows.TryGetValue(recordName, out var rows) && index < rows.Count && rows[index].TryGetValue(itemName, out var v) ? v : "";
         }
         public int SendOrder(string rqName, string screenNo, string accountNo, int orderType, string code, int qty, int price, string hoga, string orgOrderNo)

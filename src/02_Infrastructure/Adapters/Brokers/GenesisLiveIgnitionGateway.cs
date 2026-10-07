@@ -120,6 +120,48 @@ namespace MS2E.Infrastructure
             return sent;
         }
 
+        // [자식 슬롯 분할] 자식 전용 exactly-once 래치 — 봉인 래치는 '슬롯별 단조 orderId' 계약(slot = id & mask · 이전 이상이면 차단)이라
+        //   자식 ID(비트 62 표지 · 일반 ID 보다 항상 큼)를 같은 래치에 넣으면 이후 같은 슬롯의 일반 주문이 영구 차단된다 → 독립 래치(자식 ID 끼리 단조).
+        private SealedEmissionInterlock? _childSealed;
+        private long _childEmissions;
+        public long ChildEmissions => Interlocked.Read(ref _childEmissions);
+
+        /// <summary>
+        /// [자식 슬롯 분할] 자식 주문 사출 — Emit 과 같은 방어선(이중키∧방어선∧펄스 매 사출 재검 · 미개통 시 단발 개통 · 감사)을 거치되
+        /// exactly-once 는 자식 전용 래치. veto/봉인차단 = 미사출 false. ChildIdSpace 밖 ID = 거부.
+        /// </summary>
+        public bool EmitChild(long childId, long symbolCode, byte side, byte kind, long priceRaw, long qtyRaw, SealedSend onSend)
+        {
+            if (!ChildIdSpace.IsChild(childId)) return false;
+            long v = ComputeVeto();
+            if (v != 0L) { RecordVeto(v); return false; }
+            if (Volatile.Read(ref _emissionArmed) == 0L) ArmOnce();
+            bool sent;
+            if (_sealed is not null)
+            {
+                var latch = Volatile.Read(ref _childSealed);
+                if (latch is null)
+                {
+                    Interlocked.CompareExchange(ref _childSealed, new SealedEmissionInterlock(), null);   // 최초 1회(콜드)
+                    latch = Volatile.Read(ref _childSealed)!;
+                }
+                sent = latch.TrySealAndEmit(childId, symbolCode, side, kind, priceRaw, qtyRaw, onSend);
+            }
+            else
+            {
+                long seal = SealedEmissionInterlock.ComputeSeal(childId, symbolCode, side, kind, priceRaw, qtyRaw);
+                var token = new SealedOrderToken(childId, symbolCode, side, kind, priceRaw, qtyRaw, seal);
+                onSend(in token); sent = true;
+            }
+            if (sent)
+            {
+                Interlocked.Increment(ref _emissions);
+                Interlocked.Increment(ref _childEmissions);
+                _audit?.Record(IgnitionEventKind.Emission, childId, symbolCode);
+            }
+            return sent;
+        }
+
         private void ArmOnce()
         {
             if (Interlocked.CompareExchange(ref _emissionArmed, 1L, 0L) == 0L)   // 1회성 단발 개통

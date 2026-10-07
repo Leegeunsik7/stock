@@ -39,14 +39,15 @@ namespace MS2E.Infrastructure
         private readonly OrderAttestationService? _attestation;
         private long _crossCoreWrites, _attests;
         private int  _fuseTripped, _disposed;
+        private int _gate, _canaryFaults, _leaked;   // [크래시 트리아지] 수명 게이트 + 경계 카나리
+        private readonly nuint _bytes;
 
         public CacheLineCoherenceSentinel(int slots = 8, OrderAttestationService? attestation = null)
         {
             _slots = Math.Max(1, slots);
             _attestation = attestation;
-            nuint bytes = (nuint)(_slots * SlotLongs * sizeof(long));
-            _arena = (long*)NativeMemory.AlignedAlloc(bytes, (nuint)CacheLine);   // ★캐시라인 정렬
-            NativeMemory.Clear(_arena, bytes);
+            _bytes = (nuint)(_slots * SlotLongs * sizeof(long));
+            _arena = (long*)NativeCanaryBlock.Alloc(_bytes);   // ★캐시라인 정렬 · 0 초기화 · 아레나 앞/뒤 카나리(슬롯 카나리와 별개)
             for (int i = 0; i < _slots; i++) _arena[i * SlotLongs + C_CANARY] = CanaryValue;   // 슬롯 경계 카나리 심기
         }
 
@@ -63,21 +64,26 @@ namespace MS2E.Infrastructure
         /// </summary>
         public void Record(int slot)
         {
-            long* a = _arena;
-            if (a == null || (uint)slot >= (uint)_slots) return;
-            long* s = a + slot * SlotLongs;
-            int core = Thread.GetCurrentProcessorId();               // 관리형·δ=0·빠른 코어 ID
-            long prev = Interlocked.Exchange(ref s[C_CORE], core);
-            if (prev != core) Interlocked.Increment(ref _crossCoreWrites);   // 다른 코어가 이 슬롯을 씀(라인 바운싱 지표)
-            Interlocked.Increment(ref s[C_COUNT]);
+            if ((uint)slot >= (uint)_slots || !NativeLifetimeGate.TryEnter(ref _gate)) return;
+            try
+            {
+                long* a = _arena;
+                if (a == null) return;
+                long* s = a + slot * SlotLongs;
+                int core = Thread.GetCurrentProcessorId();               // 관리형·δ=0·빠른 코어 ID
+                long prev = Interlocked.Exchange(ref s[C_CORE], core);
+                if (prev != core) Interlocked.Increment(ref _crossCoreWrites);   // 다른 코어가 이 슬롯을 씀(라인 바운싱 지표)
+                Interlocked.Increment(ref s[C_COUNT]);
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>슬롯 카운터 값(δ=0·관측).</summary>
         public long CounterOf(int slot)
         {
-            long* a = _arena;
-            if (a == null || (uint)slot >= (uint)_slots) return 0;
-            return Interlocked.Read(ref a[slot * SlotLongs + C_COUNT]);
+            if ((uint)slot >= (uint)_slots || !NativeLifetimeGate.TryEnter(ref _gate)) return 0;
+            try { long* a = _arena; return a == null ? 0 : Interlocked.Read(ref a[slot * SlotLongs + C_COUNT]); }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>
@@ -87,11 +93,17 @@ namespace MS2E.Infrastructure
         public bool AttestArena()
         {
             Interlocked.Increment(ref _attests);
-            long* a = _arena;
-            if (a == null || Volatile.Read(ref _fuseTripped) == 1) return false;
-            for (int i = 0; i < _slots; i++)
-                if (a[i * SlotLongs + C_CANARY] != CanaryValue) { TripFuse($"아레나 카나리 파열 slot={i}"); return false; }
-            return true;
+            if (!NativeLifetimeGate.TryEnter(ref _gate)) return false;
+            try
+            {
+                long* a = _arena;
+                if (a == null || Volatile.Read(ref _fuseTripped) == 1) return false;
+                if (!NativeCanaryBlock.Verify(a, _bytes)) { TripFuse("아레나 전/후방 경계 카나리 파열"); return false; }   // [크래시 트리아지] 아레나 월경
+                for (int i = 0; i < _slots; i++)
+                    if (a[i * SlotLongs + C_CANARY] != CanaryValue) { TripFuse($"아레나 카나리 파열 slot={i}"); return false; }
+                return true;
+            }
+            finally { NativeLifetimeGate.Exit(ref _gate); }
         }
 
         /// <summary>
@@ -121,8 +133,18 @@ namespace MS2E.Infrastructure
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            // ★수정 전: 즉시 해제 — Record 가 아레나 스냅샷 후 Interlocked 기록 중이면 해제된 힙에 기록(use-after-free).
+            if (!NativeLifetimeGate.CloseAndDrain(ref _gate, NativeLifetimeGate.DefaultDrainTimeout)) { Volatile.Write(ref _leaked, 1); return; }
             long* a = _arena; _arena = null;
-            if (a != null) NativeMemory.AlignedFree(a);
+            if (a != null && !NativeCanaryBlock.Free(a, _bytes)) Interlocked.Increment(ref _canaryFaults);
         }
+
+        public int CanaryFaults => Volatile.Read(ref _canaryFaults);
+        public bool LeakedOnDispose => Volatile.Read(ref _leaked) == 1;
+        internal bool NativeReleased => _arena == null;
+        internal bool HoldForTest() => NativeLifetimeGate.TryEnter(ref _gate);
+        internal void ReleaseHoldForTest() => NativeLifetimeGate.Exit(ref _gate);
+        /// <summary>테스트 전용 — 아레나 뒤 1바이트 월경 주입(경계 가드 검증).</summary>
+        internal void CorruptTrailingGuardForTest() { if (_arena != null) ((byte*)_arena)[(long)_bytes] ^= 0xFF; }
     }
 }
