@@ -1324,3 +1324,9 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - ShippedBinaryLiveArmedGuard 확장: ① newobj 대상 생성자의 bool 형식 liveArmed/isLiveArmed 매개변수 = 리터럴 false(ldc.i4.0) 필수 · 마지막 위치 아니면 판독 불가 = 위반 · 생성 지점 수 MasterSites ≥ 1(비공허성) ② 일반 호출의 마지막 liveArmed 인자 리터럴 true = 위반 ③ get_LiveArmed/get_IsLiveArmed 본문 'ldc.i4.1; ret' = 위반. 형식 판독 = System.Reflection.Metadata 최소 시그니처 디코더(bool 여부) — Func<bool> 술어(SecurityAssetVault · LiveArmedEgressSentinel)는 플래그가 아니므로 제외(설계 검토 중 오탐 실측 → 교정). CLI 출력에 마스터 플래그 생성 수.
 - release-package.ps1 [6/10]: 마스터 플래그 소스 대조(생성 0건 = 구조 변경 거부 · false 아님 = 거부) · 머리말 v12.17.1-GM(BOM 유지). 버전 핀 갱신(Freeze · ReleasePackaging).
 - GoldenMasterReleasePackagingTests §7: 빌드 DLL 마스터 생성 1 · 위반 0 · newobj 직전 1바이트 패치 = 거부(CLI 포함) · get_LiveArmed 1바이트 패치 = 거부 · 술어 매개변수 오탐 0 · 스크립트 [6/10] 대조. 방어 끔 6종 6/6 Red(★실 소스 BlazorHomeForm liveArmed: true 뒤집기 = 소스 가드 + 바이너리 판독 모두 Red).
+
+### 46.3 검증 · 출하 기록
+- 게이트: 오중 빌드 0W/0E · 전체 3,616 Pass ×2 · infra 0 · Phase114 40/40.
+- 태그 v12.17.1-GM → 68ff158(신규 · 미푸시) · 형제 작업 트리에서 release-package.ps1 -NoPeer [0/10]~[10/10] 1회 통과([6/10] 마스터 플래그 소스 1건 false · 스크립트 내부 스위트 3,616 Pass) · 작업 트리 제거.
+- release-v12.17.1-GM.zip 3,030,966B · SHA-256 4EC0FF7F9A9D6C176A9F8832E86F7E3AB336F165F4D12E10947CE5EF3F66370A · masterSeal 5BEAC1A544CFD91F198A5799AD642B786FAEE780A32A2AD98AC29F47B4575A8E · 아티팩트 38 · 인터락 29 · liveArmed false · 피어 기록 없음(-NoPeer).
+- [9/10] --verify-zip Ok · --verify-live-armed Ok(키 조회 16 · 마스터 플래그 생성 1 · 위반 0) · [10/10] sync/handshake Ok. primary release/ 로 5종 복사 · v12.17.0-GM 산출물은 release/superseded-v12.17.0-GM/ · 출하 체인 테스트 30/30(무추출 재수검 62ms).
