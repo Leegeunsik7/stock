@@ -1238,3 +1238,10 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - GoldenMasterReleasePackagingTests §5 4건: 빌드 산출 DLL 지점 16 · 위반 0 · ~50ms · ldc.i4.0→ldc.i4.1 1바이트 패치 사본 16/16 거부 · 항목 누락/잘린 PE/zip 아님/부재 파일 = 거부 · 스크립트 [9] 결선 순서.
 - 방어 끔 5종 중 4종 Red: 리터럴 false 판정 제거 · 키별 비공허성 제거 · 스크립트 미결선 · ★InfraLiberationSlice2 소스 기본값 true 로 뒤집기(기존 BlazorHomeForm 가드는 Green 유지 = 사각 실증, 신규 가드 Red). stelem 정지 조건 제거는 Green — 현 코드에선 다음 ldstr 정지가 배열 초기화를 이미 차단(중복 방어 · 독립 미검증).
 - ★실결함(첫 출하 실행 4d4d7a1 · [9/10] 거부 · 원자 폐기 정상 동작): PS 5.1 Compress-Archive 가 zip 항목을 'host\MS2E.StockSuite.dll'(역슬래시)로 기록 → 가드의 정확 일치 조회 = 항목 없음(지점 0 · 거부). 단위 테스트 합성 zip 은 '/' 라 미검출. 교정: ZipSealDryRunVerifier 와 같은 '\'→'/' 정규화 · 정규화 후 동명 2개 = 거부(모호). 회귀 테스트(역슬래시 항목 수용 · 중복 거부) · 방어 끔 2/2 Red. 수정 커밋 후 태그 v12.16.1-GM 재지정(-f · 미푸시).
+
+### 41.4 출하 기록
+- 태그 v12.16.1-GM → 593525d(재지정 · 미푸시) · 형제 작업 트리 D:/PROGRAM/SM_GM_wt 에서 release-package.ps1 -NoPeer [0/10]~[10/10] 전 단계 통과 · 작업 트리 제거.
+- release-v12.16.1-GM.zip 3,013,329B · SHA-256 6F03A77F2C901CCC40ED35D3A95EB077CEAA1CDE76CF6EAD89361EC9BA50AAAF · masterSeal 14019EFF6BDC0FB5983D2342BE5417B69D1F2744BEA0740FDD1775D915ADB1B9 · 아티팩트 38 · 인터락 29 · liveArmed false · 피어 기록 없음(-NoPeer · QuantumVault 읽기 전용).
+- [9/10] --verify-zip Ok · --verify-live-armed Ok(지점 16 · 위반 0) · [10/10] sync/handshake Ok · 스크립트 내부 스위트 3,583 Pass.
+- primary release/ 로 5종 복사 · v12.15.0-GM 산출물은 release/superseded-v12.15.0-GM/ 로 이동 · 출하 체인 테스트 27/27(zip 무추출 재수검 38ms · 1비트 변조 거부 · 실 zip IL 판독 Ok).
+- 첫 실행(4d4d7a1)은 [9/10] 역슬래시 결함으로 거부 · 산출물 원자 폐기 확인 — 불완전 zip 잔존 0.
