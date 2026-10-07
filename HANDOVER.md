@@ -1237,3 +1237,4 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 41.3 검증
 - GoldenMasterReleasePackagingTests §5 4건: 빌드 산출 DLL 지점 16 · 위반 0 · ~50ms · ldc.i4.0→ldc.i4.1 1바이트 패치 사본 16/16 거부 · 항목 누락/잘린 PE/zip 아님/부재 파일 = 거부 · 스크립트 [9] 결선 순서.
 - 방어 끔 5종 중 4종 Red: 리터럴 false 판정 제거 · 키별 비공허성 제거 · 스크립트 미결선 · ★InfraLiberationSlice2 소스 기본값 true 로 뒤집기(기존 BlazorHomeForm 가드는 Green 유지 = 사각 실증, 신규 가드 Red). stelem 정지 조건 제거는 Green — 현 코드에선 다음 ldstr 정지가 배열 초기화를 이미 차단(중복 방어 · 독립 미검증).
+- ★실결함(첫 출하 실행 4d4d7a1 · [9/10] 거부 · 원자 폐기 정상 동작): PS 5.1 Compress-Archive 가 zip 항목을 'host\MS2E.StockSuite.dll'(역슬래시)로 기록 → 가드의 정확 일치 조회 = 항목 없음(지점 0 · 거부). 단위 테스트 합성 zip 은 '/' 라 미검출. 교정: ZipSealDryRunVerifier 와 같은 '\'→'/' 정규화 · 정규화 후 동명 2개 = 거부(모호). 회귀 테스트(역슬래시 항목 수용 · 중복 거부) · 방어 끔 2/2 Red. 수정 커밋 후 태그 v12.16.1-GM 재지정(-f · 미푸시).

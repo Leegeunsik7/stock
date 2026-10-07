@@ -181,11 +181,13 @@ namespace StockManager.Tests
 
         private static string HostDll() => typeof(ReleasePackager).Assembly.Location;
 
-        private static string ZipWithHost(byte[] dll, string entry = ShippedBinaryLiveArmedGuard.HostEntry)
+        private static string ZipWithHost(byte[] dll, params string[] entries)
         {
+            if (entries.Length == 0) entries = new[] { ShippedBinaryLiveArmedGuard.HostEntry };
             string tmp = Path.Combine(Path.GetTempPath(), "ms2e_arm_" + Guid.NewGuid().ToString("N") + ".zip");
             using (var z = ZipFile.Open(tmp, ZipArchiveMode.Create))
-            using (var e = z.CreateEntry(entry).Open()) e.Write(dll);
+                foreach (var name in entries)
+                    using (var e = z.CreateEntry(name).Open()) e.Write(dll);
             return tmp;
         }
 
@@ -233,6 +235,24 @@ namespace StockManager.Tests
                 Assert.True(ReleaseHandshakeCli.IsInvocation(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, zip }));
             }
             finally { File.Delete(zip); }
+        }
+
+        [Fact]
+        public void ShippedBinaryGuard_BackslashEntryNames_FromPs51CompressArchive_Accepted_DuplicatesRejected()
+        {
+            // 실결함(v12.16.1-GM 첫 출하 실행 [9/10] 거부): PS 5.1 Compress-Archive 는 'host\MS2E.StockSuite.dll' 로 기록 → 정확 일치 조회 = 항목 없음
+            byte[] dll = File.ReadAllBytes(HostDll());
+            string ps51 = ZipWithHost(dll, @"host\MS2E.StockSuite.dll"), dup = ZipWithHost(dll, @"host\MS2E.StockSuite.dll", "host/MS2E.StockSuite.dll");
+            try
+            {
+                var ok = ShippedBinaryLiveArmedGuard.ScanZip(ps51);
+                Assert.True(ok.Ok, string.Join(" | ", ok.Violations));
+                Assert.True(ok.Sites >= 2);
+                var amb = ShippedBinaryLiveArmedGuard.ScanZip(dup);                               // 정규화 후 같은 이름 2개 = 어느 쪽이 실행될지 모호
+                Assert.False(amb.Ok);
+                Assert.Contains(amb.Violations, v => v.Contains("중복", StringComparison.Ordinal));
+            }
+            finally { File.Delete(ps51); File.Delete(dup); }
         }
 
         [Fact]

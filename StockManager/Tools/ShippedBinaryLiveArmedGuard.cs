@@ -50,7 +50,15 @@ namespace StockManager.Tools
             try
             {
                 using var zip = ZipFile.OpenRead(zipPath);
-                var entry = zip.GetEntry(entryName);
+                // ★PS 5.1 Compress-Archive 는 항목 이름을 '\' 로 기록(host\MS2E.StockSuite.dll) — ZipSealDryRunVerifier 와 같은 정규화로 대조.
+                //   정규화 후 같은 이름 2개 이상 = 어느 쪽이 실행될지 모호 → 거부.
+                ZipArchiveEntry? entry = null;
+                foreach (var e in zip.Entries)
+                {
+                    if (!string.Equals(e.FullName.Replace('\\', '/'), entryName, StringComparison.Ordinal)) continue;
+                    if (entry is not null) return Fail("zip 항목 중복(정규화 후): " + entryName);
+                    entry = e;
+                }
                 if (entry is null) return Fail("zip 항목 없음: " + entryName);
                 using var src = entry.Open();
                 var ms = new MemoryStream(checked((int)entry.Length));
