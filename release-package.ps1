@@ -117,6 +117,11 @@ if (-not $NoPeer) {
     if (-not (Test-Path -LiteralPath $peerManifest)) { Fail "피어 봉인 매니페스트 없음: $peerManifest" }
     $peerDirty = @(& git -C $PeerRepo -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
     if ($peerDirty.Count -gt 0) { Fail "피어 미커밋 코드 $($peerDirty.Count)건(예: $($peerDirty[0])) — [10/10] 핸드셰이크 거부 예정, 빌드 전 중단" }
+    # [방향 B] 피어 고정 — 이 실행이 짝지을 피어(HEAD · 봉인 매니페스트 해시)를 빌드 전에 확정. [10/10] 동기화 · 핸드셰이크가 대조(이동 = 산출물 폐기).
+    $peerPinHead = (& git -C $PeerRepo rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $peerPinHead) { Fail "피어 HEAD 판독 실패: $PeerRepo" }
+    $peerPinHead = "$peerPinHead".Trim()
+    $peerPinSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $peerManifest).Hash
     Write-Host "  OK: 피어 $PeerRepo 미커밋 코드 0 · 봉인 매니페스트 존재" -ForegroundColor DarkGreen
 }
 # [출하 롤백 가드 · v12.15.0-GM] 사전 검사 통과 = 이번 실행이 같은 버전의 기존 출하 산출물을 대체한다 → 빌드 전에 전량 폐기.
@@ -265,7 +270,7 @@ Step 10 "다중 저장소 매니페스트 원자 기록 + 독립 핸드셰이크
 $hsArgs = @('--release-dir', ('"' + $releaseDir + '"'), '--repo', ('"' + $root + '"'), '--shim', ('"' + $shimDll + '"'))
 if (-not $NoPeer) {
     if (-not (Test-Path -LiteralPath (Join-Path $PeerRepo ".git"))) { Remove-ReleaseOutputs; Fail "피어 저장소 없음: $PeerRepo (-NoPeer 로 명시 생략 가능)" }
-    $hsArgs += @('--peer', ('"' + $PeerRepo + '"'))
+    $hsArgs += @('--peer', ('"' + $PeerRepo + '"'), '--pin-peer-head', $peerPinHead, '--pin-peer-manifest', $peerPinSha)
 }
 $syncExit = Invoke-HostCli (@('--sync-release-manifest') + $hsArgs + @('--live-armed-guard-passed')) "sync"
 if ($syncExit -ne 0) { Remove-ReleaseOutputs; Fail "RELEASE_MANIFEST.json 동기화 거부(exit=$syncExit) — 출하 산출물 전량 폐기" }

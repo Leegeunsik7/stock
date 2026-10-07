@@ -363,7 +363,7 @@ namespace MS2E.Infrastructure
         {
             if (trId.SequenceEqual(TrNotice)) return KisTrDomain.Real;
             if (trId.SequenceEqual(TrNoticeVts)) return KisTrDomain.Vts;
-            if (trId.SequenceEqual(TrTick) || trId.SequenceEqual(PingPong)) return KisTrDomain.Neutral;
+            if (trId.SequenceEqual(TrTick) || trId.SequenceEqual(PingPong) || trId.SequenceEqual("H0STASP0"u8)) return KisTrDomain.Neutral;   // 시세 · 호가(실/모의 공통 TR)
             if (trId.Length != 9 || !trId.Slice(1, 3).SequenceEqual(TtcStem)) return KisTrDomain.Unknown;
             for (int i = 4; i < 9; i++) { byte c = trId[i]; if (!((c >= (byte)'0' && c <= (byte)'9') || (c >= (byte)'A' && c <= (byte)'Z'))) return KisTrDomain.Unknown; }
             return trId[0] == (byte)'T' ? KisTrDomain.Real : trId[0] == (byte)'V' ? KisTrDomain.Vts : KisTrDomain.Unknown;

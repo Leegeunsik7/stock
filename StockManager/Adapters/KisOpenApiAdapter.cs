@@ -297,6 +297,9 @@ namespace StockManager.Adapters
         private readonly Func<ReadOnlyMemory<byte>, bool>? _send;
         private readonly Action<TickPayload>? _onTick;
         private readonly Action<FillPayload>? _onFill;
+        private readonly Action<OrderBookPayload>? _onBook;                          // [교차 피드] H0STASP0 10호가
+        private long _booksEmitted;
+        public long BooksEmitted => Interlocked.Read(ref _booksEmitted);
         private readonly Func<long> _nowTicks;
         private readonly KisTick[] _ticks = new KisTick[KisProtocol.MaxRecordsPerFrame];
         private readonly byte[] _cipher = GC.AllocateArray<byte>(8192, pinned: true), _plain = GC.AllocateArray<byte>(8192, pinned: true);
@@ -317,8 +320,9 @@ namespace StockManager.Adapters
         /// <param name="accountCano">[KIS VTS] 체결통보 계좌 핀(종합계좌 앞 8자리). 통보 계좌 필드가 이 값으로 시작하지 않으면 폐기.</param>
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
                                  Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
-                                 KisVtsProtocolValidator? validator = null, string? accountCano = null)
+                                 KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null)
         {
+            _onBook = onBook;
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _validator = validator;
             if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
@@ -369,6 +373,15 @@ namespace StockManager.Adapters
             _session.OnActivity(false);
             if (!KisProtocol.TryParseHeader(span, out bool encrypted, out var trId, out int count, out var body)) return Bad();
             if (_validator is { } v && !v.CheckRealtimeTr(trId)) return Bad();        // [KIS VTS] 교차 도메인 TR = 폐기 + Disarm(비트 26)
+            if (KisOrderBookParser.IsBookTr(trId))
+            {
+                // [교차 피드] KIS 실시간 10호가(평문 · 1레코드) → 정량 엔진 피드 1
+                if (encrypted || count != 1) return Bad();
+                if (!KisOrderBookParser.TryParse(body, _nowTicks(), out var book)) return Bad();
+                try { _onBook?.Invoke(book); } catch (Exception) { }
+                Interlocked.Increment(ref _booksEmitted);
+                return true;
+            }
             if (KisProtocol.IsTickTr(trId))
             {
                 if (encrypted) return Bad();

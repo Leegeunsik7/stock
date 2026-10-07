@@ -195,10 +195,17 @@ namespace StockManager.Tools
     public sealed record PeerObservation(string? Head, IReadOnlyList<string> DirtyPaths, string? ManifestSha256, string? RootHash,
                                          string? ManifestPath = null, string? Name = null);
 
+    /// <summary>
+    /// [다중 저장소 · 방향 B] 패키징 시작([0/10] 피어 사전 점검) 시점에 고정한 피어 상태(HEAD 커밋 · 봉인 매니페스트 SHA-256).
+    /// 동기화 · 핸드셰이크는 기록된 피어가 이 고정값과 같아야 통과 — 빌드(수십 분) 도중 피어가 새 커밋/새 봉인으로 움직이면
+    /// '출하를 시작할 때 승인한 피어'가 아닌 다른 피어와 조용히 짝지어지는 것을 막는다(PeerDrift → 산출물 전량 폐기).
+    /// </summary>
+    public sealed record PeerPin(string Head, string ManifestSha256);
+
     public sealed record HandshakeObservation(
         RepoObservation Repo, string? ManifestSigSha256, string? ManifestSigVersion, string? ManifestSigMasterSeal,
         IReadOnlyList<(string Name, string Sha256)> ManifestSigArtifacts, string? ZipSha256, string? AnchorSeal, string? ShimSha256,
-        PeerObservation? Peer, string? ManifestSigGenesis = null, IReadOnlyList<string>? TagInterlocks = null);
+        PeerObservation? Peer, string? ManifestSigGenesis = null, IReadOnlyList<string>? TagInterlocks = null, PeerPin? Pin = null);
 
     public enum ReleaseHandshakeVerdict : byte
     {
@@ -207,6 +214,7 @@ namespace StockManager.Tools
         ZipMismatch = 11, ShimMismatch = 12, PeerMissing = 13, PeerDirty = 14, PeerCommitMismatch = 15, PeerManifestMismatch = 16,
         GenesisMismatch = 17, InterlockSetMismatch = 18, PeerIdentityMismatch = 19,   // [다중 저장소 봉인 감사] 무대조 필드 교정
         ParserDifferential = 20,   // 독립 무할당 판독기(ManifestSealStreamer)가 거부 — 중복 키 · 이스케이프 등 판독기마다 달리 보이는 매니페스트
+        PeerDrift = 21,            // [방향 B] 기록 피어 ≠ 패키징 시작 시 고정한 피어(빌드 도중 피어 HEAD/봉인 이동)
     }
 
     public static class MultiRepoReleaseManifest
@@ -334,8 +342,14 @@ namespace StockManager.Tools
             { detail = "genesisHeadHash(기록 ≠ manifest.sig) — 제네시스 계보 위조/불일치"; return ReleaseHandshakeVerdict.GenesisMismatch; }
             if (!SameSequence(m.Interlocks, obs.TagInterlocks, out string idiff))
             { detail = "인터락 목록 ≠ 태그 소스 ArmingInterlockSource: " + idiff; return ReleaseHandshakeVerdict.InterlockSetMismatch; }
+            // ★[다중 저장소 · 실결함 교정] 피어 대조를 요청(관측 피어 있음)했는데 기록에 피어가 없으면 거부 — 수정 전엔 피어 블록을 통째로
+            //   건너뛰어 단독(-NoPeer) 매니페스트가 '피어 포함 핸드셰이크 통과'로 보였다.
+            if (m.Peer is null && (obs.Peer is not null || obs.Pin is not null))
+            { detail = "피어 대조 요청인데 기록에 피어 없음(단독 출하 매니페스트) — 다중 저장소 봉인 아님"; return ReleaseHandshakeVerdict.PeerMissing; }
             if (m.Peer is { } p)
             {
+                if (obs.Pin is { } pin && (!string.Equals(pin.Head, p.Commit, StringComparison.OrdinalIgnoreCase) || !HexEq(pin.ManifestSha256, p.ManifestSha256)))
+                { detail = $"피어 {p.Name} 기록 {Short(p.Commit)} ≠ 패키징 시작 고정 {Short(pin.Head)}(또는 봉인 매니페스트 해시) — 빌드 중 피어 이동"; return ReleaseHandshakeVerdict.PeerDrift; }
                 var po = obs.Peer;
                 if (po?.Head is null) { detail = $"피어 {p.Name} 저장소 관측 불가"; return ReleaseHandshakeVerdict.PeerMissing; }
                 if (!string.Equals(po.Name, p.Name, StringComparison.Ordinal) || !string.Equals(po.ManifestPath, p.ManifestPath, StringComparison.Ordinal))
@@ -553,11 +567,20 @@ namespace StockManager.Tools
                 if (releaseDir is null || repo is null || shim is null) { output.WriteLine("[handshake] 사용: --release-dir <dir> --repo <root> --shim <dll> [--peer <root>] [--peer-manifest <rel>] [--out|--manifest <json>]"); return ExitUsage; }
                 string? peer = o.GetValueOrDefault("--peer");
                 string peerRel = o.GetValueOrDefault("--peer-manifest") ?? PeerManifestDefault;
+                // [방향 B] 피어 고정값(--pin-peer-head 40hex · --pin-peer-manifest 64hex) — 둘 다 · 피어와 함께만 · 형식 이탈 = 사용 오류(거부)
+                string? pinHead = o.GetValueOrDefault("--pin-peer-head"), pinSha = o.GetValueOrDefault("--pin-peer-manifest");
+                PeerPin? pin = null;
+                if (pinHead is not null || pinSha is not null)
+                {
+                    if (peer is null || !IsHex(pinHead, 40) || !IsHex(pinSha, 64)) { output.WriteLine("[handshake] 피어 고정값 형식 오류(--peer 와 함께 --pin-peer-head <40hex> --pin-peer-manifest <64hex>)"); return ExitUsage; }
+                    pin = new PeerPin(pinHead!, pinSha!);
+                }
                 if (Eq(args[0], SyncFlag))
                 {
                     if (!o.ContainsKey("--live-armed-guard-passed")) { output.WriteLine("[sync] liveArmed 소스 가드 통과 표지 없음 — 기록 거부"); return ExitRejected; }
                     string outPath = o.GetValueOrDefault("--out") ?? Path.Combine(releaseDir, MultiRepoReleaseManifest.FileName);
                     if (!TryCollect(releaseDir, repo, shim, peer, peerRel, out var obs, out var sig, out string why)) { output.WriteLine("[sync] 수집 실패: " + why); return ExitRejected; }
+                    obs = obs with { Pin = pin };
                     if (obs.Repo.TagCommit is null) { output.WriteLine($"[sync] 태그 v{sig.Version} 없음 — 기록 거부"); return ExitRejected; }
                     PeerRecord? pr = obs.Peer is { Head: { } ph } po ? new PeerRecord(po.Name ?? "", ph, peerRel, po.ManifestSha256 ?? "", po.RootHash ?? "") : null;
                     if (peer is not null && pr is null) { output.WriteLine("[sync] 피어 저장소 관측 불가 — 기록 거부"); return ExitRejected; }
@@ -579,6 +602,7 @@ namespace StockManager.Tools
                     string manifestPath = o.GetValueOrDefault("--manifest") ?? Path.Combine(releaseDir, MultiRepoReleaseManifest.FileName);
                     if (!File.Exists(manifestPath)) { output.WriteLine("[handshake] 매니페스트 없음: " + manifestPath); return ExitRejected; }
                     if (!TryCollect(releaseDir, repo, shim, peer, peerRel, out var obs, out _, out string why)) { output.WriteLine("[handshake] 수집 실패: " + why); return ExitRejected; }
+                    obs = obs with { Pin = pin };
                     var v = MultiRepoReleaseManifest.Verify(File.ReadAllText(manifestPath), obs, out string d);
                     output.WriteLine($"[handshake] {v}: {d}");
                     return v == ReleaseHandshakeVerdict.Ok ? ExitOk : ExitRejected;
@@ -651,6 +675,13 @@ namespace StockManager.Tools
                 d[args[i]] = hasValue ? args[++i].Trim('"') : "";
             }
             return d;
+        }
+
+        private static bool IsHex(string? s, int len)
+        {
+            if (s is null || s.Length != len) return false;
+            foreach (char c in s) if (!char.IsAsciiHexDigit(c)) return false;
+            return true;
         }
 
         private static string? Arg(string[] args, int i) => i < args.Length && !args[i].StartsWith("--", StringComparison.Ordinal) ? args[i].Trim('"') : null;

@@ -209,6 +209,13 @@ namespace StockManager.Adapters
         private bool TryAdmitPrefix(in OrderProposal p, out AdmitContext ctx)
         {
             ctx = default;
+            // ★[AI 전략] 시그널 게이트 — 예약 · 슬롯 확보 '전' 판정(거부 부작용 0). 게이트 예외 = 거부(fail-closed).
+            if (Volatile.Read(ref _signalGate) is { } sg)
+            {
+                bool ok;
+                try { ok = sg.AdmitSignal(in p); } catch (Exception) { ok = false; }
+                if (!ok) return Reject(OrderRouteVerdict.SignalRejected, ref _signalRejects);
+            }
             if (_breaker.Evaluate()) return Reject(OrderRouteVerdict.FeedDisconnected, ref _feedRejects);
             long symHash = ReferencePriceFeedAdapter.SymbolHashForCode(p.SymbolCode);
             if (_price.TryGetReference(symHash, out long reference, out long basisAgeMicros) != ReferencePriceVerdict.Fresh)
@@ -303,6 +310,13 @@ namespace StockManager.Adapters
         }
 
         // ── [자식 슬롯 분할 라우팅] ─────────────────────────────────────────────
+
+        // ── [AI 전략] 시그널 게이트(선택) — 활성 시 단일 · 분할 주문 모두 '확신 ≥ 임계 · 같은 방향 · 신선' 일 때만 전방 통과 ──
+        private StockManager.Engines.IQuantSignalGate? _signalGate;
+        private long _signalRejects;
+        public long SignalRejects => Interlocked.Read(ref _signalRejects);
+        public bool SignalGateEnabled => Volatile.Read(ref _signalGate) is not null;
+        public void EnableSignalGate(StockManager.Engines.IQuantSignalGate gate) => Volatile.Write(ref _signalGate, gate ?? throw new ArgumentNullException(nameof(gate)));
 
         private IBrokerLimitFeed? _splitCaps;
         private Action? _onSplitUnavailable;

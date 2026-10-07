@@ -13,6 +13,10 @@
 //  (운용자 재무장 UI 없음 · TryRearm 은 물리 이중키 계약 제공).
 //  방향 A: 스캔마다 HostHeartbeatWriter 로 비관리 고정 64B 하트비트 사상 → 프록시 HostHeartbeatEgressGate 가 송신 직전 판독(방향 B).
 //  δ=0: Scan() 경로 관리 힙 0(테스트 실측). 탐침 객체·스레드는 생성 시 1회.
+//  [Long-Soak · 방향 B] 미세 누수 예측(MemoryTrend): 스캔 중 표본 간격(기본 1분)마다 Working Set 을 고정 링(128점)에 적재 → 표본 구간이
+//    최소 창(기본 1시간) 이상이면 최소제곱 기울기 · R² · 상한 도달 예상 시간(ETA) 산출. 꾸준한 우상향(R² ≥ 0.9 · 기울기 > 0)이면서
+//    ETA ≤ 예측 지평(기본 1시간)이면 = OutOfMemory 전에 발주 중단(사유 MemoryTrend · 같은 비트 21). 계단식 상한 초과(WorkingSet)를
+//    기다리지 않는다. 기동 직후 성장 · GC 톱니(R² 낮음) · 상한까지 여유가 큰 완만한 증가는 무트립(오격발 방지 — 테스트 실측).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -24,7 +28,7 @@ using MS2E.Infrastructure;
 namespace StockManager.Telemetry
 {
     [Flags]
-    public enum HealthBreach : int { None = 0, WorkingSet = 1, ThreadPoolStall = 2, GcPause = 4 }
+    public enum HealthBreach : int { None = 0, WorkingSet = 1, ThreadPoolStall = 2, GcPause = 4, MemoryTrend = 8 }
 
     public sealed partial class HealthMonitoringAgent : IArmingBlockSource, IDisposable
     {
@@ -56,6 +60,18 @@ namespace StockManager.Telemetry
         private int _breach, _disposed;
         private long _lastPause = -1, _lastCpuTicks = -1, _lastWallTs, _scans, _lastWs, _lastStallMicros, _lastPauseDeltaMicros;
         private int _lastCpuPermille;
+        // [방향 B] 미세 누수 추세(고정 링 · 스캔 스레드 단일 작성)
+        public const int TrendCapacity = 128;
+        private readonly long[] _trendTs = new long[TrendCapacity], _trendWs = new long[TrendCapacity];
+        private readonly long _trendSampleTicks, _trendMinWindowTicks, _trendHorizonTicks;
+        private readonly double _trendMinR2;
+        private int _trendCount, _trendHead;
+        private long _lastTrendTs = long.MinValue;
+        private double _lastSlopePerSec, _lastR2, _lastEtaSec = double.PositiveInfinity;
+        public double LastTrendSlopeBytesPerHour => Volatile.Read(ref _lastSlopePerSec) * 3600.0;
+        public double LastTrendR2 => Volatile.Read(ref _lastR2);
+        public double LastTrendEtaSeconds => Volatile.Read(ref _lastEtaSec);
+        public int TrendSamples => Volatile.Read(ref _trendCount);
         private readonly long _warmupTicks;   // 기동 직후 유예(부팅 초기화가 스레드풀을 점유 — 정상 기동을 sticky 트립으로 오판 방지)
         private long _firstScanTs = long.MinValue;
 
@@ -66,8 +82,15 @@ namespace StockManager.Telemetry
                                      TimeSpan? maxGcPausePerScan = null, HostHeartbeatWriter? heartbeat = null,
                                      Func<long>? workingSet = null, Func<long>? gcPauseTicks = null, Func<long>? nowTimestamp = null,
                                      bool useThreadPoolProbe = true, TimeSpan? warmup = null,
-                                     Action<IThreadPoolWorkItem>? enqueueProbe = null)
+                                     Action<IThreadPoolWorkItem>? enqueueProbe = null,
+                                     TimeSpan? trendSampleInterval = null, TimeSpan? trendMinWindow = null, TimeSpan? trendHorizon = null, double trendMinR2 = 0.9)
         {
+            _trendSampleTicks = (long)((trendSampleInterval ?? TimeSpan.FromMinutes(1)).TotalSeconds * Stopwatch.Frequency);
+            _trendMinWindowTicks = (long)((trendMinWindow ?? TimeSpan.FromHours(1)).TotalSeconds * Stopwatch.Frequency);
+            _trendHorizonTicks = (long)((trendHorizon ?? TimeSpan.FromHours(1)).TotalSeconds * Stopwatch.Frequency);
+            if (_trendSampleTicks <= 0 || _trendMinWindowTicks <= 0 || _trendHorizonTicks <= 0) throw new ArgumentOutOfRangeException(nameof(trendSampleInterval));
+            if (!(trendMinR2 > 0 && trendMinR2 <= 1)) throw new ArgumentOutOfRangeException(nameof(trendMinR2));
+            _trendMinR2 = trendMinR2;
             _enqueue = enqueueProbe ?? (static w => ThreadPool.UnsafeQueueUserWorkItem(w, preferLocal: false));
             _warmupTicks = (long)((warmup ?? TimeSpan.Zero).TotalSeconds * Stopwatch.Frequency);
             if (maxWorkingSetBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxWorkingSetBytes));
@@ -108,6 +131,7 @@ namespace StockManager.Telemetry
             long ws = _workingSet();
             Interlocked.Exchange(ref _lastWs, ws);
             if (ws > _maxWs) found |= HealthBreach.WorkingSet;
+            if (TrendBreached(now, ws)) found |= HealthBreach.MemoryTrend;
 
             if (_useThreadPoolProbe)
             {
@@ -140,6 +164,35 @@ namespace StockManager.Telemetry
                 Volatile.Read(ref _link)?.Resync();                                  // 새 사유 → 비트 Raise(0ms)
             _heartbeat?.Beat(now, Stopwatch.Frequency, ws, Volatile.Read(ref _lastCpuPermille), Tripped);
             return found;
+        }
+
+        // [방향 B] 표본 적재 + 최소제곱 추세(δ=0 · 스캔 스레드). 반환 = 예측 누수(ETA ≤ 지평).
+        private bool TrendBreached(long now, long ws)
+        {
+            if (_lastTrendTs != long.MinValue && now - _lastTrendTs < _trendSampleTicks) return false;
+            _lastTrendTs = now;
+            _trendTs[_trendHead] = now; _trendWs[_trendHead] = ws;
+            _trendHead = (_trendHead + 1) % TrendCapacity;
+            if (_trendCount < TrendCapacity) Volatile.Write(ref _trendCount, _trendCount + 1);
+            int n = _trendCount;
+            if (n < 8) return false;
+            int oldest = (_trendHead - n + TrendCapacity) % TrendCapacity;
+            long t0 = _trendTs[oldest];
+            if (now - t0 < _trendMinWindowTicks) return false;
+            double f = Stopwatch.Frequency, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+            for (int k = 0; k < n; k++)
+            {
+                int i = (oldest + k) % TrendCapacity;
+                double x = (_trendTs[i] - t0) / f, y = _trendWs[i];
+                sx += x; sy += y; sxx += x * x; sxy += x * y; syy += y * y;
+            }
+            double dx = n * sxx - sx * sx, dy = n * syy - sy * sy;
+            if (dx <= 0) return false;
+            double slope = (n * sxy - sx * sy) / dx;
+            double r2 = dy <= 0 ? 0 : (n * sxy - sx * sy) * (n * sxy - sx * sy) / (dx * dy);
+            double eta = slope > 0 ? Math.Max(0, (_maxWs - ws) / slope) : double.PositiveInfinity;
+            Volatile.Write(ref _lastSlopePerSec, slope); Volatile.Write(ref _lastR2, r2); Volatile.Write(ref _lastEtaSec, eta);
+            return slope > 0 && r2 >= _trendMinR2 && eta * f <= _trendHorizonTicks;
         }
 
         public void Start(TimeSpan interval)

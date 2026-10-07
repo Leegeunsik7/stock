@@ -174,6 +174,49 @@ namespace StockManager.Tests
         }
 
         [Fact]
+        public void Cap_AlwaysMatchesTier_UnderStepUpRollbackDisarmRace()
+        {
+            // [QA · 실결함 회귀] 단계 CAS 와 한도 기록이 분리돼 있던 시절: 늦게 깬 승격 스레드가 이전 단계 한도로 덮어 'Full 인데 50%'(실측) ·
+            //   롤백과 겹치면 '안전지대/Disarm 인데 높은 한도'(fail-open)가 남았다. 이제 한도 = 단계의 순수 함수 → 정지 후 항상 정합.
+            long[] ppm = { 1_000, 10_000, 50_000, 250_000, 1_000_000 };
+            for (int round = 0; round < 20; round++)
+            {
+                var g = new StepUpTierGovernor(new InstantRollbackPurger());
+                g.Arm(Total, true, true);
+                using var go = new ManualResetEventSlim(false);
+                var ths = new Thread[8];
+                for (int t = 0; t < ths.Length; t++)
+                {
+                    int id = t;
+                    ths[t] = new Thread(() =>
+                    {
+                        go.Wait();
+                        for (int i = 0; i < 20_000; i++)
+                        {
+                            if (id == 0 && (i & 255) == 0) g.Rollback(toSafeZone: true);
+                            else g.TryStepUp(g.CurrentTier);
+                            long tier = g.CurrentTier, cap = g.CapRaw;
+                            if (tier >= 0 && cap > Total * ppm[4] / 1_000_000) throw new InvalidOperationException("한도 > 100%");
+                        }
+                        if (id == 1) g.Rollback(toSafeZone: false);
+                    });
+                    ths[t].Start();
+                }
+                go.Set();
+                foreach (var th in ths) Assert.True(th.Join(30_000));
+                int final = g.CurrentTier;
+                Assert.Equal(final < 0 ? 0 : Total * ppm[final] / 1_000_000, g.CapRaw);   // ★정지 후 한도 = 단계 산출(완전 Disarm = 0)
+            }
+            var d = new StepUpTierGovernor(new InstantRollbackPurger());
+            d.Arm(Total, true, true);
+            d.TryStepUp(0); d.TryStepUp(1); d.TryStepUp(2);
+            d.Rollback(toSafeZone: true);
+            Assert.Equal((0, Total * 1_000 / 1_000_000), (d.CurrentTier, d.CapRaw));
+            d.Rollback(toSafeZone: false);
+            Assert.Equal((-1, 0L), (d.CurrentTier, d.CapRaw));
+        }
+
+        [Fact]
         public void StepUp_And_ValidAuthority_ZeroAllocation()
         {
             long alloc = 0; Exception? err = null;

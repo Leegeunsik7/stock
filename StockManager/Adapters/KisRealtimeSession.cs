@@ -54,6 +54,8 @@ namespace StockManager.Adapters
         private readonly Func<IKisWsTransport> _factory;
         private readonly Func<string?> _approval;
         private readonly string _htsId, _heartbeatSymbol;
+        private readonly string[] _bookSymbols;                                      // [교차 피드] H0STASP0 구독 종목(세션 등록 상한 내)
+        public const int MaxBookSymbols = 38;                                         // KIS 세션 등록 상한(41) − 체결통보 · 심박 체결가 − 여유 1
         private readonly bool _vts;
         private readonly Uri _uri;
         private readonly TimeSpan _reconnect;
@@ -63,8 +65,12 @@ namespace StockManager.Adapters
         private long _connects, _disconnects, _approvalFailures, _faults, _oversized, _framesIn, _echoes;
 
         public KisRealtimeSession(KisOpenApiAdapter adapter, KisSessionInterlock session, Func<IKisWsTransport> transportFactory, Func<string?> approvalKey,
-                                  string htsId, bool vts, string heartbeatSymbol = "005930", Uri? uri = null, TimeSpan? reconnectDelay = null)
+                                  string htsId, bool vts, string heartbeatSymbol = "005930", Uri? uri = null, TimeSpan? reconnectDelay = null,
+                                  string[]? bookSymbols = null)
         {
+            _bookSymbols = bookSymbols ?? Array.Empty<string>();
+            if (_bookSymbols.Length > MaxBookSymbols) throw new ArgumentOutOfRangeException(nameof(bookSymbols), "호가 구독 종목 상한 " + MaxBookSymbols);
+            foreach (var b in _bookSymbols) if (b is null || b.Length != 6) throw new ArgumentException("종목코드 6자리", nameof(bookSymbols));
             _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _factory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
@@ -105,6 +111,7 @@ namespace StockManager.Adapters
                     Volatile.Write(ref _transport, t);
                     await t.SendTextAsync(BuildSubscribe(key!, NoticeTrId, _htsId), ct).ConfigureAwait(false);
                     await t.SendTextAsync(BuildSubscribe(key!, "H0STCNT0", _heartbeatSymbol), ct).ConfigureAwait(false);
+                    foreach (var sym in _bookSymbols) await t.SendTextAsync(BuildSubscribe(key!, "H0STASP0", sym), ct).ConfigureAwait(false);   // [교차 피드]
                     connected = true;
                     Interlocked.Increment(ref _connects);
                     _session.MarkConnected();

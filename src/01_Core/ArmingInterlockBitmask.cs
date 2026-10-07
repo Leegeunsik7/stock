@@ -80,6 +80,7 @@ namespace MS2E.Core
         KisLimitFeed    = 24,  // [KIS 실배선] REST 잔고/주문가능 조회 연속 3회 실패 → KIS 한도 0 격리 + Disarm(미설정 = 비차단)
         KiwoomBridgeLink = 25, // [키움 실배선] 연결 활성화인데 실 COM 프록시 링크 미수립(미연결 · 신원 거부 · 시뮬레이션 프록시 · 단절) → Disarm
         KisProtocolDivergence = 26, // [KIS VTS] 실/모의 TR 도메인 교차 · REST 응답 tr_id 헤더 ≠ 요청 · 제어/주문 응답 형식 이탈 → KIS 슬롯 격리 + Disarm
+        StrategyAnomaly = 27,  // [AI 전략 · 방향 B] 시그널 산출 NaN/∞ · 범위 이탈 · 수량 0 이하 제안 · 전략 연산 > 10ms → Disarm
         StartupSanity   = 63,
     }
 

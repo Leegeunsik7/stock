@@ -299,9 +299,15 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) AppendHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) AppendHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    // 측정 창 최대 3회 중 최솟값 — 타 스레드가 일으킨 GC 가 창에 겹치면 스레드 할당 회계가 할당 문맥 크기(~8KB)만큼
+                    //   튈 수 있다(실측 8,168B · 앞선 대형 하네스 테스트의 잔여 가비지). 실제 할당이면 3회 모두 > 0.
+                    alloc = long.MaxValue;
+                    for (int w = 0; w < 3 && alloc != 0; w++)
+                    {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 20_000; i++) AppendHot();
+                        alloc = Math.Min(alloc, GC.GetAllocatedBytesForCurrentThread() - before);
+                    }
                 }
                 catch (Exception e) { err = e; }
             });
@@ -328,9 +334,15 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) GuardHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) GuardHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    // 측정 창 최대 3회 중 최솟값 — 타 스레드가 일으킨 GC 가 창에 겹치면 스레드 할당 회계가 할당 문맥 크기(~8KB)만큼
+                    //   튈 수 있다(실측 8,168B · 앞선 대형 하네스 테스트의 잔여 가비지). 실제 할당이면 3회 모두 > 0.
+                    alloc = long.MaxValue;
+                    for (int w = 0; w < 3 && alloc != 0; w++)
+                    {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 20_000; i++) GuardHot();
+                        alloc = Math.Min(alloc, GC.GetAllocatedBytesForCurrentThread() - before);
+                    }
                 }
                 catch (Exception e) { err = e; }
             });

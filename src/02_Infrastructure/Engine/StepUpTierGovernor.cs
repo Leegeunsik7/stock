@@ -73,7 +73,6 @@ namespace MS2E.Infrastructure
 
         private long _tier = -1;         // -1 = 미무장(liveArmed:false), 0..4 = 활성 단계
         private long _totalAssetsRaw;
-        private long _capRaw;
         private long _epoch;
         private long _armedBothKeys;     // 물리 이중 키 게이트
         private readonly InstantRollbackPurger _purger;
@@ -87,7 +86,6 @@ namespace MS2E.Infrastructure
             Interlocked.Exchange(ref _totalAssetsRaw, totalAssetsRaw);
             Interlocked.Exchange(ref _armedBothKeys, 1);
             Interlocked.Exchange(ref _tier, 0);
-            Interlocked.Exchange(ref _capRaw, ComputeCap(0));
             Interlocked.Increment(ref _epoch);
             _purger.Grant(0, _epoch);   // 승격 권한 토큰 부여
             return true;
@@ -107,7 +105,6 @@ namespace MS2E.Infrastructure
             int toTier = fromTier + 1;
             if (Interlocked.CompareExchange(ref _tier, toTier, fromTier) == fromTier)
             {
-                Interlocked.Exchange(ref _capRaw, ComputeCap(toTier));
                 long ep = Interlocked.Increment(ref _epoch);
                 _purger.Grant(0, ep);   // 새 단계 권한 토큰(이전 토큰 무효화)
                 return true;
@@ -116,7 +113,12 @@ namespace MS2E.Infrastructure
         }
 
         public int CurrentTier => (int)Volatile.Read(ref _tier);
-        public long CapRaw => Volatile.Read(ref _capRaw);
+        /// <summary>
+        /// 현재 단계 한도 — ★단계에서 직접 산출(별도 필드 없음). 수정 전엔 단계 CAS 뒤 한도를 따로 썼다: CAS 후 선점된 승격 스레드가
+        /// 늦게 깨어 이전 단계 한도로 덮거나(Full 인데 50% · 전역 스위트 간헐 실패로 실측), Rollback(안전지대/완전 Disarm)과 겹치면
+        /// '단계 0/−1 인데 높은 한도'가 남을 수 있었다(fail-open). 단계 → 한도가 순수 함수면 경합 순서와 무관하게 항상 정합.
+        /// </summary>
+        public long CapRaw { get { long t = Volatile.Read(ref _tier); return t < 0 ? 0 : ComputeCap((int)t); } }
         public long Epoch => Volatile.Read(ref _epoch);
         public bool IsArmed => Volatile.Read(ref _tier) >= 0 && Volatile.Read(ref _armedBothKeys) == 1;
 
@@ -128,13 +130,11 @@ namespace MS2E.Infrastructure
         {
             if (toSafeZone && Volatile.Read(ref _armedBothKeys) == 1)
             {
-                Interlocked.Exchange(ref _tier, 0);                     // 0.1% 소액 안전지대
-                Interlocked.Exchange(ref _capRaw, ComputeCap(0));
+                Interlocked.Exchange(ref _tier, 0);                     // 0.1% 소액 안전지대(한도 = 단계 산출)
             }
             else
             {
-                Interlocked.Exchange(ref _tier, -1);                    // 완전 Disarm
-                Interlocked.Exchange(ref _capRaw, 0);
+                Interlocked.Exchange(ref _tier, -1);                    // 완전 Disarm(한도 = 0)
                 Interlocked.Exchange(ref _armedBothKeys, 0);
             }
             Interlocked.Increment(ref _epoch);

@@ -71,7 +71,7 @@ namespace StockManager.Blazor.Services
         }
     }
 
-    public sealed class DashboardSnapshotHub : IPaperDashboardPort, IInterlockTransitionSink, IDisposable
+    public sealed class DashboardSnapshotHub : IPaperDashboardPort, IInterlockTransitionSink, StockManager.Engines.IDecisionSink, IDisposable
     {
         public const int DefaultPeriodMs = 50;
         public const int Brokers = PaperDashboardFrame.MaxBrokers;

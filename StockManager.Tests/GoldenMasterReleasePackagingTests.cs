@@ -163,7 +163,7 @@ namespace StockManager.Tests
                 Assert.Contains("<TreatWarningsAsErrors>true</TreatWarningsAsErrors>", File.ReadAllText(Path.Combine(root, proj)));
             }
             Assert.True(PureShellFitnessSentinel.RatchetCeiling <= 40);
-            Assert.Equal(28, Enum.GetValues<ArmingInterlockSource>().Length);
+            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // v12.15.1-DEV: + StrategyAnomaly(27) — 출하본(태그 소스)은 28
         }
     }
 }

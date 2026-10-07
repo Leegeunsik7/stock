@@ -1109,3 +1109,82 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 태그 v12.15.0-GM → f5e1bca(코드 bfeb265 + 출하 테스트 피어 선택화) · release-v12.15.0-GM.zip SHA-256 69D0E902B25F0BE9817EDF14011909881C45B3C035B97A15A40C74F6043C5DE5 · 2,991,569B · 아티팩트 38 · masterSeal 4A2EE5AFF0E4788757968DF09A1AE65C8C90EDE9B3CCE4DE3AAF479B23B82055 · 인터락 28 · 피어 기록 없음.
 - release/ 로 복사 · 이전 v12.14.1-GM 산출물은 release/superseded-v12.14.1-GM/ 으로 이동(삭제 0) · worktree 제거. 태그/커밋 원격 push 안 함.
 - 피어 정렬 미완: QuantumVault 의 봉인 도구 작업이 커밋되고 깨끗한 작업 트리에서 봉인 매니페스트가 재생성되면 `release-package.ps1`(피어 포함)로 재패키징해 피어 고정값을 기록.
+
+## 34. 차기: QuantumVault 피어 정렬 · 다중 저장소 상호 봉인 준비 (2026-10-07 · 미커밋)
+
+### 34.1 전제 검증 · 결정
+- QuantumVault 미커밋 변경 = 타 세션의 진행 중 작업(오늘 15:31 까지 커밋 지속): 릴리스 신뢰 앵커(Services/Security/ReleaseTrustAnchor.cs) · 릴리스 공개키 교체(release/gm02_public.b64) · 서명 도구(Tools/SealerProgram.Signing.cs · Tools/QvSeal/ · Tools/ReleasePackager.cs) · 봉인 스크립트. key_out.txt 는 0B(비밀 노출 없음).
+- ★사용자 결정(2026-10-07): QuantumVault 읽기 전용 유지 — 타 세션의 키/신뢰 앵커 교체를 대신 커밋 · 태그하지 않는다. 따라서 피어 포함 정식 패키징 · 양쪽 v12.15.0-GM 태그는 이번에 불가(피어 사전 점검이 정당하게 거부). StockManager 태그 v12.15.0-GM(f5e1bca)은 이동하지 않음(출하된 -NoPeer 산출물과 정합 유지).
+- 방향 A 의 ML-DSA 서명 검증은 .NET 8 BCL 미지원(외부 NuGet 신규 도입 = BCL 우선 원칙 위반) → 미구현. SHA-256 자기 봉인 재대조는 기존 무할당 스트리머로 실측(중앙값 약 27µs).
+
+### 34.2 구현
+- [방향 B] PeerPin — release-package.ps1 [0/10] 피어 사전 점검에서 피어 HEAD · 봉인 매니페스트 SHA-256 고정 → [10/10] 동기화 · 핸드셰이크에 전달 · 기록 피어 ≠ 고정 = PeerDrift(21) → 산출물 전량 폐기. 형식(40/64 hex) · --peer 동반 강제.
+- ★[실결함] 피어 대조 요청인데 매니페스트에 피어가 없으면 피어 검사를 통째로 건너뛰어 Ok — 단독(-NoPeer) 출하가 다중 저장소 봉인처럼 보였다 → PeerMissing.
+
+### 34.3 검증 · 다음
+- MultiRepoFullPackagingTests.cs 6건(고정 일치 Ok · 1비트 이동 PeerDrift · 단독 매니페스트 피어 모드 거부 · CLI 형식 · 스크립트 순서/읽기 전용 · 스트리머 δ=0 <1ms) · 방어 4종 끔 4/4 Red · 전체 3,541 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 다음: QuantumVault 소유 세션이 봉인 작업을 커밋하고 깨끗한 작업 트리에서 봉인 매니페스트를 재생성하면 → 이 변경 커밋 + 태그(v12.15.1-GM 권장 · 또는 v12.15.0-GM 재지정 후 재패키징) → `release-package.ps1`(-NoPeer 없이) 실행.
+
+## 35. 차기: AI 전략 정량 시그널 엔진 · 신뢰도 게이트 · 전략 이상 인터락 (2026-10-07 · 미커밋)
+
+### 35.1 전제 검증
+- ChildSlotOrderSplitter · RouterFeedGate.TryAdmitSplit(1~3호가 × 브로커 한도) · DashboardSnapshotHub.PublishDecision 은 기존재. 시그널 엔진 · 신뢰도 게이트 · 전략 이상 인터락 · 판단 근거 실호출부는 부재(§31 대시보드 판단 로그가 비어 있던 원인).
+- ★정직: 신호는 공개 미시구조 지표의 결정론 합성(규칙 기반)이며 백테스트 · 실거래 성과 검증 없음 — '알파' 주장 아님. 목적 = 판단 근거 관제 + 확신 낮은 주문 전방 거부.
+- 거래량 의미: KIS 틱 Volume = 누적 거래량 · 키움 틱 Volume 의미 미검증 → 누적 증분 규칙(감소 시 값 자체를 증분) · 첫 건 기준선.
+
+### 35.2 구현
+- `StockManager/Engines/QuantSignalProvider.cs` — 종목별 고정 슬롯(작성 잠금 + seqlock 판독 · δ=0): imb5 · [방향 A] 마이크로 추세 EWMA(Δ10호가 불균형 ×10 · 틱 없이 잔량 기울기로 선행) · 중간가 수익률 EWMA 변동성 · VWAP 이격 → score = 0.6·imb5 + 0.4·micro · 확신 = |score| · 변동성 스파이크(>30bp) = 확신 0 · VWAP 과이격 추격 = ½. 정적 불균형만으로는 0.85 미달(설계상 잔량 추세 동반 필요). 원시 바이트 프레임(OnBookFrame) 입력.
+- IQuantSignalGate → RouterFeedGate.EnableSignalGate: 단일 · 분할 주문 모두 예약/슬롯 확보 전 판정 — 신호 없음 · 만료(1초) · 확신 < 0.85 · 방향 불일치 = SignalRejected(21) 전방 거부 · 게이트 예외 = 거부.
+- [방향 B] StrategyAnomalyInterlock(비트 27 · 필수): 산출 NaN/∞ · 범위 이탈 · 수량 0 이하/음수 가격 제안 · 1회 연산 > 10ms = sticky Disarm · 최초 원인 각인 · 재무장 이중키.
+- 관제: 판단 상태(등급 · 방향 · 사유) 변화 또는 250ms 경과 시에만 IDecisionSink(DashboardSnapshotHub) 사출.
+- 호스트: 키움 브리지 호가/틱 → 엔진 · 비트 27 필수 결속(Seal 전) · 시그널 게이트는 `Strategy.SignalGateEnabled`(기본 false) · 임계 `Strategy.ConfidenceThresholdBp`(기본 8,500).
+
+### 35.3 검증 · 한계
+- QuantSignalStrategyTests.cs 8건(수학 · 게이트 · 이상 · 관제 사출 억제 · 하네스 E2E: 약한 신호 송출 0 · 강한 매수 = 매수만 · 수량 0 제안 = 비트 27 → 이후 송출 0 · δ=0) · 방어 9종 끔 9/9 Red · 전체 3,549 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: KIS 호가(H0STASP0) 미구독이라 엔진 입력은 키움 호가뿐 · 판단 사유는 대시보드에 숫자 코드로 표시(라벨 매핑 미구현) · 인터락 29종(0~27 + 63) — 출하본 v12.15.0-GM 은 28.
+
+## 36. 차기: 24시간 가속 Long-Soak 프로파일 · 미세 누수 예측 인터락 (2026-10-07 · 미커밋)
+
+### 36.1 전제 검증
+- 실제 24시간 키움/KIS VTS 틱 기록은 저장소에 없음 → 시드 결정론 합성 시세(±1틱 보행 · ±5% 경계 · 12시간째 거래일 경계)로 86,400 모의 초 재생(실 약 1.2초).
+- HealthMonitoringAgent(비트 21: Working Set · 스레드풀 정체 · GC 정지)는 기존재·호스트 결선 · LiveSoakSentinel(v12.5.0)은 계단식 5% 드리프트 모델(예측 아님 · 미결선).
+- 방향 A(EventCounters 덤퍼) 미채택: EventListener 는 이벤트마다 EventWrittenEventArgs · 페이로드 컬렉션을 할당 — 0B 조건과 모순. 같은 값은 BCL 무할당 판독기(GC.GetTotalMemory · Environment.WorkingSet · GC.CollectionCount · ThreadPool.PendingWorkItemCount · GetAllocatedBytesForCurrentThread — 각 0B 실측)로 표본화.
+- ★[실결함] 정량 엔진 세션 VWAP — 누적 거래량 감소(새 거래일)에도 VWAP 누적을 이어 가 하루를 넘기면 여러 날 평균(장기 구동에서만 드러남) → 세션 리셋.
+
+### 36.2 구현
+- `StockManager/Simulation/LongSoakProfileHarness.cs` — 하네스(실 게이팅 사슬 + 가상 브로커) + 정량 엔진(비트 27) + 관제 허브 + 헬스 에이전트(실 WS · 비트 21) + 스톰 게이트 + 비관리 호가 표 + MMF 블랙박스 · 모의 시계 · 시간당 표본(고정 배열) · 워밍업 후 raised 전이/블랙박스 InterlockRaised 계수 · WS 주입.
+- [방향 B] HealthMonitoringAgent MemoryTrend(같은 비트 21 · 사유 8): 1분 표본 128점 링 · 1시간+ 창 최소제곱 기울기 · R² ≥ 0.9 · ETA(상한 도달) ≤ 1시간 = 상한 초과 전 발주 중단. 기동 성장 · GC 톱니 · 평탄 잡음 · 창 미달 = 무트립.
+
+### 36.3 검증 · 한계
+- LongSoakMemoryProfileTests.cs 7건 — 24시간: 틱 72만 · 호가 14만 · 주문 3,000 = 체결 3,000 · 구동 스레드 할당 0B · GC 0/0/0 · 워밍업 후 raised 0 · 블랙박스 0 · 스톰 미격발 · WS 1.06GB 주입 = 비트 21 단독 격발 후 송출 0 · 누수 예측 61분째 883MB 에서 트립(ETA 48분) · 비관리 표 Dispose 후 복귀 · 방어 6종 끔 6/6 Red(핫패스 할당 1건 주입 포함). · 전체 3,556 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 부수 교정: MainDashboardAiFeedConcurrencyTests δ=0 2건이 단일 측정 창이라 전체 스위트에서 8,168B(할당 문맥 크기 — 창에 겹친 타 스레드 GC 의 회계 흔적)로 2회 연속 실패 → 측정 창 최대 3회 최솟값(저장소 표준 MinAllocated 방식). 실제 할당이면 3회 모두 > 0.
+- 한계: 합성 시세(실 틱 재생 아님) · 실시간 압축이라 스레드풀/GC 정지/Working Set 의 '시간 의존' 열화는 재현 불가(추세 판정은 주입 시계 단위 테스트로 입증) · 관리 힙 Δ 약 1MB 는 테스트 호스트 타 스레드(구동 스레드 0B · GC 0) · 실 24시간 무인 가동 리허설은 운용 과제.
+
+## 37. 차기: KIS 10호가(H0STASP0) 결선 · 교차 피드 확인 시그널 (2026-10-08 · 미커밋)
+
+### 37.1 전제 검증
+- ★거짓 전제: 키움 · KIS 는 같은 KRX 호가창을 중계한다(ChildSlotOrderSplitter 설계 주석과 동일) — 두 피드 차이 = 전송 지연/노후화이지 '차익' · '브로커 보유 잔량'이 아니다. 지시서 방향 A(잔량 많은 브로커로 자식 가중 배치)는 근거가 없어 미구현. 교차 피드는 데이터 품질 검증으로 사용(방향 B).
+- (참고) 거래소 단위 차이(KRX ↔ 대체거래소)는 다른 TR · 다른 설계 — 이번 범위 아님.
+- 정량 엔진 입력은 키움 호가뿐이었다(§35 한계).
+
+### 37.2 구현
+- `StockManager/Adapters/KisOrderBookParser.cs` — H0STASP0 공개 문서 필드 순서(0 코드 · 3~12 매도호가 · 13~22 매수호가 · 23~32 매도잔량 · 33~42 매수잔량) δ=0 판독 · 잘림/비숫자/음수/최우선 결측 거부(실서버 미검증).
+- KisOpenApiAdapter onBook(평문 1레코드만) · KisProtocol.ClassifyTr H0STASP0 = 중립 · KisRealtimeSession bookSymbols 구독(상한 38).
+- QuantSignalProvider 피드별 상태(불균형 · 마이크로 추세 · 변동성 · 최우선 호가 · 수신 시각). 교차 모드: 두 피드 신선(≤500ms) ∧ 방향 일치 = min(|점수|) · 불일치 = 0 · 한 피드만 = ½(Zero Single-Source Bias) · [방향 B] 피드 간 꼬임(한쪽 매도 < 다른 쪽 매수) = 확신 0 · 연속 3회 = 비트 27 Disarm(CrossFeedCrossed). 비교차 모드 = 기존 동작 그대로(피드 1 무시).
+- 호스트: `Kis.BookSymbols`(쉼표 · 기본 빈 값) 있으면 KIS 호가 구독 + 교차 모드 · `Strategy.CrossMaxSkewMs`(기본 500).
+
+### 37.3 검증 · 한계
+- CrossBrokerSignalTests.cs 8건(파서 · 어댑터 경로 · 교차 확신도 정책 · 꼬임 연속 3회 Disarm · 하네스 E2E: 단일 피드 송출 0 · 양 피드 일치 송출 · 꼬임 후 송출 0 · δ=0) · 방어 8종 끔 8/8 Red · 기존 정량/Soak 15건 무변화 통과. 전체 3,564 Pass(2회 중 1회 기존 동시성 테스트 Stage4FullRolloutConcurrencyTests 간헐 실패 — 단독 재실행 통과 · 본 변경 무관) · 오중 빌드 0W/0E.
+- 한계: H0STASP0 필드 순서 실서버 미대조 · 시각은 수신 시각 기준(거래소 시각 초 단위라 미사용) · 교차 모드는 KIS 실시간 결선(Kis.RealtimeEnabled + HTS ID) + 호가 종목 설정 시에만.
+
+## 38. v12.16.0-DEV 재검증 · 선별 커밋 · 태그 (2026-10-08)
+
+### 38.1 재검증
+- infra-scan(Phase 83 결합도) coupling 0 ≤ baseline 117 · Phase114 PureShell total=82 · coupled=40 · shell=42 · ratchet=40(상한 ≤ 40 유지).
+- 오중 빌드 Release -warnaserror 0W/0E · 전체 3,565 Pass(최종 3회 중 2회 전원 통과 · 1회 기존 MmfIpcFabricTests 실스레드 백프레셔 간헐 — 단독 5/5 · v12.14.1 이후 무변경) · Stage4FullRolloutConcurrencyTests 단독 ×5.
+- Soak 측정 보강: GC 횟수는 프로세스 전역 — 앞선 테스트 잔여 가비지가 측정 창에서 수집돼 1/1/0 오탐 → 측정 직전 GC 정리 + 기준선 재설정(LongSoakProfileHarness.ResetBaseline) · 구동 스레드 0B 단언 유지.
+- ★[실결함] StepUpTierGovernor 단계/한도 경합 — 단계 CAS 뒤 한도(_capRaw)를 따로 기록: 선점된 승격 스레드가 늦게 깨어 이전 단계 한도로 덮음(지난 회차 실측 'Full 인데 5억 = 2단계 5%') · Rollback(안전지대/완전 Disarm)과 겹치면 '단계 0/−1 인데 높은 한도'(fail-open) 가능 → 한도를 단계의 순수 함수로(별도 필드 제거 · Disarm = 0). 회귀 스트레스 테스트 Cap_AlwaysMatchesTier_UnderStepUpRollbackDisarmRace 추가(경합 창이 나노초라 수정 전 코드로 결정론 재현은 불가 — 3회 통과 · 정직 기록).
+
+### 38.2 커밋
+- 선별 스테이징: §34~§38 변경만 · 제외 = StockManager/Blazor/Pages/BrokerSettingsPage.razor · StockManager/Blazor/Pages/InstallerBuildPanel.razor · .claude/*(타 세션).
+- 커밋 "v12.16.0-DEV — KIS L2 Depth Parser, Cross-Broker Signal Validation & Interlock Bit 27 Complete" + 주석 태그 v12.16.0-DEV(로컬 · push 안 함).

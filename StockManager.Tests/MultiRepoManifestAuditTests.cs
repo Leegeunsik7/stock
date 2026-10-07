@@ -101,7 +101,7 @@ namespace StockManager.Tests
             Assert.NotNull(parsed);
             Assert.Equal(Enum.GetNames<ArmingInterlockSource>(), parsed!);         // 값 오름차순 = Enum.GetNames
             Assert.Equal("OpenOrderDivergence", parsed[22]);
-            Assert.Equal(28, parsed.Count);                                         // 비트 0~26(27개) + StartupSanity(63)
+            Assert.Equal(29, parsed.Count);                                         // 비트 0~27(28개) + StartupSanity(63)
             Assert.Null(GitRepoProbe.ParseInterlockEnum("class X {}"));
             Assert.Null(GitRepoProbe.ParseInterlockEnum("enum ArmingInterlockSource { A = 0, B = 0, }"));     // 값 중복
             Assert.Null(GitRepoProbe.ParseInterlockEnum("enum ArmingInterlockSource { A, B }"));               // 명시 값 없음

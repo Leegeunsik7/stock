@@ -395,6 +395,7 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.KisLimitFeed,     // [KIS 실배선] REST 잔고/주문가능 연속 3회 실패 → KIS 한도 0 + Disarm(미설정 = 비차단)
                 MS2E.Core.ArmingInterlockSource.KiwoomBridgeLink, // [키움 실배선] 연결 활성화인데 실 COM 프록시 링크 미수립/단절/시뮬레이션 → Disarm
                 MS2E.Core.ArmingInterlockSource.KisProtocolDivergence, // [KIS VTS] 실/모의 TR 도메인 교차 · REST 응답 TR 헤더 이탈 → KIS 슬롯 격리 + Disarm
+                MS2E.Core.ArmingInterlockSource.StrategyAnomaly, // [AI 전략 · 방향 B] 시그널 NaN/∞ · 범위 이탈 · 수량 0 이하 제안 · 전략 연산 > 10ms → Disarm
                 MS2E.Core.ArmingInterlockSource.HealthAgent);    // [헬스] Working Set 폭주 · 스레드풀 정체 · GC 정지 폭주 → Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
@@ -1596,6 +1597,9 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPaperDashboardPort>(dashHub);
             dashHub.Start(cfg.GetInt("Dashboard.PeriodMs", 50, 20, 1000));
             FormClosed += (_, _) => ShutdownTrace.Step("dashHub", () => dashHub.Dispose());
+            // [교차 피드] KIS 10호가(H0STASP0) 구독 종목 — `Kis.BookSymbols`(쉼표 · 비어 있음 = 교차 확인 꺼짐). 정량 엔진은 뒤에서 생성되므로 지연 참조.
+            string[] kisBookSymbols = kisRealtimeOn ? cfg.GetString("Kis.BookSymbols", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : Array.Empty<string>();
+            StockManager.Engines.QuantSignalProvider? quantRef = null;
             StockManager.Adapters.KisRealtimeSession? kisRealtime = null;
             System.Threading.CancellationTokenSource? kisRealtimeCts = null;
             StockManager.Adapters.KisSessionInterlock? kisSession = null;
@@ -1618,9 +1622,11 @@ namespace StockManager.Blazor
                 var kisWsAdapter = new StockManager.Adapters.KisOpenApiAdapter(kisSession,
                     send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
                     onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); kisBalance.OnKisFill(f); dashHub.OnFill(f, 1); },   // [방향 B] 포지션 원장
-                    validator: kisProtocol, accountCano: kisLive!.AccountCano);                              // [KIS VTS] 도메인 · 계좌 핀
+                    validator: kisProtocol, accountCano: kisLive!.AccountCano,                               // [KIS VTS] 도메인 · 계좌 핀
+                    onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis));   // [교차 피드]
                 kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
-                    kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"));
+                    kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"),
+                    bookSymbols: kisBookSymbols);
                 Volatile.Write(ref rtRef, kisRealtime);
                 kisRealtimeCts = new System.Threading.CancellationTokenSource();
                 _ = Task.Run(() => kisRealtime.RunAsync(kisRealtimeCts.Token));
@@ -1634,6 +1640,22 @@ namespace StockManager.Blazor
             // ★분할은 명시 설정으로만(기본 꺼짐 — 활성 시 모든 실전 주문이 1~3호가 × 브로커 한도로 나뉜다). 분할 가능 브로커 0 = 전방 거부 + 비트 23.
             bool splitEnabled = cfg.GetBool("Routing.SplitEnabled", false);
             if (splitEnabled) routerGate.EnableSplit(limitFeed, childMatrix.TripExternal);
+            // [AI 전략 · 추천 A] 정량 시그널 엔진 — 키움 10호가 · 체결 → 불균형 · 마이크로 추세 · VWAP 이격 · 변동성 → /aidash 판단 근거(상태 변화 시) ·
+            //   [방향 B] 산출 이상/연산 > 10ms = 비트 27 Disarm(필수 · 항상 결속). 시그널 게이트(확신 ≥ 0.85 · 같은 방향 · 신선)는 명시 설정으로만
+            //   라우터 전방에 결속(기본 꺼짐 — 활성 시 신호 없는 종목 주문은 전부 전방 거부).
+            var strategyAnomaly = new StockManager.Engines.StrategyAnomalyInterlock();
+            strategyAnomaly.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.StrategyAnomaly);
+            services.AddSingleton(strategyAnomaly);
+            //   [교차 피드] KIS 호가 구독이 있으면 교차 확인 모드 — 두 피드 일치 · 꼬임 Disarm · 단일 출처 ½ 감쇄(`Strategy.CrossMaxSkewMs` 기본 500).
+            var quantSignals = new StockManager.Engines.QuantSignalProvider(strategyAnomaly, dashHub,
+                confidenceThreshold: cfg.GetInt("Strategy.ConfidenceThresholdBp", 8_500, 5_000, 10_000) / 10_000.0,
+                crossConfirm: kisBookSymbols.Length > 0,
+                crossMaxSkewMicros: cfg.GetInt("Strategy.CrossMaxSkewMs", 500, 50, 10_000) * 1000L);
+            Volatile.Write(ref quantRef, quantSignals);
+            bridge.OrderBookReceived += b => quantSignals.OnBook(in b);
+            bridge.TickReceived += t => quantSignals.OnTrade(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);
+            services.AddSingleton(quantSignals);
+            if (cfg.GetBool("Strategy.SignalGateEnabled", false)) routerGate.EnableSignalGate(quantSignals);
             var childEvalTimer = new System.Threading.Timer(_ =>
             {
                 try { childMatrix.Evaluate(); } catch { }

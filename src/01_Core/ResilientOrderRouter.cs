@@ -196,6 +196,7 @@ namespace MS2E.Core
         ExposureLimit = 18,          // [포트폴리오] 단일 종목 익스포저 상한(총자산 대비) 초과
         SectorConcentration = 19,    // [포트폴리오] 섹터 편중 상한 초과
         ExposureUnknown = 20,        // [포트폴리오] 총자산/보유 평가 미상(예수금 미수신 · 마크가 미상) — fail-closed
+        SignalRejected = 21,         // [AI 전략] 시그널 게이트 거부(신호 없음 · 만료 · 확신 &lt; 임계 · 방향 불일치 · 전략 이상) — 전방 거부
     }
 
     public readonly record struct OrderRouteResult(OrderRouteVerdict Verdict, int Broker, long Handle)
