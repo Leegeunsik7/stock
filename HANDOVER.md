@@ -1291,3 +1291,9 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - ZipSealDryRunVerifier: 모든 파일 항목(manifest.sig 포함)을 '\\'→'/' 정규화 + 대소문자 무시 집합으로 대조 · 두 번째 = DuplicateEntry. ShippedBinaryLiveArmedGuard: 호스트 항목 대조를 대소문자 무시로(대소문자 변형 사본 = 중복 거부).
 - 버전 핀 갱신: GoldenMasterFreezeTests · GoldenMasterReleasePackagingTests(12.17.0 · 스크립트 머리말 v12.17.0-GM) · release-package.ps1 머리말(BOM 유지).
 - GoldenMasterReleasePackagingTests §6: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 runtimeconfig) = 수검 Ok + IL 판독 Ok · manifest.sig 2개 / 봉인 비바이너리 대소문자 변형 / 구분자 변형 바이너리 / 대소문자 변형 바이너리 = 전부 DuplicateEntry · IL 판독기 모호 항목 = 거부. 방어 끔 3종 3/3 Red.
+
+### 44.3 검증 · 출하 기록
+- 게이트: 오중 빌드 0W/0E · 전체 3,607 Pass ×2(1회차 Pipeline_FullChain_500k δ=0 단일 창 플래키 1건 → 10만×5창 최솟값으로 교정 · 판정 약화 없음) · infra 0 · Phase114 40/40.
+- 태그 v12.17.0-GM → 57a5954(신규 · 미푸시) · 형제 작업 트리 D:/PROGRAM/SM_GM_wt 에서 release-package.ps1 -NoPeer [0/10]~[10/10] 1회 통과(스크립트 내부 스위트 3,607 Pass) · 작업 트리 제거.
+- release-v12.17.0-GM.zip 3,020,925B · SHA-256 C7BA6657829F923A3D4CA3723AB2A423ADC31711140B2A6843D36B39B5BC5101 · masterSeal 4636F2B239D2CD178CA176B1556E9FE378E2BEE9C2C949FABAA83FE2435D28B0 · 아티팩트 38 · 인터락 29 · liveArmed false · 피어 기록 없음(-NoPeer).
+- [9/10] --verify-zip Ok · --verify-live-armed Ok(지점 16 · 위반 0) · [10/10] sync/handshake Ok. primary release/ 로 5종 복사 · v12.16.1-GM 산출물은 release/superseded-v12.16.1-GM/ · 출하 체인 테스트 28/28(무추출 재수검 41ms).
