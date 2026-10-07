@@ -53,7 +53,10 @@ namespace MS2E.Infrastructure
         KillSwitchTrip = 53, DeadmanRevert = 54, RedTeamDrill = 55,       // v5.0.0 Red Team·데드맨
         ComaDiagnosed = 60, ChannelFailover = 61, ThreadStarvation = 62, // v5.1.0 자율 라이브 감시망
         OrphanReaped = 63, OrphanFreeze = 64,                            // v5.1.0 적응형 고아주문 사냥꾼
-        InterlockRaised = 70, InterlockCleared = 71, EgressBypassBlocked = 72, // [E2E 스트레스] 집계어 비트 전이 · 무장 우회 송출 차단
+        // ★[카오스 스톰 · 실결함 교정] 구 값 70/71/72 는 v5.2.0 LiquiditySlice/OrderThrottled/ToxicFlowHold 와 '같은 코드'였다 — 블랙박스 덤프에서
+        //   인터락 전이와 유동성 슬라이스가 구분 불가(포렌식 판독 오류). 미사용 코드로 재배정(열거형 값 유일성은 테스트가 강제).
+        InterlockRaised = 93, InterlockCleared = 94, EgressBypassBlocked = 95, // [E2E 스트레스] 집계어 비트 전이 · 무장 우회 송출 차단
+        ChaosInjected = 96, StormFreeze = 97,                            // [카오스 스톰] 장애 주입 사건 · 연쇄 격발 증거 동결
         OpenOrderReconciled = 73, OpenOrderDivergence = 74, GhostOrderCancel = 75, // [미체결 대사] 대사 패스 판정 · 원장 불일치 건 · 유령 주문 비상 취소
         LiquiditySlice = 70, OrderThrottled = 71, ToxicFlowHold = 72,    // v5.2.0 미시 유동성 슬라이서·스로틀·독성 방어
         StrategyHotSwap = 80, ZombieAssembly = 81, OrphanEventRejected = 82, // v5.3.0 무정지 전략 핫패치·좀비 방어

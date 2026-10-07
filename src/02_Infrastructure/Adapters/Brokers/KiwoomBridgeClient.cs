@@ -74,6 +74,13 @@ namespace MS2E.Infrastructure
         public event Action<PositionPayload>? PositionReceived;              // [계좌] OPW00018 보유 1행
         public event Action<OpenOrderPayload>? OpenOrderReceived;            // [미체결 대사] OPT10075 미체결 1행
         public event Action<OrderMappedPayload>? OrderMappedReceived;        // [미체결 대사] 클라이언트 ID ↔ 키움 주문번호
+        public event Action<ProxyHelloPayload>? ProxyHelloReceived;          // [키움 실배선] 프록시 신원 선언
+
+        // [키움 실배선] 프록시 API 종류(−1 = 미선언). 시뮬레이션(NullKiwoomApi)은 주문을 조용히 무시하므로 실 송출 대상 아님.
+        private int _proxyApiKind = -1;
+        public int ProxyApiKind => Volatile.Read(ref _proxyApiKind);
+        /// <summary>실 COM 프록시와 살아 있는 연결(신원 검증 통과 · Hello=ProductionCom · 하트비트 생존).</summary>
+        public bool IsProductionProxy => _alive && Volatile.Read(ref _proxyApiKind) == MS2E.Infrastructure.ProxyApiKind.ProductionCom;
         public event Action<ErrorPayload>?   ErrorReceived;
         /// <summary>하트비트 타임아웃 또는 파이프 단절 시 발행.</summary>
         public event Action?                 ProxyLost;
@@ -324,6 +331,13 @@ namespace MS2E.Infrastructure
                 case BridgeMessageType.OrderMapped:
                     OrderMappedReceived?.Invoke(BridgeSerializer.Unpack<OrderMappedPayload>(env.Payload));
                     break;
+                case BridgeMessageType.ProxyHello:
+                {
+                    var hello = BridgeSerializer.Unpack<ProxyHelloPayload>(env.Payload);
+                    Volatile.Write(ref _proxyApiKind, hello.ApiKind);
+                    ProxyHelloReceived?.Invoke(hello);
+                    break;
+                }
                 case BridgeMessageType.ErrorReport:
                     ErrorReceived?.Invoke(BridgeSerializer.Unpack<ErrorPayload>(env.Payload));
                     break;
@@ -395,6 +409,13 @@ namespace MS2E.Infrastructure
                         if (oo.RowCount < 0 || oo.RowCount > 10_000) return false;
                         if (oo.RowCount == 0) return oo.RowIndex == 0;
                         return oo.RowIndex >= 0 && oo.RowIndex < oo.RowCount && BrokerOpenOrderRow.TryFromKiwoom(in oo, out _);
+
+                    case BridgeMessageType.ProxyHello:
+                        // [키움 실배선] 알려진 API 종류 · 프로토콜 버전 일치만(미지 = 폐기 → 미선언 유지 = 실 송출 불인정)
+                        if (payload.Length < Unsafe.SizeOf<ProxyHelloPayload>()) return false;
+                        var ph = BridgeSerializer.Unpack<ProxyHelloPayload>(payload);
+                        return ph.ProtocolVersion == MS2E.Infrastructure.ProxyApiKind.ProtocolVersion
+                            && (ph.ApiKind == MS2E.Infrastructure.ProxyApiKind.Simulation || ph.ApiKind == MS2E.Infrastructure.ProxyApiKind.ProductionCom);
 
                     case BridgeMessageType.OrderMapped:
                         if (payload.Length < Unsafe.SizeOf<OrderMappedPayload>()) return false;

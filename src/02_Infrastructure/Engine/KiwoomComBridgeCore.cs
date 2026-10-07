@@ -55,6 +55,19 @@ namespace MS2E.Infrastructure
     public static class KiwoomServerErrorCodes
     {
         public const int Margin = 7101, Password = 7102, AccountSuspended = 7103, StaPumpStall = 7199;
+        // [키움 실배선 · 방향 B] OnEventConnect 오류(로그인 · 서버 접속) · COM 생성 실패 — 수정 전: 로그인 실패는 프록시 내부 _ready=false 로만 남고
+        //   호스트에 통지되지 않았다(무장 경로가 '연결됐지만 주문 불가' 상태를 몰랐다).
+        public const int LoginFailed = 7110, ServerConnectFailed = 7111, VersionFailed = 7112, CommDisconnected = 7113, ComCreateFailed = 7120;
+        /// <summary>OnEventConnect nErrCode → 서버 오류 코드(0 = 성공 · 공개 문서 기준 −100 사용자정보교환 · −101 서버접속 · −102 버전처리 · −106 통신연결종료).</summary>
+        public static int ForConnect(int errCode) => errCode switch
+        {
+            0 => 0,
+            -100 => LoginFailed,
+            -101 => ServerConnectFailed,
+            -102 => VersionFailed,
+            -106 => CommDisconnected,
+            _ => LoginFailed,                                                     // 미분류 = 로그인 실패(fail-closed)
+        };
         public static int For(KiwoomCriticalKind k) => k switch
         {
             KiwoomCriticalKind.Margin => Margin,
@@ -62,7 +75,8 @@ namespace MS2E.Infrastructure
             KiwoomCriticalKind.AccountSuspended => AccountSuspended,
             _ => 0,
         };
-        public static bool IsCritical(int code) => code is Margin or Password or AccountSuspended or StaPumpStall;
+        public static bool IsCritical(int code) => code is Margin or Password or AccountSuspended or StaPumpStall
+                                                         or LoginFailed or ServerConnectFailed or VersionFailed or CommDisconnected or ComCreateFailed;
     }
 
     public static class KiwoomServerMessage
@@ -508,6 +522,19 @@ namespace MS2E.Infrastructure
         // ── ⑥ 계좌 조회(OPW00018 보유 · OPW00001 예수금) ─────────────────────
 
         public const string RqAccountBalance = "ACCBAL", RqAccountCash = "ACCCASH", RqOpenOrders = "OPENORD";
+
+        private long _connectFailures;
+        public long ConnectFailures => Interlocked.Read(ref _connectFailures);
+
+        /// <summary>[키움 실배선 · 방향 B] OnEventConnect(nErrCode) — 0 = 로그인 성공 · 그 외 = 중대 서버 오류 통지(호스트 KiwoomServerError 비트 Disarm).</summary>
+        public bool OnEventConnect(int errCode)
+        {
+            int code = KiwoomServerErrorCodes.ForConnect(errCode);
+            if (code == 0) return true;
+            Interlocked.Increment(ref _connectFailures);
+            try { _onServerError?.Invoke(code); } catch { }
+            return false;
+        }
 
         public long OpenOrderBatches => Interlocked.Read(ref _openOrderBatch);
         public long GhostCancels => Interlocked.Read(ref _ghostCancels);

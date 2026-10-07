@@ -76,6 +76,9 @@ namespace StockManager.KiwoomProxy
         public event EventHandler<ServerErrorEventArgs>? ServerErrorReceived;
         public event EventHandler<AccountCashEventArgs>? AccountCashReceived;
         public event EventHandler<PositionEventArgs>? PositionReceived;
+        public int ApiKind => ProxyApiKind.ProductionCom;
+        public event EventHandler<OpenOrderEventArgs>? OpenOrderReceived;
+        public event EventHandler<OrderMappedEventArgs>? OrderMapped;
 
         /// <summary>[방향 A] STA 펌프 정상(최초 Beat 전 = 정상 간주 · 동결 sticky).</summary>
         public bool PumpHealthy => !_pump.IsStalled();
@@ -105,11 +108,22 @@ namespace StockManager.KiwoomProxy
             var started = new ManualResetEventSlim(false);
             _staThread = new Thread(() =>
             {
-                _host = new Form { WindowState = FormWindowState.Minimized, ShowInTaskbar = false };
-                _ax   = new AxKHOpenAPI();
-                ((System.ComponentModel.ISupportInitialize)_ax).BeginInit();
-                _host.Controls.Add(_ax);
-                ((System.ComponentModel.ISupportInitialize)_ax).EndInit();
+                try
+                {
+                    _host = new Form { WindowState = FormWindowState.Minimized, ShowInTaskbar = false };
+                    _ax   = new AxKHOpenAPI();
+                    ((System.ComponentModel.ISupportInitialize)_ax).BeginInit();
+                    _host.Controls.Add(_ax);
+                    ((System.ComponentModel.ISupportInitialize)_ax).EndInit();
+                }
+                catch (Exception)
+                {
+                    // [키움 실배선 · 방향 B] OCX 미등록/32비트 불일치/ActiveX 호스팅 실패 — 수정 전: STA 스레드 미처리 예외 = 프록시 즉사(원인 불명 하트비트 단절).
+                    //   이제 중대 서버 오류(ComCreateFailed)로 호스트에 통지(KiwoomServerError Disarm) 후 STA 종료 — 이후 주문은 코어 부재로 거부 통보.
+                    try { ServerErrorReceived?.Invoke(this, new ServerErrorEventArgs { Code = KiwoomServerErrorCodes.ComCreateFailed }); } catch { }
+                    started.Set();
+                    return;
+                }
 
                 _core = new KiwoomComEventCore(new AxOcx(_ax),
                     onTick: t => TickReceived?.Invoke(this, new TickEventArgs { SymbolCode = t.SymbolCode, Price = t.Price, Volume = t.Volume, ChangeRate = t.ChangeRate }),
@@ -123,9 +137,11 @@ namespace StockManager.KiwoomProxy
                     onBase: rp => ReferencePriceReceived?.Invoke(this, new ReferencePriceEventArgs { SymbolCode = rp.SymbolCode, BasePrice = rp.BasePrice }),
                     onServerError: code => ServerErrorReceived?.Invoke(this, new ServerErrorEventArgs { Code = code }),
                     onCash: c => AccountCashReceived?.Invoke(this, new AccountCashEventArgs { Cash = c }),
-                    onPosition: row => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row }));
+                    onPosition: row => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row }),
+                    onOpenOrder: row => OpenOrderReceived?.Invoke(this, new OpenOrderEventArgs { Row = row }),
+                    onMapped: m => OrderMapped?.Invoke(this, new OrderMappedEventArgs { Map = m }));
 
-                _ax.OnEventConnect      += (_, e) => _ready = e.nErrCode == 0;   // 0 = 로그인 성공
+                _ax.OnEventConnect      += (_, e) => _ready = _core.OnEventConnect(e.nErrCode);   // 0 = 로그인 성공 · [방향 B] 실패 = 서버 오류 통지(호스트 Disarm)
                 _ax.OnReceiveRealData   += (_, e) => _core.OnRealData(e.sRealType, e.sRealKey);
                 _ax.OnReceiveChejanData += (_, e) => _core.OnChejan(e.sGubun);
                 _ax.OnReceiveTrData     += (_, e) => _core.OnTrData(e.sRQName, e.sTrCode);
@@ -176,6 +192,13 @@ namespace StockManager.KiwoomProxy
         // [계좌] OPW00018(보유) · OPW00001(예수금) — 응답은 OnReceiveTrData → 코어 → AccountCash/Position 이벤트
         public void QueryAccount() => _core?.QueryAccount(_cfg.AccountNo, _cfg.OrderScreenNo);
 
+        // [미체결 대사] OPT10075 · 사상 재등록 · 키움 번호 직접 취소(유령 주문)
+        public void QueryOpenOrders() => _core?.QueryOpenOrders(_cfg.AccountNo, _cfg.OrderScreenNo);
+        public void AdoptMapping(long clientId, long venueOrderNo, long symbolCode, int side, long remaining)
+            => _core?.AdoptMapping(clientId, venueOrderNo, symbolCode, side, remaining);
+        public void CancelByVenueNo(long venueOrderNo, long symbolCode, int side, long qty)
+            => _core?.CancelByVenueNo(venueOrderNo, symbolCode, side, qty);
+
         // ── 드라이버 해제(Phase 95-A §1) — COM RCW 결정적 해제 ──────────────────────────────
         public void Dispose()
         {
@@ -197,3 +220,35 @@ namespace StockManager.KiwoomProxy
     }
 }
 #endif
+
+namespace StockManager.KiwoomProxy
+{
+    /// <summary>
+    /// [키움 실배선] 프록시 API 선택(진입점 Program 이 호출). KIWOOM_COM 빌드 = ProductionKiwoomApi(계좌·화면번호는 환경변수 주입 — 코드 박제 금지) ·
+    /// 비 COM 빌드 = NullKiwoomApi(ProxyHello 로 Simulation 선언 → 호스트 실 송출 불인정). requireProduction 인데 비 COM 빌드 = null(진입점 즉시 종료).
+    /// ★이 팩토리는 쉼(KiwoomComShim · KIWOOM_COM)이 COM 분기를 컴파일 수검한다 — 진입점에 #if 를 두면 어느 빌드도 그 분기를 검증하지 않는다.
+    /// </summary>
+    public static class KiwoomApiFactory
+    {
+        public const string EnvAccount = "MS2E_KIWOOM_ACCOUNT", EnvRealScreen = "MS2E_KIWOOM_REAL_SCREEN", EnvOrderScreen = "MS2E_KIWOOM_ORDER_SCREEN";
+
+        public static IKiwoomApi? Create(bool requireProduction, System.Func<string, string?> env, out string reason)
+        {
+#if KIWOOM_COM
+            _ = requireProduction;
+            reason = "ProductionCom(axKHOpenAPI)";
+            return new ProductionKiwoomApi(new KiwoomComConfig
+            {
+                AccountNo = env(EnvAccount) ?? "",
+                RealScreenNo = env(EnvRealScreen) ?? "5000",
+                OrderScreenNo = env(EnvOrderScreen) ?? "5001",
+            });
+#else
+            _ = env;
+            if (requireProduction) { reason = "실 COM 미포함 빌드(KIWOOM_COM 미정의) — 실 API 요구 거부"; return null; }
+            reason = "Simulation(NullKiwoomApi) — 호스트가 실 송출 대상으로 인정하지 않음";
+            return new NullKiwoomApi();
+#endif
+        }
+    }
+}

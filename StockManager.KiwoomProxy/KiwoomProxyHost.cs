@@ -31,12 +31,20 @@ namespace StockManager.KiwoomProxy
         private readonly byte[]              _sendBuf = new byte[BridgeSerializer.MaxFrameSize];
         private readonly object              _sendLock = new();
 
+        // [헬스 · 방향 B] 호스트 하트비트 송신 게이트(옵션). 주입 시 매수/매도/정정은 호스트 박동이 신선·정상일 때만 키움으로 송신 —
+        //   아니면 거부 프레임 반송(호스트 슬롯 즉시 반납). 취소는 노출 축소라 게이트 없이 통과.
+        private readonly HostHeartbeatEgressGate? _egressGate;
+        public long EgressRejected => Interlocked.Read(ref _egressRejected);
+        private long _egressRejected;
+
         public KiwoomProxyHost(
             IKiwoomApi api,
-            string     pipeName = BridgeSerializer.DefaultPipeName)
+            string     pipeName = BridgeSerializer.DefaultPipeName,
+            HostHeartbeatEgressGate? egressGate = null)
         {
             _api      = api ?? throw new ArgumentNullException(nameof(api));
             _pipeName = pipeName;
+            _egressGate = egressGate;
         }
 
         // ── 진입점: 연결 수락 후 루프 실행 ──────────────────────────────────
@@ -48,7 +56,7 @@ namespace StockManager.KiwoomProxy
                 PipeDirection.InOut,
                 maxNumberOfServerInstances: 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);   // [사전 검증] DACL = 현재 사용자 전용(타 계정 접속·선점 차단)
 
             await _pipe.WaitForConnectionAsync(ct);
 
@@ -60,6 +68,12 @@ namespace StockManager.KiwoomProxy
             _api.ServerErrorReceived    += OnServerError;      // [키움 COM] 중대 서버 오류 → ErrorReport
             _api.AccountCashReceived    += OnAccountCash;      // [계좌] OPW00001 → AccountCash 프레임
             _api.PositionReceived       += OnPosition;         // [계좌] OPW00018 행 → Position 프레임
+            _api.OpenOrderReceived      += OnOpenOrder;        // [미체결 대사] OPT10075 행 → OpenOrder 프레임
+            _api.OrderMapped            += OnOrderMapped;      // [미체결 대사] 사상 통지 → OrderMapped 프레임
+
+            // [키움 실배선] 신원 선언 — 호스트는 ProductionCom 이 아니면 실 송출을 거부한다(시뮬레이션 프록시가 주문을 조용히 삼키는 상태 차단)
+            var hello = new ProxyHelloPayload { ApiKind = _api.ApiKind, ProtocolVersion = ProxyApiKind.ProtocolVersion, ProcessId = Environment.ProcessId, TimestampTicks = DateTime.UtcNow.Ticks };
+            SendFrame(BridgeMessageType.ProxyHello, in hello);
 
             _api.Connect();
 
@@ -79,6 +93,8 @@ namespace StockManager.KiwoomProxy
                 _api.ServerErrorReceived    -= OnServerError;
                 _api.AccountCashReceived    -= OnAccountCash;
                 _api.PositionReceived       -= OnPosition;
+                _api.OpenOrderReceived      -= OnOpenOrder;
+                _api.OrderMapped            -= OnOrderMapped;
             }
         }
 
@@ -151,6 +167,18 @@ namespace StockManager.KiwoomProxy
             SendFrame(BridgeMessageType.Position, in p);
         }
 
+        private void OnOpenOrder(object? sender, OpenOrderEventArgs e)
+        {
+            var p = e.Row;
+            SendFrame(BridgeMessageType.OpenOrder, in p);
+        }
+
+        private void OnOrderMapped(object? sender, OrderMappedEventArgs e)
+        {
+            var p = e.Map;
+            SendFrame(BridgeMessageType.OrderMapped, in p);
+        }
+
         private void OnAccount(object? sender, AccountEventArgs e)
         {
             var p = new AccountPayload
@@ -216,8 +244,23 @@ namespace StockManager.KiwoomProxy
             }
         }
 
-        private void ExecuteOrder(OrderRequest req)
+        /// <summary>요청 1건 실행(테스트 직접 호출 가능).</summary>
+        public void ExecuteOrder(OrderRequest req)
         {
+            if (_egressGate is { } gate && req.Type is OrderRequestType.Buy or OrderRequestType.Sell or OrderRequestType.ModifyOrder && !gate.AllowOrder())
+            {
+                Interlocked.Increment(ref _egressRejected);
+                if (req.Type != OrderRequestType.ModifyOrder)
+                {
+                    var rej = new FillPayload
+                    {
+                        OrderId = req.OrderId, SymbolCode = req.SymbolCode, Side = req.Type == OrderRequestType.Buy ? 1 : -1, TimestampTicks = DateTime.UtcNow.Ticks,
+                        Status = BridgeFillStatusCodec.Encode(BridgeFillStatus.Rejected, true), RemainingQty = 0,
+                    };
+                    if (_pipe is { IsConnected: true }) SendFrame(BridgeMessageType.OrderRejected, in rej);
+                }
+                return;                                                               // ★키움 송신 0
+            }
             switch (req.Type)
             {
                 case OrderRequestType.Buy:
@@ -240,6 +283,15 @@ namespace StockManager.KiwoomProxy
                     break;
                 case OrderRequestType.QueryAccount:
                     _api.QueryAccount();
+                    break;
+                case OrderRequestType.QueryOpenOrders:   // [미체결 대사] 조회 — 송신 게이트 대상 아님(주문 아님)
+                    _api.QueryOpenOrders();
+                    break;
+                case OrderRequestType.AdoptMapping:      // [미체결 대사] 사상 재등록(키움 송신 없음)
+                    _api.AdoptMapping(req.OrderId, req.GenomeId, req.SymbolCode, req.Pad, req.Quantity);
+                    break;
+                case OrderRequestType.CancelByVenueNo:   // [미체결 대사 · 방향 B] 유령 주문 비상 취소 — 취소는 위험 축소이므로 송신 게이트 통과
+                    _api.CancelByVenueNo(req.GenomeId, req.SymbolCode, req.Pad, req.Quantity);
                     break;
             }
         }

@@ -1,0 +1,465 @@
+// ============================================================================
+// DashboardSnapshotHub — [대시보드 · 추천 A] AI 모의투자 실시간 대시보드 텔레메트리 허브(무할당 수집 + 50ms 3중 버퍼 스냅샷)
+//
+//  ★전제(정직): 렌더 병합기(선행/후행 에지 · 버전 변경 감지 · 부하 적응 창)는 이미 MS2E.UI.Portable.Infrastructure.SnapshotRenderGovernor
+//    로 존재한다(시세 하드닝 §2). 이 허브는 그 앞단 — '무엇을 그릴지'를 매매 경로에 간섭 없이 모으고 묶는 부분 — 을 채운다.
+//
+//  ① 생산자(임의 스레드 · δ=0 · wait-free): OnFill · OnTick · PublishDecision · OnTransition(인터락 비트 전이 · 포렌식 기록기 체인).
+//     전부 고정 링(TelemetryRing — 슬롯 claim = Interlocked.Increment 1회 + 시퀀스 게시)에 구조체로 적재하고 즉시 반환한다.
+//     락 · 대기 · UI 호출 · 예외 전파 0 — 생산자(브리지 수신 · WS 수신 · 인터락 Trip 스레드)는 대시보드 존재를 느끼지 못한다.
+//  ② 펌프(전용 타이머 스레드 · 50ms · 단일 진입): 링 커서부터 소비 → 모의 포지션 원장(가중평단 · 실현손익 · 승/패) → 시가평가 ·
+//     자산곡선(1초 표본 · 600점) · MDD → 인터락 마스크/요구/결속 · 자식 슬롯(매트릭스 seqlock 판독) · 브로커 한도 → 3중 버퍼 중
+//     '게시본도 리스도 아닌' 버퍼에 조립(재사용 · 할당 0) → 게시 → FrameReady(버전) 구독자 통지(구독자 예외 = 계수).
+//  ③ 소비자(UI): Acquire → 렌더 → Release. 리스 중 버퍼는 덮어쓰지 않는다(찢어진 프레임 0). 3버퍼가 모두 묶이면 그 회차 조립 생략(계수).
+//  ★Zero UI Interference: 생산자 → 링(wait-free) │ 링 → 펌프(별도 스레드) │ 펌프 → UI(InvokeAsync 는 UI 몫). 어느 화살표도 역방향
+//    대기가 없다 — UI 가 멈추거나 예외를 던져도 최악은 '펌프 1회차 지연'이며 OrderDrainWorker · 브로커 경로와 공유 상태 0.
+//    링이 렌더보다 빨리 차면 오래된 표시 항목을 덮어쓴다(FillsLost 등 계수) — 표시 전용 유실이며 매매 데이터와 무관.
+//  손익은 체결 피드 기준 모의 원장(수수료 · 세금 · 슬리피지 미반영) — 실계좌 평가가 아니다(UI 에 명시).
+// ============================================================================
+using System;
+using System.Diagnostics;
+using System.Threading;
+using MS2E.Core;
+using MS2E.Infrastructure;
+using MS2E.UI.Portable.Ports.Trading;
+using StockManager.Adapters;
+using StockManager.Engines;
+
+namespace StockManager.Blazor.Services
+{
+    /// <summary>
+    /// 다중 생산자 · 단일 소비자 고정 링(δ=0). Publish = wait-free(슬롯 claim 1회 + 시퀀스 게시). 소비자는 위치 p 의 시퀀스가 p+1 일 때만 채택,
+    /// 더 크면 덮어써짐(유실 계수). ★표시 전용: 용량만큼 앞선 작성자가 같은 슬롯을 동시에 쓰는 극단(작성 중 선점 + 링 1바퀴)에선 그 항목이
+    /// 유실/찢김으로 보일 수 있다 — 매매 경로 자료구조로 쓰지 않는다.
+    /// </summary>
+    public sealed class TelemetryRing<T> where T : unmanaged
+    {
+        private readonly T[] _items;
+        private readonly long[] _seq;
+        private readonly int _mask;
+        private long _head;
+
+        public TelemetryRing(int capacityPow2)
+        {
+            if (capacityPow2 < 2 || (capacityPow2 & (capacityPow2 - 1)) != 0) throw new ArgumentOutOfRangeException(nameof(capacityPow2));
+            _items = new T[capacityPow2]; _seq = new long[capacityPow2]; _mask = capacityPow2 - 1;
+        }
+
+        public int Capacity => _items.Length;
+        public long Head => Volatile.Read(ref _head);
+
+        public void Publish(in T item)
+        {
+            long i = Interlocked.Increment(ref _head) - 1;
+            int idx = (int)(i & _mask);
+            Volatile.Write(ref _seq[idx], 0);                                       // 작성 중
+            _items[idx] = item;
+            Volatile.Write(ref _seq[idx], i + 1);                                   // 게시
+        }
+
+        /// <summary>위치 p 판독: 1 = 채택 · 0 = 아직 미게시(다음 회차) · −1 = 덮어써짐(유실).</summary>
+        public int TryRead(long p, out T item)
+        {
+            int idx = (int)(p & _mask);
+            long s1 = Volatile.Read(ref _seq[idx]);
+            item = default;
+            if (s1 > p + 1) return -1;
+            if (s1 != p + 1) return 0;
+            item = _items[idx];
+            Interlocked.MemoryBarrier();
+            return Volatile.Read(ref _seq[idx]) == p + 1 ? 1 : -1;
+        }
+    }
+
+    public sealed class DashboardSnapshotHub : IPaperDashboardPort, IInterlockTransitionSink, IDisposable
+    {
+        public const int DefaultPeriodMs = 50;
+        public const int Brokers = PaperDashboardFrame.MaxBrokers;
+
+        private readonly ArmingInterlockBitmask? _mask;
+        private readonly ChildSlotTrackingMatrix? _matrix;
+        private readonly IBrokerAccountView?[] _views;
+        private readonly Func<long> _nowTicks;
+        private readonly int _equityEvery;
+
+        // ── 생산자 링 ──
+        private readonly TelemetryRing<DashFill> _fills = new(1024);
+        private readonly TelemetryRing<DashDecision> _decisions = new(512);
+        private readonly TelemetryRing<DashInterlockEvent> _events = new(256);
+
+        // ── 시가(틱) 표: 개방 주소 · CAS 키 claim · 가격 Volatile ──
+        private const int PriceSlots = 512;
+        private readonly long[] _pxKey = new long[PriceSlots], _pxVal = new long[PriceSlots];
+        private long _ticksSeen, _priceTableFull;
+
+        // ── 펌프 측 상태(단일 스레드) ──
+        private long _fillCursor, _decisionCursor, _eventCursor, _fillsLost, _decisionsLost, _eventsLost, _fillsSeen;
+        private const int MaxPositions = 256;
+        private readonly long[] _posSym = new long[MaxPositions], _posQty = new long[MaxPositions], _posAvg = new long[MaxPositions];
+        private int _posCount;
+        private long _realized, _peak, _mdd;
+        private int _wins, _losses;
+        private readonly DashFill[] _recentFills = new DashFill[PaperDashboardFrame.MaxFills];
+        private readonly DashDecision[] _recentDecisions = new DashDecision[PaperDashboardFrame.MaxDecisions];
+        private readonly DashInterlockEvent[] _recentEvents = new DashInterlockEvent[PaperDashboardFrame.MaxEvents];
+        private readonly DashEquityPoint[] _equity = new DashEquityPoint[PaperDashboardFrame.MaxEquity];
+        private long _recentFillN, _recentDecisionN, _recentEventN, _equityN, _pumps;
+        private readonly StockManager.Engines.ChildSlot[] _childBuf = new StockManager.Engines.ChildSlot[PaperDashboardFrame.MaxChildren];
+        private readonly long[] _childParent = new long[PaperDashboardFrame.MaxChildren];
+        private long _lastSignature = long.MinValue;
+        private bool _pendingDirty;
+
+        // ── 3중 버퍼 ──
+        private readonly PaperDashboardFrame[] _frames = new PaperDashboardFrame[3];
+        private readonly int[] _leases = new int[3];
+        private PaperDashboardFrame? _front;
+        private long _version;
+
+        // ── 구독자(고정 배열 · 호출 δ=0) ──
+        private readonly object _subGate = new();
+        private Action<long>?[] _subs = new Action<long>?[8];
+        private int _pumping, _running;
+        private long _pumpFaults, _subscriberFaults, _buildSkipped, _published;
+        private System.Threading.Timer? _timer;
+
+        /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
+        /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
+        /// <param name="views">브로커별 계좌 뷰(인덱스 = 브로커 · null 슬롯 = 미결선).</param>
+        /// <param name="equitySampleEveryPumps">자산곡선 표본 간격(펌프 회수 · 기본 20 = 1초).</param>
+        public DashboardSnapshotHub(ArmingInterlockBitmask? mask = null, ChildSlotTrackingMatrix? matrix = null, IBrokerAccountView?[]? views = null,
+                                    Func<long>? nowTicks = null, int equitySampleEveryPumps = 20)
+        {
+            _mask = mask; _matrix = matrix; _views = views ?? Array.Empty<IBrokerAccountView?>();
+            _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
+            _equityEvery = Math.Max(1, equitySampleEveryPumps);
+            var names = new string[PaperDashboardFrame.MaxBits];                   // 비트 이름(콜드 1회 · 프레임 공유 · 불변)
+            foreach (ArmingInterlockSource s in Enum.GetValues<ArmingInterlockSource>())
+                if ((int)s < names.Length) names[(int)s] = s.ToString();
+            for (int k = 0; k < 3; k++) _frames[k] = new PaperDashboardFrame { BufferSlot = k, BitNames = names };
+        }
+
+        // ════════════ ① 생산자(δ=0 · wait-free) ════════════
+
+        /// <summary>체결 1건(체결량 > 0 만 · 접수/취소/거부 통보 무시). broker 0 키움 · 1 KIS · 2 모의.</summary>
+        public void OnFill(in FillPayload f, int broker)
+        {
+            if (f.FillQty <= 0 || f.Side is not (1 or -1) || !double.IsFinite(f.FillPrice) || f.FillPrice <= 0) return;
+            _fills.Publish(new DashFill { Ticks = _nowTicks(), Symbol = f.SymbolCode, Qty = f.FillQty, PriceWon = (long)Math.Round(f.FillPrice), Side = f.Side, Broker = broker });
+        }
+
+        /// <summary>시세 1틱(시가평가용 최신가). 표가 차면 신규 종목은 미반영(계수 · 생산자 무대기).</summary>
+        public void OnTick(long symbol, long priceWon)
+        {
+            Interlocked.Increment(ref _ticksSeen);
+            if (symbol <= 0 || priceWon <= 0) return;
+            int start = (int)((ulong)(symbol * unchecked((long)0x9E3779B97F4A7C15)) >> 55);   // 상위 9비트 = 0..511
+            for (int probe = 0; probe < PriceSlots; probe++)
+            {
+                int i = (start + probe) & (PriceSlots - 1);
+                long k = Volatile.Read(ref _pxKey[i]);
+                if (k == symbol) { Volatile.Write(ref _pxVal[i], priceWon); return; }
+                if (k == 0)
+                {
+                    long prev = Interlocked.CompareExchange(ref _pxKey[i], symbol, 0);
+                    if (prev == 0 || prev == symbol) { Volatile.Write(ref _pxVal[i], priceWon); return; }
+                }
+            }
+            Interlocked.Increment(ref _priceTableFull);
+        }
+
+        /// <summary>[방향 B] AI 판단 근거 1건(코드 · 수치만 — 문자열 0). kind = DashDecisionKind · reason = 전략 정의 코드(또는 인터락 비트).</summary>
+        public void PublishDecision(int kind, long symbol, long scaleBp, long volatilityBp, long value, int reason)
+            => _decisions.Publish(new DashDecision { Ticks = _nowTicks(), Kind = kind, Symbol = symbol, ScaleBp = scaleBp, VolatilityBp = volatilityBp, Value = value, Reason = reason });
+
+        /// <summary>인터락 비트 전이(포렌식 기록기 체인 · Trip 스레드 · δ=0). 차단은 이미 반영된 뒤다(관측이 차단을 늦추지 못함).</summary>
+        public void OnTransition(long raisedBits, long clearedBits, long maskAfter)
+            => _events.Publish(new DashInterlockEvent { Ticks = _nowTicks(), Raised = raisedBits, Cleared = clearedBits, MaskAfter = maskAfter });
+
+        // ════════════ ② 펌프(전용 스레드 · 단일 진입) ════════════
+
+        public bool Running => Volatile.Read(ref _running) == 1;
+        public long Pumps => Interlocked.Read(ref _pumps);
+        public long PumpFaults => Interlocked.Read(ref _pumpFaults);
+        public long SubscriberFaults => Interlocked.Read(ref _subscriberFaults);
+        public long BuildSkipped => Interlocked.Read(ref _buildSkipped);
+        public long Published => Interlocked.Read(ref _published);
+        public long TicksSeen => Interlocked.Read(ref _ticksSeen);
+        public long PriceTableFull => Interlocked.Read(ref _priceTableFull);
+
+        public void Start(int periodMs = DefaultPeriodMs)
+        {
+            if (Interlocked.Exchange(ref _running, 1) == 1) return;
+            _timer = new System.Threading.Timer(static s => ((DashboardSnapshotHub)s!).Pump(), this, periodMs, periodMs);
+        }
+
+        /// <summary>1회차 조립 + 게시(타이머 · 테스트 직접 호출). 반환 = 새 프레임 게시 여부. 예외는 계수만(호출자 전파 0).</summary>
+        public bool Pump()
+        {
+            if (Interlocked.CompareExchange(ref _pumping, 1, 0) != 0) return false;
+            try { return PumpCore(); }
+            catch (Exception) { Interlocked.Increment(ref _pumpFaults); return false; }
+            finally { Volatile.Write(ref _pumping, 0); }
+        }
+
+        private bool PumpCore()
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            _pumps++;
+            bool dirty = false;
+            // 링 소비
+            dirty |= DrainFills();
+            dirty |= DrainDecisions();
+            dirty |= DrainEvents();
+            // 시가평가 · 자산 · MDD
+            long unreal = 0; int open = 0;
+            for (int i = 0; i < _posCount; i++)
+            {
+                if (_posQty[i] == 0) continue;
+                open++;
+                long px = PriceOf(_posSym[i]);
+                if (px > 0) unreal += _posQty[i] * (px - _posAvg[i]);
+            }
+            long equity = _realized + unreal;
+            if (equity > _peak) _peak = equity;
+            if (_peak - equity > _mdd) _mdd = _peak - equity;
+            if (_pumps % _equityEvery == 0) { _equity[_equityN++ % _equity.Length] = new DashEquityPoint { Ticks = _nowTicks(), EquityWon = equity }; dirty = true; }
+            // 자식 슬롯 · 한도 · 인터락 서명(변경 감지)
+            int childN = _matrix?.CopyChildren(_childBuf, _childParent) ?? 0;
+            long sig = childN;
+            for (int i = 0; i < childN; i++) sig = sig * 31 + _childBuf[i].FilledQty * 7 + (int)_childBuf[i].State + _childBuf[i].OrderQty;
+            long mask = _mask?.Mask ?? 0;
+            sig = sig * 31 + mask;
+            sig = sig * 31 + (_mask?.BoundMask ?? 0);
+            sig = sig * 31 + Interlocked.Read(ref _ticksSeen);
+            for (int b = 0; b < _views.Length && b < Brokers; b++)
+            {
+                var v = _views[b];
+                bool bound = false; long room = 0;
+                try { bound = v is not null && v.Bound; if (bound) v!.TryGetBuyHeadroomWon(out room); } catch (Exception) { bound = false; }
+                sig = sig * 31 + (bound ? room + 1 : 0);
+            }
+            // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
+            if (sig != _lastSignature || _pendingDirty) dirty = true;
+            if (!dirty && _front is not null) return false;
+
+            // 조립 버퍼 선택: 게시본 · 리스 중이 아닌 것
+            var front = Volatile.Read(ref _front);
+            PaperDashboardFrame? f = null;
+            for (int k = 0; k < 3; k++)
+                if (!ReferenceEquals(_frames[k], front) && Volatile.Read(ref _leases[k]) == 0) { f = _frames[k]; break; }
+            if (f is null) { Interlocked.Increment(ref _buildSkipped); _pendingDirty = true; return false; }
+
+            f.BuiltTicks = _nowTicks();
+            f.Mask = mask; f.RequiredMask = _mask?.RequiredMask ?? 0; f.BoundMask = _mask?.BoundMask ?? 0; f.Sealed = _mask?.IsSealed ?? false;
+            f.RealizedPnlWon = _realized; f.UnrealizedPnlWon = unreal; f.EquityWon = equity; f.PeakEquityWon = _peak; f.MaxDrawdownWon = _mdd;
+            f.Wins = _wins; f.Losses = _losses; f.OpenPositions = open;
+            f.TicksSeen = Interlocked.Read(ref _ticksSeen); f.FillsSeen = _fillsSeen; f.FillsLost = _fillsLost; f.DecisionsLost = _decisionsLost; f.EventsLost = _eventsLost;
+            f.FillCount = CopyRecent(_recentFills, _recentFillN, f.Fills);
+            f.DecisionCount = CopyRecent(_recentDecisions, _recentDecisionN, f.Decisions);
+            f.EventCount = CopyRecent(_recentEvents, _recentEventN, f.Events);
+            f.EquityCount = CopyChronological(_equity, _equityN, f.Equity);
+            f.ChildCount = childN;
+            for (int i = 0; i < childN; i++)
+            {
+                ref readonly var c = ref _childBuf[i];
+                f.Children[i] = new DashChild
+                {
+                    ParentId = _childParent[i], Index = ChildIdSpace.IndexOf(c.ChildId), Broker = c.Broker, State = (int)c.State,
+                    OrderQty = c.OrderQty, FilledQty = c.FilledQty, AvgPriceWon = c.FilledQty > 0 ? c.FillValueWon / c.FilledQty : 0,
+                };
+            }
+            int lc = 0;
+            for (int b = 0; b < _views.Length && b < Brokers; b++)
+            {
+                var v = _views[b];
+                bool bound = false; long room = 0;
+                try { bound = v is not null && v.Bound; if (bound) v!.TryGetBuyHeadroomWon(out room); } catch (Exception) { bound = false; }
+                f.Limits[lc++] = new DashBrokerLimit { Broker = b, Bound = bound, HeadroomWon = bound ? room : 0 };
+            }
+            f.LimitCount = lc;
+            f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
+            long ver = Interlocked.Increment(ref _version);
+            f.Version = ver;
+            Volatile.Write(ref _front, f);                                          // ★게시(원자 참조 교체)
+            _lastSignature = sig; _pendingDirty = false;
+            Interlocked.Increment(ref _published);
+            Notify(ver);
+            return true;
+        }
+
+        private bool DrainFills()
+        {
+            long head = _fills.Head;
+            bool any = false;
+            if (head - _fillCursor > _fills.Capacity) { _fillsLost += head - _fills.Capacity - _fillCursor; _fillCursor = head - _fills.Capacity; }
+            for (; _fillCursor < head; _fillCursor++)
+            {
+                int r = _fills.TryRead(_fillCursor, out var f);
+                if (r == 0) break;
+                if (r < 0) { _fillsLost++; continue; }
+                _fillsSeen++; any = true;
+                Apply(in f);
+                _recentFills[_recentFillN++ % _recentFills.Length] = f;
+            }
+            return any;
+        }
+
+        private bool DrainDecisions()
+        {
+            long head = _decisions.Head;
+            bool any = false;
+            if (head - _decisionCursor > _decisions.Capacity) { _decisionsLost += head - _decisions.Capacity - _decisionCursor; _decisionCursor = head - _decisions.Capacity; }
+            for (; _decisionCursor < head; _decisionCursor++)
+            {
+                int r = _decisions.TryRead(_decisionCursor, out var d);
+                if (r == 0) break;
+                if (r < 0) { _decisionsLost++; continue; }
+                any = true;
+                _recentDecisions[_recentDecisionN++ % _recentDecisions.Length] = d;
+            }
+            return any;
+        }
+
+        private bool DrainEvents()
+        {
+            long head = _events.Head;
+            bool any = false;
+            if (head - _eventCursor > _events.Capacity) { _eventsLost += head - _events.Capacity - _eventCursor; _eventCursor = head - _events.Capacity; }
+            for (; _eventCursor < head; _eventCursor++)
+            {
+                int r = _events.TryRead(_eventCursor, out var e);
+                if (r == 0) break;
+                if (r < 0) { _eventsLost++; continue; }
+                any = true;
+                _recentEvents[_recentEventN++ % _recentEvents.Length] = e;
+            }
+            return any;
+        }
+
+        // 모의 포지션 원장: 같은 방향 = 가중평단 · 반대 방향 = 청산분 실현손익(체결 1건 단위 승/패) · 초과분 = 반대 포지션 개시
+        private void Apply(in DashFill f)
+        {
+            int i = 0;
+            for (; i < _posCount; i++) if (_posSym[i] == f.Symbol) break;
+            if (i == _posCount)
+            {
+                if (_posCount == MaxPositions) return;                              // 원장 초과 = 손익 미반영(표시 전용)
+                _posSym[i] = f.Symbol; _posQty[i] = 0; _posAvg[i] = 0; _posCount++;
+            }
+            long q = _posQty[i], signed = f.Side * f.Qty;
+            if (q == 0 || Math.Sign(q) == f.Side)
+            {
+                long absQ = Math.Abs(q);
+                _posAvg[i] = (_posAvg[i] * absQ + f.PriceWon * f.Qty) / (absQ + f.Qty);
+                _posQty[i] = q + signed;
+                return;
+            }
+            long close = Math.Min(f.Qty, Math.Abs(q));
+            long pnl = close * (f.PriceWon - _posAvg[i]) * Math.Sign(q);
+            _realized += pnl;
+            if (pnl > 0) _wins++; else if (pnl < 0) _losses++;
+            long rest = q + signed;
+            _posQty[i] = rest;
+            if (rest == 0) _posAvg[i] = 0;
+            else if (Math.Sign(rest) != Math.Sign(q)) _posAvg[i] = f.PriceWon;     // 반대 포지션 개시분 = 이번 체결가
+        }
+
+        private long PriceOf(long symbol)
+        {
+            int start = (int)((ulong)(symbol * unchecked((long)0x9E3779B97F4A7C15)) >> 55);
+            for (int probe = 0; probe < PriceSlots; probe++)
+            {
+                int i = (start + probe) & (PriceSlots - 1);
+                long k = Volatile.Read(ref _pxKey[i]);
+                if (k == symbol) return Volatile.Read(ref _pxVal[i]);
+                if (k == 0) return 0;
+            }
+            return 0;
+        }
+
+        // 최신 → 과거 순(최근 항목이 위)
+        private static int CopyRecent<T>(T[] ring, long n, T[] dst)
+        {
+            int count = (int)Math.Min(n, Math.Min(ring.Length, dst.Length));
+            for (int k = 0; k < count; k++) dst[k] = ring[(int)((n - 1 - k) % ring.Length)];
+            return count;
+        }
+
+        // 과거 → 최신 순(곡선)
+        private static int CopyChronological<T>(T[] ring, long n, T[] dst)
+        {
+            int count = (int)Math.Min(n, Math.Min(ring.Length, dst.Length));
+            long start = n - count;
+            for (int k = 0; k < count; k++) dst[k] = ring[(int)((start + k) % ring.Length)];
+            return count;
+        }
+
+        // ════════════ ③ 소비자(UI) ════════════
+
+        public long Version => Interlocked.Read(ref _version);
+
+        public PaperDashboardFrame? Acquire()
+        {
+            for (int spin = 0; spin < 16; spin++)
+            {
+                var f = Volatile.Read(ref _front);
+                if (f is null) return null;
+                Interlocked.Increment(ref _leases[f.BufferSlot]);
+                if (ReferenceEquals(Volatile.Read(ref _front), f)) return f;        // 리스 후 재확인(그 사이 교체되면 반납 · 재시도)
+                Interlocked.Decrement(ref _leases[f.BufferSlot]);
+            }
+            return null;
+        }
+
+        public void Release(PaperDashboardFrame frame)
+        {
+            if (frame is null || (uint)frame.BufferSlot >= 3u || !ReferenceEquals(_frames[frame.BufferSlot], frame)) return;   // 남의 프레임 무시
+            if (Interlocked.Decrement(ref _leases[frame.BufferSlot]) < 0) Interlocked.Increment(ref _leases[frame.BufferSlot]);
+        }
+
+        public int LeaseCount(int slot) => (uint)slot < 3u ? Volatile.Read(ref _leases[slot]) : 0;
+
+        public event Action<long>? FrameReady
+        {
+            add
+            {
+                if (value is null) return;
+                lock (_subGate)
+                {
+                    var cur = _subs;
+                    for (int i = 0; i < cur.Length; i++) if (cur[i] is null) { var next = (Action<long>?[])cur.Clone(); next[i] = value; Volatile.Write(ref _subs, next); return; }
+                    var grown = new Action<long>?[cur.Length * 2];
+                    Array.Copy(cur, grown, cur.Length); grown[cur.Length] = value;
+                    Volatile.Write(ref _subs, grown);
+                }
+            }
+            remove
+            {
+                if (value is null) return;
+                lock (_subGate)
+                {
+                    var cur = _subs;
+                    for (int i = 0; i < cur.Length; i++)
+                        if (cur[i] == value) { var next = (Action<long>?[])cur.Clone(); next[i] = null; Volatile.Write(ref _subs, next); return; }
+                }
+            }
+        }
+
+        private void Notify(long version)
+        {
+            var subs = Volatile.Read(ref _subs);                                     // 복사-교체 배열 — 호출 중 등록/해지와 무경합 · 할당 0
+            for (int i = 0; i < subs.Length; i++)
+            {
+                var s = subs[i];
+                if (s is null) continue;
+                try { s(version); } catch (Exception) { Interlocked.Increment(ref _subscriberFaults); }
+            }
+        }
+
+        public void Dispose()
+        {
+            Volatile.Write(ref _running, 0);
+            Interlocked.Exchange(ref _timer, null)?.Dispose();
+        }
+    }
+}

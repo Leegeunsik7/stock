@@ -56,7 +56,7 @@ namespace MS2E.Infrastructure
                 req.Content = new FormUrlEncodedContent(p);
                 var (ok, body) = SendRead(req);
                 return ok ? (true, $"업비트 주문 접수: {symbol} {(side == PaperSide.Buy ? "매수" : "매도")}")
-                          : (false, $"업비트 주문 실패: {Trunc(body)}");
+                          : (false, $"업비트 주문 실패: {Trunc(FinancialPiiMasker.Mask(body))}");   // [Zero Protocol Leakage] 마스킹 후 절단
             }
             catch (Exception ex) { return (false, "업비트 주문 오류: " + ex.Message); }
         }
@@ -214,13 +214,18 @@ namespace MS2E.Infrastructure
                 var trId = side == PaperSide.Buy ? (_real ? TrBuyReal : TrBuyVts) : (_real ? TrSellReal : TrSellVts);
                 using var req = NewReq(HttpMethod.Post, "/uapi/domestic-stock/v1/trading/order-cash", token, trId, GetHashKey(bodyJson, token));
                 req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+                long divBefore = TrHeaderDivergences;
                 var (ok, body) = SendRead(req);
+                if (TrHeaderDivergences != divBefore)
+                    return (false, $"{Name} 응답 TR 이탈({trId}) — 주문 상태 미확정(브로커 미체결 대사 대상) · 성공 판정 거부");
                 if (ok && KisProtocol.TryParseOrderAck(Encoding.UTF8.GetBytes(body), out var ack) && ack.Ok)
                 {
                     if (ack.OrgNo > 0) _orgNoByOdno[ack.OrderNo] = ack.OrgNo;
                     return (true, KisOrderIdSpace.Encode(ack.OrderNo).ToString(System.Globalization.CultureInfo.InvariantCulture));   // ★msg = 브로커 주문번호
                 }
-                return (false, $"{Name} 주문 실패: {FinancialPiiMasker.Mask(Trunc(body))}");
+                // [KIS VTS · 실결함 교정] 수정 전엔 절단 뒤 마스킹 — 절단 경계에 걸친 등록 비밀값(토큰 · 키)은 접두만 남아 마스커가 못 알아봄 → 부분 유출.
+                //   전체 본문을 먼저 마스킹한 뒤 절단한다(Zero Protocol Leakage).
+                return (false, $"{Name} 주문 실패: {Trunc(FinancialPiiMasker.Mask(body))}");
             }
             catch (Exception ex) { return (false, "KIS 주문 오류: " + FinancialPiiMasker.Mask(ex.Message)); }
         }
@@ -279,6 +284,8 @@ namespace MS2E.Infrastructure
         // ── [KIS 실배선] 분할 한도 피드용 REST 조회(콜드 · 응답 원문 바이트 → KisProtocol δ=0 판독은 호출측) ──
 
         public bool IsRealDomain => _real;
+        /// <summary>[KIS VTS] 종합계좌번호 앞 8자리(CANO) — 체결통보 계좌 핀(HTS ID 구독은 그 ID 의 모든 계좌 통보를 보낸다).</summary>
+        public string AccountCano => Acct().cano;
         public bool Configured => !string.IsNullOrWhiteSpace(_appKey) && !string.IsNullOrWhiteSpace(_appSecret) && !string.IsNullOrWhiteSpace(_account);
 
         /// <summary>매수가능조회(TTTC8908R · inquire-psbl-order) 원문. 실패 = null. ★필드/TR 은 공개 문서 기준 — 실계좌 미검증.</summary>
@@ -393,10 +400,28 @@ namespace MS2E.Infrastructure
             catch { return null; }
         }
 
-        private static (bool ok, string body) SendRead(HttpRequestMessage req)
+        private long _trHeaderDivergences;
+        /// <summary>[KIS VTS] 응답 tr_id 헤더 ≠ 요청 tr_id 누적(도메인/라우팅 이탈).</summary>
+        public long TrHeaderDivergences => System.Threading.Interlocked.Read(ref _trHeaderDivergences);
+        /// <summary>[KIS VTS] 응답 TR 이탈 통지(인자 = 요청 TR ID · 비밀값 아님) — 호스트가 KIS 프로토콜 이탈 인터락(비트 26)으로 결선.</summary>
+        public event Action<string>? ResponseDivergence;
+
+        private (bool ok, string body) SendRead(HttpRequestMessage req)
         {
             var res = Http.Send(req);
             var body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            // [KIS VTS] 요청에 tr_id 를 실었는데 응답 tr_id 헤더가 다르다 = 다른 TR/도메인의 응답 → 성공 판정 금지 + 통지.
+            //   본문은 돌려주지 않는다(이탈 응답 원문을 오류 메시지/로그로 흘리지 않음).
+            if (req.Headers.TryGetValues("tr_id", out var sent) && res.Headers.TryGetValues("tr_id", out var got))
+            {
+                string s = System.Linq.Enumerable.FirstOrDefault(sent) ?? "", g = System.Linq.Enumerable.FirstOrDefault(got) ?? "";
+                if (!KisProtocol.ResponseTrIdConsistent(s, g))
+                {
+                    System.Threading.Interlocked.Increment(ref _trHeaderDivergences);
+                    try { ResponseDivergence?.Invoke(s); } catch (Exception) { }
+                    return (false, "");
+                }
+            }
             return (res.IsSuccessStatusCode, body);
         }
         private static string Trunc(string s) => s.Length > 180 ? s[..180] : s;

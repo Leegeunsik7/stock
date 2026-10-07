@@ -110,6 +110,13 @@ namespace MS2E.Infrastructure
             if (qty <= 0)
                 return (false, "수량은 양수여야 합니다.");
 
+            // [키움 실배선] 실 COM 프록시 요구(호스트 운영 결선) — 미연결·미선언·시뮬레이션 프록시면 송출 0(Null API 가 주문을 조용히 삼키는 상태 차단)
+            if (RequireProductionProxy && !_bridge.IsProductionProxy)
+            {
+                System.Threading.Interlocked.Increment(ref _simulationRefusals);
+                return (false, "키움 실 COM 프록시 링크 미수립(미연결/시뮬레이션) — 송출 거부");
+            }
+
             long symbolCode = BridgeSerializer.ParseSymbol(symbol);
             if (symbolCode <= 0 || symbolCode > 999_999)
                 return (false, $"유효하지 않은 KSE 종목코드: {symbol}");
@@ -157,6 +164,11 @@ namespace MS2E.Infrastructure
         }
 
         public long LastIssuedOrderId => Interlocked.Read(ref _nextOrderId);
+
+        /// <summary>[키움 실배선] true = 실 COM 프록시(ProxyHello=ProductionCom · 생존)일 때만 Place 송출. 호스트 운영 결선은 true.</summary>
+        public bool RequireProductionProxy { get; set; }
+        private long _simulationRefusals;
+        public long SimulationRefusals => Interlocked.Read(ref _simulationRefusals);
 
         public void Cancel(string orderId)
         {

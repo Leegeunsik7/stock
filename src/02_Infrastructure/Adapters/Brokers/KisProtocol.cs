@@ -42,6 +42,9 @@ namespace MS2E.Infrastructure
         public long SymbolCode, HeldQty, SellableQty;
     }
 
+    /// <summary>[KIS VTS] TR 도메인 — 실(TTTC…/H0STCNI0) · 모의(VTTC…/H0STCNI9) · 중립(시세 H0STCNT0 · PINGPONG) · 미상.</summary>
+    public enum KisTrDomain : byte { Unknown = 0, Neutral = 1, Real = 2, Vts = 3 }
+
     public struct KisOrderAck
     {
         public bool Ok;
@@ -215,9 +218,12 @@ namespace MS2E.Infrastructure
         /// <summary>복호 평문(^ 구분) → 통보 1건. 공개 문서 필드 순서: 0 고객ID · 1 계좌 · 2 주문번호 · 3 원주문번호 · 4 매도매수(01/02) ·
         /// 5 정정구분(0 정상 · 1 정정 · 2 취소) · 6 주문종류 · 7 주문조건 · 8 종목코드 · 9 체결수량 · 10 체결단가 · 11 체결시간 ·
         /// 12 거부여부(0/1) · 13 체결여부(1 접수/확인 · 2 체결) · 14 접수여부 · 15 지점 · 16 주문수량.</summary>
-        public static bool TryParseNotice(ReadOnlySpan<byte> plain, out KisFillNotice n)
+        public static bool TryParseNotice(ReadOnlySpan<byte> plain, out KisFillNotice n) => TryParseNotice(plain, out n, out _);
+
+        /// <summary>[KIS VTS] 계좌 필드(1 · 원문 슬라이스) 동반 판독 — HTS ID 구독은 그 ID 의 '모든 계좌' 통보를 보낸다(계좌 핀 대조는 호출측).</summary>
+        public static bool TryParseNotice(ReadOnlySpan<byte> plain, out KisFillNotice n, out ReadOnlySpan<byte> account)
         {
-            n = default;
+            n = default; account = default;
             long side = 0, rctf = 0, refuse = 0, cntgYn = 0;
             int f = 0;
             while (f <= 16)
@@ -226,6 +232,7 @@ namespace MS2E.Infrastructure
                 var field = caret < 0 ? plain : plain[..caret];
                 switch (f)
                 {
+                    case 1: account = field; break;
                     case 2: if (!ParseLong(field, out n.OrderNo) || n.OrderNo <= 0) return false; break;
                     case 3: if (!field.IsEmpty && !ParseLong(field, out n.OrigOrderNo)) return false; break;
                     case 4: if (!ParseLong(field, out side) || side is not (1 or 2)) return false; break;
@@ -295,8 +302,13 @@ namespace MS2E.Infrastructure
         /// 반환 = 구독 응답 형식(body.rt_cd 존재). success = rt_cd "0" · isNotice = 체결통보 TR(H0STCNI0/9) · hasKeys = key 32B + iv 16B 를 dst 에 복사.
         /// </summary>
         public static bool TryParseSubscribeAck(ReadOnlySpan<byte> json, Span<byte> key32, Span<byte> iv16, out bool success, out bool isNotice, out bool hasKeys)
+            => TryParseSubscribeAck(json, key32, iv16, out success, out isNotice, out hasKeys, out _);
+
+        /// <summary>[KIS VTS] 구독 응답 header.tr_id 도메인(실/모의/중립/미상) 동반 판독.</summary>
+        public static bool TryParseSubscribeAck(ReadOnlySpan<byte> json, Span<byte> key32, Span<byte> iv16, out bool success, out bool isNotice, out bool hasKeys,
+                                                out KisTrDomain trDomain)
         {
-            success = false; isNotice = false; hasKeys = false;
+            success = false; isNotice = false; hasKeys = false; trDomain = KisTrDomain.Unknown;
             bool rtSeen = false, keyOk = false, ivOk = false;
             try
             {
@@ -317,6 +329,7 @@ namespace MS2E.Infrastructure
                             {
                                 if (!r.Read() || r.TokenType != JsonTokenType.String) return false;
                                 isNotice = r.ValueTextEquals(TrNotice) || r.ValueTextEquals(TrNoticeVts);
+                                if (!r.ValueIsEscaped) trDomain = ClassifyTr(r.ValueSpan);
                             }
                             else if (depth == 2 && inBody && r.ValueTextEquals("rt_cd"u8))
                             {
@@ -340,6 +353,25 @@ namespace MS2E.Infrastructure
             hasKeys = keyOk && ivOk;
             return rtSeen;
         }
+
+        // ── ⑨ [KIS VTS] TR 도메인 · 응답 헤더 정합 ──
+
+        private static ReadOnlySpan<byte> TtcStem => "TTC"u8;
+
+        /// <summary>TR ID 도메인 분류(δ=0). 계좌 TR = 9자 '[T|V]TTC' + 영숫자 5(예: TTTC0802U 실 · VTTC0802U 모의). 그 외 = 미상(fail-closed 판정은 호출측).</summary>
+        public static KisTrDomain ClassifyTr(ReadOnlySpan<byte> trId)
+        {
+            if (trId.SequenceEqual(TrNotice)) return KisTrDomain.Real;
+            if (trId.SequenceEqual(TrNoticeVts)) return KisTrDomain.Vts;
+            if (trId.SequenceEqual(TrTick) || trId.SequenceEqual(PingPong)) return KisTrDomain.Neutral;
+            if (trId.Length != 9 || !trId.Slice(1, 3).SequenceEqual(TtcStem)) return KisTrDomain.Unknown;
+            for (int i = 4; i < 9; i++) { byte c = trId[i]; if (!((c >= (byte)'0' && c <= (byte)'9') || (c >= (byte)'A' && c <= (byte)'Z'))) return KisTrDomain.Unknown; }
+            return trId[0] == (byte)'T' ? KisTrDomain.Real : trId[0] == (byte)'V' ? KisTrDomain.Vts : KisTrDomain.Unknown;
+        }
+
+        /// <summary>REST 응답 tr_id 헤더 정합 — 응답 헤더가 있으면 요청 TR 과 서수 일치해야 한다(부재 = 판정 불가 → 통과 · 공개 문서상 응답 헤더 tr_id 반송).</summary>
+        public static bool ResponseTrIdConsistent(ReadOnlySpan<char> requested, ReadOnlySpan<char> responded)
+            => responded.IsEmpty || responded.SequenceEqual(requested);
 
         // ── ⑧ 잔고 · 주문가능(REST) ──
 

@@ -1,0 +1,238 @@
+@* [대시보드 · 추천 A] AI 모의투자 실시간 관제 — 순수 RCL(엔진 참조 0 · @page 는 호스트 shim PaperTradingDashboard.razor 가 소유).
+   IPaperDashboardPort(읽기 전용 — 주문/무장/취소 명령 경로 없음)의 3중 버퍼 프레임을 리스(Acquire→렌더→Release)로 읽는다.
+   렌더 병합 = SnapshotRenderGovernor(50ms 창 · 선행/후행 에지 · 버전 불변 생략 · 부하/동결 적응). 허브 FrameReady 는 펌프 스레드에서
+   Signal(δ=0)만 호출 — 렌더는 InvokeAsync 로 UI 디스패처에 넘긴다(UI 가 늦거나 예외를 던져도 허브 · 매매 경로 무영향).
+   UI 문자열 생성은 렌더 시점(초당 최대 20회)에만 — 무할당 불변식은 생산자 · 허브 펌프 구간 대상(정직). *@
+@implements IDisposable
+@inject IPaperDashboardPort Dash
+@inject StateAwareRenderGovernor RenderGov
+
+<div class="top">
+    <div class="hello">
+        <h1>📡 AI 모의투자 실시간 관제 <span class="tag">PAPER TRADING TELEMETRY</span></h1>
+        <p>읽기 전용 관제 화면 — 주문 · 무장 · 취소 명령 경로가 없습니다. 손익은 체결 피드 기준 모의 원장(수수료 · 세금 · 슬리피지 미반영)입니다.</p>
+    </div>
+</div>
+
+@if (!Dash.Running)
+{
+    <div class="pd-note">⚠ 텔레메트리 허브 미가동 — 피드가 결선되지 않았습니다.</div>
+}
+@{
+    var f = Dash.Acquire();
+}
+@if (f is null)
+{
+    <div class="pd-note">프레임 대기 중 — 아직 수집된 시세/체결/인터락 전이가 없습니다.</div>
+}
+else
+{
+    try
+    {
+        <div class="pd-kpis">
+            <div class="pd-kpi"><span>평가 손익</span><b style="color:@Tone(f.EquityWon)">@Won(f.EquityWon)</b></div>
+            <div class="pd-kpi"><span>실현</span><b style="color:@Tone(f.RealizedPnlWon)">@Won(f.RealizedPnlWon)</b></div>
+            <div class="pd-kpi"><span>미실현</span><b style="color:@Tone(f.UnrealizedPnlWon)">@Won(f.UnrealizedPnlWon)</b></div>
+            <div class="pd-kpi"><span>승률</span><b>@((f.WinRate * 100).ToString("0.0"))%</b><small>@(f.Wins)승 @(f.Losses)패</small></div>
+            <div class="pd-kpi"><span>MDD</span><b style="color:#1E88E5">@Won(-f.MaxDrawdownWon)</b><small>고점 @Won(f.PeakEquityWon)</small></div>
+            <div class="pd-kpi"><span>보유 종목</span><b>@f.OpenPositions</b></div>
+            <div class="pd-kpi"><span>체결 / 유실</span><b>@f.FillsSeen.ToString("N0")</b><small>표시 유실 @f.FillsLost.ToString("N0")</small></div>
+            <div class="pd-kpi"><span>시세 틱</span><b>@f.TicksSeen.ToString("N0")</b><small>v@(f.Version) · 조립 @(f.BuildMicros)µs</small></div>
+        </div>
+
+        <div class="pd-grid">
+            <section class="pd-card pd-wide">
+                <h3>누적 손익 곡선 <small>(1초 표본 · 최근 @(f.EquityCount)점)</small></h3>
+                @if (f.EquityCount < 2)
+                {
+                    <div class="pd-empty">표본 수집 중</div>
+                }
+                else
+                {
+                    <svg viewBox="0 0 600 160" preserveAspectRatio="none" class="pd-chart">
+                        <line x1="0" x2="600" y1="@ZeroY(f)" y2="@ZeroY(f)" stroke="#555" stroke-dasharray="4 3" />
+                        <polyline fill="none" stroke="@Tone(f.EquityWon)" stroke-width="1.6" points="@CurvePoints(f)" />
+                    </svg>
+                }
+            </section>
+
+            <section class="pd-card">
+                <h3>보안 인터락 <small>@(f.Sealed ? "봉인됨" : "미봉인") · 차단 @(System.Numerics.BitOperations.PopCount((ulong)f.Mask))개</small></h3>
+                <div class="pd-leds">
+                    @for (int b = 0; b < 64; b++)
+                    {
+                        if (b < f.BitNames.Length && !string.IsNullOrEmpty(f.BitNames[b]))
+                        {
+                            var bit = b;
+                            <span class="pd-led @LedClass(f, bit)" title="@LedTitle(f, bit)">
+                                <i></i>@(bit) @f.BitName(bit)
+                            </span>
+                        }
+                    }
+                </div>
+                <h4>Disarm 격발 포렌식 <small>(최근 @(f.EventCount)건 · 유실 @(f.EventsLost))</small></h4>
+                <ul class="pd-log">
+                    @for (int i = 0; i < f.EventCount; i++)
+                    {
+                        var e = f.Events[i];
+                        <li>
+                            <code>@Time(e.Ticks)</code>
+                            @if (e.Raised != 0) { <span class="pd-up">▲ @Bits(f, e.Raised)</span> }
+                            @if (e.Cleared != 0) { <span class="pd-down">▼ @Bits(f, e.Cleared)</span> }
+                        </li>
+                    }
+                </ul>
+            </section>
+
+            <section class="pd-card">
+                <h3>브로커 한도</h3>
+                <table class="pd-tbl">
+                    @for (int i = 0; i < f.LimitCount; i++)
+                    {
+                        var l = f.Limits[i];
+                        <tr><td>@BrokerName(l.Broker)</td><td>@(l.Bound ? Won(l.HeadroomWon) : "미결속(자식 0)")</td></tr>
+                    }
+                    @if (f.LimitCount == 0) { <tr><td colspan="2" class="pd-empty">계좌 뷰 미결선</td></tr> }
+                </table>
+                <h3>체결 통보 피드 <small>(최근 @(f.FillCount)건)</small></h3>
+                <table class="pd-tbl">
+                    @for (int i = 0; i < f.FillCount; i++)
+                    {
+                        var x = f.Fills[i];
+                        <tr>
+                            <td><code>@Time(x.Ticks)</code></td><td>@BrokerName(x.Broker)</td><td>@x.Symbol.ToString("D6")</td>
+                            <td style="color:@(x.Side > 0 ? "#E53935" : "#1E88E5")">@(x.Side > 0 ? "매수" : "매도")</td>
+                            <td>@x.Qty.ToString("N0")주</td><td>@x.PriceWon.ToString("N0")</td>
+                        </tr>
+                    }
+                </table>
+            </section>
+
+            <section class="pd-card">
+                <h3>자식 슬롯 분할 매트릭스 <small>(키움 · KIS · @(f.ChildCount)슬롯)</small></h3>
+                @if (f.ChildCount == 0) { <div class="pd-empty">활성 분할 주문 없음</div> }
+                <div class="pd-slots">
+                    @for (int i = 0; i < f.ChildCount; i++)
+                    {
+                        var c = f.Children[i];
+                        <div class="pd-slot s@(c.State)" title="부모 @(c.ParentId) · #@(c.Index) · @DashChildState.Label(c.State) · 평균 @c.AvgPriceWon.ToString("N0")">
+                            <b>@BrokerName(c.Broker)</b> #@(c.Index)
+                            <div class="pd-bar"><i style="width:@Pct(c.FilledQty, c.OrderQty)%"></i></div>
+                            <small>@c.FilledQty.ToString("N0")/@c.OrderQty.ToString("N0") @DashChildState.Label(c.State)</small>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="pd-card pd-wide">
+                <h3>AI 판단 근거 라이브 로그 <small>(최근 @(f.DecisionCount)건 · 유실 @(f.DecisionsLost))</small></h3>
+                <div class="pd-stream">
+                    @for (int i = 0; i < f.DecisionCount; i++)
+                    {
+                        var d = f.Decisions[i];
+                        <div><code>@Time(d.Ticks)</code> [@DashDecisionKind.Label(d.Kind)] @d.Symbol.ToString("D6") · 비중 @Bp(d.ScaleBp) · 변동성 @Bp(d.VolatilityBp) · 값 @d.Value.ToString("N0") · 사유 @(d.Reason)</div>
+                    }
+                    @if (f.DecisionCount == 0) { <div class="pd-empty">판단 기록 없음 — 전략 계층이 PublishDecision 을 호출할 때 표시됩니다.</div> }
+                </div>
+            </section>
+        </div>
+    }
+    finally
+    {
+        Dash.Release(f);
+    }
+}
+
+<style>
+    .pd-note { padding: 10px 14px; color: var(--sub); }
+    .pd-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 8px 0 12px; }
+    .pd-kpi { background: var(--card, #161a22); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+    .pd-kpi span { font-size: 11px; color: var(--sub); } .pd-kpi b { font-size: 17px; } .pd-kpi small { font-size: 10.5px; color: var(--sub); }
+    .pd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; }
+    .pd-card { background: var(--card, #161a22); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+    .pd-card h3 { font-size: 13.5px; margin: 0 0 8px; } .pd-card h4 { font-size: 12px; margin: 10px 0 6px; }
+    .pd-card small { color: var(--sub); font-weight: 400; } .pd-wide { grid-column: 1 / -1; }
+    .pd-chart { width: 100%; height: 160px; }
+    .pd-leds { display: flex; flex-wrap: wrap; gap: 4px; }
+    .pd-led { font-size: 10.5px; padding: 2px 6px; border-radius: 6px; background: #1d2230; display: inline-flex; align-items: center; gap: 4px; }
+    .pd-led i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #3a3f4b; }
+    .pd-led.ok i { background: #43a047; } .pd-led.raised i { background: #E53935; box-shadow: 0 0 6px #E53935; } .pd-led.unbound i { background: #f9a825; }
+    .pd-log { list-style: none; padding: 0; margin: 0; max-height: 180px; overflow: auto; font-size: 11.5px; }
+    .pd-up { color: #E53935; } .pd-down { color: #1E88E5; }
+    .pd-tbl { width: 100%; font-size: 11.5px; border-collapse: collapse; margin-bottom: 8px; } .pd-tbl td { padding: 2px 4px; border-bottom: 1px solid #222837; }
+    .pd-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+    .pd-slot { background: #1d2230; border-radius: 8px; padding: 6px; font-size: 11px; }
+    .pd-slot.s4 { outline: 1px solid #43a047; } .pd-slot.s6, .pd-slot.s7 { outline: 1px solid #E53935; } .pd-slot.s5 { outline: 1px solid #757575; }
+    .pd-bar { height: 4px; background: #2a3040; border-radius: 2px; margin: 4px 0; } .pd-bar i { display: block; height: 100%; background: #43a047; border-radius: 2px; }
+    .pd-stream { font-size: 11.5px; max-height: 220px; overflow: auto; background: #0f1219; padding: 8px; border-radius: 8px; margin: 0; font-family: Consolas, monospace; }
+    .pd-empty { color: var(--sub); font-size: 12px; }
+</style>
+
+@code {
+    private SnapshotRenderGovernor? _gov;
+    private Action<long>? _onFrame;
+
+    protected override void OnInitialized()
+    {
+        // 렌더 콜백 예외(회로 종료 후 InvokeAsync 등)는 여기서 흡수 — 허브 펌프로 전파 0
+        _gov = new SnapshotRenderGovernor(() => { try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { } }, TimeSpan.FromMilliseconds(50), RenderGov);
+        var gov = _gov;
+        _onFrame = v => gov.Signal(v);
+        Dash.FrameReady += _onFrame;
+    }
+
+    public void Dispose()
+    {
+        if (_onFrame is not null) Dash.FrameReady -= _onFrame;
+        _gov?.Dispose();
+    }
+
+    private static string Tone(long v) => v > 0 ? "#E53935" : v < 0 ? "#1E88E5" : "inherit";
+    private static string Won(long v) => (v > 0 ? "+" : "") + v.ToString("N0") + "원";
+    private static string Bp(long bp) => (bp / 100.0).ToString("0.00") + "%";
+    private static string Time(long ticks) => ticks <= 0 ? "--:--:--" : new DateTime(ticks, DateTimeKind.Utc).ToLocalTime().ToString("HH:mm:ss.fff");
+    private static string BrokerName(int b) => b switch { 0 => "키움", 1 => "KIS", 2 => "모의", _ => "B" + b };
+    private static long Pct(long a, long b) => b <= 0 ? 0 : Math.Clamp(a * 100 / b, 0, 100);
+
+    private static string LedTitle(PaperDashboardFrame f, int bit)
+        => bit + " " + f.BitName(bit) + (f.IsRequired(bit) ? " · 필수" : "") + (f.IsBound(bit) ? " · 결속" : " · 미결속");
+
+    private static string LedClass(PaperDashboardFrame f, int bit)
+        => f.IsRaised(bit) ? "raised" : (f.IsRequired(bit) && !f.IsBound(bit)) ? "unbound" : "ok";
+
+    private static string Bits(PaperDashboardFrame f, long bits)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int b = 0; b < 64; b++)
+            if ((bits & (1L << b)) != 0) { if (sb.Length > 0) sb.Append(", "); sb.Append(f.BitName(b)); }
+        return sb.ToString();
+    }
+
+    private static (long Min, long Max) Range(PaperDashboardFrame f)
+    {
+        long min = 0, max = 0;
+        for (int i = 0; i < f.EquityCount; i++) { long v = f.Equity[i].EquityWon; if (v < min) min = v; if (v > max) max = v; }
+        if (max == min) max = min + 1;
+        return (min, max);
+    }
+
+    private static string ZeroY(PaperDashboardFrame f)
+    {
+        var (min, max) = Range(f);
+        return (150 - (0 - min) * 140.0 / (max - min)).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string CurvePoints(PaperDashboardFrame f)
+    {
+        var (min, max) = Range(f);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var sb = new System.Text.StringBuilder(f.EquityCount * 12);
+        double step = 600.0 / Math.Max(1, f.EquityCount - 1);
+        for (int i = 0; i < f.EquityCount; i++)
+        {
+            double x = i * step, y = 150 - (f.Equity[i].EquityWon - min) * 140.0 / (max - min);
+            sb.Append(x.ToString("0.0", inv)).Append(',').Append(y.ToString("0.0", inv)).Append(' ');
+        }
+        return sb.ToString();
+    }
+}

@@ -221,6 +221,51 @@ namespace StockManager.Engines
             if (rejected) Trip(ref _rejectTrips);
         }
 
+        // ── [KIS VTS] 브로커 슬롯 격리(프로토콜 이탈 · δ=0) ──
+
+        private long _isolations;
+        public long Isolations => Interlocked.Read(ref _isolations);
+
+        /// <summary>
+        /// 브로커 1개 격리: 그 브로커의 미송출(Pending) 자식 = 회수(송출 0) · 송출됐고 미체결 잔량이 있는 자식 = 즉시 취소 요청(1회) ·
+        /// Disarm(비트 23 sticky). 반환 = 취소 요청 수. ★프로토콜 이탈 후 그 브로커 통보를 더는 믿을 수 없으므로 불균형 타이머(500ms)를
+        /// 기다리지 않고 0ms 에 처리 — 미체결 슬롯 고착 0. 체결 이력은 보존(취소 확인/대사로 수렴).
+        /// </summary>
+        public int IsolateBroker(int broker)
+        {
+            var spin = new SpinWait();
+            while (Interlocked.CompareExchange(ref _evaluating, 1, 0) != 0) spin.SpinOnce();   // 공용 취소 버퍼 단일 진입(Evaluate 와 직렬)
+            int requested = 0, reclaimed = 0;
+            try
+            {
+                for (int g = 0; g < _groups.Length; g++)
+                {
+                    ref var grp = ref _groups[g];
+                    if (Volatile.Read(ref grp.ParentId) == 0) continue;
+                    int fromHere = 0;
+                    BeginWrite(ref grp);
+                    for (int k = 0; k < grp.Count; k++)
+                    {
+                        ref var c = ref grp.Children[k];
+                        if (c.Broker != broker) continue;
+                        if (c.State == ChildSlotState.Pending) { c.State = ChildSlotState.Reclaimed; reclaimed++; continue; }
+                        if (c.Cancelling != 0 || c.FilledQty >= c.OrderQty || c.BrokerOrderId == 0) continue;
+                        if (c.State != ChildSlotState.Sent && c.State != ChildSlotState.Accepted) continue;
+                        c.Cancelling = 1;
+                        CancelRequestsBuffer(g, k, c.Broker, c.BrokerOrderId);
+                        fromHere++;
+                    }
+                    EndWrite(ref grp);
+                    if (fromHere > 0) { requested += fromHere; FlushCancels(); }
+                }
+            }
+            finally { Volatile.Write(ref _evaluating, 0); }
+            Interlocked.Add(ref _reclaimed, reclaimed);
+            Interlocked.Increment(ref _isolations);
+            Trip(ref _externalTrips);
+            return requested;
+        }
+
         // ── 방향 B: 불균형 체결 차단기(주기 호출 · δ=0) ──
 
         /// <summary>반환 = 이번에 취소 요청한 자식 수.</summary>
@@ -333,6 +378,33 @@ namespace StockManager.Engines
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// [대시보드 · 방향 A] 활성 부모들의 자식 슬롯 복사(UI 스냅샷 · δ=0 · seqlock 낙관 판독). 작성 중/경합 그룹은 그 회차에서 건너뛴다
+        /// (재시도 상한 8 — 판독자가 작성자를 기다리게 하지 않음). parentOf[i] = dst[i] 의 부모 ID. 반환 = 복사한 자식 수.
+        /// </summary>
+        public int CopyChildren(Span<ChildSlot> dst, Span<long> parentOf)
+        {
+            int n = 0, cap = Math.Min(dst.Length, parentOf.Length);
+            for (int g = 0; g < _groups.Length && n < cap; g++)
+            {
+                ref var grp = ref _groups[g];
+                if (Volatile.Read(ref grp.ParentId) == 0) continue;
+                for (int spin = 0; spin < 8; spin++)
+                {
+                    long s1 = Volatile.Read(ref grp.Seq);
+                    if ((s1 & 1) != 0) { Thread.SpinWait(4); continue; }
+                    long pid = grp.ParentId;
+                    int cnt = Math.Min(Math.Min(grp.Count, ChildIdSpace.MaxChildren), cap - n);
+                    for (int k = 0; k < cnt; k++) { dst[n + k] = grp.Children[k]; parentOf[n + k] = pid; }
+                    Interlocked.MemoryBarrier();
+                    if (Volatile.Read(ref grp.Seq) != s1) continue;
+                    if (pid != 0) n += cnt;
+                    break;
+                }
+            }
+            return n;
         }
 
         /// <summary>종결된 부모 그룹 반납(Open 이 아닌 그룹). 반환 = 반납 수.</summary>

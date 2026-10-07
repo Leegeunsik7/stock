@@ -294,6 +294,8 @@ namespace StockManager.Simulation
         public InterlockForensicRecorder Recorder { get; }
         public SimulationTelemetryChannel Telemetry { get; }
         public VirtualPaperBroker Broker => _broker;
+        /// <summary>드레인이 실제로 송출하는 브로커(데코레이터 미주입 = Broker).</summary>
+        public IBroker SendBroker { get; }
         public OrderExecutionFeedAdapter Execution => _exec;
         public OrderDrainWorker Worker => _worker;
         public GatedOrderDispatcher Dispatcher => _dispatcher;
@@ -304,8 +306,10 @@ namespace StockManager.Simulation
         /// <param name="nowMicros">단조 µs 시계(null = 실시계). 테스트는 결정론 시계 주입.</param>
         /// <param name="stallThresholdMicros">송출 직전 정지 임계(시뮬레이션 기본 1초 — 테스트 호스트 스케줄 지터로 오격발 방지).</param>
         /// <param name="renderSignal">텔레메트리 갱신 신호(예: SnapshotRenderGovernor.Signal).</param>
+        /// <param name="fillObserver">[대시보드] 가상 체결 관측(대사 피드 뒤 · 예외는 삼킴 — 체결 대사 무영향).</param>
         public PaperTradingSimulationHarness(Func<long>? nowMicros = null, long stallThresholdMicros = 1_000_000, Action<long>? renderSignal = null,
-                                             MmfFlightRecorder? blackbox = null, long maxPriceSilenceMicros = 5_000_000)
+                                             MmfFlightRecorder? blackbox = null, long maxPriceSilenceMicros = 5_000_000, Action<FillPayload>? fillObserver = null,
+                                             Func<IBroker, IBroker>? brokerDecorator = null)
         {
             _nowMicros = nowMicros ?? ReferencePriceFeedAdapter.MonotonicMicros;
             _price = new ReferencePriceFeedAdapter(capacityPow2: 256, maxAgeMicros: 3_000_000, nowMicros: _nowMicros);
@@ -331,8 +335,10 @@ namespace StockManager.Simulation
             _ring = new OrderDispatchRing(8192);
             // ★무장 술어 = 가상 브로커 전용 true. 이 디스패처는 실 브로커에 닿는 경로가 없다(IBroker = VirtualPaperBroker).
             _dispatcher = new GatedOrderDispatcher(_ring, static () => true);
-            _worker = new OrderDrainWorker(_dispatcher, _broker, wired: false, interlocks: Interlocks, routeGate: _gate, latencyProbe: _profiler);
-            _onFill = _exec.OnFill;
+            // [카오스 스톰] 송출 데코레이터(예: LiveArmedEgressSentinel) — 가상 브로커 앞 최종 초크포인트 리허설. 미주입 = 가상 브로커 직결.
+            SendBroker = brokerDecorator?.Invoke(_broker) ?? _broker;
+            _worker = new OrderDrainWorker(_dispatcher, SendBroker, wired: false, interlocks: Interlocks, routeGate: _gate, latencyProbe: _profiler);
+            _onFill = fillObserver is null ? _exec.OnFill : f => { _exec.OnFill(f); try { fillObserver(f); } catch (Exception) { } };
             Telemetry = new SimulationTelemetryChannel(renderSignal);
         }
 

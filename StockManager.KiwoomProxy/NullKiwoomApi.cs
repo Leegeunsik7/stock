@@ -16,6 +16,14 @@ namespace StockManager.KiwoomProxy
         public event EventHandler<ServerErrorEventArgs>? ServerErrorReceived;
         public event EventHandler<AccountCashEventArgs>? AccountCashReceived;
         public event EventHandler<PositionEventArgs>? PositionReceived;
+        public int ApiKind => ProxyApiKind.Simulation;   // ★주문 무동작 — 호스트가 실 송출 대상으로 인정하지 않도록 선언
+        public event EventHandler<OpenOrderEventArgs>? OpenOrderReceived;
+        public event EventHandler<OrderMappedEventArgs>? OrderMapped;
+        public void QueryOpenOrders() { }
+        public void AdoptMapping(long clientId, long venueOrderNo, long symbolCode, int side, long remaining) { }
+        public void CancelByVenueNo(long venueOrderNo, long symbolCode, int side, long qty) { }
+        public void SimulateOpenOrder(in OpenOrderPayload row) => OpenOrderReceived?.Invoke(this, new OpenOrderEventArgs { Row = row });
+        public void SimulateOrderMapped(in OrderMappedPayload map) => OrderMapped?.Invoke(this, new OrderMappedEventArgs { Map = map });
         public void ModifyOrder(long orderId, double price, long qty) { }
         public void SimulateAccountCash(in AccountCashPayload cash) => AccountCashReceived?.Invoke(this, new AccountCashEventArgs { Cash = cash });
         public void SimulatePosition(in PositionPayload row) => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row });

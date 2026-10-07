@@ -26,14 +26,21 @@ namespace StockManager.Adapters
         private readonly Func<bool> _liveArmed;
         private readonly MmfFlightRecorder? _blackbox;
         private readonly Action<string>? _onBypass;
+        private readonly Func<bool>? _interlockBlocked;
+        private long _interlockVetoes;
         private ArmingInterlockLink? _link;
         private int _tripped;
         private long _bypassAttempts, _forwarded, _lastSymbolCode, _lastQtyMilli, _lastTicks;
 
         /// <param name="liveArmed">물리 이중키 판독(ValveWired ∧ LiveArmingWired). 판독 예외 = 미무장(fail-closed).</param>
         /// <param name="onBypass">우회 감지 통지(예: attestation.ForceFreeze) — 예외는 삼킨다(차단은 이미 반영).</param>
-        public LiveArmedEgressSentinel(IBroker inner, Func<bool> liveArmed, MmfFlightRecorder? blackbox = null, Action<string>? onBypass = null)
+        /// <param name="interlockBlocked">[카오스 스톰] 원자 인터락 집계어 판독(ArmingInterlockBitmask.Blocked). 차단이면 무장이어도 전달 0.
+        ///   ★드레인 워커는 송출 '직전'이 아니라 카나리 · 라우터 게이트 · 지연 프로브 '앞'에서 집계어를 1회 읽는다 — 그 뒤 Place 까지의
+        ///   구간에 격발한 비트는 이 초크포인트만 잡을 수 있다(TOCTOU 창 봉쇄). 판독 예외 = 차단(fail-closed).</param>
+        public LiveArmedEgressSentinel(IBroker inner, Func<bool> liveArmed, MmfFlightRecorder? blackbox = null, Action<string>? onBypass = null,
+                                       Func<bool>? interlockBlocked = null)
         {
+            _interlockBlocked = interlockBlocked;
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _liveArmed = liveArmed ?? throw new ArgumentNullException(nameof(liveArmed));
             _blackbox = blackbox;
@@ -49,6 +56,8 @@ namespace StockManager.Adapters
         public long LastSymbolCode => Interlocked.Read(ref _lastSymbolCode);
         public long LastQtyMilli => Interlocked.Read(ref _lastQtyMilli);
         public long LastTicks => Interlocked.Read(ref _lastTicks);
+        /// <summary>[카오스 스톰] 무장 상태인데 인터락 집계어 차단으로 거부한 송출 수(우회 아님 — 판정~송출 사이 격발).</summary>
+        public long InterlockVetoes => Interlocked.Read(ref _interlockVetoes);
 
         public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
         {
@@ -61,6 +70,19 @@ namespace StockManager.Adapters
         {
             bool armed;
             try { armed = _liveArmed(); } catch { armed = false; }
+            // [카오스 스톰] 무장이어도 인터락 집계어가 차단이면 전달 0 — 상류 판독 뒤 격발한 비트(TOCTOU)를 최종 초크포인트에서 원자 veto.
+            //   우회(EgressBypass sticky)로 올리지 않는다: 원인 비트가 이미 서 있고, 이건 상류 결함이 아니라 판정~송출 사이 경합이다.
+            if (armed && !Tripped && _interlockBlocked is { } ib)
+            {
+                bool blocked;
+                try { blocked = ib(); } catch { blocked = true; }
+                if (blocked)
+                {
+                    Interlocked.Increment(ref _interlockVetoes);
+                    try { _blackbox?.Record(FlightEventKind.EgressBypassBlocked, 0, 1, Interlocked.Read(ref _interlockVetoes), 2); } catch { }
+                    return (false, "인터락 집계어 차단 — 실 브로커 전달 0(송출 직전 원자 veto)");
+                }
+            }
             // 무장 상태여도 이미 우회가 한 번 감지됐다면(sticky) 재무장 전까지 전달 금지
             if (armed && !Tripped)
             {

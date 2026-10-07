@@ -1005,3 +1005,101 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 28.3 검증 · 한계
 - KisLivePipelineWiringTests.cs 9건(방어 7종 끔 Red 4건 — 다중 방어 테스트) · 전체 3,474 Pass(3회 중 1회 기존 IPC 타이밍 테스트 IpcChaosVerification 간헐 실패 · 단독 5/5 통과 · 본 변경 무관) · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
 - 한계: TR ID·필드명·WS URL 은 공개 문서 기준 · 실계좌/실서버 미검증(모의 도메인에서 프레임 대조 필수). KIS 잔고 1페이지만(연속 조회 미지원). HTS ID 는 vault 'KIS.HtsId' 수동 등록 필요(설정 UI 미반영). 키움 브리지 ConnectAsync 미호출 유지.
+
+## 29. 차기: 키움 브리지 실연결 결선 · COM 프록시 신원 선언 (2026-10-07 · 미커밋)
+
+### 29.1 전제 검증
+- 이 호스트엔 Kiwoom OpenAPI+ 미설치 → 실 COM 활성화·로그인은 여기서 실측 불가. ProductionKiwoomApi 는 `#if KIWOOM_COM` 뒤(KiwoomComShim 이 형상 쉼으로 컴파일 수검).
+- ★[실결함] 프록시 진입점이 무조건 NullKiwoomApi — Null API 는 주문을 조용히 삼키는데 호스트는 이를 구분 불가(실 송출로 오인).
+- ★[실결함] OnEventConnect 로그인 실패 코드가 호스트에 통지되지 않음 · AxKHOpenAPI 생성 예외 시 STA 스레드 붕괴(시작 신호 영구 대기).
+- 부재: 호스트의 ConnectAsync 호출부 · 프록시 기동/이중 실행 방지. 체잔/호가 파싱은 KiwoomComEventCore 에 기존재(재사용 버퍼 직렬화).
+
+### 29.2 구현
+- BridgeProtocol: ProxyHello(타입 15 · 24B · ApiKind/ProtocolVersion/PID/시각) — 프록시가 파이프 연결 직후 API 종류 선언.
+- KiwoomBridgeClient: Hello 형식 검증(버전 1 · 알려진 종류만) · IsProductionProxy = 생존 ∧ ProductionCom. ExecutionBridgeBroker.RequireProductionProxy(호스트 true) → 미연결/미선언/시뮬레이션 프록시면 송출 0.
+- [방향 B] KiwoomServerErrorCodes 7110~7113(로그인/서버/버전/통신 단절) · 7120(COM 생성 실패) 중대 분류 → 기존 비트 13 Disarm. 미분류 연결 오류 = 로그인 실패(fail-closed).
+- 프록시: KiwoomApiFactory(KIWOOM_COM = 실 API · 그 외 Null · --require-production 이면 Null 대체 거부 exit 2) · 세션 뮤텍스 이중 실행 거부(exit 3) · COM 생성 보호.
+- `StockManager/Adapters/KiwoomBridgeLink.cs` — 비트 25(KiwoomBridgeLink) 인터락 + KiwoomProxySupervisor(선택 기동 → 시도당 시한 재시도 → 수신 시작 · 신원 거부 즉시 중단 · 처분 시 자기 기동 프록시만 종료).
+- 호스트: `Kiwoom.ConnectEnabled`(기본 false) · `Kiwoom.AutoStartProxy`(기본 false) · 계좌 뷰 판정 = IsProductionProxy.
+- 방향 A(COM 이벤트 링) 미채택: 프록시가 이미 재사용 버퍼로 직렬화. 파이프 쓰기 STA 블로킹은 잔여 위험으로 기록.
+
+### 29.3 검증 · 한계
+- KiwoomRealPipelineWiringTests.cs 8건(실 파이프 왕복 Hello · 단절 즉시 불인정 · 연결 오류 Disarm · 링크 인터락 · 감독자 6상태 · 진입점/결선) · 방어 7종 끔 7/7 Red · 전체 3,482 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 팩토리는 COM 블록 뒤에 배치(쉼 형상 수검 테스트가 첫 `#if KIWOOM_COM` 블록을 판독).
+- 한계: 실 COM 로그인·체결 미검증(OpenAPI+ 설치 PC 필요) · 단절 후 자동 재기동 없음(브리지 1회용 · ForceFreeze 설계 계승) · 연결/자동기동 기본 off.
+
+## 30. 차기: KIS 모의투자(VTS) 프로토콜 검증 · 키움-KIS E2E 모의 하네스 (2026-10-07 · 미커밋)
+
+### 30.1 전제 검증
+- 주문/잔고/체결통보 TR 은 이미 도메인별 분기: VTTC0802U/0801U/0803U · VTTC8434R/8908R · H0STCNI9 ↔ TTTC…/H0STCNI0(공개 문서 기준 · 실 VTS 패킷 캡처 없음). KIS 의 2024 신규 주문 TR 체계 공지 대조는 여전히 운용 과제.
+- ★[실결함] 인터락 봉인(Seal)이 자식 매트릭스(비트 23) · KIS 한도(비트 24) 결속보다 먼저 실행 → 필수 미결속으로 봉인 실패 → 기동 샌니티 비트 영구 → 운영 무장 자체 불가(§27 도입). liveArmed:false 라 드러나지 않았음.
+- ★[실결함] KIS 주문 오류 메시지가 절단 후 마스킹 — 180자 경계에 걸친 등록 비밀값 접두가 유출. 업비트 오류 본문은 마스킹 자체 없음.
+- ★[실결함] 체결통보 어댑터가 세션 도메인과 무관하게 H0STCNI0/9 모두 수용 · HTS ID 구독은 그 ID 의 모든 계좌 통보를 보내는데 계좌 대조 없음.
+- REST 응답 tr_id 헤더 미검증. KIS 보유와 앱 내 체결 누적의 대사 부재.
+
+### 30.2 구현
+- 비트 26(KisProtocolDivergence · 필수). KisProtocol: ClassifyTr(실/모의/중립/미상) · ResponseTrIdConsistent · 통보 계좌 필드 · 구독 응답 TR 도메인.
+- `StockManager/Adapters/KisVtsProtocolValidator.cs` — 도메인 핀(실시간 TR · 구독 응답 · REST 요청 TR) · 응답 tr_id 헤더 · 주문 응답 형식 이탈 = sticky Disarm + 최초 1회 격리 + 보안 로그(종류 + 상수 라벨만). 업무 거부(모의 호출 제한 EGW00201 등)는 이탈 아님.
+- KisLiveBroker: 응답 tr_id ≠ 요청 = 성공 판정 금지 + ResponseDivergence 통지 · 오류 본문 마스킹 후 절단 · AccountCano. KisOpenApiAdapter: 검증기 + 계좌 핀(타 계좌 통보 폐기 · 비 Disarm).
+- ChildSlotTrackingMatrix.IsolateBroker — 그 브로커 미송출 자식 회수 + 송출분 0ms 취소 + Disarm(비트 23).
+- [방향 B] KisBalanceQueryAdapter 포지션 원장: 최초 잔고 = 기준선 · 체결통보 순증감 · 매 조회 '기준선 + 순체결 ≡ 보유' · 불일치 연속 2회 = 비트 24 Disarm + 한도 무효 · 조회 중 체결 = 판정 보류 · 원장 초과 = 불일치. 실시간 결선 시에만 활성.
+- [방향 A] `StockManager/Simulation/KisVtsMockStreamer.cs` — 공개 문서 형식 VTS 프레임 합성(구독 응답 · 체결가 · AES 체결통보) · POH 고정 버퍼 · 무할당 리플레이 + log2(ns) 지연 히스토그램.
+- 호스트: Seal 을 모든 결속 뒤로 이동 · 검증기 결선(격리 = 매트릭스 KIS 격리 + 세션 단절 보고) · 원장 팬아웃.
+
+### 30.3 검증 · 한계
+- KisVtsProtocolIntegrationTests.cs 15건(키움 시뮬레이션 프록시 실 파이프 + KIS VTS 스트림 동시 수렴 · 500ms 불균형 · 이탈 0ms 격리 · δ=0 · 리플레이 5만 프레임 할당 0B · 이 호스트 실측 약 72만 fps/p99 ≤4µs) · 방어 9종 끔 9/9 Red · 전체 3,497 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: 프레임은 합성(실 VTS 캡처 대조 미실시) · 통보 계좌 필드 형식(8/10자리) 미검증 — 불일치 시 전 통보 폐기 → 원장 대사가 비트 24 로 드러냄 · 응답 tr_id 헤더 부재는 통과 처리 · 체결이 연속 유입되면 원장 판정이 계속 보류될 수 있음.
+
+## 31. 차기: AI 모의투자 실시간 관제 대시보드 · 텔레메트리 허브 (2026-10-07 · 미커밋)
+
+### 31.1 전제 검증
+- 렌더 병합기는 기존재: `MS2E.UI.Portable/Infrastructure/SnapshotRenderGovernor.cs`(선행/후행 에지 · 버전 불변 생략 · 부하/동결 적응) — 중복 신설 대신 재사용(50ms 창). 지시서의 `Blazor/Services/SnapshotRenderGovernor.cs` 는 같은 이름 충돌 방지로 `DashboardSnapshotHub.cs` 로 신설(빠진 '무할당 수집 + 3중 버퍼 스냅샷' 담당).
+- 호스트 결합 UI 래칫이 이미 40/40 — 지시서 경로의 [Inject] 페이지는 래칫 위반. 관례대로 호스트 shim(`@page "/aidash"` · Inject 0) + 순수 RCL 뷰 + 포트.
+- 집계어 전이 관측자는 1개 봉인(포렌식 기록기 점유) → 기록기에 2차 체인(기록 먼저 · 체인 예외 격리) 추가.
+- 인터락 비트는 지시서 '26대(0~25)'가 아니라 현재 0~26 + 63(28개) — 실제 enum 기준 표시.
+
+### 31.2 구현
+- `MS2E.UI.Portable/Ports/Trading/PaperDashboardPort.cs` — 읽기 전용 포트(Acquire/Release/Version/Running/FrameReady · 명령 멤버 0) + 원시 구조체 프레임 DTO.
+- `StockManager/Blazor/Services/DashboardSnapshotHub.cs` — TelemetryRing(MPSC · wait-free 게시 · 유실 판정) · 생산자 4종(체결/틱/AI 판단/인터락 전이) · 전용 타이머 50ms 펌프(모의 원장: 가중평단 · 실현/미실현 · 승패 · MDD · 1초 자산곡선) · 자식 슬롯/한도/집계어 판독 · 3중 버퍼 리스 · 고정 배열 구독자 통지(예외 계수).
+- [실결함 · 자체] 3버퍼 모두 리스된 회차의 변경(링 소비분)이 다음 프레임에서 소실 → 게시 성공 시에만 서명 확정 + 보류 플래그.
+- `MS2E.UI.Portable/Pages/Trading/PaperTradingDashboardView.razor` — KPI · SVG 손익 곡선 · 인터락 LED + Disarm 포렌식 · 체결 피드 · 브로커 한도 · [방향 A] 자식 슬롯 매트릭스 · [방향 B] AI 판단 근거 로그. 상승 적색 · 하강 청색.
+- ChildSlotTrackingMatrix.CopyChildren(seqlock 낙관 판독) · InterlockForensicRecorder.Chain · 하네스 fillObserver · 호스트 결선(키움 체결/틱 · KIS 체결 · 포렌식 체인 · DI · `Dashboard.PeriodMs`) · 내비 'AI 모의투자 관제'.
+
+### 31.3 검증 · 한계
+- PaperTradingDashboardUiTests.cs 13건(1만 틱 + 500 체결 = 프레임 1 · δ=0 생산자/펌프/리스 · 리스 불변 · UI 예외/동결 중 생산자 10만 건 무대기 · 포트 읽기 전용 · 하네스 E2E 수렴 · 래칫) · 방어 9종 끔 9/9 Red · 전체 3,510 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과(coupled 40 = 래칫 40 불변 · shell 41→42).
+- 한계: 렌더 화면은 브라우저 실렌더 미검증(WinForms WebView 호스트) · 차트는 JS 캔버스 대신 SVG · 손익은 수수료/세금 미반영 모의 원장 · AI 판단 근거는 PublishDecision API 만 제공(전략 계층 실호출부 없음 — 하네스 테스트가 대리) · 방향 A 의 브로커별 5호가 잔량 오버레이 미구현(기존 IOrderBookPort 화면 몫) · UI 렌더 시 문자열 할당은 δ=0 대상 밖.
+
+## 32. 차기: 전 시스템 카오스 스톰 · 28계층 인터락 스트레스 주입 (2026-10-07 · 미커밋)
+
+### 32.1 전제 검증
+- ★[실결함] 최종 송출 초크포인트 TOCTOU — OrderDrainWorker 는 집계어를 카나리 · 라우터 게이트 · 지연 프로브 '앞'에서 1회 읽고, LiveArmedEgressSentinel 은 물리 이중키만 본다 → 그 사이 격발한 비트는 무장 상태에서 Place 까지 도달.
+- ★[실결함] 블랙박스 사건 코드 충돌 — InterlockRaised/Cleared/EgressBypassBlocked(70/71/72)가 v5.2.0 LiquiditySlice/OrderThrottled/ToxicFlowHold 와 같은 값 → 덤프에서 인터락 전이와 유동성 사건 구분 불가.
+- 기존재: MmfFlightRecorder(다중 라이터 δ=0 순환 블랙박스 · Seal) = 방향 A 의 실체 — 중복 신설 대신 사건 코드 추가 · 처리량 실측. 7계층 주입기(하네스) 확장.
+- 재무장: TryRearm 전수 이중키 선검사 · 미체결 대사기는 이중키 후에도 최초 대사 확정 전 차단(대사 미완료 재무장 거부 = 기존 설계 확인).
+
+### 32.2 구현
+- LiveArmedEgressSentinel(interlockBlocked) — 무장이어도 집계어 차단 = 전달 0 · 판독 예외 = 차단 · 우회 sticky 와 별도 계수(InterlockVetoes). 호스트 키움 · KIS 센티널 결선.
+- FlightEventKind 재배정(93/94/95) + ChaosInjected(96) · StormFreeze(97). InterlockForensicRecorder 2차 관측자 최대 4 슬롯(중복 거부).
+- `StockManager/Simulation/ChaosStormInjector.cs` — 9벡터(시세 스파이크 · 프록시 소실 · 수신 침묵 · 시계 역행 · MMF 오염 · 자격증명 유출 · 호가 교차 · 서버 오류 · 라이브락)를 실 Trip 경로로 격발 · 반환 전 비트 재판독(0ms Disarm) · 주입→전이 µs · 블랙박스 ChaosInjected · xorshift 시드 결정론 · δ=0. 하네스 brokerDecorator.
+- [방향 B] `StockManager/Telemetry/CascadingStormFreezeGate.cs` — 창(50ms) 안 서로 다른 비트 3개 격발 = StormFreeze 기록 + 블랙박스 봉인(최초 원인 보존) + ForceFreeze 1회 · 봉인 성공 뒤 Arm(기동 각인 무시). OS 페이지 읽기 전용 고정은 거부(AV catch 불가 → 프로세스 즉사).
+
+### 32.3 검증 · 한계
+- ChaosStormInterlockStressTests.cs 21건(28계층 단일/500조합/28스레드 동시 · 전이 비트당 1회 · 9벡터 · 실 파이프 프록시 종료 · 부하 중 무작위 5천 주입 차단 진입 전달 0 · 블랙박스 4스레드 약 779만 건/s · δ=0) · 방어 9종 끔 9/9 Red · 전체 3,531 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 통과.
+- 한계: 프록시 Kill 은 파이프 파기 대리(실 x86 프로세스 Kill 아님) · 시계 역행은 런타임 관측 경로만(부팅 앵커 경로는 기존 테스트) · 스톰 게이트 기본 활성(3비트/50ms → ForceFreeze) — 네트워크 단절이 3계층을 동시에 올리면 동결된다(의도된 fail-closed · `Chaos.StormThresholdBits`/`Chaos.StormWindowMs` 조정).
+
+## 33. v12.15.0-GM 출하 — QuantumVault 피어 정렬 · 릴리스 패키징 (2026-10-07)
+
+### 33.1 전제 검증
+- 지시서의 `StockManager/Services/ReleasePackager.cs` · `scripts/release-package.ps1` 는 실재 경로가 다르다: `src/02_Infrastructure/Engine/ReleasePackager.cs` · 리포 루트 `release-package.ps1`. 방향 A(zip 무추출 봉인 수검 `--verify-zip`)와 방향 B 일부([8]~[10] 실패 시 산출물 폐기)는 기존재.
+- ★[실결함] 롤백 가드 공백 — [1]~[6](빌드·테스트·infra·래칫·liveArmed) 실패 시 직전 실행이 남긴 같은 이름 zip/.sha256/master-seal.txt 가 잔존(지금 소스와 다른 봉인이 '통과한 출하물'처럼 보임) → [0/10] 통과 직후 같은 버전 산출물 전량 폐기.
+- ★[실결함] 출하 빌드에 `-warnaserror` 부재 — 프로젝트 TreatWarningsAsErrors 는 컴파일러 경고만, MSBuild 경고(MSB/NETSDK)는 게이트(-warnaserror)와 달리 통과 → 같은 판정으로 정렬.
+- 호스트 버전이 12.14.1 그대로 → 12.15.0(출하 zip 이름 · 태그 원천).
+- 피어 QuantumVault 작업 트리에 타 세션 미커밋 코드(Services/Security · Tests · Tools) → 피어 사전 점검이 정당하게 거부. 피어는 읽기 전용 원칙(쓰기 · stash · 커밋 0) — 피어 HEAD 커밋을 독립 클론해 커밋된 상태로 핸드셰이크(기록 필드 = 이름 · 커밋 · 상대 매니페스트 경로 · 해시 — 절대경로 없음).
+- 지시서의 'QuantumVault/RELEASE_MANIFEST.json 동기화(피어 쓰기)'는 하지 않는다 — StockManager 쪽 release/RELEASE_MANIFEST.json 에 28 인터락 · 38 아티팩트 · 피어 고정값 기록.
+
+### 33.2 출하 범위(v12.14.1-GM 이후)
+- KIS 실배선(REST 잔고 · WS 체결통보 · 비트 24) · 키움 실연결 결선(ProxyHello · 비트 25) · KIS VTS 도메인 핀(비트 26) · 포지션 원장 대사 · 인터락 Seal 순서 교정 · AI 모의투자 관제 대시보드(/aidash) · 카오스 스톰(송출 초크포인트 TOCTOU · 블랙박스 코드 충돌 교정 · 연쇄 격발 동결) · 크래시 트리아지 · 분할 라우팅 · 다중 브로커 결선.
+- 인터락 28종(비트 0~26 + 63 StartupSanity) · liveArmed 기본 false 불변.
+
+### 33.3 검증
+- GoldenMasterReleasePackagingTests.cs 4건(버전 · 롤백 가드 순서 · -warnaserror · 실 출하 체인: 자기 해시 · sig · 앵커 · zip · 무추출 재수검 · 소스 커밋 = 태그 커밋 · 인터락 28 = 태그 소스 · 1비트 변조 거부 · δ=0) · 방어 3종 끔 3/3 Red.

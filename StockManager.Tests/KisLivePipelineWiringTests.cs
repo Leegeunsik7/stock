@@ -340,9 +340,10 @@ namespace StockManager.Tests
             for (int k = 0; k < targets.Length; k++) Assert.True(found[k], $"결선 누락: {targets[k].DeclaringType!.Name}.{targets[k].Name}");
             string form = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "Blazor", "BlazorHomeForm.cs"));
             Assert.Contains("MS2E.Core.ArmingInterlockSource.KisLimitFeed,", form);   // 필수 비트
-            Assert.Contains("AccountSyncBrokerView(accountSync, () => bridge.IsProxyAlive), kisBalance }", form);   // KIS 한도 뷰(인덱스 1)
+            Assert.Contains("AccountSyncBrokerView(accountSync, () => bridge.IsProductionProxy), kisBalance }", form);
+            Assert.Contains("new StockManager.Adapters.BrokerLimitFeedProvider(\n                brokerViews,", form.Replace("\r\n", "\n"));   // 한도 피드 = 같은 뷰 배열   // KIS 한도 뷰(인덱스 1) · 키움 뷰 = 실 COM 링크만
             Assert.Contains("cfg.GetBool(\"Kis.RealtimeEnabled\", false)", form);    // 실시간 접속은 명시 설정
-            Assert.Contains("onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); }", form);   // 실행 피드 + 매트릭스
+            Assert.Contains("onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); kisBalance.OnKisFill(f); dashHub.OnFill(f, 1); }", form);   // 실행 피드 + 매트릭스 + [KIS VTS] 포지션 원장
             Assert.Contains("kisSession.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.KisSession)", form);
             Assert.Equal(24, (int)ArmingInterlockSource.KisLimitFeed);
         }

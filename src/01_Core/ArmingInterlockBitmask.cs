@@ -78,6 +78,8 @@ namespace MS2E.Core
         OpenOrderDivergence = 22, // [미체결 대사] 브로커 미체결 원장 미대사(최초) · 승계/추적 주문 불일치 · 유령 주문(브로커에만 존재) → Disarm(+ 비상 일괄 취소)
         ChildSlotRejection = 23, // [자식 슬롯 분할] 자식 주문 송출 거부/실패(미송출 형제 회수) · 자식 간 체결 불균형(잔여 일괄 취소) → Disarm
         KisLimitFeed    = 24,  // [KIS 실배선] REST 잔고/주문가능 조회 연속 3회 실패 → KIS 한도 0 격리 + Disarm(미설정 = 비차단)
+        KiwoomBridgeLink = 25, // [키움 실배선] 연결 활성화인데 실 COM 프록시 링크 미수립(미연결 · 신원 거부 · 시뮬레이션 프록시 · 단절) → Disarm
+        KisProtocolDivergence = 26, // [KIS VTS] 실/모의 TR 도메인 교차 · REST 응답 tr_id 헤더 ≠ 요청 · 제어/주문 응답 형식 이탈 → KIS 슬롯 격리 + Disarm
         StartupSanity   = 63,
     }
 

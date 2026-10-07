@@ -33,6 +33,24 @@ namespace MS2E.Infrastructure
         Position       = 12,  // [계좌] ProxyHost → BridgeClient: OPW00018 보유 종목 1행(배치 번호·행 번호·행 수)
         OpenOrder      = 13,  // [미체결 대사] ProxyHost → BridgeClient: OPT10075 미체결 1행(배치 번호·행 번호·행 수)
         OrderMapped    = 14,  // [미체결 대사] ProxyHost → BridgeClient: 클라이언트 ID ↔ 키움 주문번호 사상 통지(TR 응답·정정 시)
+        ProxyHello     = 15,  // [키움 실배선] ProxyHost → BridgeClient: 연결 직후 1회 — API 종류(시뮬레이션/실 COM) · 프로토콜 버전 · PID
+    }
+
+    /// <summary>[키움 실배선] 프록시 API 종류. Simulation = NullKiwoomApi(주문 무동작) — 호스트는 실 송출 대상으로 인정하지 않는다.</summary>
+    public static class ProxyApiKind
+    {
+        public const int Simulation = 0, ProductionCom = 1;
+        public const int ProtocolVersion = 1;
+    }
+
+    /// <summary>[키움 실배선] 프록시 신원 선언(24B).</summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct ProxyHelloPayload
+    {
+        public int  ApiKind;
+        public int  ProtocolVersion;
+        public long ProcessId;
+        public long TimestampTicks;
     }
 
     // ── 주문 종류 ─────────────────────────────────────────────────────────────
@@ -317,6 +335,6 @@ namespace MS2E.Infrastructure
         public static long ParseSymbol(string? code)
             => long.TryParse(code, out var v) ? v : 0L;
 
-        private static bool IsValidWireType(int t) => t is >= 0 and <= 14;   // [L2] 8·9 · [계좌] 11·12 · [미체결 대사] 13 OpenOrder · 14 OrderMapped
+        private static bool IsValidWireType(int t) => t is >= 0 and <= 15;   // [L2] 8·9 · [계좌] 11·12 · [미체결 대사] 13·14 · [키움 실배선] 15 ProxyHello
     }
 }

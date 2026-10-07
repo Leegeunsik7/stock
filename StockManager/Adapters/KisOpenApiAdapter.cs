@@ -303,15 +303,25 @@ namespace StockManager.Adapters
         private KisNoticeCipher? _cipherCtx;
         private long _frames, _ticksEmitted, _fillsEmitted, _malformed, _echoes, _noKey, _subscribeAcks, _subscribeRejects;
         private readonly byte[] _ackKey = new byte[32], _ackIv = new byte[16];
+        private readonly KisVtsProtocolValidator? _validator;                     // [KIS VTS] 실/모의 도메인 핀(null = 미검증 · 하위 호환)
+        private readonly byte[]? _accountPin;                                      // [KIS VTS] 체결통보 계좌 핀(CANO ASCII · null = 미대조)
+        private long _foreignAccount;
+        /// <summary>[KIS VTS] 계좌 핀 불일치 통보(같은 HTS ID 의 다른 계좌) — 실행 피드/매트릭스로 내보내지 않고 폐기.</summary>
+        public long ForeignAccountNotices => Interlocked.Read(ref _foreignAccount);
         public long SubscribeAcks => Interlocked.Read(ref _subscribeAcks);
         public long SubscribeRejects => Interlocked.Read(ref _subscribeRejects);
         public bool HasNoticeKeys => Volatile.Read(ref _cipherCtx) is not null;
 
         /// <param name="send">PINGPONG 반송(받은 바이트 그대로 · 전송 계층 주입). 반환 = 송신 성공.</param>
+        /// <param name="validator">[KIS VTS] 도메인 핀 — 교차 도메인 TR/구독 응답 = 폐기 + 비트 26 Disarm + KIS 슬롯 격리.</param>
+        /// <param name="accountCano">[KIS VTS] 체결통보 계좌 핀(종합계좌 앞 8자리). 통보 계좌 필드가 이 값으로 시작하지 않으면 폐기.</param>
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
-                                 Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null)
+                                 Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
+                                 KisVtsProtocolValidator? validator = null, string? accountCano = null)
         {
             _session = session ?? throw new ArgumentNullException(nameof(session));
+            _validator = validator;
+            if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
             _send = send; _onTick = onTick; _onFill = onFill;
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
         }
@@ -345,8 +355,10 @@ namespace StockManager.Adapters
                 }
                 // [KIS 실배선 · 실결함 교정] 수정 전: 구독 응답(체결통보 복호 key/iv)을 버렸다 — 운영에 SetNoticeKeys 호출부가 없어
                 //   암호화 체결통보가 전량 '키 없음' 폐기(NoticeWithoutKey)됐다. 이제 체결통보 TR 구독 성공 응답이면 키를 자동 장착(콜드 1회).
-                if (!ping && KisProtocol.TryParseSubscribeAck(span, _ackKey, _ackIv, out bool ok, out bool isNotice, out bool hasKeys))
+                if (!ping && KisProtocol.TryParseSubscribeAck(span, _ackKey, _ackIv, out bool ok, out bool isNotice, out bool hasKeys, out var ackDomain))
                 {
+                    // [KIS VTS] 교차 도메인 구독 응답(모의 세션에 H0STCNI0 등) = 복호 키 장착 거부 + 이탈 Disarm
+                    if (_validator is { } dv && !dv.CheckSubscribeDomain(ackDomain)) { CryptographicOperations.ZeroMemory(_ackKey); CryptographicOperations.ZeroMemory(_ackIv); return Bad(); }
                     if (!ok) { Interlocked.Increment(ref _subscribeRejects); return false; }
                     Interlocked.Increment(ref _subscribeAcks);
                     if (isNotice && hasKeys) SetNoticeKeys(_ackKey, _ackIv);
@@ -356,6 +368,7 @@ namespace StockManager.Adapters
             }
             _session.OnActivity(false);
             if (!KisProtocol.TryParseHeader(span, out bool encrypted, out var trId, out int count, out var body)) return Bad();
+            if (_validator is { } v && !v.CheckRealtimeTr(trId)) return Bad();        // [KIS VTS] 교차 도메인 TR = 폐기 + Disarm(비트 26)
             if (KisProtocol.IsTickTr(trId))
             {
                 if (encrypted) return Bad();
@@ -382,7 +395,8 @@ namespace StockManager.Adapters
                     if (len <= 0) return Bad();
                     plain = _plain.AsSpan(0, len);
                 }
-                if (!KisProtocol.TryParseNotice(plain, out var n)) return Bad();
+                if (!KisProtocol.TryParseNotice(plain, out var n, out var account)) return Bad();
+                if (_accountPin is { } pin && !account.StartsWith(pin)) { Interlocked.Increment(ref _foreignAccount); return false; }   // 타 계좌 통보 = 폐기
                 // 취소/정정 확인은 새 주문번호로 오고 원주문번호가 실려 온다 — 추적 슬롯은 원주문 기준
                 long odno = n.Kind is KisNoticeKind.CancelConfirmed or KisNoticeKind.Amended && n.OrigOrderNo > 0 ? n.OrigOrderNo : n.OrderNo;
                 var status = n.Kind switch

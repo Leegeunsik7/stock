@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.14.1-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.15.0-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -109,12 +109,27 @@ if ($headCommit.Trim() -ne $tagCommit.Trim()) {
 $dirty = @(& git -C $root -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
 if ($dirty.Count -gt 0) { Fail "미커밋 코드 $($dirty.Count)건(예: $($dirty[0])) — 작업 트리 빌드는 태그 소스와 다름(출하 금지)" }
 Write-Host "  OK: $tag = HEAD 코드 · 미커밋 코드 0" -ForegroundColor DarkGreen
+# [다중 저장소 봉인 감사] 피어 사전 점검(빌드 전 fail-fast · 읽기 전용) — [10/10] 핸드셰이크가 거부할 피어 상태(저장소/봉인 매니페스트 부재 ·
+#   미커밋 코드)를 수십 분 빌드 전에 같은 판정 규칙(Test-CodePath)으로 차단한다. 피어에는 아무것도 쓰지 않는다.
+if (-not $NoPeer) {
+    if (-not (Test-Path -LiteralPath (Join-Path $PeerRepo ".git"))) { Fail "피어 저장소 없음: $PeerRepo (-NoPeer 로 명시 생략 가능)" }
+    $peerManifest = Join-Path $PeerRepo "release\offline-bundle\RELEASE_MANIFEST.json"
+    if (-not (Test-Path -LiteralPath $peerManifest)) { Fail "피어 봉인 매니페스트 없음: $peerManifest" }
+    $peerDirty = @(& git -C $PeerRepo -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
+    if ($peerDirty.Count -gt 0) { Fail "피어 미커밋 코드 $($peerDirty.Count)건(예: $($peerDirty[0])) — [10/10] 핸드셰이크 거부 예정, 빌드 전 중단" }
+    Write-Host "  OK: 피어 $PeerRepo 미커밋 코드 0 · 봉인 매니페스트 존재" -ForegroundColor DarkGreen
+}
+# [출하 롤백 가드 · v12.15.0-GM] 사전 검사 통과 = 이번 실행이 같은 버전의 기존 출하 산출물을 대체한다 → 빌드 전에 전량 폐기.
+#   이후 어느 단계([1]~[10])에서 실패해도 release\ 에 이 버전의 zip · .sha256 · master-seal.txt · RELEASE_MANIFEST.json 이 남지 않는다.
+#   (수정 전: [1]~[6] 실패 시 직전 실행이 남긴 같은 이름 zip 이 '통과한 출하물'처럼 잔존 — 지금 소스와 다른 봉인.)
+#   빌드는 -warnaserror(MSBuild 경고 포함 — 프로젝트 TreatWarningsAsErrors 는 컴파일러 경고만) = 게이트와 같은 판정.
+Remove-ReleaseOutputs
 $buildStart = Get-Date
 
 # ── [1/8] WebOnly 빌드(검증 전용 — 산출물 폐기, Host 출력 폴더 공유이므로 먼저 태움) ──
 if (-not $SkipWebOnlyGate) {
     Step 1 "WebOnly Release 빌드(0W/0E 검증 전용)..."
-    dotnet build $hostProj -c Release -p:WebOnly=true -m:1
+    dotnet build $hostProj -c Release -p:WebOnly=true -m:1 -warnaserror
     if ($LASTEXITCODE -ne 0) { Fail "WebOnly 빌드 실패(exit $LASTEXITCODE) — 0W/0E 아님, 패키징 중단" }
 } else {
     Write-Host "[1/8] WebOnly 게이트 건너뜀(-SkipWebOnlyGate)" -ForegroundColor DarkGray
@@ -122,7 +137,7 @@ if (-not $SkipWebOnlyGate) {
 
 # ── [2/8] Default 빌드(sln 전체 — Host/Tests/PrimesBench/x86 KiwoomProxy, 패키징 대상 산출) ──
 Step 2 "Default Release 빌드(sln 전체: Host+Tests+PrimesBench+x86 KiwoomProxy+KiwoomComShim)..."
-dotnet build $sln -c Release -m:1
+dotnet build $sln -c Release -m:1 -warnaserror
 if ($LASTEXITCODE -ne 0) { Fail "Default 빌드 실패(exit $LASTEXITCODE) — 0W/0E 아님, 패키징 중단" }
 # [오중 빌드] COM 인터롭 쉼(#if KIWOOM_COM) 컴파일 증거 — 산출물 존재 + 이번 빌드 이후 갱신(증분 빌드 생략분은 입력 무변경이 보증)
 if (-not (Test-Path -LiteralPath $shimDll)) { Fail "KiwoomComShim 산출물 없음 — #if KIWOOM_COM 블록 미검증 출하 금지: $shimDll" }

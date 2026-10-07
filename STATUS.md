@@ -1,17 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: [KIS 실배선 · 추천 A] REST 주문가능/잔고 → KIS 한도 뷰(비트 24) · WebSocket 체결통보 세션(구독 키 자동 장착 · 심박 · 장중 3초 침묵 차단) · 매트릭스 가중평균가 (v12.15.x-DEV · 미커밋 — 대사·봉인 감사·트리아지·분할·결선 포함)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,474/3,474 Pass(3회 중 1회 기존 IPC 타이밍 테스트 간헐 · 단독 5/5), infra-scan coupling 0, Phase114 통과
-- **Updated At**: 2026-10-07 15:00
+- **Active Milestone**: [출하] v12.15.0-GM Production Golden Master — 태그 기준 깨끗한 작업 트리 패키징 · QuantumVault 피어(커밋 상태) 핸드셰이크 · 롤백 가드
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,535/3,535 Pass ×2, infra-scan coupling 0, Phase114 통과
+- **Updated At**: 2026-10-07 21:00
 
 ## Completed Deliverables
-- [실결함] 어댑터가 구독 응답 key/iv 를 버림(운영 SetNoticeKeys 호출부 없음) → 실연결 시 암호 체결통보 전량 폐기 → 자동 장착
-- KisProtocol 판독기 3종(TTTC8908R · TTTC8434R · 구독 응답 · δ=0) · KisLiveBroker 조회/접속키
-- KisBalanceQueryAdapter: 실패 즉시 한도 0 · 연속 3회 Disarm(비트 24 sticky) · 30초 만료 · 미설정 비차단
-- KisRealtimeSession: 체결통보(HTS ID) + 심박 체결가 구독 · 조각 조립 · PINGPONG 복사 반송 · 단절 = 비트 19 · 재접속
-- 방향 B: 장중(KST 09:00~15:20) 3초 침묵 차단 · 매트릭스 가중평균 체결가 · KisLivePipelineWiringTests.cs 9건 · HANDOVER.md §28
+- 호스트 버전 12.15.0 · 출하 스크립트 롤백 가드(사전 검사 직후 같은 버전 산출물 폐기) · 빌드 -warnaserror 정렬
+- GoldenMasterReleasePackagingTests.cs 4건(Red 3/3) — 실 출하 체인 · 소스 커밋 = 태그 · 인터락 28 · 1비트 변조 거부
+- v12.15.x-DEV 누적(키움/KIS 실배선 · VTS 도메인 핀 · 대시보드 · 카오스 스톰) 선별 커밋 · HANDOVER.md §33
 
 ## 정직 스코핑
-- 실시간 접속은 Kis.RealtimeEnabled(기본 false) ∧ vault KIS.HtsId 필요 · TR/필드/WS URL 공개 문서 기준 실서버 미검증
-- KIS 잔고 1페이지만 · 키움 브리지 ConnectAsync 미호출 유지 · 방향 A(비관리 링버퍼) 미채택(경합 원천 없음)
-- Next: 커밋(선별 스테이징) · 모의(VTS) 도메인 실프레임 대조 · 설정 UI 에 HTS ID 입력 · 키움 브리지 실연결
+- 피어 QuantumVault 작업 트리에 타 세션 미커밋 코드 — 피어 HEAD 커밋 독립 클론으로 핸드셰이크(피어 쓰기 0)
+- 출하 결과(zip · masterSeal)는 패키징 완료 후 이 문서와 HANDOVER §33 에 기록
+- Next: 패키징 결과 확인 · 실 KIS VTS/키움 COM 현장 대조

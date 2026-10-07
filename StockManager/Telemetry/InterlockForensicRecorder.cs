@@ -34,6 +34,26 @@ namespace StockManager.Telemetry
         public long RaisedUnion => Interlocked.Read(ref _raisedUnion);
         public long Faults => Interlocked.Read(ref _faults);
 
+        // [대시보드 · 카오스 스톰] 2차 관측자(집계어 관측자는 1개로 봉인 — 이 기록기 뒤에 체인 · 최대 4 · 고정 슬롯).
+        //   기록(해시 체인 · 블랙박스)이 먼저, 관측자는 그 뒤 · 관측자 예외는 계수만(포렌식 각인 · 차단 무영향). 추가만 · 교체/중복 금지.
+        public const int MaxChained = 4;
+        private readonly IInterlockTransitionSink?[] _next = new IInterlockTransitionSink?[MaxChained];
+        private long _chainFaults;
+        public long ChainFaults => Interlocked.Read(ref _chainFaults);
+
+        public void Chain(IInterlockTransitionSink next)
+        {
+            ArgumentNullException.ThrowIfNull(next);
+            lock (_next)
+            {
+                for (int i = 0; i < _next.Length; i++)
+                    if (ReferenceEquals(Volatile.Read(ref _next[i]), next)) throw new InvalidOperationException("같은 관측자 중복 결속 — 거부");
+                for (int i = 0; i < _next.Length; i++)
+                    if (Volatile.Read(ref _next[i]) is null) { Volatile.Write(ref _next[i], next); return; }
+            }
+            throw new InvalidOperationException("2차 관측자 슬롯 소진(" + MaxChained + ")");
+        }
+
         public void OnTransition(long raisedBits, long clearedBits, long maskAfter)
         {
             long now = _nowTicks();
@@ -47,6 +67,11 @@ namespace StockManager.Telemetry
             {
                 Interlocked.Increment(ref _clearedEvents);
                 Write(AuditEventKind.Arm, FlightEventKind.InterlockCleared, clearedBits, maskAfter, now);
+            }
+            for (int i = 0; i < _next.Length; i++)
+            {
+                if (Volatile.Read(ref _next[i]) is not { } next) continue;
+                try { next.OnTransition(raisedBits, clearedBits, maskAfter); } catch (Exception) { Interlocked.Increment(ref _chainFaults); }
             }
         }
 
