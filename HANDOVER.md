@@ -1374,3 +1374,6 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 48.4 출하
 - 버전 12.17.3 · 태그 v12.17.3-GM · `release-package.ps1 -NoPeer`(QuantumVault 피어 미정돈 — §47) · 태그 기준 형제 worktree 에서 패키징 후 release/ 복사 · 이전 v12.17.1-GM 산출물은 release/superseded-v12.17.1-GM 으로 이동.
+- 출하 기록(2026-10-12): 태그 v12.17.3-GM = 674e662 · `release-v12.17.3-GM.zip` SHA-256 5268015F128954645CC879F99DA37568BDA5CD48E1DDFAF6C1DE62C0503C9975 · masterSeal 06786D5B68CEC8592986CE4DE66520C854EEB17E10B480340E152DA34EDA8F6D · 아티팩트 38 · 피어 기록 없음(-NoPeer).
+- [0/10]~[10/10] 전 단계 통과: 미커밋 코드 0 · 오중 빌드 0W/0E · 전체 스위트 Pass · infra coupling 0 · 래칫 ≤ 40 · 소스 가드(이중 키 14 · 마스터 1) · --verify-seal 38 · --verify-zip Ok · --verify-live-armed Ok(키 조회 19 · 마스터 1 · UI 기입 가드 3/3 · 위반 0) · 핸드셰이크 재수검 Ok.
+- 주의(실측): 공유 저장소의 commit-graph 손상 경고(`unable to find all commit-graph files`)가 git stderr 로 나오면 PS 5.1 + ErrorActionPreference=Stop 이 [0/10] 를 즉시 중단시킨다. 프로세스 한정 `GIT_CONFIG_KEY_n=core.commitGraph / VALUE=false` 로 우회(전역 설정 · .git 무변경).

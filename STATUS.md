@@ -10,6 +10,7 @@
 - CLI --verify-ui-switches: 10,343 상호작용 위반 0 · 적대 200/200 차단 · 스톰 코어 틱 0B
 - 방향 A(출하): ShippedBinaryLiveArmedGuard 가 UI 기입자 3종 Admit→brfalse 게이트 · 허용 목록 안전 네임스페이스 0 을 IL 로 판독([9/10])
 - 테스트: GoldenMasterReleasePackagingTests §8 — 1바이트 패치(판정 무시 · 허용 목록 오염) 전부 거부 · HANDOVER §48
+- 출하: 태그 674e662 · zip 5268015F… · masterSeal 06786D5B… · 38 아티팩트 · [0/10]~[10/10] 통과 · --verify-zip/--verify-live-armed Ok(UI 가드 3/3)
 
 ## Next Milestone
 - QuantumVault 피어 정돈 후 이중 저장소 정식 봉인(HANDOVER §47.3 런북)
