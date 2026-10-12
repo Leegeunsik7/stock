@@ -1330,3 +1330,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 태그 v12.17.1-GM → 68ff158(신규 · 미푸시) · 형제 작업 트리에서 release-package.ps1 -NoPeer [0/10]~[10/10] 1회 통과([6/10] 마스터 플래그 소스 1건 false · 스크립트 내부 스위트 3,616 Pass) · 작업 트리 제거.
 - release-v12.17.1-GM.zip 3,030,966B · SHA-256 4EC0FF7F9A9D6C176A9F8832E86F7E3AB336F165F4D12E10947CE5EF3F66370A · masterSeal 5BEAC1A544CFD91F198A5799AD642B786FAEE780A32A2AD98AC29F47B4575A8E · 아티팩트 38 · 인터락 29 · liveArmed false · 피어 기록 없음(-NoPeer).
 - [9/10] --verify-zip Ok · --verify-live-armed Ok(키 조회 16 · 마스터 플래그 생성 1 · 위반 0) · [10/10] sync/handshake Ok. primary release/ 로 5종 복사 · v12.17.0-GM 산출물은 release/superseded-v12.17.0-GM/ · 출하 체인 테스트 30/30(무추출 재수검 62ms).
+
+## 47. 단독 운용 보존(v12.17.1-GM) · QuantumVault 피어 정돈 대기 · 비파괴 준비 탐침 · 전이 경보 (2026-10-08~12 · v12.17.2-DEV)
+
+### 47.1 단독 출하 재검증 · 피어 상태
+- release/release-v12.17.1-GM.zip: SHA-256 4EC0FF7F… = 사이드카 일치 · 호스트 CLI --verify-zip Ok(아티팩트 38 · masterSeal 5BEAC1A5… 무추출) · --verify-live-armed Ok(키 조회 16 · 마스터 플래그 생성 1 · 위반 0).
+- 피어 오염 격리: StockManager 빌드 정의(sln · csproj · props · targets)에 QuantumVault 경로 참조 0 · 출하 매니페스트 피어 기록 없음(-NoPeer) · 아티팩트에 피어 파일 0(테스트 강제).
+- QuantumVault 실측(읽기 전용 · 이 세션 쓰기 0): HEAD c1eb24e(직전 점검 bdb8bb2 → 피어 세션이 대부분 커밋) · 미커밋 코드 3(예: auto_seal.ps1 — key_out.txt 포함) · 키 의심 파일 key_out.txt(내용 미열람) · 매니페스트 봉인 2026-10-07 03:59Z < HEAD 커밋 18:40Z = 낡음 → NotReady.
+
+### 47.2 구현
+- [방향 B] `StockManager/Tools/PeerReadinessProbe.cs` + CLI `--peer-readiness <피어 루트>`(0 Ready · 2 NotReady · 64 사용 오류): ① 저장소 최상위 = 지정 경로(아니면 상위 저장소를 판정하는 함정 — 설계 검토 중 실측: 비저장소 폴더에서 감싸는 저장소 전체 스캔 7분 38초 → 교정) ② 미커밋 코드 0(스크립트 [0/10] 규칙) ③ 키 원문 의심 파일 0(추적 · 미추적 · gitignore 포함 · 이름만 — 내용 미열람/미출력) ④ 매니페스트 존재 · rootHash · sealedAtUtc ≥ HEAD 커밋 시각.
+- ★실결함(읽기 전용 피어 보호): 일반 git status 는 인덱스 stat 캐시를 기회적으로 갱신하며 .git/index 를 다시 쓴다 — release-package.ps1 피어 precheck 와 핸드셰이크 피어 관측(GitRepoProbe.Git)이 QuantumVault 인덱스를 쓸 수 있었다. GitRepoProbe.Git 모든 호출 + 스크립트 피어 status 에 --no-optional-locks. 실측: 실 QuantumVault 판정 전후 .git/index 해시 · mtime 불변.
+- PeerReadinessProbeTests.cs 6건(임시 저장소: Ready/CLI 0 · 미커밋+키(gitignore 안 포함 · 비밀값 미출력) · 매니페스트 누락/무효/낡음 · 저장소 아님/하위 폴더 · ★비파괴(stat 만 바꾼 상태에서 탐침 = 인덱스 불변 · 대조군 일반 status = 재기록 관측) · 스크립트/헬퍼 플래그 · 피어 오염 격리). 방어 끔 6종 6/6 Red. 전체 3,622 Pass ×2 · 오중 빌드 0W/0E · infra 0 · Phase114 coupled 40 = ratchet 40.
+
+### 47.3 피어 정돈 완료 시 런북(정식 이중 저장소 봉인)
+1) 탐침: `StockManager\bin\Release\net8.0-windows\MS2E.StockSuite.exe --peer-readiness D:\PROGRAM\QuantumVault --report <파일>` → 종료 코드 0 이어야 진행(NotReady 사유: 미커밋 코드 · 키 파일 이관 · 현재 HEAD 기준 재봉인).
+2) 버전/태그: StockManager 는 새 버전(예: 12.17.2)으로 커밋 · 태그 — v12.17.1-GM 단독 출하물은 이미 봉인돼 있으므로 덮어쓰지 않는다. QuantumVault 태그는 피어 세션 또는 사용자 명시 승인 시에만(읽기 전용 원칙).
+3) 형제 작업 트리(safe.directory = GIT_CONFIG_* env)에서 `release-package.ps1`(-NoPeer 없이) → [0/10] 피어 고정 · [10/10] 핸드셰이크 PeerPin.
+- 한계: 탐침은 커밋 시각 기준 낡음만 본다(매니페스트가 현재 HEAD 산출물의 해시인지 재빌드 대조는 피어 측 도구 몫) · 키 판별은 이름 규칙(내용 미열람이 원칙).
+
+### 47.4 v12.17.2-DEV — 준비 상태 전이 경보 · 대기 관측 (2026-10-12)
+- [방향 B] `StockManager/Tools/PeerReadinessWatcher.cs` + CLI `--peer-watch <피어 루트> [--polls N] [--interval-ms M] [--confirm K]`: 폴링마다 판정 묶음(Ready · 사유 비트 · HEAD 앞 12 hex)이 바뀌면 PeerReadinessTransition(102) 블랙박스 기록 · NotReady→Ready 는 같은 HEAD 연속 2회 Ready 에서만 확정(디바운스 — 피어 커밋 도중 순간 Ready 무시) → 런북 '알림' 1회(출하 실행 0 · QuantumVault 태그는 승인 몫) · HEAD 변경 = 재확인 후 재트리거. 호스트 런타임 미결선(피어 독립 · 테스트가 강제). 방향 A('0.1ns' 진단)는 불가(단조 시계 ≈100ns · git 호출 자체가 수십 ms) — 거부.
+- PeerReadinessWatcherTests.cs 4건(전이/디바운스/재트리거 순서 · 깜빡임 0 · 실 임시 저장소 정돈 전 구간 트리거 1회 + 피어 작업 트리 · .git 전체 바이트 지문 불변 + CLI 0/2/64 · 호스트 미결선 · 이벤트 102 유일). 방어 끔 5종 5/5 Red.
+- 대기 관측(2026-10-12 · 읽기 전용): QuantumVault HEAD c1eb24e(브랜치 feature/v2.8.0-signed-manifest) · NotReady — 미커밋 코드 34(예: GrpcHost/Program.cs — 10-08 의 3건에서 다시 증가: 피어 세션 진행 중) · key_out.txt · 매니페스트 봉인 10-07 03:59Z < HEAD 커밋 18:40Z. --peer-watch 2폴링: 전이 1 · 트리거 0 · .git/index 해시 · HEAD 참조 불변.
+- 단독 출하 재대조: release-v12.17.1-GM.zip --verify-zip Ok(38 · 5BEAC1A5…) · --verify-live-armed Ok(16 + 마스터 1 · 위반 0).

@@ -30,6 +30,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using MS2E.Infrastructure;
 
 namespace StockManager.Tools
@@ -514,6 +515,9 @@ namespace StockManager.Tools
                 //   core.quotepath=false porcelain 의 한글 경로 손상). UTF-8(BOM 없음)로 고정.
                 var psi = new ProcessStartInfo("git") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = repoRoot,
                                                         StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false) };
+                // [v12.17.x · 실결함 교정] 읽기 전용 피어(QuantumVault) 보호 — 일반 'git status' 는 인덱스 stat 캐시를 기회적으로 갱신하며
+                //   .git/index 를 다시 쓴다(선택적 잠금). 판독 전용 호출이므로 전부 --no-optional-locks(쓰기 0).
+                psi.ArgumentList.Add("--no-optional-locks");
                 psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("core.quotepath=false");
                 foreach (var a in args) psi.ArgumentList.Add(a);
                 using var p = Process.Start(psi);
@@ -536,11 +540,12 @@ namespace StockManager.Tools
     {
         public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
         public const string VerifyLiveArmedFlag = "--verify-live-armed";
+        public const string PeerReadinessFlag = "--peer-readiness", PeerWatchFlag = "--peer-watch";
         public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -569,6 +574,40 @@ namespace StockManager.Tools
                     var v = ZipSealDryRunVerifier.Verify(zip, File.ReadAllText(sealFile), out string d);
                     output.WriteLine($"[verify-zip] {v}: {d}");
                     return v == ZipSealVerdict.Ok ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], PeerWatchFlag))
+                {
+                    // [피어 대기 · 방향 B] 주기 관측 — 전이 = 블랙박스(102) · 같은 HEAD 연속 Ready 확정 시 런북 '알림'(출하 실행 0) → 종료 0.
+                    //   --polls N(기본 1) · --interval-ms M(기본 60000) — 확정 없이 끝나면 2.
+                    string? peerRoot = Arg(args, 1);
+                    if (peerRoot is null) { output.WriteLine("[peer-watch] 사용: --peer-watch <피어 루트> [--polls N] [--interval-ms M] [--confirm K]"); return ExitUsage; }
+                    int polls = int.TryParse(o.GetValueOrDefault("--polls"), out int pn) && pn > 0 ? pn : 1;
+                    int interval = int.TryParse(o.GetValueOrDefault("--interval-ms"), out int im) && im >= 0 ? im : 60_000;
+                    int confirm = int.TryParse(o.GetValueOrDefault("--confirm"), out int cf) && cf > 0 ? cf : PeerReadinessWatcher.DefaultConfirmPolls;
+                    var box = new MmfFlightRecorder(1_024);
+                    bool fired = false;
+                    var w = new PeerReadinessWatcher(peerRoot, box, (rep, runbook) => { fired = true; output.WriteLine("[peer-watch] ★Ready 확정 HEAD " + rep.Head + " — " + runbook); },
+                                                     confirm, o.GetValueOrDefault("--peer-manifest") ?? PeerReadinessProbe.DefaultManifest);
+                    for (int i = 0; i < polls && !fired; i++)
+                    {
+                        if (i > 0 && interval > 0) Thread.Sleep(interval);
+                        w.Poll();
+                        var rep = w.Last!;
+                        output.WriteLine($"[peer-watch] #{i + 1} {(rep.Ready ? "Ready" : "NotReady")} HEAD {rep.Head ?? "?"} · 미커밋 코드 {rep.DirtyCodePaths} · 키 의심 파일 {rep.KeyFiles}");
+                        foreach (var (issue, detail) in rep.Issues) output.WriteLine("  " + issue + ": " + detail);
+                    }
+                    output.WriteLine($"[peer-watch] 폴링 {w.Polls} · 전이 {w.Transitions} · 블랙박스 {box.TotalRecorded} · 런북 트리거 {w.RunbookTriggers}");
+                    return fired ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], PeerReadinessFlag))
+                {
+                    // [단독 운용 · 방향 B] 피어 정돈 완료 비파괴 판정 — 0 = Ready(정식 모드 집행 가능) · 2 = NotReady
+                    string? peerRoot = Arg(args, 1);
+                    if (peerRoot is null) { output.WriteLine("[peer-readiness] 사용: --peer-readiness <피어 루트> [--peer-manifest <상대 경로>]"); return ExitUsage; }
+                    var rep = PeerReadinessProbe.Probe(peerRoot, o.GetValueOrDefault("--peer-manifest") ?? PeerReadinessProbe.DefaultManifest);
+                    output.WriteLine($"[peer-readiness] {(rep.Ready ? "Ready" : "NotReady")}: HEAD {rep.Head ?? "?"} · 미커밋 코드 {rep.DirtyCodePaths} · 키 의심 파일 {rep.KeyFiles}");
+                    foreach (var (issue, detail) in rep.Issues) output.WriteLine("  " + issue + ": " + detail);
+                    return rep.Ready ? ExitOk : ExitRejected;
                 }
                 if (Eq(args[0], VerifyLiveArmedFlag))
                 {

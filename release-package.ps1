@@ -117,7 +117,7 @@ if (-not $NoPeer) {
     if (-not (Test-Path -LiteralPath (Join-Path $PeerRepo ".git"))) { Fail "피어 저장소 없음: $PeerRepo (-NoPeer 로 명시 생략 가능)" }
     $peerManifest = Join-Path $PeerRepo "release\offline-bundle\RELEASE_MANIFEST.json"
     if (-not (Test-Path -LiteralPath $peerManifest)) { Fail "피어 봉인 매니페스트 없음: $peerManifest" }
-    $peerDirty = @(& git -C $PeerRepo -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
+    $peerDirty = @(& git -C $PeerRepo --no-optional-locks -c core.quotepath=false status --porcelain --untracked-files=all | ForEach-Object { if ($_.Length -ge 4) { $x = $_.Substring(3); if ($x.Contains(' -> ')) { $x = $x.Substring($x.IndexOf(' -> ') + 4) }; $x } } | Where-Object { Test-CodePath $_ })
     if ($peerDirty.Count -gt 0) { Fail "피어 미커밋 코드 $($peerDirty.Count)건(예: $($peerDirty[0])) — [10/10] 핸드셰이크 거부 예정, 빌드 전 중단" }
     # [방향 B] 피어 고정 — 이 실행이 짝지을 피어(HEAD · 봉인 매니페스트 해시)를 빌드 전에 확정. [10/10] 동기화 · 핸드셰이크가 대조(이동 = 산출물 폐기).
     $peerPinHead = (& git -C $PeerRepo rev-parse HEAD 2>$null)
