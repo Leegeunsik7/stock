@@ -22,6 +22,14 @@
 //      LocalDatabase.SetSetting/SetSecret 호출이 정확히 1개이며 Admit '뒤'(가드 전에 기입 = 위반). 판독된 기입자 수 = UiGuardSites(3 이어야 Ok).
 //   ⑤ 허용 목록 초기화 지점(UiSettingWriteGuard..cctor)의 ldstr 접두사 ≥1 · 호스트 안전 설정 네임스페이스(Dispatch.·Broker.·Canary.·Risk.… — 호스트
 //      RuntimeConfig 판독 네임스페이스 실측 전수) 접두사 0. 판독 대상 부재 = 비공허성 위반(가드 소실 · 개명 = 거부).
+//  [v12.17.4-GM · 방향 A] ★시뮬레이션 격리 IL 판독 — 호스트 DLL 은 StockManager.Simulation 네임스페이스(가상 브로커 · 디스패처 무장 술어 강제 true ·
+//   상류 오작동 주입 InjectUpstreamFault 등 '리허설 전용' 사슬)를 함께 출하한다. 오늘은 --verify-ui-switches CLI 만 참조하지만, 누군가 호스트 조립부
+//   (BlazorHomeForm 등)에서 하네스 · 가상 브로커를 생성하도록 바꿔도 소스 가드 · 키 판독 · 마스터 플래그 판독은 그것을 보지 못한다.
+//   ⑥ 시뮬레이션 형식(최외곽 선언 형식의 네임스페이스 = StockManager.Simulation — 컴파일러 생성 중첩 클로저 포함)의 메서드를 가리키는
+//      newobj · call · callvirt · ldftn · ldvirtftn 이 시뮬레이션 밖에서 나오면 위반. 허용 = 시뮬레이션 내부 · CLI 격리 형식(QuarantineCliTypes ·
+//      Program.Main 의 UI/DB 초기화 이전 조기 분기에서만 진입). 허용 CLI 참조 지점 수 = SimulationCliSites(보고).
+//   비공허성: 시뮬레이션 형식 ≥ 1(판독 대상 존재). 대상 토큰 = 같은 어셈블리 MethodDefinition · TypeDefinition 부모 MemberReference.
+//   한계(정직): 리플렉션(Activator · Type.GetType 문자열)으로 만든 인스턴스는 IL 토큰이 없어 보지 못한다 — 호스트에 그런 경로가 생기면 별도 가드 필요.
 //  콜드 경로(출하 검증 1회) — 할당 무관. BCL 만 사용(System.Reflection.Metadata · System.Reflection.Emit.OpCodes 표).
 // ============================================================================
 using System;
@@ -41,7 +49,8 @@ namespace StockManager.Tools
         public const string HostEntry = "host/MS2E.StockSuite.dll";
         private static readonly string[] Keys = { "Dispatch.ValveWired", "Dispatch.LiveArmingWired" };
 
-        public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0)
+        public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0,
+                                             int SimulationTypes = 0, int SimulationCliSites = 0)
         {
             public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
@@ -51,6 +60,10 @@ namespace StockManager.Tools
         {
             ("AdminSettingWidgetAdapter", "SetSetting"), ("AdminSettingWidgetAdapter", "SetSecret"), ("StrategyHubInfraAdapter", "SetSetting"),
         };
+
+        // [v12.17.4-GM] 시뮬레이션 격리 — 네임스페이스와 그것을 참조해도 되는 CLI 형식(조기 분기 전용).
+        public const string SimulationNamespace = "StockManager.Simulation";
+        private static readonly string[] QuarantineCliTypes = { "UiSwitchVerifierCli", "UiFuzzRig" };
 
         // 호스트가 RuntimeConfig/설정으로 판독하는 안전 네임스페이스(BlazorHomeForm · InfraLiberationSlice2 cfg.Get* 실측 전수 + 무장 키 Broker.).
         // UI 허용 목록에 이 중 하나라도 들어가면 순수 UI 가 무장/한도 설정을 쓸 수 있다 = 위반.
@@ -117,7 +130,9 @@ namespace StockManager.Tools
         {
             using var pe = new PEReader(peImage, PEStreamOptions.LeaveOpen | PEStreamOptions.PrefetchEntireImage);
             var md = pe.GetMetadataReader();
-            int sites = 0, masterSites = 0, allowlistSites = 0;
+            int sites = 0, masterSites = 0, allowlistSites = 0, simCliSites = 0;
+            int simTypes = 0;
+            foreach (var th in md.TypeDefinitions) if (IsSimulation(md, th)) simTypes++;
             var writerSeen = new bool[UiWriters.Length];
             var perKey = new int[Keys.Length];
             var violations = new List<string>();
@@ -140,6 +155,20 @@ namespace StockManager.Tools
                     }
                 if (tname == "UiSettingWriteGuard" && mname == ".cctor")
                     allowlistSites += CheckAllowlist(md, ins, violations);
+                var owner = m.GetDeclaringType();
+                if (!IsSimulation(md, owner))
+                {
+                    string outer = md.GetString(md.GetTypeDefinition(Outermost(md, owner)).Name);
+                    bool cli = Array.IndexOf(QuarantineCliTypes, outer) >= 0;
+                    for (int k = 0; k < ins.Count; k++)
+                    {
+                        var o = ins[k].Op;
+                        if (o != OpCodes.Newobj && o != OpCodes.Call && o != OpCodes.Callvirt && o != OpCodes.Ldftn && o != OpCodes.Ldvirtftn) continue;
+                        if (TargetType(md, ins[k].Operand) is not { } tt || !IsSimulation(md, tt)) continue;
+                        if (cli) { simCliSites++; continue; }
+                        violations.Add(outer + "." + mname + ": 시뮬레이션 형식 " + md.GetString(md.GetTypeDefinition(Outermost(md, tt)).Name) + " 참조(" + o.Name + ") — 리허설 사슬은 호스트 런타임에서 격리돼야 함");
+                    }
+                }
                 if ((mname == "get_LiveArmed" || mname == "get_IsLiveArmed") && ins.Count == 2 && ins[0].Op == OpCodes.Ldc_I4_1 && ins[1].Op == OpCodes.Ret)
                     violations.Add(TypeName(md, m) + "." + mname + ": 항상 true 반환(ldc.i4.1; ret)");
                 for (int k = 0; k < ins.Count; k++)
@@ -181,8 +210,9 @@ namespace StockManager.Tools
                 if (!writerSeen[w]) violations.Add(UiWriters[w].Type + "." + UiWriters[w].Method + " UI 설정 기입자 0 — 가드 대상 소실(비공허성 실패)");
                 else uiGuardSites++;
             if (allowlistSites == 0) violations.Add("UiSettingWriteGuard 허용 목록 초기화(.cctor 접두사 ldstr) 0 — 가드 대상 소실(비공허성 실패)");
+            if (simTypes == 0) violations.Add("시뮬레이션 형식(" + SimulationNamespace + ") 0 — 격리 판독 대상 소실(비공허성 실패)");
             // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
-            return new Result(sites, violations, masterSites, uiGuardSites);
+            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites);
         }
 
         /// <summary>④ 기입자 본문: ldarg.1 → call Admit → brfalse, 그리고 DB 기입 정확히 1회 · Admit 뒤.</summary>
@@ -219,6 +249,32 @@ namespace StockManager.Tools
                         violations.Add("UiSettingWriteGuard 허용 목록에 호스트 안전 네임스페이스 '" + s + "' (" + ns + ")");
             }
             return n;
+        }
+
+        /// <summary>중첩 형식(클로저 · 상태 기계 등 컴파일러 생성 포함)의 최외곽 선언 형식.</summary>
+        private static TypeDefinitionHandle Outermost(MetadataReader md, TypeDefinitionHandle t)
+        {
+            for (int guard = 0; guard < 32; guard++)
+            {
+                var parent = md.GetTypeDefinition(t).GetDeclaringType();
+                if (parent.IsNil) return t;
+                t = parent;
+            }
+            return t;
+        }
+
+        private static bool IsSimulation(MetadataReader md, TypeDefinitionHandle t)
+            => md.GetString(md.GetTypeDefinition(Outermost(md, t)).Namespace) == SimulationNamespace;
+
+        /// <summary>메서드 토큰 → 같은 어셈블리 선언 형식(MethodDefinition · TypeDefinition 부모 MemberReference). 그 외 = null.</summary>
+        private static TypeDefinitionHandle? TargetType(MetadataReader md, int token)
+        {
+            var h = MetadataTokens.EntityHandle(token);
+            if (h.Kind == HandleKind.MethodDefinition) return md.GetMethodDefinition((MethodDefinitionHandle)h).GetDeclaringType();
+            if (h.Kind == HandleKind.MemberReference && md.GetMemberReference((MemberReferenceHandle)h).Parent is { Kind: HandleKind.TypeDefinition } p)
+                return (TypeDefinitionHandle)p;
+            if (h.Kind == HandleKind.MethodSpecification) return TargetType(md, MetadataTokens.GetToken(md.GetMethodSpecification((MethodSpecificationHandle)h).Method));
+            return null;
         }
 
         private static (string? Type, string? Name) MethodOwner(MetadataReader md, int token)

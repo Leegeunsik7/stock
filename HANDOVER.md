@@ -1377,3 +1377,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 기록(2026-10-12): 태그 v12.17.3-GM = 674e662 · `release-v12.17.3-GM.zip` SHA-256 5268015F128954645CC879F99DA37568BDA5CD48E1DDFAF6C1DE62C0503C9975 · masterSeal 06786D5B68CEC8592986CE4DE66520C854EEB17E10B480340E152DA34EDA8F6D · 아티팩트 38 · 피어 기록 없음(-NoPeer).
 - [0/10]~[10/10] 전 단계 통과: 미커밋 코드 0 · 오중 빌드 0W/0E · 전체 스위트 Pass · infra coupling 0 · 래칫 ≤ 40 · 소스 가드(이중 키 14 · 마스터 1) · --verify-seal 38 · --verify-zip Ok · --verify-live-armed Ok(키 조회 19 · 마스터 1 · UI 기입 가드 3/3 · 위반 0) · 핸드셰이크 재수검 Ok.
 - 주의(실측): 공유 저장소의 commit-graph 손상 경고(`unable to find all commit-graph files`)가 git stderr 로 나오면 PS 5.1 + ErrorActionPreference=Stop 이 [0/10] 를 즉시 중단시킨다. 프로세스 한정 `GIT_CONFIG_KEY_n=core.commitGraph / VALUE=false` 로 우회(전역 설정 · .git 무변경).
+
+## 49. v12.17.4-GM Production Golden Master 출하 — 2 브로커 분할 라우팅 드라이런 · 주문 경로 구간 계측 · 시뮬레이션 격리 IL 판독 (2026-10-12)
+
+### 49.1 다중 브로커 드라이런(v12.17.4-DEV)
+- 전제(정직): 실 키움 COM(x86 프록시 · OpenAPI+ 로그인 · 장중) · KIS VTS(App Key/Secret · 웹소켓)는 개발 호스트/CI 에서 연결 불가 — 가짜 세션 배선은 만들지 않았다. 실 장중 VTS 실측은 사용자 자격증명 · 장 시간이 필요한 별도 작업.
+- `StockManager/Simulation/MultiBrokerDryRunHarness.cs`: 호스트 BlazorHomeForm 과 같은 사슬(10호가 → QuantSignalProvider 확신 게이트 0.85 + DepthBook + 참조가 → OrderDispatchRing → GatedOrderDispatcher → OrderDrainWorker[인터락 veto → RouterFeedGate 시그널 게이트 → ChildSlotOrderSplitter 1~3호가 × 브로커 한도 → TickToTrade 송출 직전 veto → 자식 순차 송출] → 브로커별 LiveArmedEgressSentinel → 가상 브로커) + ChildSlotTrackingMatrix 불균형 취소. 가상 브로커 2(키움 주문번호 · KisOrderIdSpace) · 한도 = 고정값 · 미승인 도달 독립 계수.
+- 무장 모델: 물리 이중키(기본 off) · InjectUpstreamFault(디스패처 술어만 강제 true — 센티널은 실 이중키) — 상류 전면 오작동 리허설.
+- [방향 A] `StockManager/Telemetry/OrderPathStageProfiler.cs`: 시그널 → 게이트 승인 → 첫 자식 출구 진입 → 마지막 출구 판정 구간(log2 ns 히스토그램 · δ=0). 실측(Release · 164 부모 · 워밍업 포함): 시그널→출구 p50 ≤ 16µs · p99 ≤ 131µs · max 12.5ms(첫 호출 JIT). 호스트 미결선(하네스 데코레이터만).
+- [방향 B] 신규 구현 없음 — 기존 ChildSlotTrackingMatrix 불균형 취소(기본 500ms · Routing.ImbalanceMs 하한 50ms)를 50ms 로 실측: 49ms 취소 0 · 51ms KIS 잔여 전량 1회 + 비트 23 · 이후 송출 veto.
+- `StockManager.Tests/ProductionDryRunRoutingTests.cs` 13: 승인 분할(60/40) · 깊이 상한 · 확신 미달/방향 불일치 전방 거부 · 50ms 차단기 · 키 off(3 조합) · 상류 오작동 = 센티널 첫 자식 차단(전달 0 · sticky · 동결) · 형제 사이 인터락 격발 = 집계어 veto · 퍼징 2,000 사이클 미승인 도달 0 · 송출 경로 δ=0 · 실 브로커 형식 0. 방어 끔 4종 4/4 Red. δ=0 테스트는 확신 임계 0.5(같은 호가 반복 시 마이크로 추세 감쇠 → 0.85 미달 · 게이트는 매 주문 평가).
+
+### 49.2 [방향 A] 시뮬레이션 격리 IL 판독(출하 바이너리)
+- 호스트 DLL 은 StockManager.Simulation(가상 브로커 · 무장 술어 강제 true 디스패처 · InjectUpstreamFault)을 함께 출하한다. `ShippedBinaryLiveArmedGuard` ⑥: 최외곽 선언 형식 네임스페이스가 Simulation 인 메서드를 가리키는 newobj/call/callvirt/ldftn/ldvirtftn 이 시뮬레이션 밖에서 나오면 위반 · 허용 = 시뮬레이션 내부 + CLI 격리 형식(UiSwitchVerifierCli · UiFuzzRig — Program.Main 조기 분기). 비공허성 = 시뮬레이션 형식 ≥ 1. 한계: 리플렉션 생성은 IL 토큰이 없어 미탐.
+- 실측: 키 조회 19 · 마스터 플래그 1 · UI 기입 가드 3/3 · 시뮬레이션 형식 51(CLI 참조 29) · 위반 0. 오더의 '검증 지점 20개'는 실측과 다르다(키 19 + 마스터 1 = 20 이 의도였다면 일치 · 판독 항목은 그 외 UI 3 · 격리 51 형식 추가).
+- 테스트(GoldenMasterReleasePackagingTests §9): BlazorHomeForm 의 LiveArmedEgressSentinel 생성 newobj 토큰을 MultiBrokerDryRunHarness 생성자로 교체한 사본 = BlazorHomeForm 위반 거부 · 시뮬레이션 내부 참조는 허용 · PS 5.1 역슬래시 zip 경유 CLI Ok/거부. 공허 이미지 비공허성 위반 8.
+- 방향 B(zip 항목 정규화 · 중복 가드)는 v12.17.0-GM 출하분 그대로(§44) — 재구현 없음.
+
+### 49.3 출하
+- 버전 12.17.4 · 태그 v12.17.4-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.3-GM 산출물 → release/superseded-v12.17.3-GM.

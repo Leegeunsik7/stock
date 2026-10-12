@@ -1,7 +1,7 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.17.3-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.17.4-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.3(출하 zip 이름 · 태그 v12.17.3-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.4(출하 zip 이름 · 태그 v12.17.4-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
@@ -11,6 +11,8 @@
 //  §7 [v12.17.1-GM · 방향 A 확장] ★마스터 플래그 IL 판독: 빌드 산출 DLL = 마스터 플래그 생성 ≥1(ShadowMetricsBridge liveArmed 리터럴 false) ·
 //     newobj 직전 ldc.i4.0→ldc.i4.1 1바이트 패치 = 거부 · get_LiveArmed 본문 ldc.i4.0→ldc.i4.1 = 거부 · Func<bool> 술어 매개변수 = 대상 아님 ·
 //     스크립트 [6/10] 소스 가드도 마스터 플래그 대조.
+//  §9 [v12.17.4-GM · 방향 A] ★시뮬레이션 격리 IL 판독: 빌드 DLL = 시뮬레이션 형식 ≥ 5 · CLI(--verify-ui-switches) 참조만 허용 · 위반 0 ·
+//     호스트 조립부 newobj 토큰을 드라이런 하네스 생성자로 바꾼 사본 = BlazorHomeForm 위반으로 거부 · PS 5.1 역슬래시 zip 경유 판독 Ok · CLI 보고.
 //  §8 [v12.17.3-GM · 방향 A] ★UI 설정 기입 가드 IL 판독: 빌드 산출 DLL = 기입자 3/3 게이트 · 허용 목록 안전 네임스페이스 0 ·
 //     Admit 직후 brfalse.s → pop;nop(판정 무시) 1바이트 패치 = 기입자마다 거부 · 허용 목록 접두사 'Email.' → 'Kis.ab'(#US 힙) = 거부 · CLI 거부.
 //  §6 [v12.17.0-GM · 방향 B] zip 항목 정규화 · 중복 가드: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 비바이너리 runtimeconfig) = 수검 Ok ·
@@ -66,13 +68,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_17_3_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_17_4_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 17, 3, 0), v);
-            Assert.Equal("12.17.3", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 17, 4, 0), v);
+            Assert.Equal("12.17.4", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.17.3</Version>", csproj);
+            Assert.Contains("<Version>12.17.4</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -93,7 +95,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.17.3-GM Production Golden Master", s);
+            Assert.Contains("v12.17.4-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -302,7 +304,7 @@ namespace StockManager.Tests
                 var empty = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(File.ReadAllBytes(typeof(FactAttribute).Assembly.Location)));
                 Assert.Equal(0, empty.Sites);
                 Assert.False(empty.Ok);
-                Assert.Equal(7, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM) + UI 기입자 3 · 허용 목록 1(v12.17.3-GM)
+                Assert.Equal(8, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM) + UI 기입자 3 · 허용 목록 1(v12.17.3-GM) + 시뮬레이션 형식 1(v12.17.4-GM)
             }
             finally { foreach (var z in new[] { wrongEntry, truncated, notZip }) File.Delete(z); }
         }
@@ -516,6 +518,58 @@ namespace StockManager.Tests
             var r2 = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(g));
             Assert.False(r2.Ok);
             Assert.Contains(r2.Violations, v => v.Contains("'Kis.ab' (Kis.)", StringComparison.Ordinal));
+        }
+
+        // ════════════ §9 [v12.17.4-GM · 방향 A] 시뮬레이션 격리 IL 판독 ════════════
+
+        private static int CtorToken(byte[] dll, string typeName)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            foreach (var th in md.TypeDefinitions)
+            {
+                var t = md.GetTypeDefinition(th);
+                if (md.GetString(t.Name) != typeName) continue;
+                foreach (var mh in t.GetMethods())
+                    if (md.GetString(md.GetMethodDefinition(mh).Name) == ".ctor") return MetadataTokens.GetToken(mh);
+            }
+            Assert.Fail(typeName + " 생성자 없음");
+            return 0;
+        }
+
+        [Fact]
+        public void SimulationQuarantine_BuiltHost_OnlyCliReferences_HostWiringPatch_Rejected()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            var ok = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(dll));
+            _out.WriteLine($"[방향 A] 키 조회 {ok.Sites} · 마스터 {ok.MasterSites} · UI 가드 {ok.UiGuardSites}/3 · 시뮬레이션 형식 {ok.SimulationTypes} · CLI 참조 {ok.SimulationCliSites} · 위반 {ok.Violations.Count}");
+            Assert.True(ok.Ok, string.Join(" | ", ok.Violations));
+            Assert.True(ok.SimulationTypes >= 5, "시뮬레이션 형식 " + ok.SimulationTypes);
+            Assert.True(ok.SimulationCliSites >= 1);                                             // --verify-ui-switches → UiFuzzRig → 하네스
+
+            // 호스트 조립부가 실 송출 센티널 대신 드라이런 하네스를 생성하도록 바뀐 바이너리(newobj 4바이트 토큰 교체 — 판독기는 스택 무검증)
+            int from = CtorToken(dll, "LiveArmedEgressSentinel"), to = CtorToken(dll, "MultiBrokerDryRunHarness");
+            var bad = (byte[])dll.Clone();
+            int patched = 0;
+            for (int i = 0; i + 4 < bad.Length; i++)
+                if (bad[i] == 0x73 && BitConverter.ToInt32(bad, i + 1) == from) { BitConverter.GetBytes(to).CopyTo(bad, i + 1); patched++; }
+            Assert.True(patched >= 2, "패치 " + patched);
+            var r = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(bad));
+            foreach (var v in r.Violations) _out.WriteLine("[방향 A] 위반: " + v);
+            Assert.False(r.Ok);
+            Assert.Contains(r.Violations, v => v.StartsWith("BlazorHomeForm.", StringComparison.Ordinal) && v.Contains("MultiBrokerDryRunHarness", StringComparison.Ordinal));
+            Assert.DoesNotContain(r.Violations, v => v.StartsWith("PaperTradingSimulationHarness.", StringComparison.Ordinal));   // 시뮬레이션 내부 참조 = 허용
+
+            // PS 5.1 역슬래시 항목 zip 경유 판독 + CLI 보고(정상 Ok · 패치 거부)
+            string good = ZipWithHost(dll, "host\\MS2E.StockSuite.dll"), evil = ZipWithHost(bad, "host\\MS2E.StockSuite.dll");
+            try
+            {
+                var sw = new StringWriter();
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, good }, sw));
+                Assert.Contains("시뮬레이션 격리 형식", sw.ToString());
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, evil }, TextWriter.Null));
+            }
+            finally { File.Delete(good); File.Delete(evil); }
         }
     }
 }

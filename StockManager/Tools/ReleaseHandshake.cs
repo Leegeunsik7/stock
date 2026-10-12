@@ -615,7 +615,7 @@ namespace StockManager.Tools
                     string? zip = Arg(args, 1);
                     if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip>"); return ExitUsage; }
                     var r = ShippedBinaryLiveArmedGuard.ScanZip(zip);
-                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 위반 {r.Violations.Count}");
+                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 위반 {r.Violations.Count}");
                     foreach (var v in r.Violations) output.WriteLine("  " + v);
                     return r.Ok ? ExitOk : ExitRejected;
                 }
