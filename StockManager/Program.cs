@@ -23,6 +23,12 @@ namespace StockManager
                 Environment.ExitCode = StockManager.Tools.ReleaseHandshakeCli.Run(args, Console.Out);
                 return;
             }
+            // [자율 UI 검증] 헤드리스 UI 스위치 퍼징 수검 — 운영 DB/UI/뮤텍스 초기화 이전 분기(일회용 DB · 실 발주 경로 0).
+            if (StockManager.Tools.UiSwitchVerifierCli.IsInvocation(args))
+            {
+                Environment.ExitCode = StockManager.Tools.UiSwitchVerifierCli.Run(args, Console.Out);
+                return;
+            }
 
             ApplicationConfiguration.Initialize();
 

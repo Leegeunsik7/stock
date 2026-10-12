@@ -17,6 +17,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.8.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.1" />
+    <!-- [자율 UI 검증] 헤드리스 Blazor 렌더 · 이벤트 주입(테스트 전용 격리 — 호스트/RCL 무참조 · Components 8.0.10 정합) -->
+    <PackageReference Include="bunit" Version="1.36.0" />
   </ItemGroup>
 
   <ItemGroup>

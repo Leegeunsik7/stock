@@ -15,6 +15,13 @@
 //      위치여야 직전 명령으로 판독 가능(아니면 판독 불가 = 위반 · 관례 강제). 생성 지점 수 = MasterSites(≥1 = 비공허성).
 //   ② 일반 call/callvirt 대상 메서드의 마지막 'liveArmed' 인자가 리터럴 true(ldc.i4.1) = 위반(검증기 입력처럼 런타임 값 전달은 허용).
 //   ③ get_LiveArmed/get_IsLiveArmed 본문이 'ldc.i4.1; ret'(항상 true) = 위반.
+//  [v12.17.3-GM · 방향 A] ★UI 설정 기입 가드 IL 판독 — v12.17.3-DEV 가 교정한 결함(순수 UI 포트 SetSetting 이 임의 키 = 물리 이중 키를 DB 에 기입)의
+//   교정이 '출하 바이너리에 실제로 있는가'를 소스가 아닌 IL 로 대조한다(소스 가드는 빌드 후 패치·잘못된 브랜치 빌드를 못 본다).
+//   ④ 기입자 3종(AdminSettingWidgetAdapter.SetSetting/SetSecret · StrategyHubInfraAdapter.SetSetting) 각각:
+//      call UiSettingWriteGuard.Admit 존재 · 그 직전 = ldarg.1(바로 그 key 인자) · 직후 = brfalse(결과로 분기 — pop/무시 = 위반) ·
+//      LocalDatabase.SetSetting/SetSecret 호출이 정확히 1개이며 Admit '뒤'(가드 전에 기입 = 위반). 판독된 기입자 수 = UiGuardSites(3 이어야 Ok).
+//   ⑤ 허용 목록 초기화 지점(UiSettingWriteGuard..cctor)의 ldstr 접두사 ≥1 · 호스트 안전 설정 네임스페이스(Dispatch.·Broker.·Canary.·Risk.… — 호스트
+//      RuntimeConfig 판독 네임스페이스 실측 전수) 접두사 0. 판독 대상 부재 = 비공허성 위반(가드 소실 · 개명 = 거부).
 //  콜드 경로(출하 검증 1회) — 할당 무관. BCL 만 사용(System.Reflection.Metadata · System.Reflection.Emit.OpCodes 표).
 // ============================================================================
 using System;
@@ -34,10 +41,25 @@ namespace StockManager.Tools
         public const string HostEntry = "host/MS2E.StockSuite.dll";
         private static readonly string[] Keys = { "Dispatch.ValveWired", "Dispatch.LiveArmingWired" };
 
-        public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0)
+        public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0)
         {
-            public bool Ok => Sites > 0 && MasterSites > 0 && Violations.Count == 0;
+            public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
+
+        // [v12.17.3-GM] UI 포트 설정 기입자(형식, 메서드) — 전부 UiSettingWriteGuard.Admit 로 게이트돼야 한다.
+        private static readonly (string Type, string Method)[] UiWriters =
+        {
+            ("AdminSettingWidgetAdapter", "SetSetting"), ("AdminSettingWidgetAdapter", "SetSecret"), ("StrategyHubInfraAdapter", "SetSetting"),
+        };
+
+        // 호스트가 RuntimeConfig/설정으로 판독하는 안전 네임스페이스(BlazorHomeForm · InfraLiberationSlice2 cfg.Get* 실측 전수 + 무장 키 Broker.).
+        // UI 허용 목록에 이 중 하나라도 들어가면 순수 UI 가 무장/한도 설정을 쓸 수 있다 = 위반.
+        private static readonly string[] HostSafetyNamespaces =
+        {
+            "Dispatch.", "Broker.", "Canary.", "Ignition.", "Risk.", "Security.", "Exposure.", "Sla.", "Kis.", "Kiwoom.", "Router.", "Routing.",
+            "Account.", "Rollover.", "OpenOrder.", "Correlation.", "Health.", "Chaos.", "Clearing.", "Strategy.", "Greenhouse.", "Alpha.", "Algo.",
+            "Release.", "Dashboard.",
+        };
 
         private static readonly OpCode[] One = new OpCode[0x100], Two = new OpCode[0x100];
         static ShippedBinaryLiveArmedGuard()
@@ -95,7 +117,8 @@ namespace StockManager.Tools
         {
             using var pe = new PEReader(peImage, PEStreamOptions.LeaveOpen | PEStreamOptions.PrefetchEntireImage);
             var md = pe.GetMetadataReader();
-            int sites = 0, masterSites = 0;
+            int sites = 0, masterSites = 0, allowlistSites = 0;
+            var writerSeen = new bool[UiWriters.Length];
             var perKey = new int[Keys.Length];
             var violations = new List<string>();
             var armedParam = LiveArmedParameterIndex(md);                       // 메서드 행 번호 → (liveArmed 매개변수 위치, 매개변수 수)
@@ -107,6 +130,16 @@ namespace StockManager.Tools
                 if (il is null) continue;
                 var ins = Decode(il);
                 string mname = md.GetString(m.Name);
+                string tname = TypeName(md, m);
+                for (int w = 0; w < UiWriters.Length; w++)
+                    if (UiWriters[w].Type == tname && UiWriters[w].Method == mname && m.GetParameters().Count == 2)
+                    {
+                        if (writerSeen[w]) { violations.Add(tname + "." + mname + ": 기입자 중복 정의 — 판독 모호"); continue; }
+                        writerSeen[w] = true;
+                        CheckUiWriter(md, ins, tname + "." + mname, violations);
+                    }
+                if (tname == "UiSettingWriteGuard" && mname == ".cctor")
+                    allowlistSites += CheckAllowlist(md, ins, violations);
                 if ((mname == "get_LiveArmed" || mname == "get_IsLiveArmed") && ins.Count == 2 && ins[0].Op == OpCodes.Ldc_I4_1 && ins[1].Op == OpCodes.Ret)
                     violations.Add(TypeName(md, m) + "." + mname + ": 항상 true 반환(ldc.i4.1; ret)");
                 for (int k = 0; k < ins.Count; k++)
@@ -143,7 +176,67 @@ namespace StockManager.Tools
             for (int i = 0; i < Keys.Length; i++)
                 if (perKey[i] == 0) violations.Add("\"" + Keys[i] + "\" GetBool 조회 지점 0 — 가드 대상 소실(비공허성 실패)");
             if (masterSites == 0) violations.Add("마스터 플래그(liveArmed 생성자 인자) 생성 지점 0 — 가드 대상 소실(비공허성 실패)");
-            return new Result(sites, violations, masterSites);
+            int uiGuardSites = 0;
+            for (int w = 0; w < UiWriters.Length; w++)
+                if (!writerSeen[w]) violations.Add(UiWriters[w].Type + "." + UiWriters[w].Method + " UI 설정 기입자 0 — 가드 대상 소실(비공허성 실패)");
+                else uiGuardSites++;
+            if (allowlistSites == 0) violations.Add("UiSettingWriteGuard 허용 목록 초기화(.cctor 접두사 ldstr) 0 — 가드 대상 소실(비공허성 실패)");
+            // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
+            return new Result(sites, violations, masterSites, uiGuardSites);
+        }
+
+        /// <summary>④ 기입자 본문: ldarg.1 → call Admit → brfalse, 그리고 DB 기입 정확히 1회 · Admit 뒤.</summary>
+        private static void CheckUiWriter(MetadataReader md, List<(OpCode Op, int Operand)> ins, string where, List<string> violations)
+        {
+            int admit = -1, writes = 0, firstWrite = -1;
+            for (int k = 0; k < ins.Count; k++)
+            {
+                var op = ins[k].Op;
+                if (op != OpCodes.Call && op != OpCodes.Callvirt) continue;
+                var (type, name) = MethodOwner(md, ins[k].Operand);
+                if (type == "UiSettingWriteGuard" && name == "Admit" && admit < 0) admit = k;
+                else if (type == "LocalDatabase" && (name == "SetSetting" || name == "SetSecret")) { writes++; if (firstWrite < 0) firstWrite = k; }
+            }
+            if (admit < 0) { violations.Add(where + ": UiSettingWriteGuard.Admit 호출 없음 — 무가드 기입"); return; }
+            if (admit == 0 || ins[admit - 1].Op != OpCodes.Ldarg_1) violations.Add(where + ": Admit 인자가 key 매개변수(ldarg.1)가 아님");
+            var next = admit + 1 < ins.Count ? ins[admit + 1].Op : OpCodes.Nop;
+            if (next != OpCodes.Brfalse_S && next != OpCodes.Brfalse) violations.Add(where + ": Admit 결과로 분기하지 않음(직후 " + next.Name + ") — 판정 무시 기입");
+            if (writes != 1) violations.Add(where + ": DB 기입 호출 " + writes + "건(정확히 1 이어야 함)");
+            else if (firstWrite < admit) violations.Add(where + ": DB 기입이 Admit 보다 앞섬");
+        }
+
+        /// <summary>⑤ 허용 목록 초기화: ldstr 접두사 수(≥1 = 판독 지점) · 호스트 안전 네임스페이스와 겹치는 접두사 = 위반.</summary>
+        private static int CheckAllowlist(MetadataReader md, List<(OpCode Op, int Operand)> ins, List<string> violations)
+        {
+            int n = 0;
+            for (int k = 0; k < ins.Count; k++)
+            {
+                if (ins[k].Op != OpCodes.Ldstr) continue;
+                string s = md.GetUserString(MetadataTokens.UserStringHandle(ins[k].Operand & 0x00FFFFFF));
+                n++;
+                foreach (var ns in HostSafetyNamespaces)
+                    if (s.StartsWith(ns, StringComparison.OrdinalIgnoreCase) || ns.StartsWith(s, StringComparison.OrdinalIgnoreCase))
+                        violations.Add("UiSettingWriteGuard 허용 목록에 호스트 안전 네임스페이스 '" + s + "' (" + ns + ")");
+            }
+            return n;
+        }
+
+        private static (string? Type, string? Name) MethodOwner(MetadataReader md, int token)
+        {
+            var h = MetadataTokens.EntityHandle(token);
+            switch (h.Kind)
+            {
+                case HandleKind.MethodDefinition:
+                    var d = md.GetMethodDefinition((MethodDefinitionHandle)h);
+                    return (TypeName(md, d), md.GetString(d.Name));
+                case HandleKind.MemberReference:
+                    var r = md.GetMemberReference((MemberReferenceHandle)h);
+                    string? t = r.Parent.Kind == HandleKind.TypeReference ? md.GetString(md.GetTypeReference((TypeReferenceHandle)r.Parent).Name)
+                              : r.Parent.Kind == HandleKind.TypeDefinition ? md.GetString(md.GetTypeDefinition((TypeDefinitionHandle)r.Parent).Name) : null;
+                    return (t, md.GetString(r.Name));
+                default:
+                    return (null, null);
+            }
         }
 
         private static string TypeName(MetadataReader md, MethodDefinition m) => md.GetString(md.GetTypeDefinition(m.GetDeclaringType()).Name);

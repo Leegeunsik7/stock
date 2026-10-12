@@ -51,7 +51,7 @@ namespace MS2E.Infrastructure
         }
 
         public string? GetSetting(string key) => _db.GetSetting(key);
-        public void SetSetting(string key, string value) => _db.SetSetting(key, value);
+        public void SetSetting(string key, string value) { if (MS2E.Infrastructure.UiSettingWriteGuard.Admit(key)) _db.SetSetting(key, value); }   // ★허용 목록 밖 폐기
 
         public void Notify(string title, string message, StrategyNotifyLevel level = StrategyNotifyLevel.Info)
         {

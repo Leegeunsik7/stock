@@ -1,7 +1,7 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.17.1-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.17.3-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.1(출하 zip 이름 · 태그 v12.17.1-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.3(출하 zip 이름 · 태그 v12.17.3-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
@@ -11,6 +11,8 @@
 //  §7 [v12.17.1-GM · 방향 A 확장] ★마스터 플래그 IL 판독: 빌드 산출 DLL = 마스터 플래그 생성 ≥1(ShadowMetricsBridge liveArmed 리터럴 false) ·
 //     newobj 직전 ldc.i4.0→ldc.i4.1 1바이트 패치 = 거부 · get_LiveArmed 본문 ldc.i4.0→ldc.i4.1 = 거부 · Func<bool> 술어 매개변수 = 대상 아님 ·
 //     스크립트 [6/10] 소스 가드도 마스터 플래그 대조.
+//  §8 [v12.17.3-GM · 방향 A] ★UI 설정 기입 가드 IL 판독: 빌드 산출 DLL = 기입자 3/3 게이트 · 허용 목록 안전 네임스페이스 0 ·
+//     Admit 직후 brfalse.s → pop;nop(판정 무시) 1바이트 패치 = 기입자마다 거부 · 허용 목록 접두사 'Email.' → 'Kis.ab'(#US 힙) = 거부 · CLI 거부.
 //  §6 [v12.17.0-GM · 방향 B] zip 항목 정규화 · 중복 가드: PS 5.1 역슬래시 실봉인 zip(실 호스트 DLL + 봉인 비바이너리 runtimeconfig) = 수검 Ok ·
 //     IL 판독 Ok · manifest.sig 2개 / 봉인 비바이너리 대소문자 변형 사본 / 구분자 · 대소문자 변형 바이너리 사본 = 전부 거부(Windows 해제 시 덮어쓰기 모호성).
 //  §5 [v12.16.1-GM · 방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독(ShippedBinaryLiveArmedGuard — 추출·로드·실행 0):
@@ -64,13 +66,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_17_1_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_17_3_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 17, 1, 0), v);
-            Assert.Equal("12.17.1", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 17, 3, 0), v);
+            Assert.Equal("12.17.3", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.17.1</Version>", csproj);
+            Assert.Contains("<Version>12.17.3</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -91,7 +93,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.17.1-GM Production Golden Master", s);
+            Assert.Contains("v12.17.3-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -300,7 +302,7 @@ namespace StockManager.Tests
                 var empty = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(File.ReadAllBytes(typeof(FactAttribute).Assembly.Location)));
                 Assert.Equal(0, empty.Sites);
                 Assert.False(empty.Ok);
-                Assert.Equal(3, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM)
+                Assert.Equal(7, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM) + UI 기입자 3 · 허용 목록 1(v12.17.3-GM)
             }
             finally { foreach (var z in new[] { wrongEntry, truncated, notZip }) File.Delete(z); }
         }
@@ -461,6 +463,59 @@ namespace StockManager.Tests
                 sync = s.IndexOf("'--sync-release-manifest'", StringComparison.Ordinal);
             Assert.True(vz > 0 && arm > vz && sync > arm, $"순서 vz={vz} arm={arm} sync={sync}");
             Assert.Contains("if ($armVerify -ne 0) { Remove-ReleaseOutputs; Fail", s.Substring(arm, sync - arm));   // 거부 = 출하 산출물 전량 폐기
+        }
+
+        // ════════════ §8 [v12.17.3-GM · 방향 A] UI 설정 기입 가드 IL 판독 ════════════
+
+        private static int AdmitToken(byte[] dll)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            foreach (var th in md.TypeDefinitions)
+            {
+                var t = md.GetTypeDefinition(th);
+                if (md.GetString(t.Name) != "UiSettingWriteGuard") continue;
+                foreach (var mh in t.GetMethods())
+                    if (md.GetString(md.GetMethodDefinition(mh).Name) == "Admit") return MetadataTokens.GetToken(mh);
+            }
+            Assert.Fail("UiSettingWriteGuard.Admit 없음");
+            return 0;
+        }
+
+        [Fact]
+        public void UiSettingGuard_BuiltHost_AllWritersGated_OneBytePatches_Rejected()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            var ok = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(dll));
+            _out.WriteLine($"[방향 A] UI 설정 기입 가드 {ok.UiGuardSites}/3 · 위반 {ok.Violations.Count}");
+            Assert.True(ok.Ok, string.Join(" | ", ok.Violations));
+            Assert.Equal(3, ok.UiGuardSites);
+
+            // ① Admit 판정 무시: call Admit; brfalse.s xx → call Admit; pop; nop (IL 유효 · 기입 무조건 실행)
+            int token = AdmitToken(dll);
+            var bad = (byte[])dll.Clone();
+            int patched = 0;
+            for (int i = 0; i + 6 < bad.Length; i++)
+                if (bad[i] == 0x28 && BitConverter.ToInt32(bad, i + 1) == token && bad[i + 5] == 0x2C) { bad[i + 5] = 0x26; bad[i + 6] = 0x00; patched++; }
+            Assert.Equal(3, patched);                                                            // 기입자 3종 각 1 지점
+            var r1 = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(bad));
+            foreach (var v in r1.Violations) _out.WriteLine("[방향 A] 위반: " + v);
+            Assert.False(r1.Ok);
+            Assert.Equal(3, r1.Violations.Count(v => v.Contains("분기하지 않음", StringComparison.Ordinal)));
+            string zip = ZipWithHost(bad);
+            try { Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, zip }, TextWriter.Null)); }
+            finally { File.Delete(zip); }
+
+            // ② 허용 목록 오염: #US 힙의 "Email." (길이 13 = 6×2+1) → "Kis.ab" — 안전 네임스페이스 Kis. 가 UI 기입 가능해지는 바이너리
+            byte[] from = new byte[] { 13 }.Concat(Encoding.Unicode.GetBytes("Email.")).ToArray();
+            byte[] to = Encoding.Unicode.GetBytes("Kis.ab");
+            var g = (byte[])dll.Clone();
+            int at = g.AsSpan().IndexOf(from);
+            Assert.True(at > 0, "#US \"Email.\" 없음");
+            to.CopyTo(g, at + 1);
+            var r2 = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(g));
+            Assert.False(r2.Ok);
+            Assert.Contains(r2.Violations, v => v.Contains("'Kis.ab' (Kis.)", StringComparison.Ordinal));
         }
     }
 }

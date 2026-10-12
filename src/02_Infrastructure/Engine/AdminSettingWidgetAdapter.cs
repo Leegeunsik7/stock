@@ -17,8 +17,9 @@ namespace MS2E.Infrastructure
 
         // ── 설정 값 ──
         public string? GetSetting(string key) => _db.GetSetting(key);
-        public void SetSetting(string key, string value) => _db.SetSetting(key, value);
-        public void SetSecret(string key, string value) => _db.SetSecret(key, value);
+        // ★UiSettingWriteGuard 허용 목록 밖(무장 키 Dispatch.*·Broker.LiveArmed·Canary.* 등 · 미분류) 기입은 폐기(fail-closed).
+        public void SetSetting(string key, string value) { if (UiSettingWriteGuard.Admit(key)) _db.SetSetting(key, value); }
+        public void SetSecret(string key, string value) { if (UiSettingWriteGuard.Admit(key)) _db.SetSecret(key, value); }
 
         // ── 거래 모드 ──
         public bool IsLive => BrokerHub.IsLive(_db);

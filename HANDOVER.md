@@ -1354,3 +1354,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - PeerReadinessWatcherTests.cs 4건(전이/디바운스/재트리거 순서 · 깜빡임 0 · 실 임시 저장소 정돈 전 구간 트리거 1회 + 피어 작업 트리 · .git 전체 바이트 지문 불변 + CLI 0/2/64 · 호스트 미결선 · 이벤트 102 유일). 방어 끔 5종 5/5 Red.
 - 대기 관측(2026-10-12 · 읽기 전용): QuantumVault HEAD c1eb24e(브랜치 feature/v2.8.0-signed-manifest) · NotReady — 미커밋 코드 34(예: GrpcHost/Program.cs — 10-08 의 3건에서 다시 증가: 피어 세션 진행 중) · key_out.txt · 매니페스트 봉인 10-07 03:59Z < HEAD 커밋 18:40Z. --peer-watch 2폴링: 전이 1 · 트리거 0 · .git/index 해시 · HEAD 참조 불변.
 - 단독 출하 재대조: release-v12.17.1-GM.zip --verify-zip Ok(38 · 5BEAC1A5…) · --verify-live-armed Ok(16 + 마스터 1 · 위반 0).
+
+## 48. v12.17.3-GM Production Golden Master 출하 — 자율 헤드리스 UI 퍼저 · UiSettingWriteGuard · --verify-ui-switches · UI 기입 가드 IL 판독 (2026-10-12)
+
+### 48.1 실결함(v12.17.3-DEV 교정)
+- `IAdminSettingWidgetPort.SetSetting/SetSecret` · `IStrategyHubInfraPort.SetSetting` 이 임의 키를 LocalDatabase 에 기입했다. 호스트 RuntimeConfig precedence = 환경변수 → DB 이므로 `Dispatch.ValveWired` · `Dispatch.LiveArmingWired`(물리 이중 키) · `Broker.LiveArmed` · `Canary.*` · `Risk.*` 등이 순수 UI 한 줄로 변조 가능했다(현 RCL 은 미사용 — 포트가 허용한 것 자체가 Pure Shell 경계 구멍).
+- 교정: `src/02_Infrastructure/Engine/UiSettingWriteGuard.cs` 허용 목록(RCL 리터럴 기입 네임스페이스 8종: Lan. Llm. Ollama. Regime. Drift. Nightly. Email. Optimizer. · 미분류 = 폐기 + 계수 · 예외 아님 · 큐잉/재시도 없음). 두 어댑터가 `Admit(key)` 통과 시에만 기입. 새 UI 설정 네임스페이스는 허용 목록 등재 필수(테스트가 RCL 리터럴 키 전수 대조 · 동적 키 기입 0 강제).
+
+### 48.2 자율 UI 검증 하네스
+- `StockManager/Simulation/AutonomousUiSwitchVerifier.cs`: 헤드리스 Blazor Renderer 표면(설정 · 내비 · 대시보드 3 루트 · onclick/checkbox/앵커 자동 탐색) · 무장 프로브(실 집계어 28 소스 + 샌니티 = 29 비트 봉인 · 포렌식 기록기 · LiveArmingGate · DispatchArming · 매 회전 카나리 재무장 시도 재현) · 시드 결정론 퍼저(순차 스윕 → 무작위 · 50 회전마다 적대 기입 + 재판독) · 방향 A Fnv64/UiStateMatrix 지문 + 토글 대칭 · 방향 B SwitchStormIsolationGuard(CAS · 폐기) + CoreTickIsolationMonitor.
+- CLI `MS2E.StockSuite.exe --verify-ui-switches [--iterations N] [--seed S] [--storm-ms ms] [--out 파일]` — UI/운영 DB/뮤텍스 초기화 이전 분기 · 일회용 %TEMP% DB · LAN 소켓 생략 · 종료 0/1/2. 실측: 10,343 상호작용 위반 0 · 적대 200/200 차단 · 스톰 1초 약 800만 시도/1,000 허용 · 코어 틱 할당 0B · 1ms 초과 비율 8e-6.
+- 테스트: bUnit 1.36.0(테스트 프로젝트 전용) `StockManager.Tests/Simulation/AutonomousUiFuzzer.cs` + `AutonomousUiVerificationTests.cs` 35 — DOM↔렌더 프레임 탐색 교차 일치 · 음성 대조(가드 우회 표면 = FAIL).
+- 정직 공개: 코어 틱 최댓값은 OS 선점 포함(실측 3.4ms 1회) → 판정 = 1ms 초과 비율 ≤ 0.1%. 고유 상태 포화는 진단(난수 PIN 생성 = 무한 상태 공간). PaperTradingDashboardView 는 클릭 요소 0(읽기 전용 포트) — 렌더 부하 대상.
+
+### 48.3 [방향 A] 출하 바이너리 UI 기입 가드 IL 판독
+- `ShippedBinaryLiveArmedGuard` 확장(`--verify-live-armed` · [9/10] 자동 적용): 기입자 3종(AdminSettingWidgetAdapter.SetSetting/SetSecret · StrategyHubInfraAdapter.SetSetting) 각각 `ldarg.1 → call UiSettingWriteGuard.Admit → brfalse` · LocalDatabase 기입 정확히 1회 · Admit 뒤. 허용 목록 `.cctor` ldstr 접두사 ≥1 · 호스트 안전 네임스페이스(25종 실측) 겹침 0. 대상 부재 = 비공허성 위반. `Result.UiGuardSites` = 3 이어야 Ok.
+- 테스트(GoldenMasterReleasePackagingTests §8): 빌드 DLL 3/3 · brfalse.s → pop;nop 1바이트 패치 = 기입자마다 거부(3) · CLI 거부 · #US "Email." → "Kis.ab" = 거부. 공허 이미지 비공허성 위반 7(키 2 + 마스터 1 + 기입자 3 + 허용 목록 1).
+- 방향 B(zip 항목 정규화 · 중복 가드)는 v12.17.0-GM 에서 이미 출하(§44) — 재구현 없음.
+
+### 48.4 출하
+- 버전 12.17.3 · 태그 v12.17.3-GM · `release-package.ps1 -NoPeer`(QuantumVault 피어 미정돈 — §47) · 태그 기준 형제 worktree 에서 패키징 후 release/ 복사 · 이전 v12.17.1-GM 산출물은 release/superseded-v12.17.1-GM 으로 이동.
