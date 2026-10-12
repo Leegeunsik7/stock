@@ -10,6 +10,7 @@
 - 50ms 불균형 차단기 실측 · 키 off/상류 오작동/형제 사이 격발 전부 미승인 도달 0 · 퍼징 2,000 사이클 · 방어 끔 4/4 Red
 - 방향 A(출하): ShippedBinaryLiveArmedGuard ⑥ 시뮬레이션 격리 — 51 형식 · CLI 참조만 허용 · 호스트 결선 패치 = 거부
 - 29 인터락(0~27 + StartupSanity) · 실측 IL: 키 19 · 마스터 1 · UI 3/3 · 위반 0 · HANDOVER §49
+- 출하: 태그 261feb6 · zip 82DD8858… · masterSeal 6C2545C7… · 38 아티팩트 · [0/10]~[10/10] 통과
 - 정직 공개: 실 키움 COM/KIS VTS 세션 실측 미수행(자격증명 · 장 시간)
 
 ## Next Milestone

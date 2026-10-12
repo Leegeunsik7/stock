@@ -1396,3 +1396,5 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 49.3 출하
 - 버전 12.17.4 · 태그 v12.17.4-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.3-GM 산출물 → release/superseded-v12.17.3-GM.
+- 출하 기록(2026-10-12): 태그 v12.17.4-GM = 261feb6 · `release-v12.17.4-GM.zip` SHA-256 82DD88580372CD458173617B857671163DCE4C357F30FAF074BC06182CD2211F · masterSeal 6C2545C7DD0C672B6BEA18BC545768EB8AE8AFFEEE1B63365268E87A278679EA · 아티팩트 38 · 피어 기록 없음(-NoPeer).
+- [0/10]~[10/10] 전 단계 통과 · --verify-zip Ok · --verify-live-armed Ok(키 19 · 마스터 1 · UI 3/3 · 시뮬레이션 격리 51 형식(CLI 29) · 위반 0) · 핸드셰이크 Ok · primary 재대조 + GoldenMasterReleasePackagingTests 14/14.
