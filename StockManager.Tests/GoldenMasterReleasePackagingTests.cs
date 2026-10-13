@@ -83,13 +83,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_4_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_5_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 4, 0), v);
-            Assert.Equal("12.18.4", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 5, 0), v);
+            Assert.Equal("12.18.5", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.4</Version>", csproj);
+            Assert.Contains("<Version>12.18.5</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -110,7 +110,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.4-GM Production Golden Master", s);
+            Assert.Contains("v12.18.5-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -129,7 +129,22 @@ namespace StockManager.Tests
             Assert.False(m.LiveArmedDefault);
             Assert.Equal(38, m.Artifacts.Count);
             // 피어 기록: 있으면 QuantumVault 여야 한다 · 없으면 -NoPeer 명시 생략(피어 작업 트리에 미커밋 코드 = 고정 거부 — 우회 금지)
-            if (m.Peer is { } peer) Assert.Equal("QuantumVault", peer.Name);
+            if (m.Peer is { } peer)
+            {
+                Assert.Equal("QuantumVault", peer.Name);
+                // [v12.18.5-GM · 이중 저장소] 피어 교차 지문 형식 + 기록 경로 · 피어가 아직 그 커밋 · 그 봉인이면 드리프트 가드로 재대조(읽기 전용)
+                Assert.True(PeerDriftGuard.IsHex(peer.Commit, 40) && PeerDriftGuard.IsHex(peer.ManifestSha256, 64) && peer.RootHash.Length >= 64, "피어 교차 지문 형식");
+                Assert.Equal(ReleaseHandshakeCli.PeerManifestDefault, peer.ManifestPath);
+                string qv = Path.Combine(Path.GetDirectoryName(root)!, "QuantumVault");
+                var (pb, ph, ps) = PeerDriftGuard.Observe(qv);
+                if (pb is not null && string.Equals(ph, peer.Commit, StringComparison.OrdinalIgnoreCase) && string.Equals(ps, peer.ManifestSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    var drift = PeerDriftGuard.Check(qv, pb, peer.Commit, peer.ManifestSha256);
+                    _out.WriteLine($"[출하] 피어 교차 재대조 {drift.Verdict} · {drift.Detail}");
+                    Assert.True(drift.Ok, drift.Detail);
+                }
+                else _out.WriteLine($"[출하] 피어가 출하 이후 이동(HEAD {ph ?? "?"}) — 기록 형식만 대조");
+            }
             else _out.WriteLine("[출하] 피어 기록 없음(-NoPeer) — 피어 미커밋 상태에선 핸드셰이크 고정을 하지 않는다");
             // ★소스 커밋 = 태그 커밋(태그 재지정 후 1비트라도 어긋나면 거부)
             string? tagCommit = GitRepoProbe.Git(root, "rev-list", "-n", "1", tag)?.Trim();
