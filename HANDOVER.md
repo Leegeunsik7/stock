@@ -1487,3 +1487,52 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 기록(2026-10-13): 태그 v12.18.1-GM = 6ded491 · `release-v12.18.1-GM.zip` SHA-256 17F1F124A41AE80313999779FCECF3C891AF89DEBF0A6062A86B86FC1C32DE97 · masterSeal 551DBA60FBDD590665BE9059243093406603EF83D67712D616A0CD141370DDE4 · 아티팩트 38 · 피어 기록 없음(-NoPeer) · tightenRules 6.
 - [0/10]~[10/10] 전 단계 통과(3,742/3,742) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · 위반 0 · --expect-tighten-keys 6) · 핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF) · --verify-tighten Ok(6).
 - 콜드 CLI 1회 대조 시간: 인터락 7.5ms · 행렬 14.3ms(프로세스 첫 호출 JIT 포함 — 웜 기준은 각 < 1ms · 행렬 ≈ 40µs). primary 재대조(§3 테스트) 전부 Ok.
+
+## 55. v12.18.2-DEV — 강화 전용 설정 감사 원장(MMF 해시 체인) · 변조 = 동결 + 비트 27 · --verify-audit-chain (2026-10-13)
+
+### 55.1 원장(`StockManager/Security/MonotonicSettingAuditLog.cs`)
+- 파일 `%LOCALAPPDATA%/StockManager/audit/tighten-audit.mmf`(헤더 128B + 레코드 128B × 2,048 = 256KB · MMF · 쓰기 핸들 1개 FileShare.Read).
+- 헤더: 매직 MS2EAUDT · 버전 · 레코드 크기 · 용량 · 생성 시각 · 난수 nonce · 헤더 해시 = SHA-256([0,96)) = 제네시스.
+- 레코드: 순번 · UTC ticks · 키 인덱스(−1 미등재) · 판정 · 규칙 · 생략 거부 수 · 키 FNV-1a 64 · 현재/제안 유효값 · 예약 0 · 직전 해시 · 레코드 해시 = SHA-256([0,96)).
+- Verify(정적 · 0B): 헤더 → 순번 연속 · 직전 해시 연결 · 재계산 해시 · 시각 비감소 · 필드 범위/예약 0 → 빈 슬롯 이후 전부 0.
+- Append(0B): 매번 전체 재검증 + 프로세스 메모리 앵커(개수 · 머리 해시) 대조 → 기록. 시계 역행 = 직전 시각 유지.
+- 동결(sticky): 체인 불일치 · 손상 · 앵커 불일치 · 크기 이탈 · 열기 실패 → AuditChainBroken · 가득 참 → AuditLedgerFull — StrategyAnomalyInterlock.Trip(비트 27 원자 Disarm).
+  물리 이중키 재무장으로 비트 27 은 풀 수 있지만 원장 동결은 프로세스 수명 동안 유지(설정 변경 계속 차단). 운영자 조치 = 파일 보관 후 재기동.
+- 거부 레코드 예산: 분당 60 · 용량 3/4 이후 중단(생략 수는 다음 레코드에 누계) — 강화 레코드는 예산 없음.
+- 호스트: 싱글턴 ITightenAuditSink · 1초 타이머 PollIntegrity(쓰기 없어도 변조 감지 ≤ 1초).
+
+### 55.2 기입기 결선(TightenOnlyUiSettingWriter.TryWrite — 주문의 'AdmitAndApply' 는 이 메서드)
+- 원장 미결속(null) · 동결 = 판독 0 · 기입 0 · `TightenVerdict.AuditFrozen`(7 · RCL 라벨 "🔒 감사 원장 동결").
+- ★선기록: 강화 레코드 Append 성공 후에만 WriteStored · 저장 실패 = 강화 + StoreFault 2건. 거부/변화 없음도 기록(Reject 경유).
+- 어댑터 생성자 1개(원장 필수 · null = 예외). 리허설 CLI 는 익명 MMF 원장.
+- 출하 IL 가드 ⑪(ITightenAuditSink 형식이 있을 때만 — 구 출하 바이너리 호환): TryWrite Append 정확히 1 · Judge 뒤 · WriteStored 앞 · 직후 조건 분기 · 진입점 감사 인자 ldnull 0(nop 채움 건너뜀).
+
+### 55.3 [방향 A] CLI `--verify-audit-chain <file> [--expect-head <64hex>] [--expect-count <n>]`
+- 실행 중 호스트와 공존(읽기 전용 MMF 뷰 · 복사 0) · 0 = Ok · 2 = 거부 · 64 = 사용 오류. 외부 앵커 = 오프라인 '일관 재해시' 위조 대조용.
+- 실측: 가득 찬 2,048 레코드 전체 검증 웜 최솟값 646µs(< 1ms) · CLI 1회 668~713µs.
+
+### 55.4 검증(MonotonicSettingAuditLogTests 11)
+- δ: Append 200 = 0B · PollIntegrity 20 = 0B · 기입기 거부 경로 50 = 0B.
+- 1비트 변조 774건(헤더 · 가운데/마지막 레코드 전 바이트 × 2비트 · 꼬리) 전부 거부 · 타임스탬프 +1틱 · 순서 교환 거부.
+- 실행 중 변조 → 다음 기입 AuditFrozen(감지 4µs) · 기입 0 · 비트 27 · 이후 판독 0 · 원상 복구해도 동결 유지.
+- 일관 재해시 위조 · 꼬리 절단 = 정적 검증 통과(정직한 한계) → 메모리 앵커가 거부. 기동 시 손상/크기 이탈/쓰기 잠금/가득 참 = 동결 + 비트 27.
+- IL ⑪ 1바이트 패치 3종 거부 · 변이 2/2 Red(앵커 끔 · 선기록 결과 무시).
+- 한계(정직): 키 없는 SHA-256 — 프로세스가 내려간 사이 파일 전체 일관 재해시는 외부 앵커(--expect-head) 없이는 구분 불가 · 기록 중 정전 = 찢긴 레코드 → 재기동 동결(안전 쪽) ·
+  주문의 IncrementalHash 대신 정적 SHA256.HashData(동일 결과 · 상태 객체 0) · '0ms 감지' = 다음 기입 즉시 또는 1초 주기.
+
+## 56. v12.18.2-GM Production Golden Master 출하 — 감사 원장(§55) · 규칙 ⑪ 출하 강제 · 강화 전용 6키 · 30대 인터락 (2026-10-13)
+
+### 56.1 명세(출하)
+- 인터락 30종 불변(0~28 + 63 · 0x800000001FFFFFFF) · 강화 전용 행렬 6키 불변(§54.1) · 감사 원장 MonotonicSettingAuditLog(§55 · 비트 27 재사용 — 새 비트 0).
+- 주문의 'MonotonicSettingAuditLog.TryRecord' 는 없다 — 감사 진입점 = ITightenAuditSink.Append(TightenOnlyUiSettingWriter.TryWrite 에서 호출). 검사는 그 실제 지점을 판독.
+
+### 56.2 [방향 A] 감사 원장 결선 무추출 · 무할당 수검(`ShippedTightenMatrixVerifier.CheckAuditWiring` · `--require-audit-ledger`)
+- 빈틈: 가드 ⑪은 ITightenAuditSink 형식이 없으면 '구 바이너리'로 보고 생략 → 싱크 형식 개명(#Strings 1바이트)만으로 무감사 기입기가 가드를 통과(테스트 실증).
+- 검사: ITightenAuditSink 정의 1 · TryWrite = Append 정확히 1 · Judge < Append < WriteStored(정확히 1) · Append 직후 조건 분기 · TightenSetting = TryWrite 1 · 감사 인자(직전 비 nop) ≠ ldnull.
+  이름 비교 = MetadataStringComparer · 명령 해독 = 스택 버퍼 → 1,000회 0B · 회당 ≈ 70µs. 판정 18 AuditLedgerMissing · 19 AuditLedgerBypass.
+- 스크립트: [9/10] --verify-live-armed · [10/10] --verify-tighten 둘 다 `--require-audit-ledger`(가드 = AuditLedgerAware 아니면 거부) · 거부 = 기존 Remove-ReleaseOutputs 경로(fail 줄 7 불변).
+- 패치 + 일관 재봉인 4종(Append 분기 → br.s · Append → get_Frozen · 진입점 ldnull · 싱크 개명) 전부 거부 · 변이 1/1 Red(순서/분기 판정 끔). 구 출하물(v12.18.1-GM) = 요구 플래그에서 거부 · 없으면 통과(재수검 호환).
+- 방향 B(zip 항목 정규화 · 중복 가드)는 §51 공용 로더 그대로.
+
+### 56.3 출하
+- 버전 12.18.2 · 태그 v12.18.2-GM · `release-package.ps1 -NoPeer` · 형제 worktree · release/ 복사 · v12.18.1-GM 산출물 → release/superseded-v12.18.1-GM.

@@ -1732,6 +1732,13 @@ namespace StockManager.Blazor
             var strategyAnomaly = new StockManager.Engines.StrategyAnomalyInterlock();
             strategyAnomaly.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.StrategyAnomaly);
             services.AddSingleton(strategyAnomaly);
+            // [v12.18.2-DEV] 강화 전용 설정 감사 원장 — %LOCALAPPDATA%/StockManager/audit/tighten-audit.mmf(MMF 해시 체인). 기존 파일 = 기동 시 전체 검증 ·
+            //   불일치/가득 참/열기 실패 = 동결(설정 변경 전부 AuditFrozen) + 비트 27. 1초 타이머(아래 signalGateTimer)가 전체 재검증.
+            var tightenAudit = StockManager.Security.MonotonicSettingAuditLog.Open(System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "StockManager", "audit", "tighten-audit.mmf"), strategyAnomaly);
+            services.AddSingleton<MS2E.Infrastructure.ITightenAuditSink>(tightenAudit);
+            services.AddSingleton(tightenAudit);
+            FormClosed += (_, _) => tightenAudit.Dispose();
             //   [교차 피드] KIS 호가 구독이 있으면 교차 확인 모드 — 두 피드 일치 · 꼬임 Disarm · 단일 출처 ½ 감쇄(`Strategy.CrossMaxSkewMs` 기본 500).
             //   [v12.18.1-DEV] 변동성 적응 임계 — 국면(추세/회귀/횡보/워밍업) → 요구 확신 기본 ~ `Strategy.AdaptiveMaxBp`(9500) · 정수 · δ=0 ·
             //   `Strategy.AdaptiveThreshold`(기본 켜짐 — 끄면 고정 임계). [방향 B] 1분 승인 > `Strategy.ChurnSoftPerMin`(30) = 억제 ·
@@ -1767,7 +1774,11 @@ namespace StockManager.Blazor
             signalGateSwitch.Poll();
             services.AddSingleton(signalGateSwitch);
             dashHub.AttachSignalGate(signalGateSwitch);
-            var signalGateTimer = new System.Threading.Timer(_ => { try { signalGateSwitch.Poll(); } catch { } }, null, 1_000, 1_000);
+            var signalGateTimer = new System.Threading.Timer(_ =>
+            {
+                try { signalGateSwitch.Poll(); } catch { }
+                try { tightenAudit.PollIntegrity(); } catch { }                         // [v12.18.2-DEV] 감사 원장 전체 재검증(변조 = 동결 + 비트 27 · ≤ 1초)
+            }, null, 1_000, 1_000);
             FormClosed += (_, _) => signalGateTimer.Dispose();
             var childEvalTimer = new System.Threading.Timer(_ =>
             {

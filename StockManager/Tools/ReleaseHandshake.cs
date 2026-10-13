@@ -626,13 +626,13 @@ namespace StockManager.Tools
     {
         public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
         public const string VerifyLiveArmedFlag = "--verify-live-armed", VerifyInterlocksFlag = "--verify-interlocks";
-        public const string VerifyTightenFlag = "--verify-tighten";
+        public const string VerifyTightenFlag = "--verify-tighten", VerifyAuditChainFlag = "--verify-audit-chain";
         public const string PeerReadinessFlag = "--peer-readiness", PeerWatchFlag = "--peer-watch";
         public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], VerifyTightenFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], VerifyTightenFlag) || Eq(args[0], VerifyAuditChainFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -700,20 +700,42 @@ namespace StockManager.Tools
                 {
                     // [v12.16.1-GM · 방향 B] 출하 zip 안 호스트 DLL 의 이중 물리 키 기본값을 IL 로 직접 판독(추출 · 로드 · 실행 0)
                     string? zip = Arg(args, 1);
-                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip> [--expect-tighten-keys <n>]"); return ExitUsage; }
+                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip> [--expect-tighten-keys <n>] [--require-audit-ledger]"); return ExitUsage; }
                     // [v12.18.1-GM] 강화 전용 키 수 고정(스크립트 = 6) — 가드의 '경로 전체 부재 = 통과'(구 바이너리 호환)를 출하 게이트에선 닫는다
                     int expectTighten = -1;
                     if (o.TryGetValue("--expect-tighten-keys", out string? et) && (!int.TryParse(et, out expectTighten) || expectTighten < 0))
                     { output.WriteLine("[verify-live-armed] --expect-tighten-keys <n> 형식 오류"); return ExitUsage; }
                     var r = ShippedBinaryLiveArmedGuard.ScanZip(zip);
-                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 강화 전용 키 {r.TightenKeys}(호스트 판독 {r.TightenHostSites}) · 위반 {r.Violations.Count}");
+                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 강화 전용 키 {r.TightenKeys}(호스트 판독 {r.TightenHostSites}) · 감사 원장 ⑪ {(r.AuditLedgerAware ? "적용" : "없음")} · 위반 {r.Violations.Count}");
                     foreach (var v in r.Violations) output.WriteLine("  " + v);
                     if (expectTighten >= 0 && r.TightenKeys != expectTighten)
                     {
                         output.WriteLine($"  강화 전용 키 {r.TightenKeys} ≠ 출하 고정 {expectTighten} — 단조성 기입기 누락/변형 출하 거부");
                         return ExitRejected;
                     }
+                    // [v12.18.2-GM] 규칙 ⑪은 ITightenAuditSink 형식이 있을 때만 적용(구 바이너리 호환) — 출하 게이트는 형식 부재(= ⑪ 조용한 생략)를 거부
+                    if (o.ContainsKey("--require-audit-ledger") && !r.AuditLedgerAware)
+                    {
+                        output.WriteLine("  감사 원장(ITightenAuditSink) 부재 — 규칙 ⑪ 판독 대상 소실 · 무감사 기입기 출하 거부");
+                        return ExitRejected;
+                    }
                     return r.Ok ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], VerifyAuditChainFlag))
+                {
+                    // [v12.18.2-DEV · 방향 A] 강화 전용 감사 원장(MMF 해시 체인) 무재기동 정적 검증 — 실행 중 호스트와 공존(읽기 전용 뷰 · 복사 0).
+                    //  선택 외부 앵커: --expect-head <64hex>(운영자가 따로 보관한 머리 해시) · --expect-count <n> — 오프라인 '일관 재해시' 위조 대조.
+                    string? file = Arg(args, 1), eh = o.GetValueOrDefault("--expect-head"), ec = o.GetValueOrDefault("--expect-count");
+                    int expectCount = -1;
+                    if (file is null || !File.Exists(file) || (eh is not null && !IsHex(eh, 64)) || (ec is not null && (!int.TryParse(ec, out expectCount) || expectCount < 0)))
+                    { output.WriteLine("[verify-audit-chain] 사용: --verify-audit-chain <tighten-audit.mmf> [--expect-head <64hex>] [--expect-count <n>]"); return ExitUsage; }
+                    Span<byte> head = stackalloc byte[32];
+                    var v = StockManager.Security.MonotonicSettingAuditLog.VerifyFile(file, out int n, head, out int at, out long us);
+                    string headHex = Convert.ToHexString(head);
+                    if (v == StockManager.Security.AuditChainVerdict.Ok && ((eh is not null && !string.Equals(eh, headHex, StringComparison.OrdinalIgnoreCase)) || (expectCount >= 0 && expectCount != n)))
+                        v = StockManager.Security.AuditChainVerdict.AnchorMismatch;
+                    output.WriteLine($"[verify-audit-chain] {v}: 레코드 {n} · 머리 해시 {(v == StockManager.Security.AuditChainVerdict.Ok || v == StockManager.Security.AuditChainVerdict.AnchorMismatch ? headHex : "-")}{(at >= 0 ? " · 첫 불일치 #" + at : "")} · 검증 {us}µs");
+                    return v == StockManager.Security.AuditChainVerdict.Ok ? ExitOk : ExitRejected;
                 }
                 if (Eq(args[0], VerifyTightenFlag))
                 {
@@ -721,8 +743,8 @@ namespace StockManager.Tools
                     string? zip = Arg(args, 1), mf = o.GetValueOrDefault("--manifest"), sealFile = o.GetValueOrDefault("--seal-file");
                     if (zip is null || mf is null || sealFile is null || !File.Exists(zip) || !File.Exists(mf) || !File.Exists(sealFile)
                         || !int.TryParse(o.GetValueOrDefault("--expect-tighten-keys"), out int expect))
-                    { output.WriteLine("[verify-tighten] 사용: --verify-tighten <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-tighten-keys <n>"); return ExitUsage; }
-                    var r = ShippedTightenMatrixVerifier.Verify(zip, File.ReadAllText(mf), File.ReadAllText(sealFile), expect);
+                    { output.WriteLine("[verify-tighten] 사용: --verify-tighten <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-tighten-keys <n> [--require-audit-ledger]"); return ExitUsage; }
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, File.ReadAllText(mf), File.ReadAllText(sealFile), expect, o.ContainsKey("--require-audit-ledger"));
                     output.WriteLine($"[verify-tighten] {r.Verdict}: {r.Detail} · 팽창+해시 {r.InflateMicros}µs · 행렬 대조 {r.CompareMicros}µs");
                     return r.Verdict == TightenSealVerdict.Ok ? ExitOk : ExitRejected;
                 }

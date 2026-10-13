@@ -19,6 +19,12 @@
 //   Churn* 은 다음 기동부터(생성 시 1회 판독).
 //  출하 IL 가드(ShippedBinaryLiveArmedGuard ⑦~⑩)가 이 형식의 키 표 · 규칙 비트 · 폴백/하한/상한 = 호스트 판독 상수 · IsTightening 비교 방향 ·
 //   TryWrite 분기 · WriteStored 호출 위치를 바이너리에서 대조한다.
+//
+//  [v12.18.2-DEV · 감사 원장] 모든 시도(강화 · 변화 없음 · 거부)를 ITightenAuditSink(호스트 = MonotonicSettingAuditLog · MMF 해시 체인)에 기록한다.
+//   ★선기록(write-ahead): 강화는 감사 레코드 Append 가 성공해야만 WriteStored — 원장이 동결(체인 불일치 · 가득 참 · 손상)이면 AuditFrozen 으로
+//     거부(기록 없는 변경 0). 동결 원장은 판독조차 하지 않고 즉시 거부. 거부 레코드는 Reject 경유(실패해도 이미 거부 — 기입 0).
+//   ★저장 실패(WriteStored 예외)는 강화 레코드 뒤에 StoreFault 레코드를 덧붙인다(원장 = '시도와 결과' 순서 기록).
+//   출하 IL 가드 ⑪: TryWrite 의 Append 호출 정확히 1 · Judge 뒤 · WriteStored 앞 · 직후 조건 분기 · 진입점이 감사 인자에 ldnull 전달 0.
 // ============================================================================
 using System;
 using System.Globalization;
@@ -30,6 +36,17 @@ namespace MS2E.Infrastructure
     public enum TightenVerdict : byte
     {
         Tightened = 0, Unchanged = 1, UnknownKey = 2, Loosening = 3, Malformed = 4, EnvironmentOverride = 5, StoreFault = 6,
+        AuditFrozen = 7,   // 감사 원장 동결(체인 불일치 · 가득 참 · 미결속) — 기입 0
+    }
+
+    /// <summary>
+    /// 강화 전용 감사 원장(호스트 = MonotonicSettingAuditLog). Append = 레코드 1건 기록(할당 0 · 호출측 잠금 안에서).
+    /// false = 기록 못 함(동결) — 호출측은 기입하지 않는다. keyIndex −1 = 미등재 키(key 원문은 해시로만 기록).
+    /// </summary>
+    public interface ITightenAuditSink
+    {
+        bool Frozen { get; }
+        bool Append(int keyIndex, string? key, TightenVerdict verdict, long current, long proposed);
     }
 
     /// <summary>강화 전용 기입 저장소(호스트 어댑터 구현). WriteStored 는 TightenOnlyUiSettingWriter.TryWrite 에서만 호출된다(출하 IL 가드 ⑨).</summary>
@@ -60,7 +77,7 @@ namespace MS2E.Infrastructure
         private static readonly int[] Maximums = { 1, 1, 10_000, 10_000, 100_000, 100_000 };
 
         private static readonly object Gate = new();
-        private static long _tightened, _unchanged, _unknown, _loosening, _malformed, _envOverride, _storeFault;
+        private static long _tightened, _unchanged, _unknown, _loosening, _malformed, _envOverride, _storeFault, _auditFrozen;
 
         public static int KeyCount => Keys.Length;
         public static string KeyAt(int i) => Keys[i];
@@ -75,8 +92,9 @@ namespace MS2E.Infrastructure
         public static long Malformed => Interlocked.Read(ref _malformed);
         public static long EnvironmentOverrides => Interlocked.Read(ref _envOverride);
         public static long StoreFaults => Interlocked.Read(ref _storeFault);
-        /// <summary>거부(폐기) 누적 = 미등재 + 완화 + 형식 불량 + 환경변수 덮음 + 저장 실패.</summary>
-        public static long Rejected => UnknownKeys + Loosenings + Malformed + EnvironmentOverrides + StoreFaults;
+        public static long AuditFrozenRejects => Interlocked.Read(ref _auditFrozen);
+        /// <summary>거부(폐기) 누적 = 미등재 + 완화 + 형식 불량 + 환경변수 덮음 + 저장 실패 + 감사 원장 동결.</summary>
+        public static long Rejected => UnknownKeys + Loosenings + Malformed + EnvironmentOverrides + StoreFaults + AuditFrozenRejects;
 
         /// <summary>등재 키 인덱스(서수 비교 · 할당 0) — 없으면 −1.</summary>
         public static int IndexOf(string? key)
@@ -130,23 +148,32 @@ namespace MS2E.Infrastructure
         /// <summary>
         /// 강화 전용 기입(판독 · 판정 · 기입 직렬화). 반환 = 판정. 기입은 Tightened 일 때만 · 그 외 전부 폐기(예외 0 · 계수).
         /// </summary>
-        public static TightenVerdict TryWrite(string? key, string? value, ITightenSettingStore store)
+        public static TightenVerdict TryWrite(string? key, string? value, ITightenSettingStore store, ITightenAuditSink? audit)
         {
             if (store is null) throw new ArgumentNullException(nameof(store));
             int index = IndexOf(key);
-            if (index < 0 || value is null) return Count(index < 0 ? TightenVerdict.UnknownKey : TightenVerdict.Malformed);
             lock (Gate)
             {
+                if (audit is null || audit.Frozen) return Count(TightenVerdict.AuditFrozen);   // 원장 미결속/동결 = 판독 0 · 기입 0
+                if (index < 0 || value is null) return Reject(audit, index, key, index < 0 ? TightenVerdict.UnknownKey : TightenVerdict.Malformed, 0, 0);
                 string? env, stored;
                 try { env = store.ReadEnvironment(key!); stored = env is null ? store.ReadStored(key!) : null; }
-                catch (Exception) { return Count(TightenVerdict.StoreFault); }
-                if (env is not null) return Count(TightenVerdict.EnvironmentOverride);
-                TightenVerdict v = Judge(index, value.AsSpan(), stored, out _, out _);
-                if (v != TightenVerdict.Tightened) return Count(v);                       // ★판정 분기(출하 IL 가드 ⑨) — 기입은 이 아래 1곳뿐
+                catch (Exception) { return Reject(audit, index, key, TightenVerdict.StoreFault, 0, 0); }
+                if (env is not null) return Reject(audit, index, key, TightenVerdict.EnvironmentOverride, 0, 0);
+                TightenVerdict v = Judge(index, value.AsSpan(), stored, out long current, out long proposed);
+                if (v != TightenVerdict.Tightened) return Reject(audit, index, key, v, current, proposed);   // ★판정 분기(출하 IL 가드 ⑨) — 기입은 이 아래 1곳뿐
+                if (!audit.Append(index, key, TightenVerdict.Tightened, current, proposed)) return Count(TightenVerdict.AuditFrozen);   // ★선기록(⑪)
                 try { store.WriteStored(key!, value); }
-                catch (Exception) { return Count(TightenVerdict.StoreFault); }
+                catch (Exception) { return Reject(audit, index, key, TightenVerdict.StoreFault, current, proposed); }
                 return Count(TightenVerdict.Tightened);
             }
+        }
+
+        // 거부/변화 없음 레코드(기록 실패해도 판정 유지 — 이미 기입 0). 원장이 동결돼 있으면 Append 가 false 를 돌려줄 뿐이다.
+        private static TightenVerdict Reject(ITightenAuditSink audit, int index, string? key, TightenVerdict v, long current, long proposed)
+        {
+            audit.Append(index, key, v, current, proposed);
+            return Count(v);
         }
 
         private static TightenVerdict Count(TightenVerdict v)
@@ -159,6 +186,7 @@ namespace MS2E.Infrastructure
                 case TightenVerdict.Loosening: Interlocked.Increment(ref _loosening); break;
                 case TightenVerdict.Malformed: Interlocked.Increment(ref _malformed); break;
                 case TightenVerdict.EnvironmentOverride: Interlocked.Increment(ref _envOverride); break;
+                case TightenVerdict.AuditFrozen: Interlocked.Increment(ref _auditFrozen); break;
                 default: Interlocked.Increment(ref _storeFault); break;
             }
             return v;

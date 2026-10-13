@@ -15,7 +15,13 @@ namespace MS2E.Infrastructure
     {
         private readonly LocalDatabase _db;
         private readonly TightenStore _tightenStore;
-        public AdminSettingWidgetAdapter(LocalDatabase db) { _db = db; _tightenStore = new TightenStore(db); }
+        private readonly ITightenAuditSink _audit;
+        // [v12.18.2-DEV] 감사 원장 필수(생성자 1개 — 원장 없이 만들 길 없음 · null = 즉시 거부). 호스트 = MonotonicSettingAuditLog 싱글턴(MMF 해시 체인).
+        public AdminSettingWidgetAdapter(LocalDatabase db, ITightenAuditSink audit)
+        {
+            _db = db; _tightenStore = new TightenStore(db);
+            _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        }
 
         // ── 설정 값 ──
         public string? GetSetting(string key) => _db.GetSetting(key);
@@ -26,7 +32,7 @@ namespace MS2E.Infrastructure
         // ── [v12.18.3-DEV] 강화 전용(TightenOnlyUiSettingWriter — 판정 · 기입 직렬화 · 완화/미등재 폐기). 직접 DB 기입 0(출하 IL 가드 ⑨). ──
         public int TightenSetting(string key, string value)
         {
-            var v = TightenOnlyUiSettingWriter.TryWrite(key, value, _tightenStore);
+            var v = TightenOnlyUiSettingWriter.TryWrite(key, value, _tightenStore, _audit);   // ★감사 인자 = 필드(출하 IL 가드 ⑪ · ldnull 0)
             if (v is not (TightenVerdict.Tightened or TightenVerdict.Unchanged))
                 System.Diagnostics.Trace.WriteLine("[TightenOnly] 폐기 " + v + " key=" + key);   // 콜드 UI 경로 감사 로그(값 원문 미기록)
             return (int)v;

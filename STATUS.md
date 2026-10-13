@@ -1,16 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.1-GM — Production Golden Master 출하(30대 인터락 · 강화 전용 6키 행렬 핀 고정 · 무추출 행렬 대조)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,742/3,742 Pass, infra-scan coupling 0, Phase114 coupled ≤ ratchet 40
+- **Active Milestone**: v12.18.2-GM — Production Golden Master 출하(감사 원장 · 규칙 ⑪ 출하 강제 · 강화 전용 6키 · 30대 인터락)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,756/3,756 Pass, infra-scan coupling 0, Phase114 coupled ≤ ratchet 40
 - **Updated At**: 2026-10-13
 
 ## Completed Deliverables
-- 변동성 적응 확신 보정(정수 EMV · 국면 3종 · 8500~9500bp) · churn 차단기(비트 27) · 호스트 시그널 게이트 실결선(관찰 모드 포함)
-- 강화 전용 UI 기입기 6키(게이트/적응 = true 만 · 확신/최대 임계 = 상향만 · 승인 한도 = 하향만) · IL 가드 ⑦~⑩
-- 매니페스트 tightenRules(태그 소스 판독 · 하위 호환) · 핸드셰이크 TightenRuleMismatch(행렬 누락/변조 거부) · 스트리머 동등
-- ShippedTightenMatrixVerifier(--verify-tighten): zip 호스트 DLL IL 키 · 규칙 · 폴백/하한/상한 · 비교 방향 ↔ 매니페스트 ↔ 명세 — 대조 0B
-- --verify-live-armed --expect-tighten-keys 6(기입기 누락 출하 거부) · 패치+재봉인 5종 거부 · 변이 2/2 Red
-- 출하: 태그 v12.18.1-GM(6ded491) · zip 17F1F124 · masterSeal 551DBA60 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과 · HANDOVER §52~§54
+- 감사 원장 MonotonicSettingAuditLog(MMF 해시 체인 · 변조/가득 참 = 동결 + 비트 27 · --verify-audit-chain) — §55
+- CheckAuditWiring: zip 호스트 DLL TryWrite 선기록(Judge < Append < WriteStored · 직후 분기) · 진입점 ldnull 0 — 0B · ≈ 70µs
+- --require-audit-ledger(두 CLI): 싱크 형식 개명으로 가드 ⑪을 '생략'시키는 빈틈 차단 · 패치+재봉인 4종 거부 · 변이 1/1 Red
+- 인터락 30 · 강화 전용 6키 · 감사 원장 결선을 출하 게이트에서 함께 대조 · HANDOVER §56 · 버전 12.18.2
 
 ## Next Milestone
-- 국면 경계 실 호가 보정 · 감사 해시 체인 로거(미착수) · 피어(QuantumVault) 정돈 후 피어 포함 재출하
+- v12.18.2-GM 출하 기록 확정 · 감사 원장 상태 UI 노출 · 원장 보관/교체 운영 절차

@@ -74,7 +74,17 @@ namespace StockManager.Tests
             }
         }
 
-        private static TightenVerdict W(MemStore s, string key, string value) => TightenOnlyUiSettingWriter.TryWrite(key, value, s);
+        /// <summary>판정 테스트용 감사 싱크(항상 기록 성공 · 레코드 수만 셈) — 원장 자체는 MonotonicSettingAuditLogTests 가 검증.</summary>
+        internal sealed class PassAudit : ITightenAuditSink
+        {
+            public static readonly PassAudit Instance = new();
+            private long _n;
+            public long Records => Interlocked.Read(ref _n);
+            public bool Frozen => false;
+            public bool Append(int keyIndex, string? key, TightenVerdict verdict, long current, long proposed) { Interlocked.Increment(ref _n); return true; }
+        }
+
+        private static TightenVerdict W(MemStore s, string key, string value) => TightenOnlyUiSettingWriter.TryWrite(key, value, s, PassAudit.Instance);
 
         // ════════════ §1 판정 ════════════
 
@@ -140,8 +150,8 @@ namespace StockManager.Tests
                 Assert.Equal(TightenVerdict.UnknownKey, W(s, key, "true"));
                 Assert.Equal(TightenVerdict.UnknownKey, W(s, key, "0"));
             }
-            Assert.Equal(TightenVerdict.UnknownKey, TightenOnlyUiSettingWriter.TryWrite(null, "true", s));
-            Assert.Equal(TightenVerdict.Malformed, TightenOnlyUiSettingWriter.TryWrite("Strategy.SignalGateEnabled", null, s));
+            Assert.Equal(TightenVerdict.UnknownKey, TightenOnlyUiSettingWriter.TryWrite(null, "true", s, PassAudit.Instance));
+            Assert.Equal(TightenVerdict.Malformed, TightenOnlyUiSettingWriter.TryWrite("Strategy.SignalGateEnabled", null, s, PassAudit.Instance));
             Assert.Empty(s.Writes);
         }
 
@@ -246,9 +256,9 @@ namespace StockManager.Tests
             // A: 9600 제안 · 9500 을 읽은 뒤 멈춤. B: 9800 제안. 잠금이 없으면 B 가 9500 을 읽고 9800 을 쓴 뒤 A 가 깨어나 9600 을 쓴다(= 완화).
             var st = new PausingStore();
             const string K = "Strategy.AdaptiveMaxBp";
-            var a = Task.Run(() => TightenOnlyUiSettingWriter.TryWrite(K, "9600", st));
+            var a = Task.Run(() => TightenOnlyUiSettingWriter.TryWrite(K, "9600", st, PassAudit.Instance));
             Assert.True(st.FirstRead.Wait(5_000));
-            var b = Task.Run(() => TightenOnlyUiSettingWriter.TryWrite(K, "9800", st));
+            var b = Task.Run(() => TightenOnlyUiSettingWriter.TryWrite(K, "9800", st, PassAudit.Instance));
             await Task.WhenAny(b, Task.Delay(300));                                        // 잠금 = B 는 A 가 끝날 때까지 진입 불가
             st.Release.Set();
             var va = await a; var vb = await b;
@@ -266,7 +276,8 @@ namespace StockManager.Tests
             try
             {
                 var db = new LocalDatabase(path);
-                IAdminSettingWidgetPort port = new AdminSettingWidgetAdapter(db);
+                using var ledger = StockManager.Security.MonotonicSettingAuditLog.CreateVolatile(new StrategyAnomalyInterlock());
+                IAdminSettingWidgetPort port = new AdminSettingWidgetAdapter(db, ledger);
                 Assert.True(port.TryGetTightenable("Strategy.SignalGateEnabled", out long g) && g == 0);
                 Assert.True(port.TryGetTightenable("Strategy.AdaptiveMaxBp", out long m) && m == 9_500);
                 Assert.False(port.TryGetTightenable("Dispatch.ValveWired", out _));
@@ -284,6 +295,8 @@ namespace StockManager.Tests
                 // 하네스 래퍼도 실 어댑터로 위임
                 var h = new HarnessSettingsPort(port);
                 Assert.Equal(TightenVerdictCode.Loosening, h.TightenSetting("Strategy.AdaptiveMaxBp", "9700"));
+                Assert.Equal(6, ledger.Count);                                                  // [v12.18.2-DEV] 시도 6건 전부 원장 기록(강화 2 · 거부 4)
+                Assert.Equal(TightenVerdictCode.AuditFrozen, (int)TightenVerdict.AuditFrozen);
             }
             finally { try { File.Delete(path); } catch (IOException) { } }
 

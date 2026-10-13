@@ -1,13 +1,17 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.18.1-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.18.2-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.1(출하 zip 이름 · 태그 v12.18.1-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.2(출하 zip 이름 · 태그 v12.18.2-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
 //     인터락 30종(0~28 + StartupSanity) = 태그 소스 열거 = zip 호스트 DLL 정의(§10 검증기) · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
 //     + [v12.18.1-GM] 강화 전용 행렬 6키 = 태그 소스 = zip 호스트 DLL IL(§11 검증기) · --verify-live-armed 키 수 6 고정.
+//     + [v12.18.2-GM] 감사 원장 결선(⑪ · §12 검사기) = 출하 zip 에서 요구 플래그로 Ok · 가드 ⑪ 적용.
+//  §12 [v12.18.2-GM · 방향 A] ★감사 원장 결선 무추출 · 무할당 수검(ShippedTightenMatrixVerifier.CheckAuditWiring): 실 DLL = Ok · 1,000회 0B ·
+//     패치 + 일관 재봉인(Append 분기 → br.s · Append → get_Frozen · 진입점 감사 인자 ldnull · 싱크 형식 개명) = 전부 거부 —
+//     ★형식 개명은 가드 ⑪이 '구 바이너리'로 보고 생략(가드 단독 통과)하는 빈틈 → 요구 플래그가 닫음 · 스크립트 두 CLI 결선 · 구 출하물 호환.
 //  §4 오중 빌드 회귀.
 //  §11 [v12.18.1-GM · 방향 A] ★강화 전용 단조성 행렬 무추출 · 무할당 대조(ShippedTightenMatrixVerifier): 소스 판독 = 실행 표 = 가드 명세 ·
 //     구 태그(v12.18.0-GM) = 빈 목록 · PS 5.1 zip 실 호스트 DLL ↔ 매니페스트 tightenRules ↔ master-seal.txt = Ok · 대조 루프 δ=0 ·
@@ -79,13 +83,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_1_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_2_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 1, 0), v);
-            Assert.Equal("12.18.1", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 2, 0), v);
+            Assert.Equal("12.18.2", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.1</Version>", csproj);
+            Assert.Contains("<Version>12.18.2</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -106,7 +110,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.1-GM Production Golden Master", s);
+            Assert.Contains("v12.18.2-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -181,6 +185,11 @@ namespace StockManager.Tests
             _out.WriteLine($"[출하] 강화 전용 행렬 대조 {tight.Verdict} · {tight.Detail} · 팽창 {tight.InflateMicros}µs · 대조 {tight.CompareMicros}µs");
             Assert.Equal(TightenSealVerdict.Ok, tight.Verdict);
             Assert.Equal(TightenKeys, st.TightenRuleCount);
+            // [v12.18.2-GM · 방향 A] 감사 원장 결선(⑪) — 출하 zip 호스트 DLL · 요구 플래그
+            Assert.True(arm.AuditLedgerAware, "출하 바이너리 감사 원장 ⑪ 미적용");
+            var audit = ShippedTightenMatrixVerifier.Verify(zip, json, anchor, TightenKeys, requireAuditLedger: true);
+            _out.WriteLine($"[출하] 감사 원장 결선 {audit.Verdict} · {audit.Detail}");
+            Assert.Equal(TightenSealVerdict.Ok, audit.Verdict);
             // ★1비트 변조(임시 사본) = 거부 · 원본 무손상
             string tmp = Path.Combine(Path.GetTempPath(), "ms2e_gm_tamper_" + Guid.NewGuid().ToString("N") + ".zip");
             try
@@ -1091,6 +1100,122 @@ namespace StockManager.Tests
                 Assert.Contains("강화 전용 키 0 ≠ 출하 고정 6", w2.ToString());
                 File.WriteAllText(mf, TightenManifest(gone, seal, SourceRules()));
                 Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-tighten", goneZip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6"));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        // ════════════ §12 [v12.18.2-GM · 방향 A] 감사 원장 결선 무추출 · 무할당 수검 ════════════
+
+        /// <summary>같은 PE 이미지 바이트 1개 이상 패치 사본(매니페스트는 그 사본으로 일관 재봉인).</summary>
+        private static byte[] Patch(byte[] dll, Action<byte[]> p) { var b = (byte[])dll.Clone(); p(b); return b; }
+
+        [Fact]
+        public void AuditLedger_BuiltHost_Ps51Zip_Required_Ok_InspectorZeroAlloc()
+        {
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll), json = TightenManifest(dll, seal, SourceRules());
+                var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true);
+                _out.WriteLine($"[감사 원장 결선] {r.Verdict} · {r.Detail}");
+                Assert.True(r.Verdict == TightenSealVerdict.Ok, r.Verdict + " " + r.Detail);
+                Assert.Contains("감사 원장 선기록 결선(⑪)", r.Detail);
+                var arm = ShippedBinaryLiveArmedGuard.ScanZip(zip);
+                Assert.True(arm.Ok && arm.AuditLedgerAware, string.Join(" | ", arm.Violations));
+
+                using var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll));
+                var md = pe.GetMetadataReader();
+                Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.CheckAuditWiring(pe, md));
+                long alloc = MinAllocated(() => { for (int i = 0; i < 1_000; i++) ShippedTightenMatrixVerifier.CheckAuditWiring(pe, md); });
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 1_000; i++) ShippedTightenMatrixVerifier.CheckAuditWiring(pe, md);
+                sw.Stop();
+                _out.WriteLine($"[감사 원장 결선] 1,000회 할당 {alloc}B · 회당 {sw.Elapsed.TotalMicroseconds / 1_000:F1}µs");
+                Assert.Equal(0, alloc);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void AuditLedger_BinaryPatched_ConsistentlyResealed_Rejected_GuardAloneMissesSinkRemoval()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            const string T = ShippedBinaryLiveArmedGuard.TightenWriterType;
+            var (off, _, ins) = TightenOnlySettingGuardTests.Body(dll, T, "TryWrite");
+            int write = ins.FindIndex(i => i.Op == OpCodes.Callvirt && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == "WriteStored");
+            int app = ins.FindLastIndex(write, i => i.Op == OpCodes.Callvirt && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == "Append");
+            Assert.True(app > 0 && ins[app + 1].Op.OperandType == OperandType.ShortInlineBrTarget, "Append 직후 짧은 조건 분기 예상");
+            var (eoff, _, eins) = TightenOnlySettingGuardTests.Body(dll, "AdminSettingWidgetAdapter", "TightenSetting");
+            int tw = eins.FindIndex(i => i.Op == OpCodes.Call && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == "TryWrite");
+            Assert.Equal(OpCodes.Ldfld, eins[tw - 1].Op);
+            int ld0 = eins.FindLastIndex(tw - 1, i => i.Op == OpCodes.Ldarg_0);
+            byte[] sinkName = Encoding.UTF8.GetBytes("\0" + ShippedBinaryLiveArmedGuard.TightenAuditSinkType + "\0");
+            int sinkAt = dll.AsSpan().IndexOf(sinkName);
+            Assert.True(sinkAt > 0 && dll.AsSpan(sinkAt + 1).IndexOf(sinkName) < 0, "#Strings ITightenAuditSink 정확히 1개");
+
+            var cases = new (string Name, byte[] Bytes, TightenSealVerdict Expect, bool GuardCatches)[]
+            {
+                ("Append 분기 → br.s", Patch(dll, b => b[off + ins[app + 1].At] = 0x2B), TightenSealVerdict.AuditLedgerBypass, true),
+                ("Append → get_Frozen", Patch(dll, b => BitConverter.GetBytes(MonotonicSettingAuditLogTests.TokenOf(dll, "ITightenAuditSink", "get_Frozen")).CopyTo(b, off + ins[app].At + 1)),
+                    TightenSealVerdict.AuditLedgerMissing, true),
+                ("진입점 감사 인자 ldnull", Patch(dll, b => { int at = eoff + eins[tw - 1].At; b[at] = 0; b[at + 1] = 0; b[at + 2] = 0; b[at + 3] = 0; b[at + 4] = 0x14; b[eoff + eins[ld0].At] = 0; }),
+                    TightenSealVerdict.AuditLedgerBypass, true),
+                // ★싱크 형식 개명(ITightenAuditSink → XTightenAuditSink): 가드 ⑪은 '형식 없음 = 구 바이너리'로 보고 생략 — 출하 게이트(요구 플래그)만 잡는다
+                ("싱크 형식 개명", Patch(dll, b => b[sinkAt + 1] = (byte)'X'), TightenSealVerdict.AuditLedgerMissing, false),
+            };
+            string dir = TempDir();
+            try
+            {
+                string seal = new string('D', 64);
+                var rules = SourceRules();
+                int n = 0;
+                foreach (var (name, bytes, expect, guardCatches) in cases)
+                {
+                    string zip = Ps51HostZip(dir, "evil" + n++ + ".zip", bytes);
+                    string json = TightenManifest(bytes, seal, rules);
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true);
+                    var g = ShippedBinaryLiveArmedGuard.ScanZip(zip);
+                    _out.WriteLine($"[감사 패치] {name} → 행렬 {r.Verdict} · 가드 {(g.Ok ? "Ok" : "Rejected")}(⑪ {(g.AuditLedgerAware ? "적용" : "생략")})");
+                    Assert.Equal(expect, r.Verdict);
+                    Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys).Verdict);   // 요구 없음 = 행렬만(기존 동작)
+                    Assert.Equal(!guardCatches, g.Ok);
+                    var w = new StringWriter();
+                    Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { "--verify-live-armed", zip, "--expect-tighten-keys", "6", "--require-audit-ledger" }, w));
+                }
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void AuditLedger_PackageScript_RequiresLedger_BothCalls_CliExitCodes()
+        {
+            string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
+            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-live-armed\"", s);
+            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-tighten\"", s);
+            Assert.Equal(7, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가(폐기 경로 불변)
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll);
+                string mf = Path.Combine(dir, "RELEASE_MANIFEST.json"), sf = Path.Combine(dir, "master-seal.txt");
+                File.WriteAllText(mf, TightenManifest(dll, seal, SourceRules()));
+                File.WriteAllText(sf, seal + Environment.NewLine);
+                int Run(params string[] a) { var w = new StringWriter(); int c = ReleaseHandshakeCli.Run(a, w); _out.WriteLine(w.ToString().TrimEnd()); return c; }
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-tighten", zip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6", "--require-audit-ledger"));
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-live-armed", zip, "--expect-tighten-keys", "6", "--require-audit-ledger"));
+                // v12.18.1-GM 출하물(감사 원장 이전) = 요구 플래그에서 거부 · 없으면 기존대로 통과(구 출하물 재수검 호환)
+                string old = Path.Combine(RepoRoot(), "release", "superseded-v12.18.1-GM", "release-v12.18.1-GM.zip");
+                if (!File.Exists(old)) old = Path.Combine(RepoRoot(), "release", "release-v12.18.1-GM.zip");
+                if (File.Exists(old))
+                {
+                    Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-live-armed", old, "--expect-tighten-keys", "6"));
+                    Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-live-armed", old, "--expect-tighten-keys", "6", "--require-audit-ledger"));
+                }
+                else _out.WriteLine("[감사 원장] v12.18.1-GM 출하물 없음 — 구 출하물 대조 생략");
             }
             finally { Directory.Delete(dir, true); }
         }

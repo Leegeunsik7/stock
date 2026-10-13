@@ -65,7 +65,8 @@ namespace StockManager.Tools
         private static readonly string[] Keys = { "Dispatch.ValveWired", "Dispatch.LiveArmingWired" };
 
         public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0,
-                                             int SimulationTypes = 0, int SimulationCliSites = 0, int TightenKeys = 0, int TightenHostSites = 0)
+                                             int SimulationTypes = 0, int SimulationCliSites = 0, int TightenKeys = 0, int TightenHostSites = 0,
+                                             bool AuditLedgerAware = false)   // [v12.18.2-GM] ITightenAuditSink 형식 존재 = 규칙 ⑪ 적용됨(없으면 ⑪ 생략 — 출하 게이트가 요구)
         {
             public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
@@ -77,7 +78,7 @@ namespace StockManager.Tools
         };
 
         // [v12.18.3-DEV] 강화 전용 기입기 — 형식 · 진입점 · 고정 명세(키 → 허용 방향). 키 추가 = 여기 등재(방향 결정은 리뷰 대상)가 강제된다.
-        public const string TightenWriterType = "TightenOnlyUiSettingWriter";
+        public const string TightenWriterType = "TightenOnlyUiSettingWriter", TightenAuditSinkType = "ITightenAuditSink";
         private const byte TightenTrueOnly = 1, TightenNonDecreasing = 2, TightenNonIncreasing = 4;
         private static readonly (string Key, byte Rule)[] TightenSpec =
         {
@@ -163,6 +164,7 @@ namespace StockManager.Tools
             var violations = new List<string>();
             var armedParam = LiveArmedParameterIndex(md);                       // 메서드 행 번호 → (liveArmed 매개변수 위치, 매개변수 수)
             var tight = new TightenScan();
+            foreach (var th in md.TypeDefinitions) if (md.GetString(md.GetTypeDefinition(th).Name) == TightenAuditSinkType) tight.AuditAware = true;
             foreach (var mh in md.MethodDefinitions)
             {
                 var m = md.GetMethodDefinition(mh);
@@ -240,7 +242,7 @@ namespace StockManager.Tools
             if (simTypes == 0) violations.Add("시뮬레이션 형식(" + SimulationNamespace + ") 0 — 격리 판독 대상 소실(비공허성 실패)");
             int tightenHostSites = TightenFinish(tight, violations);
             // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
-            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites);
+            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites, tight.AuditAware);
         }
 
         // ════════════ [v12.18.3-DEV] ⑦~⑩ 강화 전용 기입기 ════════════
@@ -251,6 +253,7 @@ namespace StockManager.Tools
             public byte[]? Rules;
             public int[]? Fallbacks, Minimums, Maximums;
             public bool IsTightening, Judge, TryWrite, Entry;
+            public bool AuditAware;                                             // [v12.18.2-DEV] ITightenAuditSink 형식 존재 = 규칙 ⑪ 적용
             public readonly List<(string Key, int Fallback, int Min, int Max)> HostSites = new();
         }
 
@@ -286,6 +289,15 @@ namespace StockManager.Tools
                     if (type == "LocalDatabase" && (name == "SetSetting" || name == "SetSecret")) violations.Add("AdminSettingWidgetAdapter.TightenSetting: DB 직접 기입 — 강화 전용 판정 우회");
                 }
                 if (tryWrites != 1) violations.Add("AdminSettingWidgetAdapter.TightenSetting: TryWrite 호출 " + tryWrites + "건(정확히 1 이어야 함)");
+                // ⑪ 감사 인자(마지막 인자 = call 직전 적재)가 리터럴 null 이면 모든 시도가 AuditFrozen — 기능 무력화 · 무감사 결선 시도 신호
+                if (t.AuditAware)
+                    for (int k = 1; k < ins.Count; k++)
+                    {
+                        if (!IsCall(ins[k].Op) || MethodOwner(md, ins[k].Operand) is not (TightenWriterType, "TryWrite")) continue;
+                        int a = k - 1;
+                        while (a > 0 && ins[a].Op == OpCodes.Nop) a--;                          // nop 채움 건너뛰기(패치 흔적)
+                        if (ins[a].Op == OpCodes.Ldnull) violations.Add("AdminSettingWidgetAdapter.TightenSetting: 감사 원장 인자 ldnull — 무감사 결선");
+                    }
             }
             if (tname != TightenWriterType) return;
             switch (mname)
@@ -336,6 +348,17 @@ namespace StockManager.Tools
                         if (ins[k].Op.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch) { branch = ins[k].Op; break; }
                     if (branch != OpCodes.Brfalse && branch != OpCodes.Brfalse_S)
                         violations.Add("TightenOnlyUiSettingWriter.TryWrite: Judge 뒤 첫 분기가 brfalse(Tightened 일 때만 기입)가 아님(" + branch.Name + ")");
+                    if (t.AuditAware)
+                    {
+                        // ⑪ 선기록: ITightenAuditSink.Append 정확히 1 · Judge 뒤 · WriteStored 앞 · 직후 조건 분기(기록 실패 = 기입 0)
+                        int appends = 0, append = -1;
+                        for (int k = 0; k < ins.Count; k++)
+                            if (IsCall(ins[k].Op) && MethodOwner(md, ins[k].Operand) is (TightenAuditSinkType, "Append")) { appends++; append = k; }
+                        if (appends != 1) violations.Add("TightenOnlyUiSettingWriter.TryWrite: 감사 Append 호출 " + appends + "건(정확히 1 — 선기록)");
+                        else if (!(judge < append && append < firstWrite)) violations.Add("TightenOnlyUiSettingWriter.TryWrite: 감사 Append 가 Judge 뒤 · WriteStored 앞이 아님 — 기록 없는 기입");
+                        else if (ins[append + 1].Op.FlowControl != FlowControl.Cond_Branch)
+                            violations.Add("TightenOnlyUiSettingWriter.TryWrite: 감사 Append 결과로 분기하지 않음(직후 " + ins[append + 1].Op.Name + ") — 기록 실패 무시 기입");
+                    }
                     break;
                 }
             }

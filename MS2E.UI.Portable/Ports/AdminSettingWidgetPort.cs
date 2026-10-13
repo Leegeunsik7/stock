@@ -14,11 +14,12 @@ namespace MS2E.UI.Portable.Ports
     /// <summary>[v12.18.3-DEV] 강화 전용 기입 판정 코드(호스트 TightenVerdict 와 같은 값 — 테스트 대조) · 정적 한글 라벨.</summary>
     public static class TightenVerdictCode
     {
-        public const int Tightened = 0, Unchanged = 1, UnknownKey = 2, Loosening = 3, Malformed = 4, EnvironmentOverride = 5, StoreFault = 6;
+        public const int Tightened = 0, Unchanged = 1, UnknownKey = 2, Loosening = 3, Malformed = 4, EnvironmentOverride = 5, StoreFault = 6, AuditFrozen = 7;
         private static readonly string[] Labels =
         {
             "✅ 강화 적용됨", "변화 없음(이미 같은 값)", "⛔ 강화 전용 대상이 아닌 키 — 폐기", "⛔ 완화(느슨해지는 변경) 거부 — 기존 값 유지",
             "⛔ 형식 불량 — 폐기", "⚠️ 환경변수가 이 설정을 덮고 있어 DB 기입이 무효 — 폐기", "⚠️ 저장 실패 — 기존 값 유지",
+            "🔒 감사 원장 동결(해시 체인 불일치 · 가득 참) — 설정 변경 차단 · 운영자 점검 필요",
         };
         public static string Label(int code) => (uint)code < (uint)Labels.Length ? Labels[code] : "?";
         public static int Count => Labels.Length;
@@ -34,7 +35,7 @@ namespace MS2E.UI.Portable.Ports
         void SetSecret(string key, string value);
 
         // ── [v12.18.3-DEV] 전략 안전 설정 '강화 전용' 기입(완화 · 미등재 · 무장 키 = 폐기) ──
-        /// <summary>강화 전용 기입 — 반환 = TightenVerdictCode(0 강화됨 · 1 변화 없음 · 2 미등재 · 3 완화 거부 · 4 형식 불량 · 5 환경변수 덮음 · 6 저장 실패).</summary>
+        /// <summary>강화 전용 기입 — 반환 = TightenVerdictCode(0 강화됨 · 1 변화 없음 · 2 미등재 · 3 완화 거부 · 4 형식 불량 · 5 환경변수 덮음 · 6 저장 실패 · 7 감사 원장 동결).</summary>
         int TightenSetting(string key, string value);
         /// <summary>강화 전용 키의 현재 유효값(호스트 precedence 환경변수 → DB → 폴백 · 불리언 0/1). 미등재 키 = false.</summary>
         bool TryGetTightenable(string key, out long effective);

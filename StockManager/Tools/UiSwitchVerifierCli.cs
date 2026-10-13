@@ -46,7 +46,7 @@ namespace StockManager.Tools
         {
             _dbPath = Path.Combine(Path.GetTempPath(), "ms2e_uifuzz_" + Guid.NewGuid().ToString("N") + ".db");
             Db = new LocalDatabase(_dbPath);
-            Settings = new HarnessSettingsPort(new AdminSettingWidgetAdapter(Db));
+            Settings = new HarnessSettingsPort(new AdminSettingWidgetAdapter(Db, StockManager.Security.MonotonicSettingAuditLog.CreateVolatile(new StockManager.Engines.StrategyAnomalyInterlock())));   // 리허설 = 익명 MMF 원장
             var db = Db;
             Probe = new UiArmingInvariantProbe(key => Environment.GetEnvironmentVariable(key) ?? db.GetSetting(key));
             Hub = new DashboardSnapshotHub(Probe.Mask);

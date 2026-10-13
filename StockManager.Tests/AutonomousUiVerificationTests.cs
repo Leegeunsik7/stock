@@ -176,7 +176,7 @@ namespace StockManager.Tests
             try
             {
                 using var db = new LocalDatabase(path);
-                var admin = new AdminSettingWidgetAdapter(db);
+                var admin = new AdminSettingWidgetAdapter(db, StockManager.Security.MonotonicSettingAuditLog.CreateVolatile(new StockManager.Engines.StrategyAnomalyInterlock()));
                 var hub = new StrategyHubInfraAdapter(null!, db, new StockManager.Blazor.ToastService(), new SymbolContext());
                 long r0 = UiSettingWriteGuard.Rejected;
                 foreach (var k in UiArmingInvariantProbe.SafetyKeys)

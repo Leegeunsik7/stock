@@ -18,6 +18,11 @@
 //      정확히 1개씩 · 그 순서 · 상수 true 반환 0 · 미정의 규칙 = false 로 종료.
 //   하나라도 어긋나면 거부 → 스크립트가 출하 산출물 전량 폐기(Remove-ReleaseOutputs). 판독 실패 = 거부(fail-closed).
 //
+//   ④ [v12.18.2-GM · 방향 A] 감사 원장 결선(CheckAuditWiring · 힙 0 · requireAuditLedger 일 때): MS2E.Infrastructure.ITightenAuditSink 정의 1개 ·
+//      TightenOnlyUiSettingWriter.TryWrite IL — ITightenAuditSink.Append 호출 정확히 1 · Judge 뒤 · ITightenSettingStore.WriteStored(정확히 1) 앞 ·
+//      Append 직후 조건 분기(기록 실패 = 기입 0) · AdminSettingWidgetAdapter.TightenSetting — TryWrite 호출 정확히 1 · 감사 인자(직전 비 nop) ≠ ldnull.
+//      ShippedBinaryLiveArmedGuard ⑪과 같은 규칙의 독립 구현(문자열 0 · 스택 해독기) — 가드는 형식이 없으면 ⑪을 생략하지만 여기서는 부재 = 거부.
+//
 //  δ=0 범위(정직): ③ CompareMatrix 는 힙 0(테스트 실측 — PEMemoryBlock/BlobReader 는 구조체 · 명령 버퍼 stackalloc).
 //   ①의 JSON 파싱 · 행 문자열 분해와 ②의 팽창 버퍼 · PEReader 생성은 콜드 경로라 할당한다. 시간도 ②와 ③을 분리해 보고한다.
 // ============================================================================
@@ -40,6 +45,8 @@ namespace StockManager.Tools
         ArtifactHashMismatch = 6, PeUnreadable = 7,                      // 3~7 = InterlockSealVerdict 와 같은 값(공용 로더)
         WriterMissing = 8, WriterAmbiguous = 9, CountMismatch = 10, SpecMismatch = 11, KeyMismatch = 12,
         RuleMismatch = 13, FallbackMismatch = 14, MinimumMismatch = 15, MaximumMismatch = 16, DirectionMismatch = 17,
+        AuditLedgerMissing = 18,   // [v12.18.2-GM] ITightenAuditSink 정의 · TryWrite 의 Append 호출 · 진입점 없음
+        AuditLedgerBypass = 19,    // [v12.18.2-GM] Append 중복 · 순서(Judge < Append < WriteStored) · 직후 분기 · 진입점 ldnull 이탈
     }
 
     /// <summary>매니페스트 행 1개 — 키 · 규칙 비트(1 TrueOnly · 2 NonDecreasing · 4 NonIncreasing) · 호스트 폴백 · 하한 · 상한.</summary>
@@ -60,7 +67,8 @@ namespace StockManager.Tools
         // 판독하는 옵코드(값 = ECMA-335 인코딩 · 2바이트는 0xFE00 | 둘째 바이트)
         private const ushort OpLdarg0 = 0x02, OpLdarg1 = 0x03, OpLdarg2 = 0x04, OpLdc0 = 0x16, OpLdc1 = 0x17, OpLdc2 = 0x18,
                              OpLdc4 = 0x1A, OpRet = 0x2A, OpAnd = 0x5F, OpConvI8 = 0x6A, OpLdstr = 0x72, OpStsfld = 0x80, OpLdsflda = 0x7F,
-                             OpLdtoken = 0xD0, OpCeq = 0xFE01, OpCgt = 0xFE02, OpClt = 0xFE04;
+                             OpLdtoken = 0xD0, OpCeq = 0xFE01, OpCgt = 0xFE02, OpClt = 0xFE04, OpNop = 0x00, OpLdnull = 0x14, OpCall = 0x28, OpCallvirt = 0x6F;
+        public const string AuditSinkName = ShippedBinaryLiveArmedGuard.TightenAuditSinkType, AdapterName = "AdminSettingWidgetAdapter";
 
         static ShippedTightenMatrixVerifier()
         {
@@ -98,7 +106,7 @@ namespace StockManager.Tools
         }
 
         /// <summary>출하 zip ↔ 매니페스트(json) tightenRules ↔ 가드 고정 명세 ↔ 외부 앵커(master-seal.txt 내용) 대조.</summary>
-        public static TightenSealReport Verify(string zipPath, string manifestJson, string anchorText, int expectedKeys)
+        public static TightenSealReport Verify(string zipPath, string manifestJson, string anchorText, int expectedKeys, bool requireAuditLedger = false)
         {
             TightenSealReport R(TightenSealVerdict v, string d, int n = 0, string? sha = null, long inf = 0, long cmp = 0) => new(v, d, n, sha, inf, cmp);
 
@@ -135,7 +143,9 @@ namespace StockManager.Tools
             {
                 using var pe = new PEReader(ImmutableCollectionsMarshal.AsImmutableArray(image));
                 if (!pe.HasMetadata) return R(TightenSealVerdict.PeUnreadable, "메타데이터 없음", sha: sha, inf: inflateUs);
-                v = CompareMatrix(pe, pe.GetMetadataReader(), rows, out at);
+                var md = pe.GetMetadataReader();
+                v = CompareMatrix(pe, md, rows, out at);
+                if (v == TightenSealVerdict.Ok && requireAuditLedger) v = CheckAuditWiring(pe, md);
             }
             catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or ArgumentException or IndexOutOfRangeException)
             {
@@ -145,7 +155,7 @@ namespace StockManager.Tools
             string Row(int i) => i >= 0 && i < rows.Length ? $"#{i} '{rows[i].Key}'" : $"#{i}";
             string detail = v switch
             {
-                TightenSealVerdict.Ok => $"강화 전용 키 {rows.Length} · 키 순서 · 규칙(==1 / ≥ / ≤) · 폴백 · 하한 · 상한 = 매니페스트 = 명세 · 호스트 DLL = 봉인 해시",
+                TightenSealVerdict.Ok => $"강화 전용 키 {rows.Length} · 키 순서 · 규칙(==1 / ≥ / ≤) · 폴백 · 하한 · 상한 = 매니페스트 = 명세 · 호스트 DLL = 봉인 해시" + (requireAuditLedger ? " · 감사 원장 선기록 결선(⑪)" : ""),
                 TightenSealVerdict.WriterMissing => WriterNamespace + "." + WriterName + " 정의 또는 .cctor/get_Rules/IsTightening 본문 없음",
                 TightenSealVerdict.WriterAmbiguous => WriterNamespace + "." + WriterName + " 정의/본문 2개 이상",
                 TightenSealVerdict.CountMismatch => $"바이너리 키 표 · 정적 데이터 길이 ≠ 매니페스트 {rows.Length}",
@@ -155,6 +165,8 @@ namespace StockManager.Tools
                 TightenSealVerdict.MinimumMismatch => Row(at) + " 바이너리 하한 ≠ 매니페스트",
                 TightenSealVerdict.MaximumMismatch => Row(at) + " 바이너리 상한 ≠ 매니페스트",
                 TightenSealVerdict.DirectionMismatch => "IsTightening 비교 방향/규칙 비트 대응 이탈(==1 · ≥ · ≤ 정확히 1개씩 · 상수 true 0 · 미정의 = false)",
+                TightenSealVerdict.AuditLedgerMissing => "감사 원장 결선 없음(ITightenAuditSink 정의 · TryWrite Append 호출 · TightenSetting 진입점)",
+                TightenSealVerdict.AuditLedgerBypass => "감사 원장 우회(Append 정확히 1 · Judge < Append < WriteStored · 직후 조건 분기 · 진입점 감사 인자 ≠ null)",
                 _ => v.ToString(),
             };
             return R(v, detail, rows.Length, sha, inflateUs, compareUs);
@@ -239,6 +251,82 @@ namespace StockManager.Tools
             n = Decode(pe, tightRva, ops, args);
             if (n < 0) return TightenSealVerdict.WriterMissing;
             return CheckDirection(ops[..n]);
+        }
+
+        /// <summary>
+        /// ④ 감사 원장 결선 판정(힙 0 — 이름 비교 MetadataStringComparer · 명령 버퍼 stackalloc).
+        /// </summary>
+        public static TightenSealVerdict CheckAuditWiring(PEReader pe, MetadataReader md)
+        {
+            int sinks = 0, tryWriteRva = 0, entryRva = 0, nTry = 0, nEntry = 0;
+            foreach (var th in md.TypeDefinitions)
+            {
+                var td = md.GetTypeDefinition(th);
+                if (!md.StringComparer.Equals(td.Namespace, WriterNamespace)) continue;
+                if (md.StringComparer.Equals(td.Name, AuditSinkName)) { sinks++; continue; }
+                bool writer = md.StringComparer.Equals(td.Name, WriterName), adapter = !writer && md.StringComparer.Equals(td.Name, AdapterName);
+                if (!writer && !adapter) continue;
+                foreach (var mh in td.GetMethods())
+                {
+                    var m = md.GetMethodDefinition(mh);
+                    if (writer && md.StringComparer.Equals(m.Name, "TryWrite")) { tryWriteRva = m.RelativeVirtualAddress; nTry++; }
+                    else if (adapter && md.StringComparer.Equals(m.Name, "TightenSetting")) { entryRva = m.RelativeVirtualAddress; nEntry++; }
+                }
+            }
+            if (sinks == 0 || nTry == 0 || nEntry == 0 || tryWriteRva == 0 || entryRva == 0) return TightenSealVerdict.AuditLedgerMissing;
+            if (sinks > 1 || nTry > 1 || nEntry > 1) return TightenSealVerdict.WriterAmbiguous;
+
+            Span<ushort> ops = stackalloc ushort[MaxIl];
+            Span<int> args = stackalloc int[MaxIl];
+            int n = Decode(pe, tryWriteRva, ops, args);
+            if (n < 0) return TightenSealVerdict.AuditLedgerMissing;
+            int judge = -1, append = -1, appends = 0, write = -1, writes = 0;
+            for (int k = 0; k < n; k++)
+            {
+                if (ops[k] != OpCall && ops[k] != OpCallvirt) continue;
+                if (judge < 0 && IsMethod(md, args[k], WriterName, "Judge")) judge = k;
+                else if (IsMethod(md, args[k], AuditSinkName, "Append")) { appends++; append = k; }
+                else if (IsMethod(md, args[k], "ITightenSettingStore", "WriteStored")) { writes++; write = k; }
+            }
+            if (appends == 0) return TightenSealVerdict.AuditLedgerMissing;
+            if (appends != 1 || writes != 1 || judge < 0 || !(judge < append && append < write) || append + 1 >= n || !IsCondBranch(ops[append + 1]))
+                return TightenSealVerdict.AuditLedgerBypass;
+
+            n = Decode(pe, entryRva, ops, args);
+            if (n < 0) return TightenSealVerdict.AuditLedgerMissing;
+            int calls = 0;
+            for (int k = 0; k < n; k++)
+            {
+                if ((ops[k] != OpCall && ops[k] != OpCallvirt) || !IsMethod(md, args[k], WriterName, "TryWrite")) continue;
+                calls++;
+                int a = k - 1;
+                while (a > 0 && ops[a] == OpNop) a--;
+                if (a < 0 || ops[a] == OpLdnull) return TightenSealVerdict.AuditLedgerBypass;
+            }
+            return calls == 1 ? TightenSealVerdict.Ok : calls == 0 ? TightenSealVerdict.AuditLedgerMissing : TightenSealVerdict.AuditLedgerBypass;
+        }
+
+        // 조건 분기(brfalse/brtrue/beq…blt.un — 짧은 형식 0x2C~0x37 · 긴 형식 0x39~0x44)
+        private static bool IsCondBranch(ushort op) => op is >= 0x2C and <= 0x37 or >= 0x39 and <= 0x44;
+
+        /// <summary>호출 토큰 → (선언 형식 이름, 메서드 이름) 일치(MethodDefinition · TypeDef/TypeRef 부모 MemberReference · 문자열 생성 0).</summary>
+        private static bool IsMethod(MetadataReader md, int token, string type, string name)
+        {
+            var h = MetadataTokens.EntityHandle(token);
+            if (h.Kind == HandleKind.MethodDefinition)
+            {
+                var m = md.GetMethodDefinition((MethodDefinitionHandle)h);
+                return md.StringComparer.Equals(m.Name, name) && md.StringComparer.Equals(md.GetTypeDefinition(m.GetDeclaringType()).Name, type);
+            }
+            if (h.Kind != HandleKind.MemberReference) return false;
+            var r = md.GetMemberReference((MemberReferenceHandle)h);
+            if (!md.StringComparer.Equals(r.Name, name)) return false;
+            return r.Parent.Kind switch
+            {
+                HandleKind.TypeDefinition => md.StringComparer.Equals(md.GetTypeDefinition((TypeDefinitionHandle)r.Parent).Name, type),
+                HandleKind.TypeReference => md.StringComparer.Equals(md.GetTypeReference((TypeReferenceHandle)r.Parent).Name, type),
+                _ => false,
+            };
         }
 
         /// <summary>
