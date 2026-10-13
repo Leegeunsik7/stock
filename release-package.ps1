@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.17.4-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.18.0-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -28,6 +28,9 @@
 #     [10/10] [방향 B] 다중 저장소 핸드셰이크 — RELEASE_MANIFEST.json(태그·소스 커밋·manifest.sig·masterSeal·아티팩트·zip·쉼 해시·
 #            liveArmed=false·인터락 + 피어 QuantumVault HEAD/봉인 매니페스트 해시 '읽기 전용')을 원자 기록 후 독립 재수검.
 #            불일치 = 모든 출하 산출물 삭제 후 중단. 피어 저장소에는 쓰지 않는다.
+#            + [v12.18.0-GM · 방향 A] 30대 인터락 봉인 대조(--verify-interlocks) — zip 안 호스트 DLL 의 ArmingInterlockSource 정의(이름 · 값 ·
+#              비트마스크)를 MMF 뷰에서 무추출 판독 → 기록된 매니페스트 interlocks · master-seal.txt · 기대 개수($ExpectedInterlocks) 와 대조.
+#              불일치 = 출하 산출물 전량 폐기. 새 인터락 비트를 추가하면 $ExpectedInterlocks 도 갱신해야 출하된다(의도된 명세 게이트).
 #   전부 실패-닫힘: 어느 단계든 실패하면 즉시 중단, 불완전 zip 은 남기지 않는다.
 #
 #   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]
@@ -53,6 +56,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 $manifestOut = Join-Path $releaseDir "manifest.sig"
 $zipOut      = Join-Path $releaseDir "release-v$Version-GM.zip"
+$ExpectedInterlocks = 30   # [v12.18.0-GM] ArmingInterlockSource 0~28 + StartupSanity(63) — 출하 명세(바이너리 · 매니페스트와 불일치 = 폐기)
 
 function Fail($msg) { Write-Host "✗ $msg" -ForegroundColor Red; exit 1 }
 function Step($n, $msg) { Write-Host "[$n/10] $msg" -ForegroundColor Cyan }
@@ -287,6 +291,8 @@ $syncExit = Invoke-HostCli (@('--sync-release-manifest') + $hsArgs + @('--live-a
 if ($syncExit -ne 0) { Remove-ReleaseOutputs; Fail "RELEASE_MANIFEST.json 동기화 거부(exit=$syncExit) — 출하 산출물 전량 폐기" }
 $hsExit = Invoke-HostCli (@('--release-handshake') + $hsArgs) "handshake"
 if ($hsExit -ne 0) { Remove-ReleaseOutputs; Fail "다중 저장소 핸드셰이크 거부(exit=$hsExit) — 출하 산출물 전량 폐기" }
+$ilkExit = Invoke-HostCli @('--verify-interlocks', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-interlocks', "$ExpectedInterlocks") "verify-interlocks"
+if ($ilkExit -ne 0) { Remove-ReleaseOutputs; Fail "30대 인터락 봉인 대조 거부(exit=$ilkExit) — 출하 산출물 전량 폐기" }
 
 Write-Host "== 완료: $zipOut (SHA-256 $zipSha) · RELEASE_MANIFEST.json 봉인 ==" -ForegroundColor Green
 exit 0

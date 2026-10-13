@@ -1,13 +1,17 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.17.4-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.18.0-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.17.4(출하 zip 이름 · 태그 v12.17.4-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.0(출하 zip 이름 · 태그 v12.18.0-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
-//     인터락 29종(0~27 + StartupSanity) = 태그 소스 열거 · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
+//     인터락 30종(0~28 + StartupSanity) = 태그 소스 열거 = zip 호스트 DLL 정의(§10 검증기) · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
 //  §4 오중 빌드 회귀.
+//  §10 [v12.18.0-GM · 방향 A] ★30대 인터락 봉인 무추출 대조(ShippedInterlockManifestVerifier): PS 5.1 역슬래시 zip(실 호스트 DLL) ↔ RELEASE_MANIFEST ↔
+//     master-seal.txt = Ok(30 · 마스크 0x800000001FFFFFFF · OrderPathLatency=#28) · 정의 대조 1ms 미만 · 대조 루프 δ=0 ·
+//     구 명세(29) 매니페스트 / 기대 29 / 이름 순서 교환 / 앵커 교체 / 봉인 해시 불일치 / 매니페스트 변조 / 정규화 중복 · 누락 · 손상 zip = 전부 거부 ·
+//     ★바이너리 상수 28 → 29 패치 + 매니페스트 재봉인(일관된 위조) = 마스크 거부 · 스크립트 [10/10] 결선 · CLI 종료 코드.
 //  §7 [v12.17.1-GM · 방향 A 확장] ★마스터 플래그 IL 판독: 빌드 산출 DLL = 마스터 플래그 생성 ≥1(ShadowMetricsBridge liveArmed 리터럴 false) ·
 //     newobj 직전 ldc.i4.0→ldc.i4.1 1바이트 패치 = 거부 · get_LiveArmed 본문 ldc.i4.0→ldc.i4.1 = 거부 · Func<bool> 술어 매개변수 = 대상 아님 ·
 //     스크립트 [6/10] 소스 가드도 마스터 플래그 대조.
@@ -68,13 +72,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_17_4_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_0_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 17, 4, 0), v);
-            Assert.Equal("12.17.4", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 0, 0), v);
+            Assert.Equal("12.18.0", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.17.4</Version>", csproj);
+            Assert.Contains("<Version>12.18.0</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -95,7 +99,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.17.4-GM Production Golden Master", s);
+            Assert.Contains("v12.18.0-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -120,11 +124,12 @@ namespace StockManager.Tests
             string? tagCommit = GitRepoProbe.Git(root, "rev-list", "-n", "1", tag)?.Trim();
             Assert.False(string.IsNullOrEmpty(tagCommit), "태그 없음: " + tag);
             Assert.Equal(tagCommit, m.SourceCommit, ignoreCase: true);
-            // 인터락 29종(0~27 + StartupSanity) = 태그 소스 열거
+            // 인터락 30종(0~28 + StartupSanity) = 태그 소스 열거
             var tagLocks = GitRepoProbe.TagInterlockNames(root, m.SourceCommit);
             Assert.NotNull(tagLocks);
             Assert.Equal(m.Interlocks, tagLocks!);
-            Assert.Equal(29, m.Interlocks.Count);
+            Assert.Equal(30, m.Interlocks.Count);
+            Assert.Equal("OrderPathLatency", m.Interlocks[28]);
             Assert.Contains("KisProtocolDivergence", m.Interlocks);
             Assert.Contains("StrategyAnomaly", m.Interlocks);
             Assert.Equal("StartupSanity", m.Interlocks[^1]);
@@ -149,6 +154,11 @@ namespace StockManager.Tests
             sw.Stop();
             _out.WriteLine($"[출하] {tag} zip 무추출 재수검 {verdict} · {sw.ElapsedMilliseconds}ms · {new FileInfo(zip).Length:N0}B · {detail}");
             Assert.Equal(ZipSealVerdict.Ok, verdict);
+            // [v12.18.0-GM · 방향 A] zip 호스트 DLL 인터락 정의 = 매니페스트 = 앵커(무추출)
+            var ilk = ShippedInterlockManifestVerifier.Verify(zip, json, anchor, 30);
+            _out.WriteLine($"[출하] 인터락 봉인 대조 {ilk.Verdict} · {ilk.Detail} · 팽창 {ilk.InflateMicros}µs · 대조 {ilk.CompareMicros}µs");
+            Assert.Equal(InterlockSealVerdict.Ok, ilk.Verdict);
+            Assert.Equal(0x800000001FFFFFFFUL, ilk.DefinitionMask);
             // [방향 B] 출하 zip 안 호스트 DLL 이중 물리 키 기본값 = 리터럴 false(IL 직접 판독)
             var arm = ShippedBinaryLiveArmedGuard.ScanZip(zip);
             Assert.True(arm.Ok, "출하 바이너리 liveArmed 판독 거부: 지점 " + arm.Sites + " · " + string.Join(" | ", arm.Violations));
@@ -184,7 +194,7 @@ namespace StockManager.Tests
                 Assert.Contains("<TreatWarningsAsErrors>true</TreatWarningsAsErrors>", File.ReadAllText(Path.Combine(root, proj)));
             }
             Assert.True(PureShellFitnessSentinel.RatchetCeiling <= 40);
-            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Length);                   // 0~27 + StartupSanity — v12.17.1-GM 출하본(태그 소스)도 29
+            Assert.Equal(30, Enum.GetValues<ArmingInterlockSource>().Length);                   // v12.18.0-GM: 0~28 + StartupSanity = 출하 매니페스트 · 스크립트 $ExpectedInterlocks
         }
 
         // ════════════ §5 [방향 B] 출하 바이너리 liveArmed 기본값 IL 직접 판독 ════════════
@@ -570,6 +580,199 @@ namespace StockManager.Tests
                 Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, evil }, TextWriter.Null));
             }
             finally { File.Delete(good); File.Delete(evil); }
+        }
+    
+
+        // ════════════ §10 [v12.18.0-GM · 방향 A] 30대 인터락 봉인 무추출 대조 ════════════
+
+        private const ulong ThirtyLayerMask = 0x800000001FFFFFFFUL;
+
+        /// <summary>§6 봉인 zip(PS 5.1 역슬래시 · 실 호스트 DLL) + 그 봉인으로 기록한 RELEASE_MANIFEST(인터락 = 빌드 열거 이름 · 호스트 DLL 해시).</summary>
+        private static (string Zip, string Seal, string Json) InterlockFixture(string dir, IReadOnlyList<string>? interlocks = null, string? hostSha = null,
+                                                                             Action<ZipArchive>? extra = null)
+        {
+            Directory.CreateDirectory(dir);
+            var (zip, seal) = SealedPs51Zip(dir, extra);
+            string sha = hostSha ?? ReleaseHandshakeCli.FileSha(HostDll());
+            string hex = new string('A', 64);
+            var m = new ReleaseManifestInput(ReleasePackager.DefaultVersion + "-GM", "v" + ReleasePackager.DefaultVersion + "-GM", new string('a', 40), hex, seal, hex,
+                new List<(string, string)> { ("host/MS2E.StockSuite.dll", sha) }, "pkg.zip", hex, hex, false,
+                interlocks ?? Enum.GetNames<ArmingInterlockSource>(), null);
+            return (zip, seal, MultiRepoReleaseManifest.Build(m));
+        }
+
+        private static string TempDir() { string d = Path.Combine(Path.GetTempPath(), "ms2e_ilk_" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(d); return d; }
+
+        private static string EvilManifest(byte[] dll, string seal)
+        {
+            string hex = new string('A', 64);
+            return MultiRepoReleaseManifest.Build(new ReleaseManifestInput("x-GM", "vx-GM", new string('a', 40), hex, seal, hex,
+                new List<(string, string)> { ("host/MS2E.StockSuite.dll", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(dll))) },
+                "evil.zip", hex, hex, false, Enum.GetNames<ArmingInterlockSource>(), null));
+        }
+
+        [Fact]
+        public void InterlockSeal_BuiltHost_Ps51Zip_ThirtyLayers_Ok_CompareUnderOneMs_LoopZeroAlloc()
+        {
+            string dir = TempDir();
+            try
+            {
+                var (zip, seal, json) = InterlockFixture(dir);
+                var r = ShippedInterlockManifestVerifier.Verify(zip, json, seal + "\r\n", 30);       // master-seal.txt = 개행 포함(Set-Content)
+                Assert.True(r.Verdict == InterlockSealVerdict.Ok, r.Verdict + " " + r.Detail);
+                Assert.Equal(30, r.Count);
+                Assert.Equal(ThirtyLayerMask, r.DefinitionMask);
+                Assert.Equal(ThirtyLayerMask, ShippedInterlockManifestVerifier.ExpectedMaskFor(30));
+                Assert.Equal(ReleaseHandshakeCli.FileSha(HostDll()), r.HostSha256);
+                Assert.Equal("OrderPathLatency", Enum.GetNames<ArmingInterlockSource>()[28]);
+
+                // 정의 대조(PE 헤더 · 메타데이터 판독 + 대조) — 1ms 예산 · 반복 최솟값(JIT · 캐시 제외)
+                long best = long.MaxValue;
+                for (int i = 0; i < 7; i++) best = Math.Min(best, ShippedInterlockManifestVerifier.Verify(zip, json, seal, 30).CompareMicros);
+                _out.WriteLine($"[인터락 봉인] 팽창+해시 {r.InflateMicros}µs · 정의 대조 최솟값 {best}µs · 마스크 0x{r.DefinitionMask:X16}");
+                Assert.True(best < 1_000, "정의 대조 ≥ 1ms: " + best + "µs");
+
+                // 대조 루프 δ=0(MetadataStringComparer · 스택 버퍼)
+                byte[] dll = File.ReadAllBytes(HostDll());
+                using var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll));
+                var md = pe.GetMetadataReader();
+                IReadOnlyList<string> names = Enum.GetNames<ArmingInterlockSource>();
+                Assert.Equal(InterlockSealVerdict.Ok, ShippedInterlockManifestVerifier.CompareDefinition(md, names, ThirtyLayerMask, out _, out _, out _));
+                Assert.Equal(0, MinAllocated(() => ShippedInterlockManifestVerifier.CompareDefinition(md, names, ThirtyLayerMask, out _, out _, out _)));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void InterlockSeal_SpecDrift_Anchor_Hash_Tamper_Duplicate_AllRejected()
+        {
+            string dir = TempDir();
+            try
+            {
+                var names = Enum.GetNames<ArmingInterlockSource>();
+                var (zip, seal, json) = InterlockFixture(Path.Combine(dir, "ok"));
+                InterlockSealVerdict V(string z, string j, string a, int n) => ShippedInterlockManifestVerifier.Verify(z, j, a, n).Verdict;
+
+                // 구 명세(v12.17.4-GM · 29 — OrderPathLatency 없음) 매니페스트 ↔ 30대 바이너리
+                var old = names.Where(n => n != "OrderPathLatency").ToArray();
+                Assert.Equal(29, old.Length);
+                var (zOld, sOld, jOld) = InterlockFixture(Path.Combine(dir, "old"), old);
+                Assert.Equal(InterlockSealVerdict.CountMismatch, V(zOld, jOld, sOld, 29));              // 바이너리 30 ≠ 매니페스트 29
+                Assert.Equal(InterlockSealVerdict.CountMismatch, V(zOld, jOld, sOld, 30));              // 매니페스트 29 ≠ 스크립트 명세 30
+                Assert.Equal(InterlockSealVerdict.CountMismatch, V(zip, json, seal, 29));               // 스크립트 명세 미갱신
+                Assert.Equal(InterlockSealVerdict.CountMismatch, V(zip, json, seal, 0));
+
+                // 이름 순서 교환(27 ↔ 28) · 개명
+                var swapped = (string[])names.Clone(); (swapped[27], swapped[28]) = (swapped[28], swapped[27]);
+                var (zSw, sSw, jSw) = InterlockFixture(Path.Combine(dir, "sw"), swapped);
+                var rSw = ShippedInterlockManifestVerifier.Verify(zSw, jSw, sSw, 30);
+                Assert.Equal(InterlockSealVerdict.NameMismatch, rSw.Verdict);
+                Assert.Contains("#27", rSw.Detail);
+                var renamed = (string[])names.Clone(); renamed[28] = "OrderPathLatencyX";
+                var (zRn, sRn, jRn) = InterlockFixture(Path.Combine(dir, "rn"), renamed);
+                Assert.Equal(InterlockSealVerdict.NameMismatch, V(zRn, jRn, sRn, 30));
+
+                // 앵커 교체 · 형식 이탈
+                Assert.Equal(InterlockSealVerdict.AnchorMismatch, V(zip, json, new string('B', 64), 30));
+                Assert.Equal(InterlockSealVerdict.AnchorMismatch, V(zip, json, "", 30));
+
+                // 봉인 해시 ≠ zip 안 DLL(판독 대상 ≠ 봉인 대상)
+                var (zH, sH, jH) = InterlockFixture(Path.Combine(dir, "h"), hostSha: new string('C', 64));
+                Assert.Equal(InterlockSealVerdict.ArtifactHashMismatch, V(zH, jH, sH, 30));
+
+                // 매니페스트 변조(재봉인 없이 이름 1자) · liveArmedDefault=true · 파싱 불가
+                Assert.Equal(InterlockSealVerdict.ManifestInvalid, V(zip, json.Replace("\"OrderPathLatency\"", "\"OrderPathLatencY\""), seal, 30));
+                Assert.Equal(InterlockSealVerdict.ManifestInvalid, V(zip, json.Replace("\"liveArmedDefault\": false", "\"liveArmedDefault\": true"), seal, 30));
+                Assert.Equal(InterlockSealVerdict.ManifestInvalid, V(zip, "{", seal, 30));
+
+                // [방향 B] 정규화 중복(역슬래시 + 슬래시 · 대소문자) · 누락 · 손상
+                byte[] dll = File.ReadAllBytes(HostDll());
+                var (zD, sD, jD) = InterlockFixture(Path.Combine(dir, "d"), extra: za => AddEntry(za, "host/MS2E.StockSuite.dll", dll));
+                Assert.Equal(InterlockSealVerdict.EntryDuplicate, V(zD, jD, sD, 30));
+                var (zC, sC, jC) = InterlockFixture(Path.Combine(dir, "c"), extra: za => AddEntry(za, "HOST\\ms2e.stocksuite.runtimeconfig.JSON", new byte[] { 1 }));
+                Assert.Equal(InterlockSealVerdict.EntryDuplicate, V(zC, jC, sC, 30));
+                string noHost = Path.Combine(dir, "nohost.zip");
+                using (var za = ZipFile.Open(noHost, ZipArchiveMode.Create)) AddEntry(za, "manifest.sig", new byte[] { 1 });
+                Assert.Equal(InterlockSealVerdict.EntryMissing, V(noHost, json, seal, 30));
+                string junk = Path.Combine(dir, "junk.zip");
+                File.WriteAllBytes(junk, Encoding.ASCII.GetBytes("not a zip at all"));
+                Assert.Equal(InterlockSealVerdict.ZipUnreadable, V(junk, json, seal, 30));
+                Assert.Equal(InterlockSealVerdict.ZipUnreadable, V(Path.Combine(dir, "absent.zip"), json, seal, 30));
+
+                // 원본은 여전히 Ok(거부 사례가 픽스처를 오염시키지 않았다)
+                Assert.Equal(InterlockSealVerdict.Ok, V(zip, json, seal, 30));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void InterlockSeal_BinaryConstantPatched_ConsistentlyResealedManifest_MaskRejected()
+        {
+            // 공격 모델: 호스트 DLL 의 OrderPathLatency 상수(28)를 29 로 바꾸고 매니페스트를 '그 바이너리'로 일관되게 재봉인 —
+            //  해시 · 이름 · 개수는 전부 맞는다. 남는 방어선 = 정의 비트마스크 구조 규칙(0~28 연속 + 63).
+            byte[] dll = File.ReadAllBytes(HostDll());
+            int off;
+            using (var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll)))
+            {
+                var md = pe.GetMetadataReader();
+                var td = md.TypeDefinitions.Select(md.GetTypeDefinition).Single(t => md.GetString(t.Name) == "ArmingInterlockSource" && md.GetString(t.Namespace) == "MS2E.Core");
+                var f = td.GetFields().Select(md.GetFieldDefinition).Single(x => md.GetString(x.Name) == "OrderPathLatency");
+                var blob = md.GetConstant(f.GetDefaultValue()).Value;
+                off = pe.PEHeaders.MetadataStartOffset + md.GetHeapMetadataOffset(HeapIndex.Blob) + MetadataTokens.GetHeapOffset(blob) + 1;   // +1 = 압축 길이 접두
+            }
+            Assert.Equal(28, dll[off]);
+            byte[] evil = (byte[])dll.Clone();
+            evil[off] = 29;
+            string dir = TempDir();
+            try
+            {
+                string seal = new string('D', 64);
+                string zip = Path.Combine(dir, "evil.zip");
+                using (var za = ZipFile.Open(zip, ZipArchiveMode.Create)) AddEntry(za, "host\\MS2E.StockSuite.dll", evil);
+                var r = ShippedInterlockManifestVerifier.Verify(zip, EvilManifest(evil, seal), seal, 30);
+                Assert.Equal(InterlockSealVerdict.MaskMismatch, r.Verdict);
+                Assert.Equal((ThirtyLayerMask & ~(1UL << 28)) | (1UL << 29), r.DefinitionMask);
+
+                evil[off] = 27;                                                                         // 값 중복(27 두 번)
+                string zip2 = Path.Combine(dir, "evil2.zip");
+                using (var za = ZipFile.Open(zip2, ZipArchiveMode.Create)) AddEntry(za, "host\\MS2E.StockSuite.dll", evil);
+                Assert.Equal(InterlockSealVerdict.ValueInvalid, ShippedInterlockManifestVerifier.Verify(zip2, EvilManifest(evil, seal), seal, 30).Verdict);
+
+                // 대조군: 패치 없는 원본 + 같은 방식 재봉인 = Ok(거부가 재봉인 절차 탓이 아님)
+                string zip3 = Path.Combine(dir, "good.zip");
+                using (var za = ZipFile.Open(zip3, ZipArchiveMode.Create)) AddEntry(za, "host\\MS2E.StockSuite.dll", dll);
+                Assert.Equal(InterlockSealVerdict.Ok, ShippedInterlockManifestVerifier.Verify(zip3, EvilManifest(dll, seal), seal, 30).Verdict);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void InterlockSeal_PackageScript_Step10_Wired_SpecPinned_CliExitCodes()
+        {
+            string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
+            var spec = Regex.Match(s, @"^\$ExpectedInterlocks = (\d+)", RegexOptions.Multiline);
+            Assert.True(spec.Success, "스크립트 인터락 명세 고정값 없음");
+            Assert.Equal(Enum.GetValues<ArmingInterlockSource>().Length, int.Parse(spec.Groups[1].Value));
+            int hs = s.IndexOf("$hsExit = Invoke-HostCli", StringComparison.Ordinal), ilk = s.IndexOf("'--verify-interlocks'", StringComparison.Ordinal),
+                done = s.IndexOf("== 완료:", StringComparison.Ordinal);
+            Assert.True(hs > 0 && ilk > hs && done > ilk, "★인터락 봉인 대조 = 매니페스트 기록 · 핸드셰이크 뒤 · 완료 앞");
+            Assert.Contains("if ($ilkExit -ne 0) { Remove-ReleaseOutputs; Fail", s);
+            Assert.True(ReleaseHandshakeCli.IsInvocation(new[] { "--verify-interlocks" }));
+
+            string dir = TempDir();
+            try
+            {
+                var (zip, seal, json) = InterlockFixture(dir);
+                string mf = Path.Combine(dir, "RELEASE_MANIFEST.json"), sf = Path.Combine(dir, "master-seal.txt");
+                File.WriteAllText(mf, json);
+                File.WriteAllText(sf, seal + Environment.NewLine);
+                int Run(params string[] a) { var w = new StringWriter(); int c = ReleaseHandshakeCli.Run(a, w); _out.WriteLine(w.ToString().TrimEnd()); return c; }
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-interlocks", zip, "--manifest", mf, "--seal-file", sf, "--expect-interlocks", "30"));
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-interlocks", zip, "--manifest", mf, "--seal-file", sf, "--expect-interlocks", "29"));
+                Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-interlocks", zip, "--manifest", mf, "--seal-file", sf));
+                Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-interlocks", zip, "--seal-file", sf, "--expect-interlocks", "30"));
+            }
+            finally { Directory.Delete(dir, true); }
         }
     }
 }

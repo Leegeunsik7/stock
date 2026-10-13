@@ -1398,3 +1398,39 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 버전 12.17.4 · 태그 v12.17.4-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.3-GM 산출물 → release/superseded-v12.17.3-GM.
 - 출하 기록(2026-10-12): 태그 v12.17.4-GM = 261feb6 · `release-v12.17.4-GM.zip` SHA-256 82DD88580372CD458173617B857671163DCE4C357F30FAF074BC06182CD2211F · masterSeal 6C2545C7DD0C672B6BEA18BC545768EB8AE8AFFEEE1B63365268E87A278679EA · 아티팩트 38 · 피어 기록 없음(-NoPeer).
 - [0/10]~[10/10] 전 단계 통과 · --verify-zip Ok · --verify-live-armed Ok(키 19 · 마스터 1 · UI 3/3 · 시뮬레이션 격리 51 형식(CLI 29) · 위반 0) · 핸드셰이크 Ok · primary 재대조 + GoldenMasterReleasePackagingTests 14/14.
+
+## 50. v12.17.5~6-DEV — 주문 경로 지연 시각화(/aidash) · 실발주 경로 스탬프 프로덕션 결선 · 비트 28 지연 인터락 (2026-10-13)
+
+### 50.1 시각화(v12.17.5-DEV)
+- `StockManager/Telemetry/LatencyHistogram.cs`: 고정 InlineArray 108 버킷(1µs~10ms · 옥타브당 8 · 상대 오차 ≤ 12.5%) 백분위 — δ=0. RCL(`SignalLabelMapper`)에 축 사본 · 테스트가 버킷 전수 대조.
+- `OrderPathStageProfiler` 최근 1,000 부모 창(단일 라이터 · claim 카운터 · 판독자는 찢김 가능 최고령 표본 절단) → `DashboardSnapshotHub` 50ms 프레임에 p50/p99 3구간 + 추세 64.
+- `LatencySpikeDegradationGuard`: p99 > 1ms = 차트 발행 50 → 200ms 강등 · 2s 무스파이크 = 복귀. /aidash 지연 배지 · 확신-지연 이중 스파크라인(좌표 δ=0) · 등급(정상/미세 정체/심각 지연/미계측) 정적 라벨.
+
+### 50.2 실발주 경로 결선(v12.17.6-DEV)
+- 스탬프 데코레이터(`StageStampingSplitGate` · `EgressStageProbe`) Simulation → `StockManager/Telemetry/OrderPathStamping.cs`(프로덕션 네임스페이스 — IL 시뮬레이션 격리 위반 0).
+- 시그널 시각 = `OrderDispatchRing.Publish`(IOrderPathObserver — 전 호스트 생산자 공통 1지점) · 종결 = `GatedOrderDispatcher.Drain` try/finally(무장 차단 · 동결 · 송출 · veto · 예외 전부 정확히 1회).
+- 호스트: dispatchRing.PathObserver · routerGate 감쌈 · 센티널 감싼 `stampedBrokerMap`(판정은 센티널 그대로 · 매트릭스 취소는 원 brokerMap) · 허브 `orderPath:`.
+- [방향 A] 미도달 부모 슬롯 CAS 즉시 회수 — 축출 0(대조: 관측자 없으면 3,000 중 1,976 오축출). 스탬프 비용 주문당 141~232ns · δ=0.
+- [방향 B] `OrderPathLatencyInterlock` = 신규 필수 비트 28 `OrderPathLatency` — 시그널→출구 p99 > 예산 연속 3회(fresh 판정 · 표본 ≥ 100) = Disarm(sticky) · 재무장 물리 이중키 + 기준선. 판정은 50ms 콜드 타이머(주문 스레드 밖).
+- ★예산 = 병목 50ms + 드레인 주기 50ms = 100ms(`Router.OrderPathBottleneckMs`): 시그널 스탬프가 링 발행이라 설계된 드레인 대기 0~50ms 가 S2 에 포함 — 문자 그대로 50ms 면 정상 운용 p99 50.9ms 로 오격발(테스트가 두 경우 실측).
+- 정직: liveArmed:false 기본에서는 출구 도달 0 → /aidash = '계측 대기 · 발행 N · 회수 N'. 실 p50/p99 는 키 on(드라이런 사슬 p50 ≤ 6.7µs · p99 ≤ 21µs). 실 브로커 출구 지연은 미실측.
+- 인터락 30종(0~28 + StartupSanity 63) — 개수 고정 테스트 5곳 갱신.
+
+## 51. v12.18.0-GM Production Golden Master 출하 — 30대 인터락 봉인 무추출 대조 · 호스트 스탬프 · 100ms 지연 예산 (2026-10-13)
+
+### 51.1 인터락 명세(출하)
+- ArmingInterlockSource 30종 = 비트 0~28 연속 + StartupSanity(63) · 정의 마스크 0x800000001FFFFFFF · 비트 28 `OrderPathLatency`(§50.2 · 예산 100ms).
+- 매니페스트 interlocks = 태그 소스 열거(기존 [10/10] 핸드셰이크) = zip 호스트 DLL 정의(신규 · 51.2) — 3자 일치해야 출하.
+
+### 51.2 [방향 A] `StockManager/Tools/ShippedInterlockManifestVerifier.cs` · CLI `--verify-interlocks`
+- 빈틈: 기존 핸드셰이크는 매니페스트 ↔ '태그 소스'만 대조 — 실제 출하되는 zip 안 바이너리(스테일 bin · 다른 커밋 빌드)는 대조되지 않았다.
+- ① 매니페스트 자기 봉인 · liveArmedDefault=false · masterSeal == master-seal.txt · 매니페스트 개수 == 기대값.
+  ② zip = MemoryMappedFile 읽기 전용 뷰(정확 길이) · 항목 정규화('\'→'/' · 대소문자 무시) 중복 = 거부 · 호스트 DLL 만 팽창 → SHA-256 == 매니페스트 artifacts(판독 = 봉인 바이트).
+  ③ 팽창 버퍼를 복사 없이 PEReader(ImmutableCollectionsMarshal) → MS2E.Core.ArmingInterlockSource TypeDef 정확히 1개 · 리터럴 byte 상수 · 값 오름차순 이름 == 매니페스트 순서(MetadataStringComparer) · 값 중복/범위 = 거부 · 마스크 == 구조 규칙(0~n-2 + 63).
+- 실측: 정의 대조(③) 최솟값 114µs(< 1ms) · 대조 루프 힙 0B · 팽창+해시(②) ≈ 16~21ms(Deflate — 1ms 대상 아님, 보고서 분리 기록).
+- 스크립트 `$ExpectedInterlocks = 30`: [10/10] 핸드셰이크 뒤 실행 · 거부 = Remove-ReleaseOutputs(산출물 전량 폐기). 새 비트 추가 시 이 값을 갱신해야 출하(테스트가 열거 길이와 고정 대조).
+- 테스트(GoldenMasterReleasePackagingTests §10) 4: Ok(PS 5.1 역슬래시 zip · 실 DLL) · 구 명세 29 / 기대 29 / 순서 교환 / 개명 / 앵커 / 봉인 해시 / 매니페스트 변조 / 정규화 중복 · 누락 · 손상 = 거부 · ★DLL 상수 28→29 패치 + 일관 재봉인 = MaskMismatch(27 = 값 중복) · 스크립트 결선 · CLI 0/2/64. 방어 끔 변이 2/2 Red(마스크 · 중복).
+- 방향 B(zip 항목 정규화 · 중복 가드)는 §44 기존 + 이 검증기 ②에 같은 규칙 재적용.
+
+### 51.3 출하
+- 버전 12.18.0 · 태그 v12.18.0-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.4-GM 산출물 → release/superseded-v12.17.4-GM.

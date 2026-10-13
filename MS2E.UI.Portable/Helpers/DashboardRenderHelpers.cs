@@ -39,6 +39,23 @@ namespace MS2E.UI.Portable.Helpers
 
         /// <summary>게이트 선 y 좌표(정수).</summary>
         public static int GateY(int height, long gateBp = SignalLabelMapper.GateBp) => (int)(height - gateBp * height / 10_000);
+
+        /// <summary>
+        /// [v12.17.5-DEV] 지연(ns · oldest → newest) → "x,y …"(정수 좌표 · 위 = 느림). 세로축 = 지연 버킷 인덱스(로그 축 — 1µs 와 10ms 를 한 화면에) —
+        /// 버킷 → 0~10,000 척도로 사상한 뒤 Write 와 같은 작성기를 쓴다(고정 버퍼 · 할당 0). 반환 = 작성 문자 수(0 = 값 &lt; 2 또는 버퍼 부족).
+        /// </summary>
+        public static int WriteLatency(ReadOnlySpan<long> nanos, Span<long> scratch, Span<char> dst, int width, int height)
+        {
+            if (nanos.Length < 2 || scratch.Length < nanos.Length) return 0;
+            for (int i = 0; i < nanos.Length; i++) scratch[i] = LatencyScale(nanos[i]);
+            return Write(scratch[..nanos.Length], dst, width, height);
+        }
+
+        /// <summary>지연(ns) → 0~10,000 세로 척도(버킷 인덱스 비례).</summary>
+        public static long LatencyScale(long nanos) => (long)SignalLabelMapper.LatencyBucket(nanos) * 10_000 / (SignalLabelMapper.LatencyBuckets - 1);
+
+        /// <summary>지연 기준선(기본 1ms = 미세 정체 경계) y 좌표(정수).</summary>
+        public static int LatencyY(int height, long nanos = 1_000_000) => (int)(height - LatencyScale(nanos) * height / 10_000);
     }
 
     public sealed class DashboardDegradationGovernor

@@ -44,7 +44,7 @@ namespace MS2E.UI.Portable.Helpers
         public static string Reason(int code) => (uint)code < (uint)Reasons.Length ? Reasons[code] : Unknown;
         public static bool IsWarningReason(int code) => (uint)code < (uint)ReasonTone.Length && ReasonTone[code] == 3;
 
-        // ── 인터락 비트(ArmingInterlockSource — 0..27 + 63) ──
+        // ── 인터락 비트(ArmingInterlockSource — 0..28 + 63) ──
         private static readonly string[] Interlocks =
         {
             "부팅 무결성",                 // 0 BootIntegrity
@@ -75,6 +75,7 @@ namespace MS2E.UI.Portable.Helpers
             "키움 브리지 링크",            // 25 KiwoomBridgeLink
             "KIS 프로토콜 이탈",           // 26 KisProtocolDivergence
             "전략 이상(호가 꼬임 포함)",   // 27 StrategyAnomaly
+            "주문 경로 지연(p99)",         // 28 OrderPathLatency
         };
         public const int StartupSanityBit = 63;
         private const string StartupSanity = "기동 샌니티(미봉인)";
@@ -112,5 +113,63 @@ namespace MS2E.UI.Portable.Helpers
         /// <summary>배지 문구(정적).</summary>
         public static string BadgeText(int kind, long bp, int reason)
             => IsWarningReason(reason) ? "거부" : bp >= GateBp && kind == 1 ? "매수 확신" : bp >= GateBp && kind == 2 ? "매도 확신" : "보류";
+
+        // ── [v12.17.5-DEV] 주문 경로 지연 등급 · 구간 · 마이크로초 라벨 ──
+        //  등급 코드 = DashLatencyGrade(0 정상 · 1 미세 정체 · 2 심각 지연 · 3 미계측). 배지 색: 정상 녹 · 미세 정체 황 · 심각 지연 적 · 미계측 회.
+        private static readonly string[] LatencyGrades = { "정상", "미세 정체", "심각 지연", "미계측" };
+        private static readonly string[] LatencyGradeClasses = { "ok", "spike", "lag", "off" };
+        private static readonly string[] LatencyStages = { "시그널→게이트", "게이트→출구", "시그널→발주" };
+
+        public static int LatencyGradeCount => LatencyGrades.Length;
+        public static string LatencyGradeLabel(int grade) => (uint)grade < (uint)LatencyGrades.Length ? LatencyGrades[grade] : Unknown;
+        public static string LatencyGradeClass(int grade) => (uint)grade < (uint)LatencyGradeClasses.Length ? LatencyGradeClasses[grade] : "off";
+        public static string LatencyStage(int stage) => (uint)stage < (uint)LatencyStages.Length ? LatencyStages[stage] : Unknown;
+
+        //  지연 축(호스트 Telemetry/LatencyHistogram.cs 복제 — 엔진 참조 0 · 동기화는 호스트 테스트가 전 버킷 대조로 강제):
+        //   버킷 0 = ns < 1,024 · 1..106 = 옥타브 2^10..2^23 마다 선형 8 등분 · 107 = 10,485,759ns 초과.
+        //   허브가 싣는 백분위는 버킷 상한(또는 그 안의 관측 최대)이므로 ns → 버킷 → '미리 만든' 라벨 1개로 대응된다(조회 = 할당 0).
+        public const int LatencyBuckets = 108;
+        private const int LatencySub = 8, LatencyMinOctave = 10, LatencyMaxOctave = 23;
+        public const long LatencyMaxTrackedNanos = ((LatencySub + 2L) << (LatencyMaxOctave - 3)) - 1;
+        private static readonly string[] LatencyTexts = BuildLatencyTexts();
+
+        /// <summary>ns → 지연 버킷(0 ~ 107).</summary>
+        public static int LatencyBucket(long nanos)
+        {
+            if (nanos < (1L << LatencyMinOctave)) return 0;
+            if (nanos > LatencyMaxTrackedNanos) return LatencyBuckets - 1;
+            int msb = 63 - System.Numerics.BitOperations.LeadingZeroCount((ulong)nanos);
+            int sub = (int)(nanos >> (msb - 3)) & (LatencySub - 1);
+            return 1 + (msb - LatencyMinOctave) * LatencySub + sub;
+        }
+
+        /// <summary>버킷 상한(ns · 포함) — 넘침 버킷 = long.MaxValue.</summary>
+        public static long LatencyBucketUpperNanos(int bucket)
+        {
+            if (bucket <= 0) return (1L << LatencyMinOctave) - 1;
+            if (bucket >= LatencyBuckets - 1) return long.MaxValue;
+            int o = (bucket - 1) / LatencySub, sub = (bucket - 1) % LatencySub;
+            return ((LatencySub + sub + 1L) << (o + LatencyMinOctave - 3)) - 1;
+        }
+
+        /// <summary>지연(ns) → "≤16µs" · "≤1.2ms" 등 버킷 상한 라벨(정적 · 올림 = 보수적) · 0 이하 = "-" · 10.5ms 초과 = "&gt;10.5ms".</summary>
+        public static string LatencyText(long nanos) => nanos <= 0 ? "-" : LatencyTexts[LatencyBucket(nanos)];
+
+        private static string[] BuildLatencyTexts()
+        {
+            // 콜드 1회(정적 초기화) — 이후 조회는 배열 인덱싱만
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var t = new string[LatencyBuckets];
+            for (int b = 0; b < LatencyBuckets - 1; b++)
+            {
+                long upper = LatencyBucketUpperNanos(b);
+                long tenthsUs = (upper + 99) / 100;                                    // 0.1µs 단위 올림
+                t[b] = tenthsUs < 100 ? "≤" + (tenthsUs / 10.0).ToString("0.0", inv) + "µs"
+                     : tenthsUs < 10_000 ? "≤" + ((tenthsUs + 9) / 10).ToString(inv) + "µs"
+                     : "≤" + (((upper + 99_999) / 100_000) / 10.0).ToString("0.0", inv) + "ms";
+            }
+            t[LatencyBuckets - 1] = ">" + ((LatencyMaxTrackedNanos + 99_999) / 100_000 / 10.0).ToString("0.0", inv) + "ms";
+            return t;
+        }
     }
 }

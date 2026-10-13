@@ -9,7 +9,8 @@
 //      → TickToTradeLatencyProfiler 송출 직전 veto → 자식 순차 송출) → [브로커 b] LiveArmedEgressSentinel(물리 이중키 ∧ 집계어) → 가상 브로커 b
 //    체결 통보 → OrderExecutionFeedAdapter + ChildSlotTrackingMatrix(불균형 차단기 · 취소 → 센티널 → 가상 브로커).
 //   호스트와 다른 점(명시): ① 브로커 = 가상(네트워크 0 · IsLive=false) ② 한도 피드 = 고정값(BrokerLimitFeedProvider 대신 · 테스트가 조절)
-//   ③ 게이트 승인 · 출구 진입을 OrderPathStageProfiler 로 스탬프하는 얇은 데코레이터 2종(동작 위임만 · 판정 변경 0).
+//   ③ 게이트 승인 · 출구 진입 스탬프 = 호스트와 같은 StockManager.Telemetry 데코레이터 2종(v12.17.6 에 프로덕션 네임스페이스로 이전 ·
+//      동작 위임만 · 판정 변경 0) + 링 경로 관측자(발행 · 종결 — 호스트와 동일 결선).
 //
 //  무장 모델(liveArmed:false 가 기본):
 //   · Valve / LiveArming = 물리 이중키 모사(기본 false). 디스패처 무장 술어 = 둘 다 true 일 때만.
@@ -133,65 +134,6 @@ namespace StockManager.Simulation
         public decimal HeldQty(PaperAsset asset, string symbol) => 0m;
     }
 
-    /// <summary>[방향 A 계측] 라우터 게이트 데코레이터 — 판정은 내부 게이트 그대로 · 승인 반환 직후 스탬프(MarkGate) · 이전 부모 종료(EndOrder).</summary>
-    public sealed class StageStampingSplitGate : IChildSplitRouteGate
-    {
-        private readonly IChildSplitRouteGate _inner;
-        private readonly OrderPathStageProfiler _stages;
-
-        public StageStampingSplitGate(IChildSplitRouteGate inner, OrderPathStageProfiler stages)
-        {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _stages = stages ?? throw new ArgumentNullException(nameof(stages));
-        }
-
-        public bool TryAdmitSplit(in OrderProposal proposal, Span<ChildOrderPlan> children, out int count)
-        {
-            _stages.EndOrder();
-            bool ok = _inner.TryAdmitSplit(in proposal, children, out count);
-            if (ok) _stages.MarkGate(proposal.OrderId);
-            return ok;
-        }
-
-        public bool TryAdmit(in OrderProposal proposal, out OrderAdmission admission)
-        {
-            _stages.EndOrder();
-            bool ok = _inner.TryAdmit(in proposal, out admission);
-            if (ok) _stages.MarkGate(proposal.OrderId);
-            return ok;
-        }
-
-        public void OnBrokerAccepted(long proposalId, string brokerOrderId) => _inner.OnBrokerAccepted(proposalId, brokerOrderId);
-        public void OnNotSent(long proposalId) => _inner.OnNotSent(proposalId);
-    }
-
-    /// <summary>[방향 A 계측] 출구 데코레이터 — 센티널 '앞'에서 진입 시각 · 판정 반환 후 MarkEgress. 판정 · 전달은 센티널 그대로.</summary>
-    public sealed class EgressStageProbe : IBroker
-    {
-        private readonly IBroker _inner;
-        private readonly OrderPathStageProfiler _stages;
-
-        public EgressStageProbe(IBroker inner, OrderPathStageProfiler stages)
-        {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _stages = stages ?? throw new ArgumentNullException(nameof(stages));
-        }
-
-        public string Name => _inner.Name;
-        public bool IsLive => _inner.IsLive;
-
-        public (bool ok, string msg) Place(PaperAsset asset, string symbol, string name, PaperSide side, PaperKind kind, decimal qty, decimal limitPrice, decimal currentPrice)
-        {
-            long t = _stages.Timestamp();
-            var r = _inner.Place(asset, symbol, name, side, kind, qty, limitPrice, currentPrice);
-            _stages.MarkEgress(t, r.ok);
-            return r;
-        }
-
-        public void Cancel(string orderId) => _inner.Cancel(orderId);
-        public decimal HeldQty(PaperAsset asset, string symbol) => _inner.HeldQty(asset, symbol);
-    }
-
     public sealed class MultiBrokerDryRunHarness : IDisposable
     {
         public const int KiwoomBroker = 0, KisBroker = 1;
@@ -290,6 +232,7 @@ namespace StockManager.Simulation
             Worker = new OrderDrainWorker(Dispatcher, _brokerMap[0]!, wired: false, attestation: Attestation, interlocks: Interlocks,
                                           routeGate: new StageStampingSplitGate(Gate, Stages), latencyProbe: TickToTrade, brokersByIndex: _brokerMap);
             Worker.EnableChildSplit(Matrix);
+            _ring.PathObserver = Stages;                                            // [v12.17.6] 호스트와 동일: 발행 · 종결 스탬프(슬롯 즉시 회수)
             _onFill = f => { _exec.OnFill(f); Matrix.OnFill(f); };
         }
 
@@ -333,11 +276,8 @@ namespace StockManager.Simulation
         /// </summary>
         public long SubmitFromSignal(long symbol, OrderSide side, long shares, long limitWon, bool force = false)
         {
-            long ts = Stages.Timestamp();
             if (!force && !(Signals.TryGetSignal(symbol, out var s) && s.Side == (side == OrderSide.Buy ? 1 : -1))) return 0;
-            long id = _ring.Publish(0, symbol, side, 1, new QPrice(limitWon * RawScale), new QQty(shares * RawScale), NowMicros);
-            Stages.BeginOrder(id, ts);
-            return id;
+            return _ring.Publish(0, symbol, side, 1, new QPrice(limitWon * RawScale), new QQty(shares * RawScale), NowMicros);   // 발행 스탬프 = 링 관측자(호스트와 동일)
         }
 
         /// <summary>1 사이클: 피드 판정 → 드레인(실전 사슬) → 부모 스탬프 종료 → 체결/취소 통보 → 매트릭스 평가 · 수렴 반납.</summary>

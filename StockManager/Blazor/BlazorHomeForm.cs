@@ -396,6 +396,7 @@ namespace StockManager.Blazor
                 MS2E.Core.ArmingInterlockSource.KiwoomBridgeLink, // [키움 실배선] 연결 활성화인데 실 COM 프록시 링크 미수립/단절/시뮬레이션 → Disarm
                 MS2E.Core.ArmingInterlockSource.KisProtocolDivergence, // [KIS VTS] 실/모의 TR 도메인 교차 · REST 응답 TR 헤더 이탈 → KIS 슬롯 격리 + Disarm
                 MS2E.Core.ArmingInterlockSource.StrategyAnomaly, // [AI 전략 · 방향 B] 시그널 NaN/∞ · 범위 이탈 · 수량 0 이하 제안 · 전략 연산 > 10ms → Disarm
+                MS2E.Core.ArmingInterlockSource.OrderPathLatency, // [v12.17.6 · 방향 B] 실발주 경로 시그널 → 출구 p99 > 예산(드레인 주기 + 50ms) 연속 3회 → Disarm
                 MS2E.Core.ArmingInterlockSource.HealthAgent);    // [헬스] Working Set 폭주 · 스레드풀 정체 · GC 정지 폭주 → Disarm
             services.AddSingleton(interlockMask);
             // ★실전 무장 술어(liveArmed): 물리 키(LiveArmingWired) ∧ 전 방어선 ∧ 인증 봉인 ∧ 전환 아님. 실 브로커 사출 전담.
@@ -1010,6 +1011,20 @@ namespace StockManager.Blazor
             var t2tProfiler   = new StockManager.Telemetry.TickToTradeLatencyProfiler(cfg.GetInt("Router.StallThresholdMicros", 5_000, 500, 1_000_000));
             t2tProfiler.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.LatencyStall);
             services.AddSingleton(t2tProfiler);
+            // [v12.17.6 · 실발주 경로 지연 계측] 시그널(링 발행) → 라우터 게이트 → 출구 초크포인트(센티널 앞) 구간 계측기. 결선 4곳:
+            //   ① dispatchRing.PathObserver = 발행 · 종결 스탬프(단일 생산자 CAS 안 · 모든 처분 경로 — 방향 A 슬롯 즉시 회수)
+            //   ② 드레인 routeGate = StageStampingSplitGate(routerGate) ③ 드레인 브로커 맵 = EgressStageProbe(센티널) ④ 관제 허브 orderPath.
+            //   전부 StockManager.Telemetry(프로덕션) — 시뮬레이션 형식 참조 0(ShippedBinaryLiveArmedGuard ⑥). 핫패스 비용 = 시계 · 원자 증가 수회(할당 0).
+            const int orderDrainPeriodMs = 50;
+            var orderPathProfiler = new StockManager.Telemetry.OrderPathStageProfiler(1024);
+            dispatchRing.PathObserver = orderPathProfiler;
+            services.AddSingleton(orderPathProfiler);
+            // [v12.17.6 · 방향 B] 심각 지연 자동 Disarm(비트 28 필수 · 항상 결속) — 예산 = 50ms 병목 허용치 + 드레인 주기(설계된 링 대기 · 오격발 방지).
+            var orderPathLatency = new StockManager.Telemetry.OrderPathLatencyInterlock(orderPathProfiler,
+                StockManager.Telemetry.OrderPathLatencyInterlock.HostBudgetNanos(orderDrainPeriodMs,
+                    cfg.GetInt("Router.OrderPathBottleneckMs", 50, 5, 5_000) * 1_000_000L));
+            orderPathLatency.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OrderPathLatency);
+            services.AddSingleton(orderPathLatency);
             FormClosed += (_, _) => ShutdownTrace.Step("nativeBuffers", () => { nativeBook.Dispose(); depthBook.Dispose(); t2tProfiler.Dispose(); });
             Action<OrderBookPayload> onBridgeBook = book =>
             {
@@ -1558,6 +1573,12 @@ namespace StockManager.Blazor
                     () => cfg.GetBool("Dispatch.ValveWired", false) && cfg.GetBool("Dispatch.LiveArmingWired", false),
                     blackbox, why => attestation.ForceFreeze(why), interlockBlocked: () => interlockMask.Blocked);
             var brokerMap = new IBroker?[] { egressSentinel, kisEgress };
+            // [v12.17.6] 드레인 송출용 맵 = 같은 센티널을 출구 스탬프 프로브로 감싼 것(판정 · 전달 · 취소 위임 — 센티널 우회 0). 취소 경로(매트릭스)는 원 맵.
+            var stampedBrokerMap = new IBroker?[]
+            {
+                new StockManager.Telemetry.EgressStageProbe(egressSentinel, orderPathProfiler),
+                kisEgress is null ? null : new StockManager.Telemetry.EgressStageProbe(kisEgress, orderPathProfiler),
+            };
             // [실전 결선 · 분할 라우팅] 자식 슬롯 추적 매트릭스(비트 23 필수) — 체결/취소/거부 통보(키움 브리지) 수렴 · 500ms 불균형 시 실 브로커 취소.
             var childMatrix = new StockManager.Engines.ChildSlotTrackingMatrix(256,
                 imbalanceMicros: cfg.GetInt("Routing.ImbalanceMs", 500, 50, 60_000) * 1000L,
@@ -1591,7 +1612,8 @@ namespace StockManager.Blazor
             //   생산자(브리지 체결/틱 · KIS 체결 · 인터락 전이 = 포렌식 기록기 2차 체인)는 wait-free 링 적재만, 조립은 전용 타이머 스레드
             //   50ms 3중 버퍼 — UI 동결/예외가 OrderDrainWorker · 브로커 경로에 닿을 공유 상태 0.
             var brokerViews = new StockManager.Adapters.IBrokerAccountView?[] { new StockManager.Adapters.AccountSyncBrokerView(accountSync, () => bridge.IsProductionProxy), kisBalance };
-            var dashHub = new StockManager.Blazor.Services.DashboardSnapshotHub(interlockMask, childMatrix, brokerViews);
+            var dashHub = new StockManager.Blazor.Services.DashboardSnapshotHub(interlockMask, childMatrix, brokerViews,
+                orderPath: orderPathProfiler);   // [v12.17.6] 실발주 경로 지연 → /aidash p50/p99(미계측 해소)
             interlockRecorder.Chain(dashHub);
             bridge.FillReceived += f => dashHub.OnFill(f, 0);
             bridge.TickReceived += t => dashHub.OnTick(t.SymbolCode, (long)Math.Round(t.Price));
@@ -1731,6 +1753,7 @@ namespace StockManager.Blazor
                 try { kisOpenOrders?.RefreshGate(); } catch { }                         // [KIS 미체결 대사] 재접속 확정 철회 → KIS 한도 0(δ=0)
                 try { recoveryMonitor.Pump(); } catch { }                              // [Long-Soak · 방향 A] 복구 전이 · 작동 표류 블랙박스
                 try { kiwoomLink.Evaluate(); } catch { }                                // [키움 실배선] 링크(하트비트 단절 포함) 재평가
+                try { orderPathLatency.Evaluate(); } catch { }                          // [v12.17.6 · 방향 B] 실발주 경로 p99 예산 판정(콜드 · δ=0)
             }, null, 50, 50);
             FormClosed += (_, _) => ShutdownTrace.Step("childMatrix", () =>
             {
@@ -1740,7 +1763,7 @@ namespace StockManager.Blazor
             });
             var drainWorker = new OrderDrainWorker(ringDispatcher, egressSentinel,   // [E2E · 방향 B] 실 브로커 앞 백업 인터락 경유
                 wired: cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런도 드레인 가동(미러 급전)
-                periodMs: 50,
+                periodMs: orderDrainPeriodMs,   // [v12.17.6] 방향 B 예산과 같은 상수(설계된 링 대기)
                 attestation: attestation,
                 dualKeyIntact: () => cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.DryRunActive", false),   // v10.1.0 — 드라이런은 무결성 통과(오동결 방지)
                 pinGrid: cpuGrid,   // v7.3.0 — 밸브 wired 시 드레인을 P-Core 전용 핀 스레드로(미wired면 미가동)
@@ -1749,9 +1772,9 @@ namespace StockManager.Blazor
                 slaGate: slaGate, jitterGuard: jitterGuard,   // v10.1.0 Final — 드레인 사이클 지연 나노 SLA 계측(지터 필터 후 계상)
                 canaryGov: canaryGovernor,   // v10.1.0 Ops — 실전 사출 직전 카나리 캡(자본 ≤0.1%) 검문
                 interlocks: interlockMask,   // [실배선] 판정↔송출 사이 인터락 Trip → 송출 직전 veto(GatedOut)
-                routeGate: routerGate,       // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백
+                routeGate: new StockManager.Telemetry.StageStampingSplitGate(routerGate, orderPathProfiler),   // [피드 연동] 참조가·라우터 판정·추적 확보 → 송출 결과 슬롯 결속/롤백 · [v12.17.6] 승인 스탬프/거부 회수
                 latencyProbe: t2tProfiler,   // [저지연] 주문별 Tick-to-Trade 계측 + 송출 직전 정지 veto
-                brokersByIndex: brokerMap);  // [실전 결선 · 다중 브로커] 라우터 판정 브로커로 송출(미결선 인덱스 = 대체 송출 금지)
+                brokersByIndex: stampedBrokerMap);  // [실전 결선 · 다중 브로커] 라우터 판정 브로커로 송출(미결선 인덱스 = 대체 송출 금지) · [v12.17.6] 출구 스탬프
             if (splitEnabled) drainWorker.EnableChildSplit(childMatrix);   // [분할 라우팅] 게이트웨이 경유 자식 봉인 사출 · 거부 시 형제 회수 + Disarm
             // ★[KIS VTS · 실결함 교정] 봉인은 '모든 필수 소스 결속 뒤' 1회. 수정 전엔 자식 매트릭스(비트 23) · KIS 한도(비트 24) 결속보다 먼저
             //   Seal 해 필수 미결속으로 실패 → 기동 샌니티 비트(63)가 영구히 서서 무장 자체가 불가능했다(fail-closed 이나 운영 결선 결함).

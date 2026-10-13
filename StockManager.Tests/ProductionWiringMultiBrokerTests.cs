@@ -283,7 +283,9 @@ namespace StockManager.Tests
             string form = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "Blazor", "BlazorHomeForm.cs"));
             Assert.Contains("new MS2E.Core.LockFreeBrokerSwitchboard(2)", form);
             Assert.Contains("if (!kisConfigured) routerBoard.Blacklist(1);", form);   // ★KIS 미결속 = 라우터 선택 불가
-            Assert.Contains("brokersByIndex: brokerMap", form);
+            Assert.Contains("brokersByIndex: stampedBrokerMap);", form);   // [v12.17.6] 출구 스탬프 프로브 = 같은 센티널을 감쌈(우회 0)
+            Assert.Contains("new StockManager.Telemetry.EgressStageProbe(egressSentinel, orderPathProfiler)", form);
+            Assert.Contains("kisEgress is null ? null : new StockManager.Telemetry.EgressStageProbe(kisEgress, orderPathProfiler)", form);
             Assert.Contains("MS2E.Core.ArmingInterlockSource.ChildSlotRejection,", form);   // 필수 비트
             Assert.Contains("bridge.FillReceived += onChildFill;", form);
             Assert.Contains("routerGate.EnableSplit(limitFeed, childMatrix.TripExternal)", form);

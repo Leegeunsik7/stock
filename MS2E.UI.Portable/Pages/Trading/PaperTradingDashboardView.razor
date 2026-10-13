@@ -5,7 +5,10 @@
    UI 문자열 생성은 렌더 시점(초당 최대 20회)에만 — 무할당 불변식은 생산자 · 허브 펌프 구간 대상(정직).
    [UX Polish] 코드 → 한글 라벨 · 확신도 텍스트 = SignalLabelMapper 정적 문자열(조회 0B) · 확신도 배지/진행률(0.85 게이트 선) ·
    점멸 경고(헬스 21 · 전략 이상/호가 꼬임 27 · 송출 우회 15 · 자격증명 1) · [방향 A] 확신도 스파크라인(고정 char 버퍼 작성 · 프레임 버전당 1회 문자열) ·
-   [방향 B] 렌더 지연 열화 모드(지연 EWMA &gt; 250ms 연속 3회 = 차트/스파크라인/점멸 끔 · &lt; 100ms 연속 10회 = 복귀). *@
+   [방향 B] 렌더 지연 열화 모드(지연 EWMA &gt; 250ms 연속 3회 = 차트/스파크라인/점멸 끔 · &lt; 100ms 연속 10회 = 복귀).
+   [v12.17.5-DEV] 상단 주문 경로 지연 띠: 등급 배지(정상/미세 정체/심각 지연/미계측) · 구간 3개 p50/p99(최근 ≤1,000 부모) ·
+   확신도-지연 듀얼 스파크라인(지연 = 로그 버킷 축 · 1ms 기준선). 라벨 · 마이크로초 텍스트 = SignalLabelMapper 정적 문자열(조회 0B) ·
+   스파크라인 좌표 = 고정 char 버퍼(프레임 버전당 문자열 1회 — DOM 속성은 string 필요 · 물리 한계). 미결선 = '미계측'(숫자 날조 0). *@
 @implements IDisposable
 @inject IPaperDashboardPort Dash
 @inject StateAwareRenderGovernor RenderGov
@@ -37,6 +40,43 @@ else
         {
             <div class="pd-note pd-degraded">⚡ 경량 모드 — 렌더 지연 @(_degrade.LagEwmaMs.ToString("0"))ms · 차트 · 스파크라인 · 점멸을 끄고 핵심 텍스트만 표시합니다.</div>
         }
+        <div class="pd-lat">
+            <span class="pd-lat-grade @SignalLabelMapper.LatencyGradeClass(f.LatencyGrade)">주문 경로 @SignalLabelMapper.LatencyGradeLabel(f.LatencyGrade)</span>
+            @if (!f.LatencyBound)
+            {
+                <span class="pd-lat-off">계측 미결선 — 주문 경로 계측기가 이 허브에 주입되지 않아 지연을 표시하지 않습니다.</span>
+            }
+            else if (f.Latency(DashLatencyGrade.SignalToEgress).Count == 0)
+            {
+                <span class="pd-lat-off">계측 대기 — 출구 도달 0 · 발행 @f.LatencyPublished.ToString("N0") · 미도달 회수 @f.LatencyReclaimed.ToString("N0") (무장 차단 · 거부 · veto)</span>
+            }
+            else
+            {
+                @for (int s = 0; s < DashLatencyGrade.StageCount; s++)
+                {
+                    var st = f.Latency(s);
+                    <span class="pd-lat-b @(s == DashLatencyGrade.SignalToEgress ? "pd-lat-main" : "")">
+                        <em>@SignalLabelMapper.LatencyStage(s)</em> p50 <b>@SignalLabelMapper.LatencyText(st.P50Nanos)</b> · p99 <b>@SignalLabelMapper.LatencyText(st.P99Nanos)</b>
+                    </span>
+                }
+                @if (f.LatencyThrottled)
+                {
+                    <span class="pd-lat-throttle">⚡ 주문 경로 p99 &gt; 1ms — 관제 갱신 200ms 감속(매매 경로 무간섭)</span>
+                }
+                @if (!_degrade.Degraded && f.LatencyTrendCount >= 2)
+                {
+                    <svg viewBox="0 0 @(SparkW) @(SparkH)" preserveAspectRatio="none" class="pd-spark pd-lat-spark" aria-label="확신도-지연 추이">
+                        <line x1="0" x2="@(SparkW)" y1="@(SparklineWriter.GateY(SparkH))" y2="@(SparklineWriter.GateY(SparkH))" stroke="#f9a825" stroke-dasharray="3 3" />
+                        <line x1="0" x2="@(SparkW)" y1="@(SparklineWriter.LatencyY(SparkH))" y2="@(SparklineWriter.LatencyY(SparkH))" stroke="#E53935" stroke-dasharray="1 3" />
+                        @if (f.DecisionCount >= 2)
+                        {
+                            <polyline fill="none" stroke="#9fa8da" stroke-width="1.4" points="@SparkPoints(f)" />
+                        }
+                        <polyline fill="none" stroke="#4dd0e1" stroke-width="1.4" points="@LatencyPoints(f)" />
+                    </svg>
+                }
+            }
+        </div>
         <div class="pd-kpis">
             <div class="pd-kpi"><span>평가 손익</span><b style="color:@Tone(f.EquityWon)">@Won(f.EquityWon)</b></div>
             <div class="pd-kpi"><span>실현</span><b style="color:@Tone(f.RealizedPnlWon)">@Won(f.RealizedPnlWon)</b></div>
@@ -193,6 +233,14 @@ else
     .pd-empty { color: var(--sub); font-size: 12px; }
     .pd-degraded { color: #f9a825; }
     .pd-spark { width: 100%; height: 40px; margin-bottom: 6px; }
+    .pd-lat { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 10px; font-size: 11.5px; }
+    .pd-lat-grade { padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+    .pd-lat-grade.ok { background: #2e7d32; color: #fff; } .pd-lat-grade.spike { background: #f9a825; color: #111; }
+    .pd-lat-grade.lag { background: #E53935; color: #fff; } .pd-lat-grade.off { background: #3a3f4b; color: #ccc; }
+    .pd-lat-b { background: #1d2230; border-radius: 6px; padding: 2px 8px; font-family: Consolas, monospace; }
+    .pd-lat-b em { font-style: normal; color: var(--sub); margin-right: 4px; } .pd-lat-main { outline: 1px solid #4dd0e1; }
+    .pd-lat-off { color: var(--sub); } .pd-lat-throttle { color: #f9a825; }
+    .pd-lat-spark { flex: 1 1 100%; }
     .pd-dec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 1px 0; }
     .pd-badge { font-size: 10.5px; padding: 1px 6px; border-radius: 6px; font-family: inherit; }
     .pd-badge.up { background: #E53935; color: #fff; } .pd-badge.down { background: #1E88E5; color: #fff; }
@@ -229,6 +277,21 @@ else
         _sparkPoints = len > 0 ? new string(_sparkBuf, 0, len) : "";
         _sparkVersion = f.Version;
         return _sparkPoints;
+    }
+
+    // [v12.17.5-DEV] 지연 스파크라인(로그 버킷 축) — 고정 버퍼 작성 · 프레임 버전당 문자열 1회
+    private readonly long[] _latScratch = new long[PaperDashboardFrame.MaxLatencyTrend];
+    private readonly char[] _latBuf = new char[PaperDashboardFrame.MaxLatencyTrend * 12];
+    private long _latVersion = -1;
+    private string _latPoints = "";
+
+    private string LatencyPoints(PaperDashboardFrame f)
+    {
+        if (f.Version == _latVersion) return _latPoints;
+        int len = SparklineWriter.WriteLatency(f.LatencyTrendSpan, _latScratch, _latBuf, SparkW, SparkH);
+        _latPoints = len > 0 ? new string(_latBuf, 0, len) : "";
+        _latVersion = f.Version;
+        return _latPoints;
     }
 
     protected override void OnAfterRender(bool firstRender)

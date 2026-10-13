@@ -27,6 +27,25 @@ namespace MS2E.UI.Portable.Ports.Trading
 
     public struct DashEquityPoint { public long Ticks, EquityWon; }
 
+    /// <summary>[v12.17.5-DEV] 주문 경로 구간 1개의 최근 창(≤ 1,000 부모) 분포 — ns · 백분위 = 지연 버킷 상한(≤ 관측 최대).</summary>
+    public struct DashLatencyStage { public long Count, P50Nanos, P99Nanos, MaxNanos; }
+
+    /// <summary>
+    /// [v12.17.5-DEV] 주문 경로 지연 등급 — 기준 = 최근 창 시그널 → 발주 p99. 정상 ≤ 1ms · 미세 정체 1ms 초과 · 심각 지연 10ms 초과 ·
+    /// 미계측 = 계측기 미결선 또는 표본 0(UI 는 정직하게 '미계측' 렌더 — 숫자 날조 0).
+    /// </summary>
+    public static class DashLatencyGrade
+    {
+        public const int Normal = 0, MicroSpike = 1, SevereLag = 2, Unmeasured = 3;
+        public const long MicroSpikeNanos = 1_000_000, SevereLagNanos = 10_000_000;
+        public const int StageCount = 3;
+        /// <summary>구간 인덱스(OrderPathStage 와 같은 순서).</summary>
+        public const int SignalToGate = 0, GateToEgress = 1, SignalToEgress = 2;
+
+        public static int Classify(bool bound, long samples, long p99Nanos)
+            => !bound || samples <= 0 ? Unmeasured : p99Nanos > SevereLagNanos ? SevereLag : p99Nanos > MicroSpikeNanos ? MicroSpike : Normal;
+    }
+
     public static class DashDecisionKind
     {
         public const int Entry = 1, Exit = 2, Scale = 3, Hold = 4, Veto = 5;
@@ -43,6 +62,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     public sealed class PaperDashboardFrame
     {
         public const int MaxFills = 32, MaxDecisions = 48, MaxEvents = 32, MaxEquity = 600, MaxChildren = 64, MaxBrokers = 4, MaxBits = 64;
+        public const int MaxLatencyTrend = 64;
 
         public long Version, BuiltTicks;
         /// <summary>허브 3중 버퍼 슬롯 번호(리스 반납 식별 · UI 는 쓰지 않는다).</summary>
@@ -63,6 +83,25 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly DashChild[] Children = new DashChild[MaxChildren];
         public readonly DashBrokerLimit[] Limits = new DashBrokerLimit[MaxBrokers];
         public int FillCount, DecisionCount, EventCount, EquityCount, ChildCount, LimitCount;
+
+        // [v12.17.5-DEV] 주문 경로 지연(OrderPathStageProfiler 최근 창 · 허브가 펌프마다 재계산) — 미결선이면 LatencyBound = false · 등급 미계측.
+        public bool LatencyBound;
+        public int LatencyGrade = DashLatencyGrade.Unmeasured;
+        /// <summary>계측 누적 부모 수 · 출구 전달/거부(veto) 판정 수(누적).</summary>
+        public long LatencyOrders, LatencyForwarded, LatencyVetoed;
+        /// <summary>[v12.17.6] 발행 스탬프 누적 · 출구 미도달 종결로 슬롯 회수된 누적(미무장 차단 · 게이트 거부 · veto — liveArmed:false 정상 상태의 정직한 관측).</summary>
+        public long LatencyPublished, LatencyReclaimed;
+        /// <summary>[방향 B] 주문 경로 미세 정체로 관제 게시 주기가 감속(50 → 200ms)된 상태인가 · 현재 게시 주기(ms).</summary>
+        public bool LatencyThrottled;
+        public int PublishPeriodMs;
+        /// <summary>구간별 최근 창 분포(인덱스 = DashLatencyGrade.SignalToGate · GateToEgress · SignalToEgress).</summary>
+        public readonly DashLatencyStage[] LatencyStages = new DashLatencyStage[DashLatencyGrade.StageCount];
+        /// <summary>최근 부모 시그널 → 발주 지연(ns · 과거 → 최신 · 최대 64) — 스파크라인 원천.</summary>
+        public readonly long[] LatencyTrend = new long[MaxLatencyTrend];
+        public int LatencyTrendCount;
+        /// <summary>유효 추이 구간(복사 0 · 리스 동안만 유효).</summary>
+        public ReadOnlySpan<long> LatencyTrendSpan => LatencyTrend.AsSpan(0, LatencyTrendCount);
+        public ref readonly DashLatencyStage Latency(int stage) => ref LatencyStages[(uint)stage < (uint)LatencyStages.Length ? stage : DashLatencyGrade.SignalToEgress];
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();

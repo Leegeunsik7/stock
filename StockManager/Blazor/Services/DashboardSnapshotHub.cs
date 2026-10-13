@@ -15,6 +15,13 @@
 //    대기가 없다 — UI 가 멈추거나 예외를 던져도 최악은 '펌프 1회차 지연'이며 OrderDrainWorker · 브로커 경로와 공유 상태 0.
 //    링이 렌더보다 빨리 차면 오래된 표시 항목을 덮어쓴다(FillsLost 등 계수) — 표시 전용 유실이며 매매 데이터와 무관.
 //  손익은 체결 피드 기준 모의 원장(수수료 · 세금 · 슬리피지 미반영) — 실계좌 평가가 아니다(UI 에 명시).
+//  [v12.17.5-DEV · 주문 경로 지연 관제] 선택 결선 OrderPathStageProfiler(orderPath): 펌프가 새 부모가 완료된 회차에만 최근 창(≤ 1,000 부모)을
+//   무대기 복사(CopyRecent) → 구간 3개 LatencyHistogram(고정 인라인 버킷 · 방향 A) 재적재 → p50/p99/최대 · 시그널 → 발주 추이 64점을 프레임에 싣는다.
+//   계측기는 드레인 스레드가 단일 작성자로 쓰고 펌프는 읽기만 한다 — 드레인이 펌프를 기다리는 경로 0(Zero UI Interference).
+//   [방향 B] LatencySpikeDegradationGuard: 창 p99 > 1ms = 게시 주기 50 → 200ms 감속(펌프 타이머 주기도 함께 · 스레드 풀 부하 완화) ·
+//   정체 재관측 없이 2초 = 복귀. 감속 중 보류된 변경은 다음 허가 회차에 반드시 게시(유실 0).
+//   [v12.17.6] 호스트 결선 완료(BlazorHomeForm — 링 발행/종결 관측자 + 게이트/출구 데코레이터). liveArmed:false 기본 상태에선 디스패처가
+//   무장 게이트에서 전부 차단하므로 출구 도달 0 = '계측 대기 · 발행 N · 회수 N' 렌더(숫자 날조 0 · 계측 사슬이 살아 있음을 정직하게 표시).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -24,6 +31,7 @@ using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Adapters;
 using StockManager.Engines;
+using StockManager.Telemetry;
 
 namespace StockManager.Blazor.Services
 {
@@ -122,14 +130,30 @@ namespace StockManager.Blazor.Services
         private long _pumpFaults, _subscriberFaults, _buildSkipped, _published;
         private System.Threading.Timer? _timer;
 
+        // ── [v12.17.5-DEV] 주문 경로 지연(선택 결선 · 펌프 단일 스레드) ──
+        private readonly OrderPathStageProfiler? _orderPath;
+        private readonly long[] _lat0 = new long[OrderPathStageProfiler.RecentWindow], _lat1 = new long[OrderPathStageProfiler.RecentWindow],
+                                _lat2 = new long[OrderPathStageProfiler.RecentWindow];
+        private LatencyHistogram _h0, _h1, _h2;
+        private readonly DashLatencyStage[] _latStages = new DashLatencyStage[DashLatencyGrade.StageCount];
+        private long _latSeen = -1;
+        private int _latCount;
+        private readonly LatencySpikeDegradationGuard _spikeGuard;
+        private int _basePeriodMs = DefaultPeriodMs;
+
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
         /// <param name="views">브로커별 계좌 뷰(인덱스 = 브로커 · null 슬롯 = 미결선).</param>
         /// <param name="equitySampleEveryPumps">자산곡선 표본 간격(펌프 회수 · 기본 20 = 1초).</param>
+        /// <param name="orderPath">[v12.17.5-DEV] 주문 경로 구간 계측기(null = 지연 미계측 렌더).</param>
+        /// <param name="spikeGuard">[방향 B] 미세 정체 감속 가드(null = 기본 1ms · 50/200ms · 복귀 2초).</param>
         public DashboardSnapshotHub(ArmingInterlockBitmask? mask = null, ChildSlotTrackingMatrix? matrix = null, IBrokerAccountView?[]? views = null,
-                                    Func<long>? nowTicks = null, int equitySampleEveryPumps = 20)
+                                    Func<long>? nowTicks = null, int equitySampleEveryPumps = 20,
+                                    OrderPathStageProfiler? orderPath = null, LatencySpikeDegradationGuard? spikeGuard = null)
         {
             _mask = mask; _matrix = matrix; _views = views ?? Array.Empty<IBrokerAccountView?>();
+            _orderPath = orderPath;
+            _spikeGuard = spikeGuard ?? new LatencySpikeDegradationGuard();
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
             _equityEvery = Math.Max(1, equitySampleEveryPumps);
             var names = new string[PaperDashboardFrame.MaxBits];                   // 비트 이름(콜드 1회 · 프레임 공유 · 불변)
@@ -185,10 +209,16 @@ namespace StockManager.Blazor.Services
         public long Published => Interlocked.Read(ref _published);
         public long TicksSeen => Interlocked.Read(ref _ticksSeen);
         public long PriceTableFull => Interlocked.Read(ref _priceTableFull);
+        public bool OrderPathBound => _orderPath is not null;
+        /// <summary>[방향 B] 감속 가드(판독 전용 용도 · 상태 변경은 펌프만).</summary>
+        public LatencySpikeDegradationGuard LatencyGuard => _spikeGuard;
+        /// <summary>현재 게시 주기(ms) — 감속 중 = max(기본 주기, 감속 주기).</summary>
+        public int CurrentPeriodMs => _spikeGuard.Degraded ? Math.Max(_basePeriodMs, _spikeGuard.DegradedPeriodMs) : _basePeriodMs;
 
         public void Start(int periodMs = DefaultPeriodMs)
         {
             if (Interlocked.Exchange(ref _running, 1) == 1) return;
+            _basePeriodMs = periodMs;
             _timer = new System.Threading.Timer(static s => ((DashboardSnapshotHub)s!).Pump(), this, periodMs, periodMs);
         }
 
@@ -210,6 +240,8 @@ namespace StockManager.Blazor.Services
             dirty |= DrainFills();
             dirty |= DrainDecisions();
             dirty |= DrainEvents();
+            long nowT = _nowTicks();
+            dirty |= SampleOrderPath(nowT);
             // 시가평가 · 자산 · MDD
             long unreal = 0; int open = 0;
             for (int i = 0; i < _posCount; i++)
@@ -231,6 +263,7 @@ namespace StockManager.Blazor.Services
             sig = sig * 31 + mask;
             sig = sig * 31 + (_mask?.BoundMask ?? 0);
             sig = sig * 31 + Interlocked.Read(ref _ticksSeen);
+            if (_orderPath is { } opSig) sig = sig * 31 + opSig.EgressForwarded + opSig.EgressVetoed * 7 + opSig.Begun * 13 + opSig.Reclaimed * 17;
             for (int b = 0; b < _views.Length && b < Brokers; b++)
             {
                 var v = _views[b];
@@ -241,6 +274,8 @@ namespace StockManager.Blazor.Services
             // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
             if (sig != _lastSignature || _pendingDirty) dirty = true;
             if (!dirty && _front is not null) return false;
+            // [방향 B] 미세 정체 감속 중 = 마지막 게시 + 200ms 전에는 보류(변경은 _pendingDirty 로 이월 — 다음 허가 회차에 게시)
+            if (_front is not null && !_spikeGuard.AllowPublish(nowT)) { _pendingDirty = true; return false; }
 
             // 조립 버퍼 선택: 게시본 · 리스 중이 아닌 것
             var front = Volatile.Read(ref _front);
@@ -277,14 +312,58 @@ namespace StockManager.Blazor.Services
                 f.Limits[lc++] = new DashBrokerLimit { Broker = b, Bound = bound, HeadroomWon = bound ? room : 0 };
             }
             f.LimitCount = lc;
+            var op = _orderPath;
+            f.LatencyBound = op is not null;
+            for (int k = 0; k < DashLatencyGrade.StageCount; k++) f.LatencyStages[k] = _latStages[k];
+            ref readonly var e2e = ref _latStages[DashLatencyGrade.SignalToEgress];
+            f.LatencyGrade = DashLatencyGrade.Classify(op is not null, e2e.Count, e2e.P99Nanos);
+            f.LatencyOrders = op?.RecentTotal ?? 0; f.LatencyForwarded = op?.EgressForwarded ?? 0; f.LatencyVetoed = op?.EgressVetoed ?? 0;
+            f.LatencyPublished = op?.Begun ?? 0; f.LatencyReclaimed = op?.Reclaimed ?? 0;
+            int tc = Math.Min(_latCount, PaperDashboardFrame.MaxLatencyTrend);
+            Array.Copy(_lat2, _latCount - tc, f.LatencyTrend, 0, tc);
+            f.LatencyTrendCount = tc;
+            f.LatencyThrottled = _spikeGuard.Degraded; f.PublishPeriodMs = CurrentPeriodMs;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;
             Volatile.Write(ref _front, f);                                          // ★게시(원자 참조 교체)
             _lastSignature = sig; _pendingDirty = false;
+            _spikeGuard.MarkPublished(nowT);
             Interlocked.Increment(ref _published);
             Notify(ver);
             return true;
+        }
+
+        // [v12.17.5-DEV] 새 부모가 완료된 회차에만 최근 창 재계산(δ=0) · 감속 가드 관측 · 모드 전환 시 타이머 주기 변경. 반환 = 프레임 갱신 필요.
+        private bool SampleOrderPath(long now)
+        {
+            var op = _orderPath;
+            if (op is null) return false;
+            long total = op.RecentTotal;
+            bool fresh = total != _latSeen;
+            if (fresh)
+            {
+                _latSeen = total;
+                int n = op.CopyRecent(_lat0, _lat1, _lat2);
+                _latCount = n;
+                _latStages[DashLatencyGrade.SignalToGate] = Summarize(ref _h0, _lat0.AsSpan(0, n));
+                _latStages[DashLatencyGrade.GateToEgress] = Summarize(ref _h1, _lat1.AsSpan(0, n));
+                _latStages[DashLatencyGrade.SignalToEgress] = Summarize(ref _h2, _lat2.AsSpan(0, n));
+            }
+            ref readonly var e2e = ref _latStages[DashLatencyGrade.SignalToEgress];
+            if (_spikeGuard.Observe(fresh, e2e.P99Nanos, e2e.Count, now))
+            {
+                int period = CurrentPeriodMs;
+                try { _timer?.Change(period, period); } catch (ObjectDisposedException) { }
+                return true;                                                        // 감속/복귀 표시 갱신
+            }
+            return fresh;
+        }
+
+        private static DashLatencyStage Summarize(ref LatencyHistogram h, ReadOnlySpan<long> nanos)
+        {
+            h.Load(nanos);
+            return new DashLatencyStage { Count = h.Count, P50Nanos = h.Percentile(500), P99Nanos = h.Percentile(990), MaxNanos = h.MaxNanos };
         }
 
         private bool DrainFills()

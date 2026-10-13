@@ -81,6 +81,7 @@ namespace MS2E.Core
         KiwoomBridgeLink = 25, // [키움 실배선] 연결 활성화인데 실 COM 프록시 링크 미수립(미연결 · 신원 거부 · 시뮬레이션 프록시 · 단절) → Disarm
         KisProtocolDivergence = 26, // [KIS VTS] 실/모의 TR 도메인 교차 · REST 응답 tr_id 헤더 ≠ 요청 · 제어/주문 응답 형식 이탈 → KIS 슬롯 격리 + Disarm
         StrategyAnomaly = 27,  // [AI 전략 · 방향 B] 시그널 산출 NaN/∞ · 범위 이탈 · 수량 0 이하 제안 · 전략 연산 > 10ms → Disarm
+        OrderPathLatency = 28, // [v12.17.6 · 방향 B] 실발주 경로 시그널 → 출구 p99 > 예산(드레인 주기 + 50ms) 연속 3회 → Disarm(sticky · 물리 이중키 재무장)
         StartupSanity   = 63,
     }
 

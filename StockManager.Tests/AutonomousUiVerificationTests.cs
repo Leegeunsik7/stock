@@ -207,7 +207,7 @@ namespace StockManager.Tests
         {
             var store = new Dictionary<string, string>();
             var probe = new UiArmingInvariantProbe(k => store.TryGetValue(k, out var v) ? v : null);
-            Assert.Equal(29, probe.BitCount);
+            Assert.Equal(30, probe.BitCount);                                                     // 0~28 + StartupSanity(v12.17.6)
             Assert.Equal(UiArmingInvariantProbe.InterlockBitCount, probe.BitCount);
             Assert.True(probe.Mask.IsSealed);
             Assert.Equal(0, probe.Mask.Mask);                                                 // 최악의 출발점: 차단 비트 0
@@ -287,7 +287,7 @@ namespace StockManager.Tests
                 Assert.Contains("[ui-fuzz] verdict=PASS", text);
                 Assert.Contains("[ui-storm]", text);
                 Assert.Contains("liveArmed=False ignition=Locked canaryArmed=False", text);
-                Assert.Contains("interlockBits=29 maskFinal=0x0", text);
+                Assert.Contains("interlockBits=30 maskFinal=0x0", text);
                 var m = Regex.Match(text, "executed=(\\d+)");
                 Assert.True(m.Success && long.Parse(m.Groups[1].Value) >= 10_000, text);
                 Assert.Equal(text, File.ReadAllText(outFile));

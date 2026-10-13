@@ -539,13 +539,13 @@ namespace StockManager.Tools
     public static class ReleaseHandshakeCli
     {
         public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
-        public const string VerifyLiveArmedFlag = "--verify-live-armed";
+        public const string VerifyLiveArmedFlag = "--verify-live-armed", VerifyInterlocksFlag = "--verify-interlocks";
         public const string PeerReadinessFlag = "--peer-readiness", PeerWatchFlag = "--peer-watch";
         public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -618,6 +618,17 @@ namespace StockManager.Tools
                     output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 위반 {r.Violations.Count}");
                     foreach (var v in r.Violations) output.WriteLine("  " + v);
                     return r.Ok ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], VerifyInterlocksFlag))
+                {
+                    // [v12.18.0-GM · 방향 A] 출하 zip 호스트 DLL 인터락 정의 ↔ RELEASE_MANIFEST ↔ master-seal.txt 무추출 대조(기대 개수 = 스크립트 고정)
+                    string? zip = Arg(args, 1), mf = o.GetValueOrDefault("--manifest"), sealFile = o.GetValueOrDefault("--seal-file");
+                    if (zip is null || mf is null || sealFile is null || !File.Exists(zip) || !File.Exists(mf) || !File.Exists(sealFile)
+                        || !int.TryParse(o.GetValueOrDefault("--expect-interlocks"), out int expect))
+                    { output.WriteLine("[verify-interlocks] 사용: --verify-interlocks <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-interlocks <n>"); return ExitUsage; }
+                    var r = ShippedInterlockManifestVerifier.Verify(zip, File.ReadAllText(mf), File.ReadAllText(sealFile), expect);
+                    output.WriteLine($"[verify-interlocks] {r.Verdict}: {r.Detail} · 팽창+해시 {r.InflateMicros}µs · 정의 대조 {r.CompareMicros}µs");
+                    return r.Verdict == InterlockSealVerdict.Ok ? ExitOk : ExitRejected;
                 }
                 string? releaseDir = o.GetValueOrDefault("--release-dir"), repo = o.GetValueOrDefault("--repo"), shim = o.GetValueOrDefault("--shim");
                 if (releaseDir is null || repo is null || shim is null) { output.WriteLine("[handshake] 사용: --release-dir <dir> --repo <root> --shim <dll> [--peer <root>] [--peer-manifest <rel>] [--out|--manifest <json>]"); return ExitUsage; }

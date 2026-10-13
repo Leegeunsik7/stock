@@ -3,7 +3,7 @@
 //
 //  목적: 순수 RCL(MS2E.UI.Portable)의 실 컴포넌트(설정 · 내비 · 대시보드)를 메모리에서 렌더하고, 그 안의 모든 클릭 가능 요소
 //  (onclick 요소 · checkbox · 내비 앵커)를 순차/무작위로 '실제 이벤트 디스패치' 해 — 어떤 조합의 조작으로도 liveArmed 가
-//  true 로 전이되지 않고(물리 이중 키 부재), 29 인터락 비트가 1비트도 오염되지 않음을 매 상호작용마다 판정한다.
+//  true 로 전이되지 않고(물리 이중 키 부재), 30 인터락 비트(v12.17.6)가 1비트도 오염되지 않음을 매 상호작용마다 판정한다.
 //
 //  구성(클릭 주입기는 IUiClickSurface 로 추상화 — CLI 는 본 파일의 HeadlessUiSurface, 테스트는 bUnit 표면을 꽂는다):
 //   ① UiStateFingerprint / UiStateMatrix   [방향 A] 렌더 상태 무할당 해싱(FNV-1a 64) + 고정 용량 지문 집합(상태 폭주·꼬임 추적).
@@ -11,7 +11,7 @@
 //      · 고유 상태 수 · 포화(Saturated)는 진단 관측치 — 난수 PIN 생성 등 정당한 무한 상태 공간이 있어 판정에서 제외.
 //   ② SwitchStormIsolationGuard           [방향 B] UI 조작 고정 창 허용 계수기(CAS · δ=0) — 초과 조작은 폐기(큐잉·재시도 없음).
 //      CoreTickIsolationMonitor             스톰 동안 전용 스레드에서 코어 틱(허브 OnTick + 집계어 판독)의 처리 시간을 측정.
-//   ③ UiArmingInvariantProbe               실 안전 코어(집계어 28 소스 + 샌니티 = 29 비트 · 포렌식 기록기 · LiveArmingGate ·
+//   ③ UiArmingInvariantProbe               실 안전 코어(집계어 29 소스 + 샌니티 = 30 비트 · 포렌식 기록기 · LiveArmingGate ·
 //      DispatchArming 술어 · CanaryHealthSentinel)를 호스트와 같은 설정 경로(RuntimeConfig ← 설정 저장소)로 조립하고, 매 회전
 //      '호스트가 재무장 시 하는 일'(설정의 이중 키로 카나리 Arm 시도)까지 재현해 불법 무장을 판정.
 //   ④ AutonomousUiSwitchFuzzer             순차 스윕 → 시드 고정 무작위 → 적대 기입(UI 포트로 무장 키 직접 기입) 루프 + 보고서.
@@ -282,14 +282,14 @@ namespace StockManager.Simulation
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// 실 안전 코어를 '최악의 출발점' 으로 조립한다: 28 소스가 전부 건강하게 결속 + 봉인 → 집계어 0(차단 비트 없음).
+    /// 실 안전 코어를 '최악의 출발점' 으로 조립한다: 29 소스가 전부 건강하게 결속 + 봉인 → 집계어 0(차단 비트 없음).
     /// 이 상태에서도 liveArmed 를 막는 것은 물리 이중 키(Dispatch.ValveWired ∧ Dispatch.LiveArmingWired)와 점화락·LiveArmingWired
     /// 술어뿐이다 — UI 조작이 그 키들을 설정 저장소에 써넣을 수 있다면 Check() 의 카나리 재무장 시도가 성공해 위반으로 잡힌다.
     /// </summary>
     public sealed class UiArmingInvariantProbe
     {
-        /// <summary>집계어 비트 수 = 소스 28(0..27) + StartupSanity 1.</summary>
-        public const int InterlockBitCount = 29;
+        /// <summary>집계어 비트 수 = 소스 29(0..28 · v12.17.6 OrderPathLatency) + StartupSanity 1.</summary>
+        public const int InterlockBitCount = 30;
 
         /// <summary>UI 경로로 바뀌면 안 되는 무장/한도 설정 키(호스트 RuntimeConfig 가 판독하는 실 키).</summary>
         public static readonly string[] SafetyKeys =

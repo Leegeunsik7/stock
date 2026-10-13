@@ -138,9 +138,9 @@ namespace StockManager.Tests
             Assert.Equal(2, inner.Placed);
         }
 
-        // ════════════ §3 28계층 ════════════
+        // ════════════ §3 29계층(v12.17.6 비트 28 OrderPathLatency 추가) ════════════
 
-        private static readonly ArmingInterlockSource[] AllSources = Enumerable.Range(0, 28).Select(i => (ArmingInterlockSource)i).ToArray();
+        private static readonly ArmingInterlockSource[] AllSources = Enumerable.Range(0, 29).Select(i => (ArmingInterlockSource)i).ToArray();
 
         private static (ArmingInterlockBitmask Mask, Src[] Srcs, ArmingInterlockLink[] Links, InterlockForensicRecorder Rec) Full()
         {
@@ -153,9 +153,9 @@ namespace StockManager.Tests
         }
 
         [Fact]
-        public void TwentyEightLayers_SingleAndRandomCombos_BlockAndVetoEgress()
+        public void TwentyNineLayers_SingleAndRandomCombos_BlockAndVetoEgress()
         {
-            Assert.Equal(28, Enum.GetValues<ArmingInterlockSource>().Count(s => (int)s < 63));    // 0~27 + 63
+            Assert.Equal(29, Enum.GetValues<ArmingInterlockSource>().Count(s => (int)s < 63));    // 0~28 + 63
             var (mask, srcs, links, _) = Full();
             var inner = new CountingBroker();
             var sentinel = new LiveArmedEgressSentinel(inner, () => true, interlockBlocked: () => mask.Blocked);
@@ -187,7 +187,7 @@ namespace StockManager.Tests
         }
 
         [Fact]
-        public void TwentyEightLayers_ConcurrentRaiseClear_ExactlyOnceTransitions_ZeroAlloc()
+        public void TwentyNineLayers_ConcurrentRaiseClear_ExactlyOnceTransitions_ZeroAlloc()
         {
             var (mask, srcs, links, rec) = Full();
             Assert.True(mask.Seal(out _));
@@ -199,8 +199,8 @@ namespace StockManager.Tests
                 srcs[i].Blocked = true;
                 for (int k = 0; k < 50; k++) links[i].Resync();                                // 같은 비트 중복 동기화
             });
-            Assert.Equal((1L << 28) - 1, mask.Mask);
-            Assert.Equal(28, rec.RaisedEvents - raised0);                                        // ★비트당 정확히 1회
+            Assert.Equal((1L << 29) - 1, mask.Mask);
+            Assert.Equal(29, rec.RaisedEvents - raised0);                                        // ★비트당 정확히 1회
             Parallel.For(0, srcs.Length, i => { srcs[i].Blocked = false; links[i].Resync(); });
             Assert.Equal(0, mask.Mask);
             Assert.False(mask.Blocked);

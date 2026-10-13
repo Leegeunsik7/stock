@@ -53,6 +53,17 @@ namespace MS2E.Infrastructure
         private long _nextOrderId;
         private int  _publishing;        // 0=idle,1=publishing — ★단일 생산자 계약 런타임 강제(CAS)
         private long _writerCollisions;  // S29 Gamma — CAS 게이트 낙방(동시 생산자 위반) 누적 계측
+        private IOrderPathObserver? _pathObserver;   // [v12.17.6] 주문 경로 계측 관측자(null = 미결선 · 발행/종결 스탬프 0)
+
+        /// <summary>
+        /// [v12.17.6] 주문 경로 계측 관측자 결선(콜드 · 1회 권장). 발행(단일 생산자 CAS 안 · 링 게시 '직전' — 드레인이 먼저 소비해도 스탬프 선행)과
+        /// 종결(GatedOrderDispatcher 드레인의 모든 처분 경로)에서 호출된다. 관측자는 δ=0 · 비차단 · 비throw 여야 한다.
+        /// </summary>
+        public IOrderPathObserver? PathObserver
+        {
+            get => Volatile.Read(ref _pathObserver);
+            set => Volatile.Write(ref _pathObserver, value);
+        }
 
         /// <param name="capacity">2 이상의 2의 거듭제곱(기본 1024).</param>
         public OrderDispatchRing(int capacity = 1024) => _ring = new RingBufferCore<OrderProposal>(capacity);
@@ -83,6 +94,7 @@ namespace MS2E.Infrastructure
             try
             {
                 long id = ++_nextOrderId;   // 게이트가 단일 생산자 보장 → 비경합(Interlocked 불요, 다중생산자 오해 제거)
+                Volatile.Read(ref _pathObserver)?.OnPublished(id);   // [v12.17.6] 시그널(제안 발행) 시각 — 게시 전 스탬프
                 _ring.Publish(new OrderProposal(id, genomeId, symbolCode, side, kind, price, qty, timestampTicks));
                 return id;
             }
@@ -93,7 +105,11 @@ namespace MS2E.Infrastructure
         public void PublishRaw(in OrderProposal proposal)
         {
             EnterPublish();
-            try { _ring.Publish(in proposal); }
+            try
+            {
+                Volatile.Read(ref _pathObserver)?.OnPublished(proposal.OrderId);
+                _ring.Publish(in proposal);
+            }
             finally { Volatile.Write(ref _publishing, 0); }
         }
 
@@ -110,6 +126,7 @@ namespace MS2E.Infrastructure
     public sealed class GatedOrderDispatcher
     {
         private readonly RingConsumer<OrderProposal> _consumer;
+        private readonly OrderDispatchRing           _ring;   // [v12.17.6] 경로 관측자 판독(종결 스탬프)
         private readonly Func<bool>                  _isArmed;
         private readonly OrderAttestationService?    _att;    // Mission A: onSend throw → ForceFreeze(null 허용 = att 없음)
         private readonly MmfFlightRecorder?          _blackbox;   // v4.95.0 — 블랙박스 이산 사건 기록(null=미배선·완전 no-op·δ=0)
@@ -131,6 +148,7 @@ namespace MS2E.Infrastructure
         {
             if (ring is null) throw new ArgumentNullException(nameof(ring));
             _consumer = ring.CreateConsumer();
+            _ring     = ring;
             _isArmed  = isArmed ?? throw new ArgumentNullException(nameof(isArmed));
             _att      = attestation;
             _blackbox = blackbox;
@@ -169,66 +187,80 @@ namespace MS2E.Infrastructure
             while (_consumer.TryRead(out var p))
             {
                 n++;   // 제안은 이미 소비됨 — throw 로 인한 '증발' 방지 위해 먼저 계상
-                // ★무장 게이트 — 매 제안마다 재평가(런타임 후퇴 즉시 반영). 술어가 throw 하면(예: BrokerHub.IsArmed 의
-                //   db I/O 예외) fail-closed: 미무장 간주 → 송출 안 함 + GatedOut 계상(예외 전파·제안 증발 차단).
-                bool armed;
-                try { armed = _isArmed(); }
-                catch { armed = false; }
-                if (armed)
+                // [v12.17.6 · 방향 A] 종결 스탬프 — 처분 경로(미무장 · 블래스트/fat-finger 동결 · 송출 · 하류 veto · throw)와 무관하게 정확히 1회.
+                //   관측자가 그 주문의 상관 슬롯을 즉시 회수한다(veto 주문 슬롯 누수 → 오탐 축출 · 슬롯 고갈 방지). break 도 finally 를 거친다.
+                bool pathForwarded = false;
+                try
                 {
-                    // ★v5.0.0 블래스트 반경 물리 강제 — 무장 통과 직후·송출 직전 단일 초크포인트. 검역창 명목 상한 초과=경성 동결(fail-closed).
-                    //   완전 무장 상태여도 카나리 1주 상한을 초과하는 대형 주문(fat-finger/버그)은 여기서 물리 차단. 무제한(null/미설정)이면 통과.
-                    if (_blastRadius is { } br)
+                    // ★무장 게이트 — 매 제안마다 재평가(런타임 후퇴 즉시 반영). 술어가 throw 하면(예: BrokerHub.IsArmed 의
+                    //   db I/O 예외) fail-closed: 미무장 간주 → 송출 안 함 + GatedOut 계상(예외 전파·제안 증발 차단).
+                    bool armed;
+                    try { armed = _isArmed(); }
+                    catch { armed = false; }
+                    if (armed)
                     {
-                        long notional;
-                        // ★시장가(PriceRaw<=0)는 명목 미상 — 상한 활성 중이면 '무한 명목'으로 취급해 물리 차단(대형 시장가 fat-finger 봉쇄).
-                        //   PreTradeRiskShield 의 시장가=미상 fail-closed 관례와 정렬. 상한 비활성(무제한)이면 무영향(0 통과).
-                        if (p.PriceRaw <= 0) notional = br.Active ? long.MaxValue : 0L;
-                        else { try { notional = QMath.Notional(p.PriceRaw, p.QtyRaw, roundUp: true); } catch (OverflowException) { notional = long.MaxValue; } }
-                        if (!br.Check(notional))
+                        // ★v5.0.0 블래스트 반경 물리 강제 — 무장 통과 직후·송출 직전 단일 초크포인트. 검역창 명목 상한 초과=경성 동결(fail-closed).
+                        //   완전 무장 상태여도 카나리 1주 상한을 초과하는 대형 주문(fat-finger/버그)은 여기서 물리 차단. 무제한(null/미설정)이면 통과.
+                        if (_blastRadius is { } br)
+                        {
+                            long notional;
+                            // ★시장가(PriceRaw<=0)는 명목 미상 — 상한 활성 중이면 '무한 명목'으로 취급해 물리 차단(대형 시장가 fat-finger 봉쇄).
+                            //   PreTradeRiskShield 의 시장가=미상 fail-closed 관례와 정렬. 상한 비활성(무제한)이면 무영향(0 통과).
+                            if (p.PriceRaw <= 0) notional = br.Active ? long.MaxValue : 0L;
+                            else { try { notional = QMath.Notional(p.PriceRaw, p.QtyRaw, roundUp: true); } catch (OverflowException) { notional = long.MaxValue; } }
+                            if (!br.Check(notional))
+                            {
+                                Interlocked.Increment(ref _sendErrors);
+                                _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
+                                _att?.ForceFreeze($"블래스트 반경 초과 — 명목 {notional} > 상한 {br.CeilingRaw}(카나리 검역창 물리 상한·fail-closed)");
+                                break;
+                            }
+                        }
+                        // ★v7.4.0 Think Beyond — fat-finger 가격 괴리 + 폭주 명목속도 사출 방화벽(BlastRadius 다음·송출 직전).
+                        //   개별 유효해도 집합적으로 폭주하는 주문 스톰(Knight Capital $440M/45분)을 δ=0 로 차단. 위반=경성 동결(fail-closed).
+                        if (_fatFinger is { } ff && !ff.Admit(in p))
                         {
                             Interlocked.Increment(ref _sendErrors);
-                            _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
-                            _att?.ForceFreeze($"블래스트 반경 초과 — 명목 {notional} > 상한 {br.CeilingRaw}(카나리 검역창 물리 상한·fail-closed)");
+                            _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 3);
+                            _att?.ForceFreeze($"Fat-Finger/폭주 명목속도 인터록 veto — forensic 0x{ff.LastForensic:X}(가격 괴리 또는 집합 폭주·fail-closed)");
                             break;
                         }
-                    }
-                    // ★v7.4.0 Think Beyond — fat-finger 가격 괴리 + 폭주 명목속도 사출 방화벽(BlastRadius 다음·송출 직전).
-                    //   개별 유효해도 집합적으로 폭주하는 주문 스톰(Knight Capital $440M/45분)을 δ=0 로 차단. 위반=경성 동결(fail-closed).
-                    if (_fatFinger is { } ff && !ff.Admit(in p))
-                    {
-                        Interlocked.Increment(ref _sendErrors);
-                        _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 3);
-                        _att?.ForceFreeze($"Fat-Finger/폭주 명목속도 인터록 veto — forensic 0x{ff.LastForensic:X}(가격 괴리 또는 집합 폭주·fail-closed)");
-                        break;
-                    }
-                    bool sent;
-                    try { sent = onSend(p); }
-                    catch (Exception ex)
-                    {
-                        // ★Mission A — downstream throw(브로커 단절·네트워크 오류) fail-closed 벽.
-                        // ForceFreeze 는 항상 성공(멱등·audit append) — fail-open 절대 금지.
-                        Interlocked.Increment(ref _sendErrors);
-                        _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
-                        _att?.ForceFreeze("GatedOrderDispatcher downstream throw: " + ex.Message);
-                        break;   // 추가 제안 처리 차단 — 동결 후 루프 폭주 방지
-                    }
-                    if (sent)
-                    {
-                        Interlocked.Increment(ref _forwarded);   // ★실 송출 성공 시만 계상
-                        _blackbox?.Record(FlightEventKind.OrderForwarded, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
+                        bool sent;
+                        try { sent = onSend(p); }
+                        catch (Exception ex)
+                        {
+                            // ★Mission A — downstream throw(브로커 단절·네트워크 오류) fail-closed 벽.
+                            // ForceFreeze 는 항상 성공(멱등·audit append) — fail-open 절대 금지.
+                            Interlocked.Increment(ref _sendErrors);
+                            _blackbox?.Record(FlightEventKind.OrderSendError, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
+                            _att?.ForceFreeze("GatedOrderDispatcher downstream throw: " + ex.Message);
+                            break;   // 추가 제안 처리 차단 — 동결 후 루프 폭주 방지
+                        }
+                        if (sent)
+                        {
+                            Interlocked.Increment(ref _forwarded);   // ★실 송출 성공 시만 계상
+                            pathForwarded = true;
+                            _blackbox?.Record(FlightEventKind.OrderForwarded, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
+                        }
+                        else
+                        {
+                            // ★하류 veto(게이트웨이 이중키/방어선/펄스 실패 또는 봉인 이중사출 봉쇄) = 미송출. SendError/ForceFreeze 아님(fail-safe).
+                            Interlocked.Increment(ref _gatedOut);
+                            _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
+                        }
                     }
                     else
                     {
-                        // ★하류 veto(게이트웨이 이중키/방어선/펄스 실패 또는 봉인 이중사출 봉쇄) = 미송출. SendError/ForceFreeze 아님(fail-safe).
                         Interlocked.Increment(ref _gatedOut);
-                        _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 2);
+                        _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
                     }
                 }
-                else
+                finally
                 {
-                    Interlocked.Increment(ref _gatedOut);
-                    _blackbox?.Record(FlightEventKind.OrderGated, p.SymbolCode, p.PriceRaw, p.QtyRaw, p.OrderId, 1);
+                    if (_ring.PathObserver is { } obs)
+                    {
+                        try { obs.OnDispatchEnd(p.OrderId, pathForwarded); } catch { /* 관측 실패 = 계측 유실만(처분 무영향) */ }
+                    }
                 }
             }
             return n;
