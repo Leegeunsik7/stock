@@ -4,6 +4,7 @@
 //  §1 라운드트립·빔·백프레셔    — 발행/소비 일치·빈 링·가득참(부패 아님).
 //  §2 오염 방어 → ForceFreeze   — 라이터/상대 하트비트 20ms 단절·매직 파손 → 격리+동결.
 //  §3 레이턴시(µs)·SPSC torn=0·δ=0 무할당·Dispose·liveArmed:false.
+//  [v12.18.4-DEV] 실 스레드 생존 판정 테스트 = 스텝 락 코디네이터(논리 시계 · 이벤트 순서 · Thread.Sleep 0) — OS 스케줄링 무관.
 //
 //  ★공유메모리/IPC/스핀 테스트는 부하·타이밍 민감 → ConcurrencyStress 컬렉션(직렬화)에 편입.
 // ============================================================================
@@ -282,28 +283,218 @@ namespace StockManager.Tests
             Assert.Equal(GatingMode.Normal, att.Mode);
         }
 
+        // ── [v12.18.4-DEV · 방향 A] 결정론 스텝 락 이벤트 배리어 ──────────────────────────────────────────────
+        //  실 스레드 백프레셔 테스트가 전체 스위트에서 간헐 실패한 근본 원인(정직): 테스트가 '실 시계 + 20ms 생존 임계'에 묶여 있었다.
+        //   리더 40ms 정지(Thread.Sleep) 뒤 라이터가 '마지막 20ms 안에' 백프레셔 하트비트를 찍어야 통과 — 라이터 스레드가 OS 에 20ms 이상
+        //   선점되면(스위트 후반 · 메모리 압박 · 다른 프로세스) 리더는 정당하게 '라이터 단절'을 판정한다(설계상 생존 감지 · 엔진 정상).
+        //   ∴ 실패는 엔진 결함이 아니라 '시간을 OS 스케줄러에 맡긴' 하네스 결함이다.
+        //  교정: 시간을 OS 에서 빼앗는다. 두 패브릭은 코디네이터의 논리 시계(주입 nowTicks · 1 tick = 100ns)만 읽고, 논리 시계는
+        //   코디네이터가 명시적으로 전진시킬 때만 움직인다. OS 가 어느 스레드를 얼마나 멈추든(20ms · 100ms · 1초) 논리 시간은 0 이다.
+        //   리더 '정지'는 소비 중단 + 논리 시계 전진(40ms)으로 표현하고, 순서는 이벤트로 강제한다:
+        //    ① 리더 소비 중단 → ArmBeats(현재 백프레셔 수) → 라이터가 가득 찬 링에서 백프레셔 하트비트를 1회 이상 찍을 때까지 대기(MRES).
+        //       (리더가 멈춘 뒤의 백프레셔 = 링 가득 참 확정)
+        //    ② 논리 시계 +40ms(임계 20ms 의 2배 — 하트비트 교정 ⑤가 없으면 반드시 Poison).
+        //    ③ ArmBeats(현재 수 + 1) 대기 = 전진 '후' 시작된 백프레셔 하트비트 1회 이상 보장:
+        //       캡처한 수 C 이후 C+1 번째 증가는 캡처 뒤에 일어났지만 그 하트비트의 시계 판독은 전진 전일 수 있다. C+2 번째의 시계 판독은
+        //       C+1 증가(전체 펜스) 뒤 = 캡처 뒤 = 전진 뒤 — 라이터 프로그램 순서로 보장. 그래서 임계값 = C + 1(증가 수 > C+1 ⇔ ≥ C+2).
+        //    ④ 소비 재개 — 리더의 now = 라이터 하트비트(같은 논리 시각) → 경과 0 ≤ 20ms → Poison 불가(수학적: 논리 시계 차 = 0).
+        //   대조군(LegacyHarness): 라이터를 게이트에 세운 채(백프레셔 0) 같은 전진 → 리더는 반드시 '라이터 단절'(결정론 Red).
+        //  대기 = ManualResetEventSlim(라이터가 백프레셔 직후 Notify) — 코어 1개여도 대기 리더는 블록되고 라이터가 진행한다(스핀 기아 없음).
+        //  Thread.Sleep 0 · 실 시계 판정 0. 대기 상한(30초)은 교착 탐지용이며 판정에 쓰이지 않는다.
+        private sealed class StepLockCoordinator : IDisposable
+        {
+            public const long Disarmed = long.MaxValue;
+            private long _clock = 1_000_000, _threshold = Disarmed;
+            private readonly ManualResetEventSlim _beat = new(false), _writerGate = new(true), _parked = new(false);
+            private int _stopped;
+            public long WaitTimeouts;
+            public bool Stopped => Volatile.Read(ref _stopped) != 0;
+            public void Stop() { Volatile.Write(ref _stopped, 1); _writerGate.Set(); }
+
+            public long Now() => Volatile.Read(ref _clock);
+            public void Advance(long ticks) => Interlocked.Add(ref _clock, ticks);
+
+            /// <summary>라이터: 백프레셔(TryPublish=false) 직후 호출. 무장 임계 초과 = 대기자 깨움.</summary>
+            public void NotifyBackpressure(long beats)
+            {
+                if (beats > Volatile.Read(ref _threshold)) _beat.Set();
+            }
+
+            /// <summary>
+            /// 리더: 백프레셔 수가 threshold 를 넘을 때까지 대기. 반환 false = 교착(상한 초과).
+            /// ★이벤트는 '힌트'이고 진실은 계수다(조건 변수 패턴 — 깨어나면 술어 재확인 · 아니면 다시 대기).
+            ///  [실측 결함 · 25회 중 2회] 이전 단계의 지연된 Set: 라이터가 ①의 임계를 읽고(넘음) Set 하기 직전 선점 → 리더는 계수로 이미 통과 ·
+            ///  전진 · ③ 무장(Reset) → 그 뒤 늦게 도착한 ①의 Set 이 ③ 대기를 '전진 뒤 하트비트' 없이 통과시켰다 → 소비 재개 = 정당한 단절 판정.
+            ///  Reset→무장 순서만으로는 막을 수 없다(Set 주체가 옛 임계를 이미 읽었다) — 계수 재확인 루프가 유일한 정답.
+            /// </summary>
+            public bool WaitBeatsAbove(MmfIpcFabric writer, long threshold)
+            {
+                Volatile.Write(ref _threshold, threshold);
+                long deadline = Environment.TickCount64 + 30_000;                        // 교착 탐지 전용(판정 무관)
+                bool ok = true;
+                while (writer.BackpressureBeats <= threshold)
+                {
+                    _beat.Reset();
+                    if (writer.BackpressureBeats > threshold) break;                    // Reset 과 Set 사이의 증가 재확인
+                    long left = deadline - Environment.TickCount64;
+                    if (left <= 0 || !_beat.Wait((int)left)) { ok = writer.BackpressureBeats > threshold; break; }
+                }
+                Volatile.Write(ref _threshold, Disarmed);
+                if (!ok) Interlocked.Increment(ref WaitTimeouts);
+                return ok;
+            }
+
+            /// <summary>
+            /// 대조군: 라이터를 게이트에 세우고 '실제로 섰음'(parked)을 확인한 뒤 반환 — 게이트를 이미 지난 진행 중 발행이
+            /// 끝난 뒤라야 시계를 전진시킬 수 있다(그 발행이 전진 후 시각을 하트비트로 찍는 경합 차단).
+            /// </summary>
+            public bool HoldWriter()
+            {
+                _parked.Reset();
+                _writerGate.Reset();
+                bool ok = _parked.Wait(30_000);
+                if (!ok) Interlocked.Increment(ref WaitTimeouts);
+                return ok;
+            }
+            public void ReleaseWriter() => _writerGate.Set();
+            /// <summary>라이터: 발행 시도 전마다 호출. 게이트 닫힘 = parked 통지 후 대기. 반환 false = 중단.</summary>
+            public bool WriterPass()
+            {
+                if (!_writerGate.IsSet) { _parked.Set(); if (!_writerGate.Wait(30_000)) return false; }
+                return !Stopped;
+            }
+
+            public void Dispose() { _beat.Dispose(); _writerGate.Dispose(); _parked.Dispose(); }
+        }
+
+        private sealed class StepLockStats { public long Got, Torn, Stalls, ReaderCorrupt, WriterCorrupt, Beats, WaitTimeouts; public bool Joined; public string Reason = ""; }
+
+        /// <summary>
+        /// 스텝 락 SPSC 1 라운드 — 라이터 · 리더 전용 스레드 · 논리 시계 주입. 리더는 stallEvery 프레임마다 ①~④ 정지를 수행한다.
+        /// holdWriterAtStall = 대조군(정지 동안 라이터 게이트 차단 → 백프레셔 하트비트 0 · 같은 전진 → 단절 판정 기대).
+        /// burners = OS 스케줄링 교란(전 코어 초과 구독 스핀 스레드 — 실 시간 지연을 크게 만들어도 논리 판정이 불변임을 보인다).
+        /// </summary>
+        private static StepLockStats RunStepLock(long perRound, int capacity, long stallEvery, long stallTicks, bool holdWriterAtStall = false, int burners = 0)
+        {
+            var st = new StepLockStats();
+            using var co = new StepLockCoordinator();
+            string name = UniqueName("STEP");
+            using var w = new MmfIpcFabric(name, MmfFabricRole.Writer, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
+            using var r = new MmfIpcFabric(name, MmfFabricRole.Reader, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
+            using var go = new CountdownEvent(2);                                     // 두 스레드 준비 래치
+            using var start = new ManualResetEventSlim(false);
+            int stopBurn = 0;
+            var burn = new Thread[burners];
+            for (int b = 0; b < burners; b++)
+            {
+                burn[b] = new Thread(() => { long x = 0; while (Volatile.Read(ref stopBurn) == 0) x++; GC.KeepAlive(x); }) { IsBackground = true, Name = "mmf-step-burner" };
+                burn[b].Start();
+            }
+            var wt = new Thread(() =>
+            {
+                var buf = new byte[16];
+                go.Signal(); start.Wait();
+                for (long i = 0; i < perRound; i++)
+                {
+                    BitConverter.TryWriteBytes(buf.AsSpan(0, 8), i);
+                    BitConverter.TryWriteBytes(buf.AsSpan(8, 8), ~i);
+                    while (true)
+                    {
+                        if (!co.WriterPass()) return;
+                        if (w.TryPublish(buf)) break;
+                        if (w.IsCorrupted) return;
+                        co.NotifyBackpressure(w.BackpressureBeats);
+                        Thread.Yield();                                                // 코어 1개: 리더/코디네이터에 양보(시간 판정과 무관)
+                    }
+                }
+            }) { IsBackground = true, Name = "mmf-step-writer" };
+            var rt = new Thread(() =>
+            {
+                var dst = new byte[32];
+                go.Signal(); start.Wait();
+                long got = 0;
+                while (got < perRound)
+                {
+                    if (r.TryConsume(dst, out int len))
+                    {
+                        long a = BitConverter.ToInt64(dst, 0), b = BitConverter.ToInt64(dst, 8);
+                        if (len != 16 || a != got || b != ~got) st.Torn++;
+                        got++;
+                        if (got % stallEvery == 0 && got < perRound)
+                        {
+                            // ① 소비 중단 → 링 가득 참(백프레셔) 확인
+                            if (holdWriterAtStall && !co.HoldWriter()) break;
+                            if (!holdWriterAtStall && !co.WaitBeatsAbove(w, w.BackpressureBeats)) break;
+                            // ② 논리 시계 전진(리더 정지 = stallTicks)
+                            co.Advance(stallTicks);
+                            // ③ 전진 뒤 시작된 백프레셔 하트비트 1회 이상(대조군은 라이터 정지 — 하트비트 없음)
+                            if (!holdWriterAtStall && !co.WaitBeatsAbove(w, w.BackpressureBeats + 1)) break;
+                            st.Stalls++;
+                            // ④ 소비 재개
+                        }
+                    }
+                    else if (r.IsCorrupted) break;
+                    else Thread.Yield();
+                }
+                st.Got = got;
+                co.Stop();                                                             // 라이터 종료(가득 찬 링 재시도 탈출 · 게이트 해제)
+            }) { IsBackground = true, Name = "mmf-step-reader" };
+            wt.Start(); rt.Start();
+            Assert.True(go.Wait(30_000), "스레드 준비 래치 타임아웃");
+            start.Set();
+            bool rj = rt.Join(60_000);
+            co.Stop();
+            bool wj = wt.Join(60_000);
+            Volatile.Write(ref stopBurn, 1);
+            foreach (var t in burn) t.Join(10_000);
+            st.Joined = rj && wj;
+            st.ReaderCorrupt = r.IsCorrupted ? 1 : 0;
+            st.WriterCorrupt = w.IsCorrupted ? 1 : 0;
+            st.Beats = w.BackpressureBeats;
+            st.Reason = "리더[" + r.LastReason + "] 라이터[" + w.LastReason + "] got=" + st.Got + " stalls=" + st.Stalls;
+            st.WaitTimeouts = co.WaitTimeouts;
+            return st;
+        }
+
         [Fact]
         public void Backpressure_RealThreads_ReaderStall_NoFalsePoison()
         {
-            // [실결함 · 실 스레드 Red] 리더를 40ms 씩 정지(선점 모사) — 임계 20ms · 용량 64 라 정지마다 링이 가득 찬다.
-            //   수정 전: 정지 직후 첫 소비에서 Poison(재현 100%). 수정 후: 라이터 백프레셔 하트비트로 무오판.
-            var st = RunSpscRounds(rounds: 1, perRound: 2_000, capacity: 64, heartbeatMs: 20,
-                                   readerHook: got => { if (got % 500 == 0) Thread.Sleep(40); });
-            Assert.Equal(0L, st.ReaderCorrupt);
+            // [실결함 · 실 스레드] 리더 40ms 정지(논리 시계) × 3회 — 임계 20ms · 용량 64 라 정지마다 링이 가득 찬다.
+            //   수정 전 엔진(백프레셔 하트비트 없음): 정지 직후 첫 소비에서 Poison. 수정 후: 백프레셔 하트비트로 무오판(논리 시각 차 0).
+            //   판정은 OS 스케줄링과 무관 — 시간은 코디네이터 전진으로만 흐른다(스텝 락 ①~④).
+            var st = RunStepLock(perRound: 2_000, capacity: 64, stallEvery: 500, stallTicks: 40 * TimeSpan.TicksPerMillisecond);
+            Assert.True(st.Joined, "스텝 락 교착");
+            Assert.Equal(0L, st.WaitTimeouts);
+            Assert.Equal(3L, st.Stalls);
+            Assert.True(st.Beats >= 2 * st.Stalls, "정지마다 백프레셔 하트비트(가득 참 1 + 전진 뒤 1) " + st.Beats);
+            Assert.True(st.ReaderCorrupt == 0, st.Reason);
             Assert.Equal(0L, st.WriterCorrupt);
             Assert.Equal(0L, st.Torn);
             Assert.Equal(2_000L, st.Got);
         }
 
         [Fact]
+        public void Backpressure_StepLock_UnderCpuOversubscription_AndLongStalls_StillNoFalsePoison()
+        {
+            // 적대 조건: 전 코어 × 2 의 스핀 스레드로 OS 스케줄링을 교란 + 정지 길이 100ms(임계 5배) · 정지 20회.
+            //   실 시계 하네스라면 라이터/리더 선점 지연이 그대로 판정에 섞인다. 스텝 락은 논리 시간만 보므로 결과가 같아야 한다.
+            var st = RunStepLock(perRound: 10_000, capacity: 64, stallEvery: 500, stallTicks: 100 * TimeSpan.TicksPerMillisecond,
+                                 burners: Math.Max(2, Environment.ProcessorCount * 2));
+            Assert.True(st.Joined, "스텝 락 교착");
+            Assert.Equal((0L, 19L), (st.WaitTimeouts, st.Stalls));
+            Assert.Equal((0L, 0L, 0L), (st.ReaderCorrupt, st.WriterCorrupt, st.Torn));
+            Assert.Equal(10_000L, st.Got);
+        }
+
+        [Fact]
         public void LegacyHarness_WriterStall_BeyondHeartbeat_IsDetected_ByDesign()
         {
-            // 원 하네스의 나머지 실패 경로(W): 라이터가 생존 임계보다 오래 멈추면 리더가 '단절' 판정 — 설계상 정당한 생존 감지다.
-            //   ∴ 순서/찢김 검증 하네스를 20ms 임계에 묶으면 스케줄러 지연만으로 실패한다(결정론 재현). 교정 하네스는 임계를 분리.
-            var st = RunSpscRounds(rounds: 1, perRound: 2_000, capacity: 64, heartbeatMs: 20,
-                                   writerHook: i => { if (i == 500) Thread.Sleep(60); });
-            Assert.Equal(1L, st.ReaderCorrupt);                      // ★스케줄링만으로 '단절' — 하네스가 생존 임계와 분리돼야 하는 이유
-            Assert.True(st.Got < 2_000);
+            // 대조군(결정론 Red): 같은 정지(논리 +60ms) 동안 라이터를 게이트에 세워 하트비트를 끊으면 리더는 반드시 '라이터 단절' 판정 —
+            //   설계상 정당한 생존 감지. 위 무오판이 '판정을 끈 결과'가 아니라 백프레셔 하트비트 덕분임을 같은 하네스로 입증한다.
+            var st = RunStepLock(perRound: 2_000, capacity: 64, stallEvery: 500, stallTicks: 60 * TimeSpan.TicksPerMillisecond, holdWriterAtStall: true);
+            Assert.True(st.Joined, "스텝 락 교착");
+            Assert.Equal(1L, st.ReaderCorrupt);                      // ★정확히 첫 정지 뒤 첫 소비에서 단절
+            Assert.Equal(500L, st.Got);
             Assert.Equal(0L, st.Torn);                               // 오염 판정은 데이터 찢김이 아니라 생존 판정
         }
 

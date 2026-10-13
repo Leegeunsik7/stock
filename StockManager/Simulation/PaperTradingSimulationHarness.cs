@@ -309,7 +309,7 @@ namespace StockManager.Simulation
         /// <param name="fillObserver">[대시보드] 가상 체결 관측(대사 피드 뒤 · 예외는 삼킴 — 체결 대사 무영향).</param>
         public PaperTradingSimulationHarness(Func<long>? nowMicros = null, long stallThresholdMicros = 1_000_000, Action<long>? renderSignal = null,
                                              MmfFlightRecorder? blackbox = null, long maxPriceSilenceMicros = 5_000_000, Action<FillPayload>? fillObserver = null,
-                                             Func<IBroker, IBroker>? brokerDecorator = null)
+                                             Func<IBroker, IBroker>? brokerDecorator = null, IOrderPathObserver? pathObserver = null)
         {
             _nowMicros = nowMicros ?? ReferencePriceFeedAdapter.MonotonicMicros;
             _price = new ReferencePriceFeedAdapter(capacityPow2: 256, maxAgeMicros: 3_000_000, nowMicros: _nowMicros);
@@ -333,6 +333,7 @@ namespace StockManager.Simulation
             _gate = new RouterFeedGate(_router, _price, _exec, Injector.FeedBreaker, depth: _depth, requireDepthForMarket: true);
             _broker = new VirtualPaperBroker(8192);
             _ring = new OrderDispatchRing(8192);
+            _ring.PathObserver = pathObserver;                                      // [v12.18.4-DEV] 호스트와 동일: 발행 · 종결 스탬프(null = 미결선)
             // ★무장 술어 = 가상 브로커 전용 true. 이 디스패처는 실 브로커에 닿는 경로가 없다(IBroker = VirtualPaperBroker).
             _dispatcher = new GatedOrderDispatcher(_ring, static () => true);
             // [카오스 스톰] 송출 데코레이터(예: LiveArmedEgressSentinel) — 가상 브로커 앞 최종 초크포인트 리허설. 미주입 = 가상 브로커 직결.

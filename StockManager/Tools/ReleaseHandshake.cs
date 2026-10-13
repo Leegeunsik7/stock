@@ -743,10 +743,11 @@ namespace StockManager.Tools
                     string? zip = Arg(args, 1), mf = o.GetValueOrDefault("--manifest"), sealFile = o.GetValueOrDefault("--seal-file");
                     if (zip is null || mf is null || sealFile is null || !File.Exists(zip) || !File.Exists(mf) || !File.Exists(sealFile)
                         || !int.TryParse(o.GetValueOrDefault("--expect-tighten-keys"), out int expect))
-                    { output.WriteLine("[verify-tighten] 사용: --verify-tighten <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-tighten-keys <n> [--require-audit-ledger] [--require-audit-telemetry]"); return ExitUsage; }
+                    { output.WriteLine("[verify-tighten] 사용: --verify-tighten <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-tighten-keys <n> [--require-audit-ledger] [--require-audit-telemetry] [--require-ipc-fabric]"); return ExitUsage; }
                     // [v12.18.3-GM · 방향 A] --require-audit-telemetry = 관제 배지 무잠금 seqlock 결선(⑤) 수검 추가
+                    // [v12.18.4-GM · 방향 A] --require-ipc-fabric = IPC 패브릭 핫 폐포 무대기 · 무슬립 · 기본 시계(⑥) 수검 추가
                     var r = ShippedTightenMatrixVerifier.Verify(zip, File.ReadAllText(mf), File.ReadAllText(sealFile), expect, o.ContainsKey("--require-audit-ledger"),
-                                                                o.ContainsKey("--require-audit-telemetry"));
+                                                                o.ContainsKey("--require-audit-telemetry"), o.ContainsKey("--require-ipc-fabric"));
                     output.WriteLine($"[verify-tighten] {r.Verdict}: {r.Detail} · 팽창+해시 {r.InflateMicros}µs · 행렬 대조 {r.CompareMicros}µs");
                     return r.Verdict == TightenSealVerdict.Ok ? ExitOk : ExitRejected;
                 }

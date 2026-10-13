@@ -41,7 +41,8 @@ namespace StockManager.Tests
             soak.RunSeconds(3_600);                                                               // 1시간 예열(JIT · 종목 캐시 · 링 회전)
             // GC 수집 횟수는 프로세스 전역 — 앞선 테스트(스레드 대량 생성 등)의 잔여 가비지가 측정 창에서 수집되면 오탐(실측 1/1/0).
             //   측정 직전 정리 + 기준선 재설정 → 창 안 GC 는 창 안 할당에서만 생긴다(구동 스레드 0B 는 별도 단언).
-            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+            //   [v12.18.4-DEV] 정리는 하네스 Settle — 그 강제 GC 정지는 헬스 GC 정지 판정(스캔 간 > 500ms = 비트 21)에서 제외(스위트 후반 오탐 교정).
+            soak.Settle();
             soak.ResetBaseline();
             long t0 = Stopwatch.GetTimestamp();                                                   // (Stopwatch 객체 = 40B — 측정 구간 오염 방지)
             soak.RunSeconds(86_400);                                                              // ★24시간 측정 구간
@@ -53,7 +54,8 @@ namespace StockManager.Tests
             Assert.True(r.Samples >= 25);                                                         // 기준선 1 + 시간당 24
             Assert.Equal(0, r.ThreadAllocatedDelta);                                               // ★24시간 구동 스레드 관리 힙 할당 0B
             Assert.Equal((0L, 0L, 0L), (r.Gen0Delta, r.Gen1Delta, r.Gen2Delta));                  // ★GC 수집 0(Flatline)
-            Assert.Equal((0L, 0L, 0L, false, 0), (r.RaisedAfterWarmup, r.BlackboxRaisedAfterWarmup, r.FinalMask, r.StormTripped, r.HealthBreach));   // ★오작동 0
+            Assert.True((r.RaisedAfterWarmup, r.BlackboxRaisedAfterWarmup, r.FinalMask, r.StormTripped, r.HealthBreach) == (0L, 0L, 0L, false, 0),
+                        $"오작동 — 헬스 {(HealthBreach)r.HealthBreach} · 스레드풀 대기 {soak.Health.LastStallMicros:N0}µs · 제외 GC 정지 {soak.ExcludedPauseMicros:N0}µs");   // ★오작동 0
             Assert.Equal(r.Placed, r.Filled);                                                      // 미체결 잔존 0
             Assert.True(r.Placed >= 2_800, "송출 " + r.Placed);                                    // 24h × 60 × 2 = 2,880(게이트 통과분)
             Assert.False(soak.Anomaly.Tripped);

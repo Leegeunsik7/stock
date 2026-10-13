@@ -1583,3 +1583,56 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 콜드 CLI 1회 대조: 인터락 7.5ms · 행렬+⑪+⑤ 30.0ms(프로세스 첫 호출 JIT 포함). primary 재대조(GoldenMasterReleasePackagingTests) 30/30.
 - 정직: 사전 전체 스위트 1회차에서 MmfIpcFabricTests.Backpressure_RealThreads_ReaderStall_NoFalsePoison 1건 실패(이미 ConcurrencyStress · 20ms 임계 실 스레드 시험 —
   타 컬렉션 병렬 CPU 경합). 단독 5/5 통과 · 재실행 3,767/3,767 · 패키저 내 실행 3,767/3,767. 이번 변경은 IPC 무관 — 코드 수정 없음(기록만).
+
+## 59. v12.18.4-DEV — 전 사슬 가속 Soak(100만 틱) · 3중 경합 퍼징 · 지터 센티널 · IPC 스텝 락 결정론화 (2026-10-13)
+
+### 59.1 전 사슬 가속 Soak(`StockManager/Simulation/LongSoakProfileHarness.cs` — 주문의 `StockManager.Tests/Simulation/` 경로는 없음)
+- `fullChain` = 호스트와 같은 선택 결속: VolatilityAdaptiveCalibrator + SignalChurnCircuitBreaker → QuantSignalProvider · 허브 AttachCalibration ·
+  OrderPathStageProfiler → 디스패치 링 PathObserver(`PaperTradingSimulationHarness(pathObserver:)` 신설) + 허브 orderPath · 휘발 MonotonicSettingAuditLog(같은 비트 27) → 허브 배지 ·
+  MicrosecondJitterSentinel. `regimeCycleSeconds` = 추세(한 방향 · 한쪽 잔량 우세) ↔ 횡보(틱 교대 · 넓은 잔량 잡음) 교차. `RunTicks(n)` · `RunOrderBurst`(고속 제안 루프).
+- `Settle()` = 강제 전체 GC + 그 정지를 헬스 GC 정지 판정(스캔 간 > 500ms = 비트 21)에서 제외(주입 gcPauseTicks · 프로덕션 에이전트 무변경).
+
+### 59.2 [방향 A] `StockManager/Telemetry/MicrosecondJitterSentinel.cs`
+- 500µs 초과 = 비관리 원형 링(NativeMemory · 넘치면 오래된 것 덮어씀 + 계수) · 전체 표본 상위 K(16) 정확 보존(임계 미만도) · LatencyHistogram ‰ 백분위.
+- 원인 = 표본 구간 Gen0 수집 횟수 변화 시 Gc · 아니면 Unattributed(ETW 없이 OS 선점 구분 불가 — 추측 라벨 없음). 기록 0B · 단일 작성자.
+
+### 59.3 검증(LongSoakIntegrationTests 5 · 컬렉션 NonParallelSoak · 테스트 전후 강제 GC)
+- 100만 틱(예열 10만 + 측정 90만): 측정 할당 0B · GC 0/0/0 · raised 0 · 집계어 0 · 횡보 진입 6,191 · 지터 p99 ≈ 12µs.
+- 3중 경합(실 스레드): 주문 ≈ 64,500/s · 판독 1,000/s(+50ms 프레임) · 퍼저 ≈ 93/s · 원장 256 → 찢김 0 · 역행 0 · 교착 0 · 주문/판독 0B · GC 0 ·
+  동결 관측 순간 비트 27 · 동결 뒤 기입 0 · 송출 0 · 비트 27 외 0. 퍼저 0B 는 회차별 측정 — 90% 고지 1회차(Trace 문자열 440B · 콜드 설계)만 분리.
+- 결정론 포화: 90~100% = 경고(무장 불변) · 100% 다음 기입 = 동결 + 그 반환 시점 비트 27(§55 설계 그대로 — 마지막 레코드 즉시 동결로 바꿀지는 미결정).
+
+### 59.4 IPC 스텝 락(MmfIpcFabricTests · [방향 A] 결정론 스텝 락 이벤트 배리어)
+- 원인: 실 시계 + 20ms 생존 임계 — 리더 40ms Sleep 뒤 라이터가 마지막 20ms 안에 백프레셔 하트비트를 찍어야 통과 → 라이터 선점 시 정당한 '단절' 판정(엔진 정상 · 하네스 결함).
+- 교정: 두 패브릭이 코디네이터 논리 시계만 읽는다(OS 지연 = 논리 시간 0). 정지 = ① 가득 참 백프레셔 대기 ② 시계 +40ms ③ 전진 뒤 시작된 하트비트(계수 > C+1) 대기 ④ 재개.
+  대기 = MRES 힌트 + 계수 술어 재확인 루프. ★실측 결함(25회 중 2회): 이전 단계의 지연된 Set 이 ③ 대기를 통과 → Reset→무장 순서로는 못 막고 술어 재확인으로 교정.
+  대조군 = 라이터 게이트 정지(parked 확인 후 전진) → 정확히 첫 정지 뒤 단절(결정론 Red). 적대: 코어 × 2 스핀 스레드 + 100ms 정지 19회 = 무오판(15초).
+- Thread.Sleep 0(해당 테스트) · 클래스 40회 연속 통과(교정 전 20회 중 1 · 25회 중 2 실패).
+
+### 59.5 게이트 · 정직
+- 오중 빌드 0W/0E(Default 마지막) · 전체 스위트 연속 2회 3,773/3,773(주문의 3,772 + 적대 스텝 락 1) · coupling 0 · 래칫 40.
+- 전역 직렬: 이 어셈블리는 v10.1.0 부터 DisableTestParallelization(추적 파일) — '병렬 경합'은 원인이 아니었다. NonParallelSoak 는 방어적 고정.
+- ★Soak 간헐 raised 1 의 근본 원인은 미확정: Settle 제외 GC 정지 실측 26ms(500ms 한도 대비 작음) — 메모리 압박(페이징) 시에만 커지는 가설.
+  이후 2회 연속 무재현이나 재현 시 단언 메시지가 헬스 위반 사유 · 스레드풀 대기 · 제외 정지를 남긴다. 방향 B(메모리 거버너)는 미구현.
+
+## 60. v12.18.4-GM Production Golden Master — Soak · 지터 센티널 · IPC 스텝 락(§59) 출하 · 30대 인터락 · 강화 전용 6키 · 규칙 ⑪ · IPC 패브릭 무슬립 위상 IL 수검 (2026-10-13)
+
+### 60.1 명세(출하)
+- 30대 인터락(비트 0~28 + 63 · 구조 마스크 0x800000001FFFFFFF) 불변 · 강화 전용 6키 행렬(§54.1) 불변 · 규칙 ⑪(감사 원장 선기록 · §56) 불변 · ⑤ 관제 배지 seqlock(§58) 불변.
+- 결정론적 IPC 가짜 시계 배선(§59.4): `MmfIpcFabric(nowTicks:)` 주입은 테스트(코디네이터 논리 시계)만 — 출하 생성자 기본값 = `Stopwatch.GetTimestamp`(⑥ (c) 가 IL 로 고정).
+- 원장 동결 규격(지연 동결 · §55/§59.3): 90~100% = 포화 경고(무장 불변) · 100% 도달 뒤 '다음' 기입 = 동결 + 그 반환 시점 비트 27. 즉시 동결 전환은 미결정(이번 출하 = 기존 규격 그대로).
+- 버전 12.18.4 · `release-package.ps1` 머리말 v12.18.4-GM · `$ExpectedInterlocks` 30 · `$ExpectedTightenKeys` 6 · `Remove-ReleaseOutputs; Fail` 7(폐기 경로 불변).
+- 주문 항목 대조: '[방향 B] Zip 항목 정규화 · 중복 가드'는 v12.17.0-GM(ZipEntryGuard)부터 출하 게이트에 있다 — 이번은 방향 A 만 구현.
+
+### 60.2 [방향 A] IPC 패브릭 무슬립 위상 IL 수검(`ShippedTightenMatrixVerifier.CheckIpcFabric` · `--require-ipc-fabric`)
+- 출하 zip 호스트 DLL(②의 MMF 뷰 로더 · 무추출 · 로드 0 · 실행 0)에서 `MS2E.Infrastructure.MmfIpcFabric` 판독:
+  - (a) 핫 폐포 = TryPublish/TryConsume/Beat/CheckPeerAlive 에서 call/callvirt/newobj/ldftn 으로 닿는 같은 형식 메서드 전부(고정점 · stackalloc 상태 바이트).
+    차단 대기 0: Thread.Sleep/Yield/SpinWait/Join · Task.Delay/Wait/WaitAll/WaitAny/Yield · SpinWait(SpinOnce 포함) · Monitor · WaitHandle 계열 · MRES · SemaphoreSlim ·
+    Mutex · SpinLock · RWLS · Lock · Barrier · CountdownEvent. 중첩 형식(클로저) 호출 · 해석 불가 피호출자 = 거부. 다른 형식으로 나가는 호출은 범위 밖(정직).
+  - (b) 형식 전체(중첩 · 생성자 · Dispose 포함) Thread.Sleep/Yield · Task.Delay · SpinWait.SpinUntil 0. Dispose 바운드 드레인 SpinOnce 는 핫 폐포 밖이라 허용.
+  - (c) 생성자 기본 시계 ldftn Stopwatch.GetTimestamp 정확히 1.
+- 판정 22 IpcFabricMissing · 23 IpcFabricBlocking · 24 IpcFabricClockDrift(중복 정의 = WriterAmbiguous). 힙 0(200회 0B) · 웜 회당 ≈ 0.27ms.
+- `[10/10] --verify-tighten` 에 `--require-ipc-fabric` 추가 — 위반 = 출하 산출물 전량 폐기.
+- 시험(GoldenMasterReleasePackagingTests §14 · 3): 실 빌드 Ok + 0B + CLI · 타 어셈블리 = Missing · 일관 재봉인 패치 5종(TryConsume MemoryBarrier→Sleep · Enter Increment→SpinOnce(전이) ·
+  TryPublish Enter→Dispose(드레인 유입) · Dispose SpinOnce→Sleep = Blocking · 생성자 시계 ldftn 이탈 = ClockDrift) — 전부 행렬 + ⑪ + ⑤ 는 통과하는 바이너리.
+- 구 출하물: v12.18.3-GM zip 도 ⑥ Ok(패브릭 소스 무변경 — v12.18.4-DEV 결정론화는 테스트 하네스 쪽).

@@ -33,6 +33,19 @@
 //      (CopyHead/PollIntegrity/Append/Verify = _gate 경로) · BlazorHomeForm(중첩 클로저 포함) 의 DashboardSnapshotHub.AttachAuditLedger 호출 정확히 1.
 //      부재 = AuditTelemetryMissing · 규칙 이탈 = AuditTelemetryUnsafe. 해독은 IlCursor(스트리밍 · 버퍼 0) — PumpCore 처럼 큰 본문도 길이 제한 없음.
 //
+//   ⑥ [v12.18.4-GM · 방향 A] IPC 패브릭 무슬립 위상(CheckIpcFabric · 힙 0 · requireIpcFabric 일 때) — v12.18.4-DEV 가 테스트의 실 시계 Sleep 을
+//      논리 시계 스텝 락으로 바꿨다. 그 결정론이 '테스트만의 성질'이 아니라 출하 바이너리의 매매 통로에서도 성립함을 IL 사실로 판정한다:
+//      MS2E.Infrastructure.MmfIpcFabric 정의 1개 · 핫 진입점 TryPublish/TryConsume/Beat/CheckPeerAlive · .ctor · Dispose 각 1개.
+//      (a) 핫 폐포 = 진입점에서 call/callvirt 로 닿는 같은 형식 메서드 전부(Enter · VerifyHeaderIntegrity · Poison · 속성 접근자 …)를 고정점까지 추적.
+//          폐포 안 차단 대기 0: Thread.Sleep/Yield/SpinWait/Join · Task.Delay/Wait/WaitAll/WaitAny/Yield · SpinWait(SpinOnce 포함) · Monitor ·
+//          WaitHandle 계열 · ManualResetEventSlim · SemaphoreSlim · Mutex · SpinLock · ReaderWriterLockSlim · Lock · Barrier · CountdownEvent.
+//          ldftn/ldvirtftn 으로 같은 대상을 위임에 담는 것도 같은 판정. 중첩 형식(클로저) 메서드 호출 · 해석 불가 피호출자 = 판정 불가 → 거부.
+//          다른 형식으로 나가는 호출(증명 서비스 동결 · 블랙박스 기록 · 인터락 Resync)은 추적하지 않는다(범위 한정 — 각 대상의 계약).
+//      (b) 형식 전체(중첩 포함 · 생성자 · Dispose) 비결정 슬립 0: Thread.Sleep/Yield · Task.Delay · SpinWait.SpinUntil.
+//          Dispose 의 바운드 드레인(SpinWait.SpinOnce · 2,000,000 상한)은 핫 폐포 밖이라 허용 — 언매핑 전 인플라이트 드레인이 그 목적.
+//      (c) 생성자 기본 시계 = ldftn Stopwatch.GetTimestamp — 주입 시계(테스트의 논리 시계)는 인자로만 들어오고 출하 기본값은 단조 실 시계.
+//      부재 = IpcFabricMissing · 대기/슬립 = IpcFabricBlocking · 기본 시계 이탈 = IpcFabricClockDrift. zip 은 ②의 MMF 뷰 로더 그대로(무추출).
+//
 //  δ=0 범위(정직): ③ CompareMatrix 는 힙 0(테스트 실측 — PEMemoryBlock/BlobReader 는 구조체 · 명령 버퍼 stackalloc).
 //   ①의 JSON 파싱 · 행 문자열 분해와 ②의 팽창 버퍼 · PEReader 생성은 콜드 경로라 할당한다. 시간도 ②와 ③을 분리해 보고한다.
 // ============================================================================
@@ -59,6 +72,9 @@ namespace StockManager.Tools
         AuditLedgerBypass = 19,    // [v12.18.2-GM] Append 중복 · 순서(Judge < Append < WriteStored) · 직후 분기 · 진입점 ldnull 이탈
         AuditTelemetryMissing = 20, // [v12.18.3-GM] 원장 Snapshot/PublishSnapshot · 허브/어댑터 소비자 · 호스트 AttachAuditLedger 결선 없음
         AuditTelemetryUnsafe = 21,  // [v12.18.3-GM] Snapshot 잠금/원장 메서드/금지 필드/기록/할당 · seqlock 이탈 · 소비자의 잠금 경로 호출
+        IpcFabricMissing = 22,      // [v12.18.4-GM] MmfIpcFabric 정의 · 핫 진입점(TryPublish/TryConsume/Beat/CheckPeerAlive) · 생성자 · Dispose 없음
+        IpcFabricBlocking = 23,     // [v12.18.4-GM] 핫 폐포의 차단 대기(Sleep/Yield/SpinWait/잠금/대기 핸들/Task 대기) · 형식 전체의 비결정 슬립 · 해석 불가 피호출자
+        IpcFabricClockDrift = 24,   // [v12.18.4-GM] 생성자 기본 시계 ≠ Stopwatch.GetTimestamp(가짜/논리 시계는 테스트 주입만)
     }
 
     /// <summary>매니페스트 행 1개 — 키 · 규칙 비트(1 TrueOnly · 2 NonDecreasing · 4 NonIncreasing) · 호스트 폴백 · 하한 · 상한.</summary>
@@ -90,6 +106,15 @@ namespace StockManager.Tools
                              OpCalli = 0x29, OpLdftn = 0xFE06, OpLdvirtftn = 0xFE07;
         private static readonly string[] LockTypes = { "Monitor", "SpinLock", "Mutex", "SemaphoreSlim", "ReaderWriterLockSlim", "Lock", "WaitHandle" };
         private static readonly string[] ForbiddenFields = { "_gate", "_hasher", "_head" };
+
+        // [v12.18.4-GM] ⑥ IPC 패브릭 무슬립 위상 판독 대상
+        public const string FabricNamespace = "MS2E.Infrastructure", FabricName = "MmfIpcFabric";
+        public const int MaxFabricMethods = 256;
+        private static readonly string[] FabricRoots = { "TryPublish", "TryConsume", "Beat", "CheckPeerAlive" };
+        // 핫 폐포 금지 — 형식 전체(어떤 멤버든 대기/잠금)
+        private static readonly string[] BlockingTypes = { "SpinWait", "Monitor", "WaitHandle", "EventWaitHandle", "ManualResetEvent", "AutoResetEvent", "ManualResetEventSlim",
+                                                           "SemaphoreSlim", "Semaphore", "Mutex", "SpinLock", "ReaderWriterLockSlim", "Lock", "Barrier", "CountdownEvent" };
+        private static readonly string[] ThreadWaits = { "Sleep", "Yield", "SpinWait", "Join" }, TaskWaits = { "Delay", "Wait", "WaitAll", "WaitAny", "Yield" };
 
         static ShippedTightenMatrixVerifier()
         {
@@ -128,7 +153,7 @@ namespace StockManager.Tools
 
         /// <summary>출하 zip ↔ 매니페스트(json) tightenRules ↔ 가드 고정 명세 ↔ 외부 앵커(master-seal.txt 내용) 대조.</summary>
         public static TightenSealReport Verify(string zipPath, string manifestJson, string anchorText, int expectedKeys, bool requireAuditLedger = false,
-                                               bool requireAuditTelemetry = false)
+                                               bool requireAuditTelemetry = false, bool requireIpcFabric = false)
         {
             TightenSealReport R(TightenSealVerdict v, string d, int n = 0, string? sha = null, long inf = 0, long cmp = 0) => new(v, d, n, sha, inf, cmp);
 
@@ -169,6 +194,7 @@ namespace StockManager.Tools
                 v = CompareMatrix(pe, md, rows, out at);
                 if (v == TightenSealVerdict.Ok && requireAuditLedger) v = CheckAuditWiring(pe, md);
                 if (v == TightenSealVerdict.Ok && requireAuditTelemetry) v = CheckAuditTelemetry(pe, md);
+                if (v == TightenSealVerdict.Ok && requireIpcFabric) v = CheckIpcFabric(pe, md);
             }
             catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or ArgumentException or IndexOutOfRangeException)
             {
@@ -179,7 +205,8 @@ namespace StockManager.Tools
             string detail = v switch
             {
                 TightenSealVerdict.Ok => $"강화 전용 키 {rows.Length} · 키 순서 · 규칙(==1 / ≥ / ≤) · 폴백 · 하한 · 상한 = 매니페스트 = 명세 · 호스트 DLL = 봉인 해시" + (requireAuditLedger ? " · 감사 원장 선기록 결선(⑪)" : "")
-                                         + (requireAuditTelemetry ? " · 관제 배지 무잠금 seqlock 결선(⑤)" : ""),
+                                         + (requireAuditTelemetry ? " · 관제 배지 무잠금 seqlock 결선(⑤)" : "")
+                                         + (requireIpcFabric ? " · IPC 패브릭 핫 폐포 무대기 · 무슬립 · 기본 시계 Stopwatch(⑥)" : ""),
                 TightenSealVerdict.WriterMissing => WriterNamespace + "." + WriterName + " 정의 또는 .cctor/get_Rules/IsTightening 본문 없음",
                 TightenSealVerdict.WriterAmbiguous => WriterNamespace + "." + WriterName + " 정의/본문 2개 이상",
                 TightenSealVerdict.CountMismatch => $"바이너리 키 표 · 정적 데이터 길이 ≠ 매니페스트 {rows.Length}",
@@ -193,6 +220,9 @@ namespace StockManager.Tools
                 TightenSealVerdict.AuditLedgerBypass => "감사 원장 우회(Append 정확히 1 · Judge < Append < WriteStored · 직후 조건 분기 · 진입점 감사 인자 ≠ null)",
                 TightenSealVerdict.AuditTelemetryMissing => "관제 배지 결선 없음(원장 Snapshot/PublishSnapshot · 허브 PumpCore/어댑터 TryGetAuditLedger 의 Snapshot 호출 · 호스트 AttachAuditLedger)",
                 TightenSealVerdict.AuditTelemetryUnsafe => "관제 배지 잠금 간섭(Snapshot: seqlock 판독 ≥ 2 · 잠금/원장 메서드/_gate·_hasher·_head/기록/할당 0 · PublishSnapshot 시퀀스 증가 정확히 2 · 소비자 Snapshot 정확히 1 · 그 외 원장 호출 0)",
+                TightenSealVerdict.IpcFabricMissing => FabricNamespace + "." + FabricName + " 정의 또는 TryPublish/TryConsume/Beat/CheckPeerAlive/.ctor/Dispose 본문 없음",
+                TightenSealVerdict.IpcFabricBlocking => "IPC 패브릭 차단 대기(핫 폐포: Sleep/Yield/SpinWait/잠금/대기 핸들/Task 대기 0 · 중첩 형식 호출 0 · 형식 전체: Thread.Sleep/Yield · Task.Delay · SpinWait.SpinUntil 0)",
+                TightenSealVerdict.IpcFabricClockDrift => "IPC 패브릭 생성자 기본 시계 ≠ Stopwatch.GetTimestamp(논리/가짜 시계는 주입 인자만)",
                 _ => v.ToString(),
             };
             return R(v, detail, rows.Length, sha, inflateUs, compareUs);
@@ -427,6 +457,123 @@ namespace StockManager.Tools
                 }
             }
             return attaches == 1 ? TightenSealVerdict.Ok : attaches == 0 ? TightenSealVerdict.AuditTelemetryMissing : TightenSealVerdict.WriterAmbiguous;
+        }
+
+        /// <summary>
+        /// ⑥ [v12.18.4-GM] IPC 패브릭 무슬립 위상(힙 0) — (a) 핫 폐포 차단 대기 0 · (b) 형식 전체 비결정 슬립 0 · (c) 생성자 기본 시계 = Stopwatch.GetTimestamp.
+        /// 폐포 상태는 메서드 행 번호 기준 stackalloc 바이트(0 미방문 · 1 대기열 · 2 판독 완료)로 고정점까지 돈다(재귀 · 컬렉션 0).
+        /// </summary>
+        public static TightenSealVerdict CheckIpcFabric(PEReader pe, MetadataReader md)
+        {
+            TypeDefinitionHandle fabric = default;
+            int fabrics = 0;
+            foreach (var th in md.TypeDefinitions)
+            {
+                var td = md.GetTypeDefinition(th);
+                if (td.GetDeclaringType().IsNil && md.StringComparer.Equals(td.Namespace, FabricNamespace) && md.StringComparer.Equals(td.Name, FabricName)) { fabric = th; fabrics++; }
+            }
+            if (fabrics == 0) return TightenSealVerdict.IpcFabricMissing;
+            if (fabrics > 1) return TightenSealVerdict.WriterAmbiguous;
+
+            // 메서드 목록 = 연속 행(MethodList 범위). 비연속(MethodPtr 간접 표) · 과다 = 판정 불가 → 거부
+            var methods = md.GetTypeDefinition(fabric).GetMethods();
+            int count = methods.Count, first = 0, k = 0;
+            if (count == 0 || count > MaxFabricMethods) return TightenSealVerdict.IpcFabricMissing;
+            Span<byte> state = stackalloc byte[count];
+            Span<int> roots = stackalloc int[4];
+            int ctors = 0, ctorRva = 0, disposes = 0;
+            foreach (var mh in methods)
+            {
+                int row = MetadataTokens.GetRowNumber(mh);
+                if (k == 0) first = row;
+                else if (row != first + k) return TightenSealVerdict.IpcFabricMissing;
+                var m = md.GetMethodDefinition(mh);
+                for (int r = 0; r < FabricRoots.Length; r++)
+                    if (md.StringComparer.Equals(m.Name, FabricRoots[r]))
+                    {
+                        if (m.RelativeVirtualAddress == 0) return TightenSealVerdict.IpcFabricMissing;
+                        roots[r]++; state[k] = 1;
+                    }
+                if (md.StringComparer.Equals(m.Name, ".ctor")) { ctors++; ctorRva = m.RelativeVirtualAddress; }
+                else if (md.StringComparer.Equals(m.Name, "Dispose") && m.RelativeVirtualAddress != 0) disposes++;
+                k++;
+            }
+            for (int r = 0; r < roots.Length; r++)
+            {
+                if (roots[r] == 0) return TightenSealVerdict.IpcFabricMissing;
+                if (roots[r] > 1) return TightenSealVerdict.WriterAmbiguous;
+            }
+            if (ctors == 0 || ctorRva == 0 || disposes == 0) return TightenSealVerdict.IpcFabricMissing;
+            if (ctors > 1 || disposes > 1) return TightenSealVerdict.WriterAmbiguous;
+
+            // (a) 핫 폐포 — 진입점에서 닿는 같은 형식 메서드를 고정점까지 판독
+            for (bool more = true; more;)
+            {
+                more = false;
+                k = 0;
+                foreach (var mh in methods)
+                {
+                    if (state[k] != 1) { k++; continue; }
+                    state[k] = 2; more = true;
+                    var c = IlCursor.Open(pe, md.GetMethodDefinition(mh).RelativeVirtualAddress);
+                    while (c.Next(out ushort op, out int arg))
+                    {
+                        if (op != OpCall && op != OpCallvirt && op != OpNewobj && op != OpLdftn && op != OpLdvirtftn) continue;
+                        var h = MetadataTokens.EntityHandle(arg);
+                        if (h.Kind == HandleKind.MethodSpecification) h = md.GetMethodSpecification((MethodSpecificationHandle)h).Method;
+                        if (h.Kind == HandleKind.MethodDefinition)
+                        {
+                            var owner = md.GetMethodDefinition((MethodDefinitionHandle)h).GetDeclaringType();
+                            if (owner == fabric)
+                            {
+                                int idx = MetadataTokens.GetRowNumber(h) - first;
+                                if ((uint)idx >= (uint)count) return TightenSealVerdict.IpcFabricMissing;
+                                if (state[idx] == 0) state[idx] = 1;
+                                continue;
+                            }
+                            if (Outermost(md, owner) == fabric) return TightenSealVerdict.IpcFabricBlocking;   // 중첩 형식(클로저) = 폐포 밖 본문 → 판정 불가
+                        }
+                        if (!TryCallee(md, arg, out var type, out var name, out _)) return TightenSealVerdict.IpcFabricBlocking;
+                        if (NamedAny(md, type, BlockingTypes)
+                            || (md.StringComparer.Equals(type, "Thread") && NamedAny(md, name, ThreadWaits))
+                            || ((md.StringComparer.Equals(type, "Task") || md.StringComparer.Equals(type, "Task`1")) && NamedAny(md, name, TaskWaits)))
+                            return TightenSealVerdict.IpcFabricBlocking;
+                    }
+                    if (c.Bad) return TightenSealVerdict.IpcFabricMissing;
+                    k++;
+                }
+            }
+
+            // (b) 형식 전체(중첩 포함) 비결정 슬립 0 · (c) 생성자 기본 시계
+            int clocks = 0;
+            foreach (var th in md.TypeDefinitions)
+            {
+                if (Outermost(md, th) != fabric) continue;
+                foreach (var mh in md.GetTypeDefinition(th).GetMethods())
+                {
+                    int rva = md.GetMethodDefinition(mh).RelativeVirtualAddress;
+                    if (rva == 0) continue;
+                    var c = IlCursor.Open(pe, rva);
+                    while (c.Next(out ushort op, out int arg))
+                    {
+                        if (op != OpCall && op != OpCallvirt && op != OpLdftn && op != OpLdvirtftn) continue;
+                        if (!TryCallee(md, arg, out var type, out var name, out _)) return TightenSealVerdict.IpcFabricBlocking;
+                        if ((md.StringComparer.Equals(type, "Thread") && (md.StringComparer.Equals(name, "Sleep") || md.StringComparer.Equals(name, "Yield")))
+                            || ((md.StringComparer.Equals(type, "Task") || md.StringComparer.Equals(type, "Task`1")) && md.StringComparer.Equals(name, "Delay"))
+                            || (md.StringComparer.Equals(type, "SpinWait") && md.StringComparer.Equals(name, "SpinUntil")))
+                            return TightenSealVerdict.IpcFabricBlocking;
+                        if (rva == ctorRva && op == OpLdftn && IsMethod(md, arg, "Stopwatch", "GetTimestamp")) clocks++;
+                    }
+                    if (c.Bad) return TightenSealVerdict.IpcFabricMissing;
+                }
+            }
+            return clocks == 1 ? TightenSealVerdict.Ok : TightenSealVerdict.IpcFabricClockDrift;
+        }
+
+        private static TypeDefinitionHandle Outermost(MetadataReader md, TypeDefinitionHandle t)
+        {
+            for (var d = md.GetTypeDefinition(t).GetDeclaringType(); !d.IsNil; d = md.GetTypeDefinition(t).GetDeclaringType()) t = d;
+            return t;
         }
 
         // 소비자 본문의 원장 Snapshot 호출 수 · 그 외 원장 메서드 호출 = -1 · 해독 실패 = -2

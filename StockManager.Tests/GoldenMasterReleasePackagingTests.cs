@@ -83,13 +83,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_3_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_4_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 3, 0), v);
-            Assert.Equal("12.18.3", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 4, 0), v);
+            Assert.Equal("12.18.4", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.3</Version>", csproj);
+            Assert.Contains("<Version>12.18.4</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -110,7 +110,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.3-GM Production Golden Master", s);
+            Assert.Contains("v12.18.4-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -190,6 +190,10 @@ namespace StockManager.Tests
             var audit = ShippedTightenMatrixVerifier.Verify(zip, json, anchor, TightenKeys, requireAuditLedger: true);
             _out.WriteLine($"[출하] 감사 원장 결선 {audit.Verdict} · {audit.Detail}");
             Assert.Equal(TightenSealVerdict.Ok, audit.Verdict);
+            // [v12.18.3-GM ⑤ · v12.18.4-GM ⑥] 관제 배지 무잠금 결선 · IPC 패브릭 무슬립 위상 — 출하 zip 호스트 DLL(스크립트 [10/10] 과 같은 요구 플래그)
+            var full = ShippedTightenMatrixVerifier.Verify(zip, json, anchor, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true, requireIpcFabric: true);
+            _out.WriteLine($"[출하] ⑪+⑤+⑥ {full.Verdict} · {full.Detail}");
+            Assert.Equal(TightenSealVerdict.Ok, full.Verdict);
             // ★1비트 변조(임시 사본) = 거부 · 원본 무손상
             string tmp = Path.Combine(Path.GetTempPath(), "ms2e_gm_tamper_" + Guid.NewGuid().ToString("N") + ".zip");
             try
@@ -1193,7 +1197,7 @@ namespace StockManager.Tests
         {
             string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-live-armed\"", s);
-            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry') \"verify-tighten\"", s);
+            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') \"verify-tighten\"", s);
             Assert.Equal(7, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가(폐기 경로 불변)
             string dir = TempDir();
             try
@@ -1224,17 +1228,40 @@ namespace StockManager.Tests
 
         private const string Ledger = ShippedTightenMatrixVerifier.LedgerName;
 
-        /// <summary>호출 명령(call/callvirt + 토큰) 5바이트 패턴의 파일 오프셋 — 정확히 1개여야 한다(패치 대상 모호성 차단).</summary>
-        private static int UniqueCallSite(byte[] dll, int token)
+        /// <summary>
+        /// 형식 outerType(중첩 클로저 형식 포함) 메서드 본문 안의 호출 명령(call/callvirt + 토큰) 파일 오프셋 — 정확히 1개여야 한다(패치 대상 모호성 차단).
+        /// 검사기(CheckAuditTelemetry (d))와 같은 범위 — [v12.18.4-DEV] 같은 DLL 의 시뮬레이션 하네스(LongSoakProfileHarness)도 AttachAuditLedger 를 부른다.
+        /// </summary>
+        private static int UniqueCallSite(byte[] dll, int token, string outerType)
         {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
             int found = -1, n = 0;
-            for (int i = 0; i + 5 <= dll.Length; i++)
+            foreach (var mh in md.MethodDefinitions)
             {
-                if ((dll[i] != 0x28 && dll[i] != 0x6F) || BitConverter.ToInt32(dll, i + 1) != token) continue;
-                found = i; n++;
+                var m = md.GetMethodDefinition(mh);
+                var t = m.GetDeclaringType();
+                for (var d = md.GetTypeDefinition(t).GetDeclaringType(); !d.IsNil; d = md.GetTypeDefinition(t).GetDeclaringType()) t = d;
+                if (m.RelativeVirtualAddress == 0 || md.GetString(md.GetTypeDefinition(t).Name) != outerType) continue;
+                string name = md.GetString(m.Name);
+                var (off, il, ins) = TightenOnlySettingGuardTests.Body(dll, md.GetString(md.GetTypeDefinition(m.GetDeclaringType()).Name), name);
+                if (off != BodyFileOffset(pe, dll, m.RelativeVirtualAddress)) continue;            // 같은 이름 다른 오버로드 = 건너뜀(Body 는 첫 일치만)
+                foreach (var i in ins)
+                    if ((i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && i.Operand == token) { found = off + i.At; n++; }
             }
-            Assert.True(n == 1, $"호출 지점 {n}개(토큰 0x{token:X8})");
+            Assert.True(n == 1, $"{outerType} 안 호출 지점 {n}개(토큰 0x{token:X8})");
             return found;
+        }
+
+        private static int BodyFileOffset(PEReader pe, byte[] dll, int rva)
+        {
+            foreach (var s in pe.PEHeaders.SectionHeaders)
+                if (rva >= s.VirtualAddress && rva < s.VirtualAddress + Math.Max(s.VirtualSize, s.SizeOfRawData))
+                {
+                    int file = rva - s.VirtualAddress + s.PointerToRawData;
+                    return file + ((dll[file] & 0x3) == 0x2 ? 1 : ((dll[file + 1] >> 4) & 0xF) * 4);
+                }
+            return -1;
         }
 
         private static int MemberRefToken(byte[] dll, string type, string name)
@@ -1331,7 +1358,7 @@ namespace StockManager.Tests
             int pumpCall = hoff + hins.Single(i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && i.Operand == snapTok).At;
             var (aoff, _, ains) = TightenOnlySettingGuardTests.Body(dll, ShippedTightenMatrixVerifier.AdapterName, ShippedTightenMatrixVerifier.AdapterBadge);
             int badgeCall = aoff + ains.Single(i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && i.Operand == snapTok).At;
-            int attach = UniqueCallSite(dll, MonotonicSettingAuditLogTests.TokenOf(dll, ShippedTightenMatrixVerifier.HubName, "AttachAuditLedger"));
+            int attach = UniqueCallSite(dll, MonotonicSettingAuditLogTests.TokenOf(dll, ShippedTightenMatrixVerifier.HubName, "AttachAuditLedger"), ShippedTightenMatrixVerifier.HostName);
             static byte[] Tok(int t) => BitConverter.GetBytes(t);
             const TightenSealVerdict U = TightenSealVerdict.AuditTelemetryUnsafe, M = TightenSealVerdict.AuditTelemetryMissing;
 
@@ -1382,6 +1409,122 @@ namespace StockManager.Tests
             _out.WriteLine($"[관제 배지] v12.18.2-GM: 요구 없음 {old.Verdict} · 요구 {req.Verdict}");
             Assert.Equal(TightenSealVerdict.Ok, old.Verdict);                                   // 구 출하물 재수검 호환
             Assert.Equal(TightenSealVerdict.AuditTelemetryMissing, req.Verdict);               // 배지 이전 바이너리 = 이번 출하 게이트 불통
+        }
+
+        // ════════════ §14 [v12.18.4-GM · 방향 A] IPC 패브릭 무슬립 위상 무추출 · 무할당 수검 ════════════
+
+        private const string Fabric = ShippedTightenMatrixVerifier.FabricName;
+
+        /// <summary>본문 안 '호출 명령 + 지정 메서드 이름' 의 명령 파일 오프셋 — 정확히 1개여야 한다(패치 대상 모호성 차단).</summary>
+        private static int CallIn(byte[] dll, string method, string callee)
+        {
+            var (off, _, ins) = TightenOnlySettingGuardTests.Body(dll, Fabric, method);
+            var hits = ins.Where(i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == callee).ToList();
+            Assert.True(hits.Count == 1, $"{Fabric}.{method} 안 {callee} 호출 {hits.Count}개");
+            return off + hits[0].At;
+        }
+
+        [Fact]
+        public void IpcFabric_BuiltHost_Ps51Zip_HotClosureSleepFree_Ok_InspectorZeroAlloc_Cli()
+        {
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('F', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll), json = TightenManifest(dll, seal, SourceRules());
+                var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true, requireIpcFabric: true);
+                _out.WriteLine($"[IPC 위상] {r.Verdict} · {r.Detail} · 대조 {r.CompareMicros}µs");
+                Assert.True(r.Verdict == TightenSealVerdict.Ok, r.Verdict + " " + r.Detail);
+                Assert.Contains("IPC 패브릭 핫 폐포 무대기 · 무슬립 · 기본 시계 Stopwatch(⑥)", r.Detail);
+
+                using var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll));
+                var md = pe.GetMetadataReader();
+                Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.CheckIpcFabric(pe, md));
+                long alloc = MinAllocated(() => { for (int i = 0; i < 200; i++) ShippedTightenMatrixVerifier.CheckIpcFabric(pe, md); });
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 200; i++) ShippedTightenMatrixVerifier.CheckIpcFabric(pe, md);
+                sw.Stop();
+                _out.WriteLine($"[IPC 위상] 200회 할당 {alloc}B · 회당 {sw.Elapsed.TotalMicroseconds / 200:F1}µs");
+                Assert.Equal(0, alloc);
+
+                // 실측 전제(소스 주석이 아니라 IL 사실): Dispose 만 바운드 SpinOnce · 핫 진입점 4종은 그 호출 0
+                var (_, _, dins) = TightenOnlySettingGuardTests.Body(dll, Fabric, "Dispose");
+                Assert.Contains(dins, i => i.Op == OpCodes.Call && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == "SpinOnce");
+                foreach (var root in new[] { "TryPublish", "TryConsume", "Beat", "CheckPeerAlive" })
+                    Assert.DoesNotContain(TightenOnlySettingGuardTests.Body(dll, Fabric, root).Ins,
+                                          i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) is "SpinOnce" or "Sleep");
+
+                // 다른 어셈블리(패브릭 없음) = 부재 거부(조용한 통과 0)
+                using var tpe = new PEReader(File.OpenRead(typeof(GoldenMasterReleasePackagingTests).Assembly.Location));
+                Assert.Equal(TightenSealVerdict.IpcFabricMissing, ShippedTightenMatrixVerifier.CheckIpcFabric(tpe, tpe.GetMetadataReader()));
+
+                string mf = Path.Combine(dir, "RELEASE_MANIFEST.json"), sf = Path.Combine(dir, "master-seal.txt");
+                File.WriteAllText(mf, json);
+                File.WriteAllText(sf, seal + Environment.NewLine);
+                var w = new StringWriter();
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, ReleaseHandshakeCli.Run(new[] { "--verify-tighten", zip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6",
+                                                                                       "--require-audit-ledger", "--require-audit-telemetry", "--require-ipc-fabric" }, w));
+                _out.WriteLine(w.ToString().TrimEnd());
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void IpcFabric_BinaryPatched_ConsistentlyResealed_Rejected_OtherSealsUnaffected()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            int sleep = MemberRefToken(dll, "Thread", "Sleep"), spinOnce = MemberRefToken(dll, "SpinWait", "SpinOnce"), barrier = MemberRefToken(dll, "Interlocked", "MemoryBarrier");
+            int consumeBarrier = CallIn(dll, "TryConsume", "MemoryBarrier");
+            int enterIncrement = CallIn(dll, "Enter", "Increment");
+            int publishEnter = CallIn(dll, "TryPublish", "Enter");
+            int disposeSpin = CallIn(dll, "Dispose", "SpinOnce");
+            var (coff, _, cins) = TightenOnlySettingGuardTests.Body(dll, Fabric, ".ctor");
+            var clock = cins.Single(i => i.Op == OpCodes.Ldftn && MonotonicSettingAuditLogTests.MethodName(dll, i.Operand) == "GetTimestamp");
+            static byte[] Tok(int t) => BitConverter.GetBytes(t);
+            const TightenSealVerdict B = TightenSealVerdict.IpcFabricBlocking;
+
+            var cases = new (string Name, byte[] Bytes, TightenSealVerdict Expect)[]
+            {
+                ("TryConsume MemoryBarrier → Thread.Sleep(진입점 직접 슬립)", Patch(dll, b => Tok(sleep).CopyTo(b, consumeBarrier + 1)), B),
+                ("Enter Interlocked.Increment → SpinWait.SpinOnce(폐포 전이 — 진입점 아님)", Patch(dll, b => Tok(spinOnce).CopyTo(b, enterIncrement + 1)), B),
+                ("TryPublish Enter → Dispose(바운드 드레인 SpinOnce 가 핫 폐포로 유입)", Patch(dll, b => Tok(MonotonicSettingAuditLogTests.TokenOf(dll, Fabric, "Dispose")).CopyTo(b, publishEnter + 1)), B),
+                ("Dispose SpinOnce → Thread.Sleep(형식 전체 비결정 슬립)", Patch(dll, b => Tok(sleep).CopyTo(b, disposeSpin + 1)), B),
+                ("생성자 기본 시계 Stopwatch.GetTimestamp → 다른 메서드(시계 이탈)", Patch(dll, b => Tok(barrier).CopyTo(b, coff + clock.At + 2)), TightenSealVerdict.IpcFabricClockDrift),
+            };
+            string dir = TempDir();
+            try
+            {
+                string seal = new string('C', 64);
+                var rules = SourceRules();
+                int n = 0;
+                foreach (var (name, bytes, expect) in cases)
+                {
+                    string zip = Ps51HostZip(dir, "evil" + n++ + ".zip", bytes);
+                    string json = TightenManifest(bytes, seal, rules);
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true, requireIpcFabric: true);
+                    _out.WriteLine($"[IPC 패치] {name} → {r.Verdict}");
+                    Assert.Equal(expect, r.Verdict);
+                    // 요구 없음 = 기존 동작(행렬 + ⑪ + ⑤ 는 이 패치들과 무관하게 통과 — ⑥ 만이 잡는다)
+                    Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true).Verdict);
+                }
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void IpcFabric_PreviousShipment_v12_18_3_GM_TopologyUnchanged_Ok()
+        {
+            // 정직: 패브릭 소스는 v12.18.3-GM 이후 변경 없음(v12.18.4-DEV 결정론화는 테스트 하네스 쪽) — 구 출하물도 ⑥ 통과가 맞다.
+            string root = RepoRoot();
+            string? d = new[] { Path.Combine(root, "release", "superseded-v12.18.3-GM"), Path.Combine(root, "release") }
+                .FirstOrDefault(x => File.Exists(Path.Combine(x, "release-v12.18.3-GM.zip")) && File.Exists(Path.Combine(x, "RELEASE_MANIFEST.json"))
+                                     && File.ReadAllText(Path.Combine(x, "RELEASE_MANIFEST.json")).Contains("\"v12.18.3-GM\"", StringComparison.Ordinal));
+            if (d is null) { _out.WriteLine("[IPC 위상] v12.18.3-GM 출하물 없음 — 구 출하물 대조 생략"); return; }
+            var r = ShippedTightenMatrixVerifier.Verify(Path.Combine(d, "release-v12.18.3-GM.zip"), File.ReadAllText(Path.Combine(d, "RELEASE_MANIFEST.json")),
+                                                        File.ReadAllText(Path.Combine(d, "master-seal.txt")), TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true, requireIpcFabric: true);
+            _out.WriteLine($"[IPC 위상] v12.18.3-GM: {r.Verdict} · {r.Detail}");
+            Assert.Equal(TightenSealVerdict.Ok, r.Verdict);
         }
     }
 }
