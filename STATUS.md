@@ -10,7 +10,7 @@
 - 매니페스트 tightenRules(태그 소스 판독 · 하위 호환) · 핸드셰이크 TightenRuleMismatch(행렬 누락/변조 거부) · 스트리머 동등
 - ShippedTightenMatrixVerifier(--verify-tighten): zip 호스트 DLL IL 키 · 규칙 · 폴백/하한/상한 · 비교 방향 ↔ 매니페스트 ↔ 명세 — 대조 0B
 - --verify-live-armed --expect-tighten-keys 6(기입기 누락 출하 거부) · 패치+재봉인 5종 거부 · 변이 2/2 Red
-- HANDOVER §52~§54 · 버전 12.18.1
+- 출하: 태그 v12.18.1-GM(6ded491) · zip 17F1F124 · masterSeal 551DBA60 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과 · HANDOVER §52~§54
 
 ## Next Milestone
-- v12.18.1-GM 출하 기록(zip SHA · masterSeal) 확정 · 국면 경계 실 호가 보정 · 감사 해시 체인 로거(미착수)
+- 국면 경계 실 호가 보정 · 감사 해시 체인 로거(미착수) · 피어(QuantumVault) 정돈 후 피어 포함 재출하
