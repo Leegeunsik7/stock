@@ -317,6 +317,8 @@ namespace StockManager.Adapters
         public long SignalRejects => Interlocked.Read(ref _signalRejects);
         public bool SignalGateEnabled => Volatile.Read(ref _signalGate) is not null;
         public void EnableSignalGate(StockManager.Engines.IQuantSignalGate gate) => Volatile.Write(ref _signalGate, gate ?? throw new ArgumentNullException(nameof(gate)));
+        /// <summary>[v12.18.2-DEV] 시그널 게이트 해제(런타임 토글 — 호스트는 SignalGateRuntimeSwitch 경유로만: 물리 키가 하나라도 켜져 있으면 해제 거부).</summary>
+        public void DisableSignalGate() => Volatile.Write(ref _signalGate, null);
 
         private IBrokerLimitFeed? _splitCaps;
         private Action? _onSplitUnavailable;

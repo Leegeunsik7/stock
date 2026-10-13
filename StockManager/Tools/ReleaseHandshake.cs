@@ -195,7 +195,8 @@ namespace StockManager.Tools
         string ManifestSigSha256, string MasterSeal, string GenesisHeadHash,
         IReadOnlyList<(string Name, string Sha256)> Artifacts,
         string ZipName, string ZipSha256, string ShimSha256,
-        bool LiveArmedDefault, IReadOnlyList<string> Interlocks, PeerRecord? Peer);
+        bool LiveArmedDefault, IReadOnlyList<string> Interlocks, PeerRecord? Peer,
+        IReadOnlyList<string>? TightenRules = null);   // [v12.18.1-GM] 강화 전용 행렬 "키|규칙|폴백|하한|상한"(태그 소스 판독 · 없으면 기록 생략 = 구 매니페스트 호환)
 
     public sealed record RepoObservation(string? Head, string? TagCommit, IReadOnlyList<string> DirtyPaths, IReadOnlyList<string> DriftPaths);
 
@@ -212,7 +213,8 @@ namespace StockManager.Tools
     public sealed record HandshakeObservation(
         RepoObservation Repo, string? ManifestSigSha256, string? ManifestSigVersion, string? ManifestSigMasterSeal,
         IReadOnlyList<(string Name, string Sha256)> ManifestSigArtifacts, string? ZipSha256, string? AnchorSeal, string? ShimSha256,
-        PeerObservation? Peer, string? ManifestSigGenesis = null, IReadOnlyList<string>? TagInterlocks = null, PeerPin? Pin = null);
+        PeerObservation? Peer, string? ManifestSigGenesis = null, IReadOnlyList<string>? TagInterlocks = null, PeerPin? Pin = null,
+        IReadOnlyList<string>? TagTightenRules = null);
 
     public enum ReleaseHandshakeVerdict : byte
     {
@@ -222,6 +224,7 @@ namespace StockManager.Tools
         GenesisMismatch = 17, InterlockSetMismatch = 18, PeerIdentityMismatch = 19,   // [다중 저장소 봉인 감사] 무대조 필드 교정
         ParserDifferential = 20,   // 독립 무할당 판독기(ManifestSealStreamer)가 거부 — 중복 키 · 이스케이프 등 판독기마다 달리 보이는 매니페스트
         PeerDrift = 21,            // [방향 B] 기록 피어 ≠ 패키징 시작 시 고정한 피어(빌드 도중 피어 HEAD/봉인 이동)
+        TightenRuleMismatch = 22,  // [v12.18.1-GM] 강화 전용 행렬 기록 ≠ 태그 소스(TightenOnlyUiSettingWriter 표) — 누락(제거) · 방향/상수 변조
     }
 
     public static class MultiRepoReleaseManifest
@@ -239,6 +242,7 @@ namespace StockManager.Tools
             L("genesisHeadHash", m.GenesisHeadHash.ToUpperInvariant()); L("zipName", m.ZipName); L("zipSha256", m.ZipSha256.ToUpperInvariant());
             L("shimSha256", m.ShimSha256.ToUpperInvariant()); L("liveArmedDefault", m.LiveArmedDefault ? "true" : "false");
             foreach (var i in m.Interlocks) L("interlock", i);
+            if (m.TightenRules is { } tr) foreach (var t in tr) L("tighten", t);
             var arts = new List<(string Name, string Sha256)>(m.Artifacts);
             arts.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
             foreach (var a in arts) L("artifact", a.Name + "|" + a.Sha256.ToUpperInvariant());
@@ -270,6 +274,12 @@ namespace StockManager.Tools
                 w.WriteStartArray("interlocks");
                 foreach (var i in m.Interlocks) w.WriteStringValue(i);
                 w.WriteEndArray();
+                if (m.TightenRules is { Count: > 0 } tr)
+                {
+                    w.WriteStartArray("tightenRules");
+                    foreach (var t in tr) w.WriteStringValue(t);
+                    w.WriteEndArray();
+                }
                 w.WriteNumber("artifactCount", m.Artifacts.Count);
                 w.WriteStartArray("artifacts");
                 var arts = new List<(string Name, string Sha256)>(m.Artifacts);
@@ -303,12 +313,19 @@ namespace StockManager.Tools
                 var arts = new List<(string, string)>();
                 foreach (var a in r.GetProperty("artifacts").EnumerateArray()) arts.Add((S(a, "name"), S(a, "sha256")));
                 if (r.GetProperty("artifactCount").GetInt32() != arts.Count) { why = "artifactCount 불일치"; return false; }
+                List<string>? tighten = null;
+                if (r.TryGetProperty("tightenRules", out var tre))
+                {
+                    tighten = new List<string>();
+                    foreach (var t in tre.EnumerateArray()) tighten.Add(t.GetString() ?? throw new FormatException("tightenRule"));
+                    if (tighten.Count == 0) { why = "tightenRules 빈 배열(비정규 — 없으면 키 자체를 생략)"; return false; }
+                }
                 PeerRecord? peer = null;
                 if (r.TryGetProperty("peer", out var pe) && pe.ValueKind == JsonValueKind.Object)
                     peer = new PeerRecord(S(pe, "name"), S(pe, "commit"), S(pe, "manifestPath"), S(pe, "manifestSha256"), S(pe, "rootHash"));
                 manifest = new ReleaseManifestInput(S(r, "version"), S(r, "tag"), S(r, "sourceCommit"), S(r, "manifestSigSha256"), S(r, "masterSeal"),
                     S(r, "genesisHeadHash"), arts, S(r, "zipName"), S(r, "zipSha256"), S(r, "shimSha256"),
-                    r.GetProperty("liveArmedDefault").GetBoolean(), interlocks, peer);
+                    r.GetProperty("liveArmedDefault").GetBoolean(), interlocks, peer, tighten);
                 storedHash = S(r, "manifestHash");
                 return true;
             }
@@ -349,6 +366,13 @@ namespace StockManager.Tools
             { detail = "genesisHeadHash(기록 ≠ manifest.sig) — 제네시스 계보 위조/불일치"; return ReleaseHandshakeVerdict.GenesisMismatch; }
             if (!SameSequence(m.Interlocks, obs.TagInterlocks, out string idiff))
             { detail = "인터락 목록 ≠ 태그 소스 ArmingInterlockSource: " + idiff; return ReleaseHandshakeVerdict.InterlockSetMismatch; }
+            // [v12.18.1-GM] 강화 전용 행렬 — 태그 소스에 표가 있으면 기록도 같아야 한다(기록에서 지운 '조용한 누락' = 거부).
+            //  기록에 있는데 태그 소스를 관측하지 못함 = 거부(fail-closed). 둘 다 없음(구 태그 · 구 매니페스트) = 대상 아님.
+            if (m.TightenRules is not null || obs.TagTightenRules is { Count: > 0 })
+            {
+                if (!SameSequence(m.TightenRules ?? Array.Empty<string>(), obs.TagTightenRules, out string tdiff))
+                { detail = "강화 전용 행렬 ≠ 태그 소스 TightenOnlyUiSettingWriter: " + tdiff; return ReleaseHandshakeVerdict.TightenRuleMismatch; }
+            }
             // ★[다중 저장소 · 실결함 교정] 피어 대조를 요청(관측 피어 있음)했는데 기록에 피어가 없으면 거부 — 수정 전엔 피어 블록을 통째로
             //   건너뛰어 단독(-NoPeer) 매니페스트가 '피어 포함 핸드셰이크 통과'로 보였다.
             if (m.Peer is null && (obs.Peer is not null || obs.Pin is not null))
@@ -373,7 +397,7 @@ namespace StockManager.Tools
         private static bool SameSequence(IReadOnlyList<string> recorded, IReadOnlyList<string>? observed, out string diff)
         {
             diff = "";
-            if (observed is null) { diff = "태그 소스 인터락 열거 관측 불가"; return false; }
+            if (observed is null) { diff = "태그 소스 관측 불가"; return false; }
             if (recorded.Count != observed.Count) { diff = $"개수 {recorded.Count} ≠ {observed.Count}"; return false; }
             for (int i = 0; i < recorded.Count; i++)
                 if (!string.Equals(recorded[i], observed[i], StringComparison.Ordinal)) { diff = $"#{i} {recorded[i]} ≠ {observed[i]}"; return false; }
@@ -459,6 +483,68 @@ namespace StockManager.Tools
             return src is null ? null : ParseInterlockEnum(src);
         }
 
+        public const string TightenSourcePath = "src/02_Infrastructure/Engine/TightenOnlyUiSettingWriter.cs";
+
+        /// <summary>
+        /// [v12.18.1-GM] 태그 커밋의 강화 전용 행렬("키|규칙|폴백|하한|상한" · 키 표 순서). 파일 부재(구 태그) = 빈 목록 ·
+        /// git 실패 · 형식 이탈(열 길이 불일치 · 미지 규칙 · 비정수 · 표 모호) = null(호출측 fail-closed).
+        /// </summary>
+        public static IReadOnlyList<string>? TagTightenRules(string repoRoot, string? commit)
+        {
+            if (commit is null || commit.Length is < 7 or > 64) return null;
+            foreach (char c in commit) if (!char.IsAsciiHexDigit(c)) return null;
+            string? listed = Git(repoRoot, "ls-tree", "--name-only", commit, "--", TightenSourcePath);
+            if (listed is null) return null;
+            if (listed.Trim().Length == 0) return Array.Empty<string>();
+            string? src = Git(repoRoot, "show", commit + ":" + TightenSourcePath);
+            return src is null ? null : ParseTightenMatrix(src);
+        }
+
+        public static IReadOnlyList<string>? ParseTightenMatrix(string source)
+        {
+            static string? Block(string s, string anchor)
+            {
+                int at = s.IndexOf(anchor, StringComparison.Ordinal);
+                if (at < 0 || s.IndexOf(anchor, at + anchor.Length, StringComparison.Ordinal) >= 0) return null;   // 0개 · 2개 이상 = 모호
+                int open = s.IndexOf('{', at), close = open < 0 ? -1 : s.IndexOf('}', open);
+                return open < 0 || close < 0 ? null : s.Substring(open + 1, close - open - 1);
+            }
+            static List<string> Items(string block)
+            {
+                var r = new List<string>();
+                foreach (var line in block.Split('\n'))
+                {
+                    string t = line;
+                    int cm = t.IndexOf("//", StringComparison.Ordinal);
+                    if (cm >= 0) t = t[..cm];
+                    foreach (var item in t.Split(','))
+                        if (item.Trim() is { Length: > 0 } x) r.Add(x);
+                }
+                return r;
+            }
+            static int? Int(string t)
+                => int.TryParse(t.Replace("_", ""), System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out int v) ? v : null;
+            string? kb = Block(source, "string[] Keys ="), rb = Block(source, "ReadOnlySpan<byte> Rules =>"),
+                    fb = Block(source, "int[] Fallbacks ="), nb = Block(source, "int[] Minimums ="), xb = Block(source, "int[] Maximums =");
+            if (kb is null || rb is null || fb is null || nb is null || xb is null) return null;
+            var keys = Items(kb); var rules = Items(rb); var fbs = Items(fb); var mins = Items(nb); var maxs = Items(xb);
+            int n = keys.Count;
+            if (n == 0 || rules.Count != n || fbs.Count != n || mins.Count != n || maxs.Count != n) return null;
+            var rows = new List<string>(n);
+            for (int i = 0; i < n; i++)
+            {
+                string k = keys[i];
+                if (k.Length < 3 || k[0] != '"' || k[^1] != '"') return null;
+                k = k[1..^1];
+                foreach (char c in k) if (!(char.IsAsciiLetterOrDigit(c) || c == '.')) return null;
+                int? rule = rules[i] switch { "RuleTrueOnly" => 1, "RuleNonDecreasing" => 2, "RuleNonIncreasing" => 4, var t => Int(t) };
+                int? f = Int(fbs[i]), lo = Int(mins[i]), hi = Int(maxs[i]);
+                if (rule is not (1 or 2 or 4) || f is null || lo is null || hi is null) return null;
+                rows.Add(FormattableString.Invariant($"{k}|{rule}|{f}|{lo}|{hi}"));
+            }
+            return rows;
+        }
+
         public static IReadOnlyList<string>? ParseInterlockEnum(string source)
         {
             int at = source.IndexOf("enum ArmingInterlockSource", StringComparison.Ordinal);
@@ -540,12 +626,13 @@ namespace StockManager.Tools
     {
         public const string VerifyZipFlag = "--verify-zip", SyncFlag = "--sync-release-manifest", HandshakeFlag = "--release-handshake";
         public const string VerifyLiveArmedFlag = "--verify-live-armed", VerifyInterlocksFlag = "--verify-interlocks";
+        public const string VerifyTightenFlag = "--verify-tighten";
         public const string PeerReadinessFlag = "--peer-readiness", PeerWatchFlag = "--peer-watch";
         public const int ExitOk = 0, ExitRejected = 2, ExitUsage = 64;
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], VerifyTightenFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -613,11 +700,31 @@ namespace StockManager.Tools
                 {
                     // [v12.16.1-GM · 방향 B] 출하 zip 안 호스트 DLL 의 이중 물리 키 기본값을 IL 로 직접 판독(추출 · 로드 · 실행 0)
                     string? zip = Arg(args, 1);
-                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip>"); return ExitUsage; }
+                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip> [--expect-tighten-keys <n>]"); return ExitUsage; }
+                    // [v12.18.1-GM] 강화 전용 키 수 고정(스크립트 = 6) — 가드의 '경로 전체 부재 = 통과'(구 바이너리 호환)를 출하 게이트에선 닫는다
+                    int expectTighten = -1;
+                    if (o.TryGetValue("--expect-tighten-keys", out string? et) && (!int.TryParse(et, out expectTighten) || expectTighten < 0))
+                    { output.WriteLine("[verify-live-armed] --expect-tighten-keys <n> 형식 오류"); return ExitUsage; }
                     var r = ShippedBinaryLiveArmedGuard.ScanZip(zip);
-                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 위반 {r.Violations.Count}");
+                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 강화 전용 키 {r.TightenKeys}(호스트 판독 {r.TightenHostSites}) · 위반 {r.Violations.Count}");
                     foreach (var v in r.Violations) output.WriteLine("  " + v);
+                    if (expectTighten >= 0 && r.TightenKeys != expectTighten)
+                    {
+                        output.WriteLine($"  강화 전용 키 {r.TightenKeys} ≠ 출하 고정 {expectTighten} — 단조성 기입기 누락/변형 출하 거부");
+                        return ExitRejected;
+                    }
                     return r.Ok ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], VerifyTightenFlag))
+                {
+                    // [v12.18.1-GM · 방향 A] 출하 zip 호스트 DLL 강화 전용 행렬(IL) ↔ RELEASE_MANIFEST tightenRules ↔ 가드 명세 ↔ master-seal.txt 무추출 대조
+                    string? zip = Arg(args, 1), mf = o.GetValueOrDefault("--manifest"), sealFile = o.GetValueOrDefault("--seal-file");
+                    if (zip is null || mf is null || sealFile is null || !File.Exists(zip) || !File.Exists(mf) || !File.Exists(sealFile)
+                        || !int.TryParse(o.GetValueOrDefault("--expect-tighten-keys"), out int expect))
+                    { output.WriteLine("[verify-tighten] 사용: --verify-tighten <zip> --manifest <RELEASE_MANIFEST.json> --seal-file <master-seal.txt> --expect-tighten-keys <n>"); return ExitUsage; }
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, File.ReadAllText(mf), File.ReadAllText(sealFile), expect);
+                    output.WriteLine($"[verify-tighten] {r.Verdict}: {r.Detail} · 팽창+해시 {r.InflateMicros}µs · 행렬 대조 {r.CompareMicros}µs");
+                    return r.Verdict == TightenSealVerdict.Ok ? ExitOk : ExitRejected;
                 }
                 if (Eq(args[0], VerifyInterlocksFlag))
                 {
@@ -652,9 +759,11 @@ namespace StockManager.Tools
                     PeerRecord? pr = obs.Peer is { Head: { } ph } po ? new PeerRecord(po.Name ?? "", ph, peerRel, po.ManifestSha256 ?? "", po.RootHash ?? "") : null;
                     if (peer is not null && pr is null) { output.WriteLine("[sync] 피어 저장소 관측 불가 — 기록 거부"); return ExitRejected; }
                     if (obs.TagInterlocks is null) { output.WriteLine("[sync] 태그 소스 인터락 열거 판독 실패 — 기록 거부"); return ExitRejected; }
+                    if (obs.TagTightenRules is null) { output.WriteLine("[sync] 태그 소스 강화 전용 행렬 판독 실패 — 기록 거부"); return ExitRejected; }
                     // [다중 저장소 봉인 감사] 인터락 목록 = 태그 소스 열거(실행 바이너리 Enum.GetNames 아님 — 검증 시 같은 출처로 재대조)
                     var m = new ReleaseManifestInput(sig.Version, "v" + sig.Version, obs.Repo.TagCommit, obs.ManifestSigSha256!, sig.MasterSeal, sig.Genesis,
-                        obs.ManifestSigArtifacts, sig.ZipName, obs.ZipSha256 ?? "", obs.ShimSha256 ?? "", false, obs.TagInterlocks, pr);
+                        obs.ManifestSigArtifacts, sig.ZipName, obs.ZipSha256 ?? "", obs.ShimSha256 ?? "", false, obs.TagInterlocks, pr,
+                        obs.TagTightenRules.Count > 0 ? obs.TagTightenRules : null);
                     string json = MultiRepoReleaseManifest.Build(m);
                     // 원자적 기록: 임시 파일 → 즉시 핸드셰이크 → 통과 시에만 교체(실패 = 기존 파일 보존 · 임시 삭제)
                     string tmp = outPath + ".tmp";
@@ -722,7 +831,8 @@ namespace StockManager.Tools
             obs = new HandshakeObservation(repoObs, FileSha(sigPath), version, seal, arts,
                 File.Exists(zipPath) ? FileSha(zipPath) : null, File.Exists(anchorPath) ? File.ReadAllText(anchorPath).Trim() : null,
                 File.Exists(shim) ? FileSha(shim) : null, po,
-                genesis.Length > 0 ? genesis : null, GitRepoProbe.TagInterlockNames(repo, repoObs.TagCommit));
+                genesis.Length > 0 ? genesis : null, GitRepoProbe.TagInterlockNames(repo, repoObs.TagCommit),
+                TagTightenRules: GitRepoProbe.TagTightenRules(repo, repoObs.TagCommit));
             return true;
         }
 

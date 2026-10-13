@@ -134,7 +134,7 @@ namespace StockManager.Tests
             int hsArgs = s.IndexOf("'--pin-peer-head', $peerPinHead", StringComparison.Ordinal);
             Assert.True(hsArgs < s.IndexOf("'--sync-release-manifest'", StringComparison.Ordinal), "고정값은 동기화 · 핸드셰이크 공통 인자");
             Assert.DoesNotMatch(@"(Set-Content|Out-File|Copy-Item|Move-Item|Remove-Item|New-Item|Add-Content)[^\r\n]*\$(PeerRepo|peerManifest)", s);
-            Assert.Equal(6, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);   // v12.16.1-GM: + 바이너리 liveArmed 판독 거부 · v12.18.0-GM: + 30대 인터락 봉인 대조 거부
+            Assert.Equal(7, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);   // v12.18.1-GM: + 강화 전용 행렬 대조 거부 · v12.16.1-GM: + 바이너리 liveArmed 판독 거부 · v12.18.0-GM: + 30대 인터락 봉인 대조 거부
         }
 
         // ════════════ §5 교차 봉인 판독 ════════════

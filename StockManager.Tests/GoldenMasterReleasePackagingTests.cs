@@ -1,13 +1,19 @@
 // ============================================================================
-// GoldenMasterReleasePackagingTests — [출하 · v12.18.0-GM · 추천 A]
+// GoldenMasterReleasePackagingTests — [출하 · v12.18.1-GM · 추천 A]
 //
-//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.0(출하 zip 이름 · 태그 v12.18.0-GM 의 원천).
+//  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.1(출하 zip 이름 · 태그 v12.18.1-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
 //     인터락 30종(0~28 + StartupSanity) = 태그 소스 열거 = zip 호스트 DLL 정의(§10 검증기) · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
+//     + [v12.18.1-GM] 강화 전용 행렬 6키 = 태그 소스 = zip 호스트 DLL IL(§11 검증기) · --verify-live-armed 키 수 6 고정.
 //  §4 오중 빌드 회귀.
+//  §11 [v12.18.1-GM · 방향 A] ★강화 전용 단조성 행렬 무추출 · 무할당 대조(ShippedTightenMatrixVerifier): 소스 판독 = 실행 표 = 가드 명세 ·
+//     구 태그(v12.18.0-GM) = 빈 목록 · PS 5.1 zip 실 호스트 DLL ↔ 매니페스트 tightenRules ↔ master-seal.txt = Ok · 대조 루프 δ=0 ·
+//     행렬 미기록 / 키 1개 제거 / 기대 5·7 / 명세 밖 방향 · 키 / 폴백 · 하한 · 상한 / 키 순서 교환 / 앵커 / 변조 / 중복 = 전부 거부 ·
+//     ★바이너리 패치 + 일관된 재봉인(폴백 9500→5000 · 규칙 2→4 · clt→cgt · 상수 true · #US 키 개명) = 전부 거부 ·
+//     핸드셰이크: 행렬을 지운 매니페스트 = TightenRuleMismatch · 스트리머 동등성 · 스크립트 [9]·[10] 결선 · CLI 종료 코드.
 //  §10 [v12.18.0-GM · 방향 A] ★30대 인터락 봉인 무추출 대조(ShippedInterlockManifestVerifier): PS 5.1 역슬래시 zip(실 호스트 DLL) ↔ RELEASE_MANIFEST ↔
 //     master-seal.txt = Ok(30 · 마스크 0x800000001FFFFFFF · OrderPathLatency=#28) · 정의 대조 1ms 미만 · 대조 루프 δ=0 ·
 //     구 명세(29) 매니페스트 / 기대 29 / 이름 순서 교환 / 앵커 교체 / 봉인 해시 불일치 / 매니페스트 변조 / 정규화 중복 · 누락 · 손상 zip = 전부 거부 ·
@@ -30,6 +36,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -72,13 +79,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_0_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_1_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 0, 0), v);
-            Assert.Equal("12.18.0", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 1, 0), v);
+            Assert.Equal("12.18.1", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.0</Version>", csproj);
+            Assert.Contains("<Version>12.18.1</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -99,7 +106,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.0-GM Production Golden Master", s);
+            Assert.Contains("v12.18.1-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -162,6 +169,18 @@ namespace StockManager.Tests
             // [방향 B] 출하 zip 안 호스트 DLL 이중 물리 키 기본값 = 리터럴 false(IL 직접 판독)
             var arm = ShippedBinaryLiveArmedGuard.ScanZip(zip);
             Assert.True(arm.Ok, "출하 바이너리 liveArmed 판독 거부: 지점 " + arm.Sites + " · " + string.Join(" | ", arm.Violations));
+            // [v12.18.1-GM · 방향 A] 강화 전용 행렬 6키 = 태그 소스 = zip 호스트 DLL IL(무추출) · 가드 판독 키 수 6
+            Assert.Equal(TightenKeys, arm.TightenKeys);
+            Assert.NotNull(m.TightenRules);
+            Assert.Equal(TightenKeys, m.TightenRules!.Count);
+            var tagRules = GitRepoProbe.TagTightenRules(root, m.SourceCommit);
+            Assert.NotNull(tagRules);
+            Assert.Equal(m.TightenRules, tagRules!);
+            Assert.Equal("Strategy.AdaptiveMaxBp|2|9500|5000|10000", m.TightenRules[3]);
+            var tight = ShippedTightenMatrixVerifier.Verify(zip, json, anchor, TightenKeys);
+            _out.WriteLine($"[출하] 강화 전용 행렬 대조 {tight.Verdict} · {tight.Detail} · 팽창 {tight.InflateMicros}µs · 대조 {tight.CompareMicros}µs");
+            Assert.Equal(TightenSealVerdict.Ok, tight.Verdict);
+            Assert.Equal(TightenKeys, st.TightenRuleCount);
             // ★1비트 변조(임시 사본) = 거부 · 원본 무손상
             string tmp = Path.Combine(Path.GetTempPath(), "ms2e_gm_tamper_" + Guid.NewGuid().ToString("N") + ".zip");
             try
@@ -314,7 +333,7 @@ namespace StockManager.Tests
                 var empty = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(File.ReadAllBytes(typeof(FactAttribute).Assembly.Location)));
                 Assert.Equal(0, empty.Sites);
                 Assert.False(empty.Ok);
-                Assert.Equal(8, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM) + UI 기입자 3 · 허용 목록 1(v12.17.3-GM) + 시뮬레이션 형식 1(v12.17.4-GM)
+                Assert.Equal(8, empty.Violations.Count(v => v.Contains("비공허성", StringComparison.Ordinal)));   // 키 2 + 마스터 플래그 생성 지점(v12.17.1-GM) + UI 기입자 3 · 허용 목록 1(v12.17.3-GM) + 시뮬레이션 형식 1(v12.17.4-GM) · 강화 전용 경로 전체 부재 = 위반 아님(v12.18.3-DEV)
             }
             finally { foreach (var z in new[] { wrongEntry, truncated, notZip }) File.Delete(z); }
         }
@@ -771,6 +790,307 @@ namespace StockManager.Tests
                 Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-interlocks", zip, "--manifest", mf, "--seal-file", sf, "--expect-interlocks", "29"));
                 Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-interlocks", zip, "--manifest", mf, "--seal-file", sf));
                 Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-interlocks", zip, "--seal-file", sf, "--expect-interlocks", "30"));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        // ════════════ §11 [v12.18.1-GM · 방향 A] 강화 전용 단조성 행렬 무추출 · 무할당 대조 ════════════
+
+        private const int TightenKeys = 6;
+
+        /// <summary>현재 작업 트리 소스의 행렬(태그 소스 판독기와 같은 파서) — 출하 시 sync 가 태그 커밋에서 같은 방식으로 기록한다.</summary>
+        private static IReadOnlyList<string> SourceRules()
+        {
+            var rows = GitRepoProbe.ParseTightenMatrix(File.ReadAllText(Path.Combine(RepoRoot(), GitRepoProbe.TightenSourcePath.Replace('/', Path.DirectorySeparatorChar))));
+            Assert.NotNull(rows);
+            return rows!;
+        }
+
+        private static string TightenManifest(byte[] dll, string seal, IReadOnlyList<string>? rules)
+        {
+            string hex = new string('A', 64);
+            return MultiRepoReleaseManifest.Build(new ReleaseManifestInput(ReleasePackager.DefaultVersion + "-GM", "v" + ReleasePackager.DefaultVersion + "-GM", new string('a', 40), hex, seal, hex,
+                new List<(string, string)> { ("host/MS2E.StockSuite.dll", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(dll))) },
+                "pkg.zip", hex, hex, false, Enum.GetNames<ArmingInterlockSource>(), null, rules));
+        }
+
+        private static string Ps51HostZip(string dir, string name, byte[] dll)
+        {
+            string zip = Path.Combine(dir, name);
+            using (var za = ZipFile.Open(zip, ZipArchiveMode.Create)) AddEntry(za, "host\\MS2E.StockSuite.dll", dll);   // PS 5.1 역슬래시 항목
+            return zip;
+        }
+
+        [Fact]
+        public void TightenMatrix_SourceParse_EqualsWriterTables_GuardSpec_OldTagEmpty()
+        {
+            var rules = SourceRules();
+            Assert.Equal(TightenKeys, rules.Count);
+            Assert.Equal(TightenKeys, TightenOnlyUiSettingWriter.KeyCount);
+            Assert.Equal(TightenKeys, ShippedBinaryLiveArmedGuard.TightenSpecCount);
+            for (int i = 0; i < rules.Count; i++)
+            {
+                string expect = FormattableString.Invariant($"{TightenOnlyUiSettingWriter.KeyAt(i)}|{TightenOnlyUiSettingWriter.RuleAt(i)}|{TightenOnlyUiSettingWriter.FallbackAt(i)}|{TightenOnlyUiSettingWriter.MinimumAt(i)}|{TightenOnlyUiSettingWriter.MaximumAt(i)}");
+                Assert.Equal(expect, rules[i]);                                                   // 소스 판독 = 실행 표(파서가 표를 잘못 읽지 않는다)
+                Assert.True(ShippedTightenMatrixVerifier.TryParseRow(rules[i], out var row));
+                Assert.True(ShippedBinaryLiveArmedGuard.TryTightenSpec(row.Key, out byte spec) && spec == row.Rule, rules[i]);
+            }
+            Assert.Equal(new[]
+            {
+                "Strategy.SignalGateEnabled|1|0|0|1", "Strategy.AdaptiveThreshold|1|1|0|1", "Strategy.ConfidenceThresholdBp|2|8500|5000|10000",
+                "Strategy.AdaptiveMaxBp|2|9500|5000|10000", "Strategy.ChurnSoftPerMin|4|30|1|100000", "Strategy.ChurnHardPerMin|4|60|2|100000",
+            }, rules);
+
+            // 형식 이탈 = null(fail-closed): 열 길이 불일치 · 미지 규칙 · 표 중복 정의 · 표 부재
+            string src = File.ReadAllText(Path.Combine(RepoRoot(), GitRepoProbe.TightenSourcePath.Replace('/', Path.DirectorySeparatorChar)));
+            Assert.Null(GitRepoProbe.ParseTightenMatrix(src.Replace("{ 0, 1, 8_500, 9_500, 30, 60 }", "{ 0, 1, 8_500, 9_500, 30 }")));
+            Assert.Null(GitRepoProbe.ParseTightenMatrix(src.Replace("RuleNonIncreasing, RuleNonIncreasing }", "RuleNonIncreasing, RuleWhatever }")));
+            Assert.Null(GitRepoProbe.ParseTightenMatrix(src + "\nstatic readonly int[] Fallbacks = { 1 };"));
+            Assert.Null(GitRepoProbe.ParseTightenMatrix("class X { }"));
+            foreach (var bad in new[] { "", "a|1|0|0", "Strategy.X|3|0|0|1", "Strategy.X|1|x|0|1", "Str ategy|1|0|0|1", "Strategy.X|1|0|0|1|9" })
+                Assert.False(ShippedTightenMatrixVerifier.TryParseRow(bad, out _), bad);
+
+            // 태그 소스 판독: v12.18.0-GM(기입기 이전) = 빈 목록(구 태그 · 대상 아님) · 잘못된 커밋 = null
+            string root = RepoRoot();
+            string? oldTag = GitRepoProbe.Git(root, "rev-list", "-n", "1", "v12.18.0-GM")?.Trim();
+            if (!string.IsNullOrEmpty(oldTag))
+            {
+                var old = GitRepoProbe.TagTightenRules(root, oldTag);
+                Assert.NotNull(old);
+                Assert.Empty(old!);
+            }
+            Assert.Null(GitRepoProbe.TagTightenRules(root, "not-a-commit"));
+            Assert.Null(GitRepoProbe.TagTightenRules(root, null));
+        }
+
+        [Fact]
+        public void TightenMatrix_BuiltHost_Ps51Zip_SixKeys_Ok_CompareLoopZeroAlloc()
+        {
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll), json = TightenManifest(dll, seal, SourceRules());
+                var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal + "\r\n", TightenKeys);
+                _out.WriteLine($"[강화 전용 행렬] {r.Verdict} · {r.Detail} · 팽창+해시 {r.InflateMicros}µs · 대조 {r.CompareMicros}µs");
+                Assert.True(r.Verdict == TightenSealVerdict.Ok, r.Verdict + " " + r.Detail);
+                Assert.Equal(TightenKeys, r.Count);
+                Assert.Equal(ReleaseHandshakeCli.FileSha(HostDll()), r.HostSha256);
+
+                // 대조 루프 δ=0 — #US 직접 비교 · RVA 블롭 BlobReader · 명령 버퍼 stackalloc
+                var rows = SourceRules().Select(t => { Assert.True(ShippedTightenMatrixVerifier.TryParseRow(t, out var x)); return x; }).ToArray();
+                using var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll));
+                var md = pe.GetMetadataReader();
+                Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.CompareMatrix(pe, md, rows, out _));
+                long alloc = MinAllocated(() => { for (int i = 0; i < 1_000; i++) ShippedTightenMatrixVerifier.CompareMatrix(pe, md, rows, out _); });
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 1_000; i++) ShippedTightenMatrixVerifier.CompareMatrix(pe, md, rows, out _);
+                sw.Stop();
+                _out.WriteLine($"[강화 전용 행렬] 대조 1,000회 할당 {alloc}B · 회당 {sw.Elapsed.TotalMicroseconds / 1_000:F1}µs");
+                Assert.Equal(0, alloc);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void TightenMatrix_ManifestMissingOrDrifted_SpecAnchorTamper_AllRejected()
+        {
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll);
+                var rules = SourceRules();
+                TightenSealReport V(IReadOnlyList<string>? rs, int expect = TightenKeys, string? anchor = null, string? json = null)
+                    => ShippedTightenMatrixVerifier.Verify(zip, json ?? TightenManifest(dll, seal, rs), anchor ?? seal, expect);
+                string[] With(int i, string row) { var c = rules.ToArray(); c[i] = row; return c; }
+
+                // 기입기 행렬 미기록(구 매니페스트 형식 · 누락 출하) · 키 1개 제거 · 스크립트 고정값 이탈
+                Assert.Equal(TightenSealVerdict.CountMismatch, V(null).Verdict);
+                Assert.Equal(TightenSealVerdict.CountMismatch, V(rules.Take(5).ToArray()).Verdict);
+                Assert.Equal(TightenSealVerdict.CountMismatch, V(rules, 5).Verdict);
+                Assert.Equal(TightenSealVerdict.CountMismatch, V(rules, 7).Verdict);
+                // 매니페스트 행이 고정 명세 밖: AdaptiveMaxBp 방향 2 → 4(내리기만 허용) · 명세 밖 키
+                Assert.Equal(TightenSealVerdict.SpecMismatch, V(With(3, "Strategy.AdaptiveMaxBp|4|9500|5000|10000")).Verdict);
+                Assert.Equal(TightenSealVerdict.SpecMismatch, V(With(0, "Dispatch.ValveWired|1|0|0|1")).Verdict);
+                // 매니페스트 상수 ≠ 바이너리(폴백 · 하한 · 상한) · 키 순서 교환(같은 규칙 2 ↔ 2 → 명세는 통과 · 바이너리 대조에서 거부)
+                var fb = V(With(3, "Strategy.AdaptiveMaxBp|2|5000|5000|10000"));
+                Assert.Equal(TightenSealVerdict.FallbackMismatch, fb.Verdict);
+                Assert.Contains("#3 'Strategy.AdaptiveMaxBp'", fb.Detail);
+                Assert.Equal(TightenSealVerdict.MinimumMismatch, V(With(2, "Strategy.ConfidenceThresholdBp|2|8500|4000|10000")).Verdict);
+                Assert.Equal(TightenSealVerdict.MaximumMismatch, V(With(5, "Strategy.ChurnHardPerMin|4|60|2|99999")).Verdict);
+                var swapped = rules.ToArray(); (swapped[2], swapped[3]) = (swapped[3], swapped[2]);
+                Assert.Equal(TightenSealVerdict.KeyMismatch, V(swapped).Verdict);
+                // 형식 · 중복 · 앵커 · 매니페스트 변조(재봉인 없이 상수 1자)
+                Assert.Equal(TightenSealVerdict.ManifestInvalid, V(With(1, "Strategy.AdaptiveThreshold|1|1|0")).Verdict);
+                Assert.Equal(TightenSealVerdict.ManifestInvalid, V(With(1, rules[0])).Verdict);
+                Assert.Equal(TightenSealVerdict.AnchorMismatch, V(rules, anchor: new string('B', 64)).Verdict);
+                string good = TightenManifest(dll, seal, rules);
+                Assert.Equal(TightenSealVerdict.ManifestInvalid, V(null, json: good.Replace("|9500|", "|5000|")).Verdict);
+                Assert.Equal(TightenSealVerdict.ManifestInvalid, V(null, json: good.Replace("\"liveArmedDefault\": false", "\"liveArmedDefault\": true")).Verdict);
+                // 봉인 해시 ≠ zip 안 DLL · 정규화 중복 항목(공용 로더)
+                byte[] other = (byte[])dll.Clone(); other[^1] ^= 0x01;
+                Assert.Equal(TightenSealVerdict.ArtifactHashMismatch, V(null, json: TightenManifest(other, seal, rules)).Verdict);
+                string dup = Path.Combine(dir, "dup.zip");
+                using (var za = ZipFile.Open(dup, ZipArchiveMode.Create)) { AddEntry(za, "host\\MS2E.StockSuite.dll", dll); AddEntry(za, "host/MS2E.StockSuite.dll", dll); }
+                Assert.Equal(TightenSealVerdict.EntryDuplicate, ShippedTightenMatrixVerifier.Verify(dup, good, seal, TightenKeys).Verdict);
+
+                Assert.Equal(TightenSealVerdict.Ok, V(rules).Verdict);                           // 원본 무손상
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void TightenMatrix_BinaryPatched_ConsistentlyResealed_Rejected()
+        {
+            // 공격 모델: 호스트 DLL 행렬 1곳을 바꾸고 매니페스트 해시를 '그 바이너리'로 재봉인 — 행렬 기록은 태그 소스(정직)에서 온다.
+            byte[] dll = File.ReadAllBytes(HostDll());
+            const string T = ShippedBinaryLiveArmedGuard.TightenWriterType;
+            var cases = new List<(string Name, byte[] Bytes, TightenSealVerdict Expect)>();
+            {
+                int f = TightenOnlySettingGuardTests.FallbacksDataFile(dll) + 3 * 4;
+                Assert.Equal(9_500, BitConverter.ToInt32(dll, f));
+                var b = (byte[])dll.Clone(); BitConverter.GetBytes(5_000).CopyTo(b, f);
+                cases.Add(("폴백 9500→5000", b, TightenSealVerdict.FallbackMismatch));
+            }
+            {
+                int f = TightenOnlySettingGuardTests.FieldDataFile(dll, "get_Rules");
+                Assert.Equal(2, dll[f + 3]);
+                var b = (byte[])dll.Clone(); b[f + 3] = 4;
+                cases.Add(("규칙 2→4", b, TightenSealVerdict.RuleMismatch));
+            }
+            {
+                var (off, _, ins) = TightenOnlySettingGuardTests.Body(dll, T, "IsTightening");
+                int k = ins.FindIndex(i => i.Op == OpCodes.Clt);
+                var b = (byte[])dll.Clone(); b[off + ins[k].At + 1] = 0x02;                     // clt → cgt(≥ → ≤)
+                cases.Add(("clt→cgt", b, TightenSealVerdict.DirectionMismatch));
+            }
+            {
+                var (off, _, _) = TightenOnlySettingGuardTests.Body(dll, T, "IsTightening");
+                var b = (byte[])dll.Clone(); b[off] = 0x17; b[off + 1] = 0x2A;                   // ldc.i4.1; ret
+                cases.Add(("상수 true", b, TightenSealVerdict.DirectionMismatch));
+            }
+            {
+                // #US 힙 키 개명(AdaptiveMaxBp → AdaptiveMaxBq) — 기입기 키와 호스트 판독이 함께 바뀌는 '일관된' 변조
+                byte[] key = Encoding.Unicode.GetBytes("Strategy.AdaptiveMaxBp");
+                int at = dll.AsSpan().IndexOf(key);
+                Assert.True(at > 0 && dll.AsSpan(at + 1).IndexOf(key) < 0, "키 #US 항목 정확히 1개");
+                var b = (byte[])dll.Clone(); b[at + key.Length - 2] = (byte)'q';
+                cases.Add(("키 개명", b, TightenSealVerdict.KeyMismatch));
+            }
+            string dir = TempDir();
+            try
+            {
+                string seal = new string('D', 64);
+                var rules = SourceRules();
+                int n = 0;
+                foreach (var (name, bytes, expect) in cases)
+                {
+                    string zip = Ps51HostZip(dir, "evil" + n++ + ".zip", bytes);
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, TightenManifest(bytes, seal, rules), seal, TightenKeys);
+                    _out.WriteLine($"[패치] {name} → {r.Verdict} · {r.Detail}");
+                    Assert.Equal(expect, r.Verdict);
+                }
+                string good = Ps51HostZip(dir, "good.zip", dll);                                // 대조군: 같은 재봉인 절차 + 원본 = Ok
+                Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.Verify(good, TightenManifest(dll, seal, rules), seal, TightenKeys).Verdict);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void TightenMatrix_Handshake_StreamerParity_StrippedRulesRejected()
+        {
+            const string src = "9f3b7ef08456c9b30a1d29aaa2233a9f28116d43";
+            string seal = new('7', 64), genesis = new('6', 64), sigSha = new('5', 64), zipSha = new('8', 64), shim = new('C', 64);
+            var arts = new List<(string, string)> { ("host/MS2E.StockSuite.dll", new string('1', 64)) };
+            var locks = new[] { "BootIntegrity", "StartupSanity" };
+            var rules = SourceRules();
+            ReleaseManifestInput In(IReadOnlyList<string>? rs) => new("12.18.1-GM", "v12.18.1-GM", src, sigSha, seal, genesis, arts, "release-v12.18.1-GM.zip", zipSha, shim, false, locks, null, rs);
+            HandshakeObservation Obs(IReadOnlyList<string>? tag) => new(new RepoObservation(src, src, Array.Empty<string>(), Array.Empty<string>()), sigSha, "12.18.1-GM", seal, arts,
+                zipSha, seal, shim, null, genesis, locks, null, tag);
+            ReleaseHandshakeVerdict V(ReleaseManifestInput m, HandshakeObservation o) => MultiRepoReleaseManifest.Verify(MultiRepoReleaseManifest.Build(m), o, out _);
+
+            Assert.Equal(ReleaseHandshakeVerdict.Ok, V(In(rules), Obs(rules)));
+            Assert.Equal(ReleaseHandshakeVerdict.Ok, V(In(null), Obs(Array.Empty<string>())));       // 구 태그 · 구 매니페스트(대상 아님)
+            Assert.Equal(ReleaseHandshakeVerdict.TightenRuleMismatch, V(In(null), Obs(rules)));        // ★기록에서 행렬을 지운 '조용한 누락'
+            Assert.Equal(ReleaseHandshakeVerdict.TightenRuleMismatch, V(In(rules), Obs(null)));        // 태그 소스 관측 불가 = fail-closed
+            Assert.Equal(ReleaseHandshakeVerdict.TightenRuleMismatch, V(In(rules), Obs(Array.Empty<string>())));
+            var drift = rules.ToArray(); drift[3] = "Strategy.AdaptiveMaxBp|2|5000|5000|10000";
+            Assert.Equal(ReleaseHandshakeVerdict.TightenRuleMismatch, V(In(drift), Obs(rules)));
+
+            // 기준 판독(JsonDocument) ↔ 독립 무할당 스트리머: 같은 자기 봉인 · tighten 줄 포함 · 빈 배열 = 둘 다 거부 · δ=0
+            string json = MultiRepoReleaseManifest.Build(In(rules));
+            Assert.Contains("\"tightenRules\"", json);
+            Assert.DoesNotContain("\"tightenRules\"", MultiRepoReleaseManifest.Build(In(null)));
+            var st = new ManifestSealStreamer();
+            Assert.True(st.Load(Encoding.UTF8.GetBytes(json)));
+            byte[] an = Convert.FromHexString(seal);
+            Assert.Equal(ManifestStreamVerdict.Ok, st.Verify(an));
+            Assert.Equal(TightenKeys, st.TightenRuleCount);
+            Assert.Equal(0, MinAllocated(() => st.Verify(an)));
+            Assert.True(MultiRepoReleaseManifest.TryParse(json, out var back, out _, out _));
+            Assert.Equal(rules, back.TightenRules!);
+            string empty = json.Replace(json.Substring(json.IndexOf("\"tightenRules\"", StringComparison.Ordinal),
+                json.IndexOf(']', json.IndexOf("\"tightenRules\"", StringComparison.Ordinal)) + 1 - json.IndexOf("\"tightenRules\"", StringComparison.Ordinal)), "\"tightenRules\": []");
+            Assert.False(MultiRepoReleaseManifest.TryParse(empty, out _, out _, out _));
+            Assert.True(st.Load(Encoding.UTF8.GetBytes(empty)));
+            Assert.Equal(ManifestStreamVerdict.NonCanonical, st.Verify(an));
+            // 행렬 1자 변조(재봉인 없음) = 두 판독기 모두 자기 봉인 거부
+            string tampered = json.Replace("|9500|", "|9400|");
+            Assert.Equal(ReleaseHandshakeVerdict.SelfHashMismatch, MultiRepoReleaseManifest.Verify(tampered, Obs(rules), out _));
+            Assert.True(st.Load(Encoding.UTF8.GetBytes(tampered)));
+            Assert.Equal(ManifestStreamVerdict.SelfHashMismatch, st.Verify(an));
+        }
+
+        [Fact]
+        public void TightenMatrix_PackageScript_Wired_KeysPinned_CliExitCodes()
+        {
+            string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
+            var spec = Regex.Match(s, @"^\$ExpectedTightenKeys = (\d+)", RegexOptions.Multiline);
+            Assert.True(spec.Success, "스크립트 강화 전용 키 고정값 없음");
+            Assert.Equal(TightenKeys, int.Parse(spec.Groups[1].Value));
+            Assert.Equal(ShippedBinaryLiveArmedGuard.TightenSpecCount, int.Parse(spec.Groups[1].Value));
+            Assert.Contains("'--verify-live-armed', ('\"' + $zipOut + '\"'), '--expect-tighten-keys', \"$ExpectedTightenKeys\"", s);
+            int ilk = s.IndexOf("$ilkExit = Invoke-HostCli", StringComparison.Ordinal), tight = s.IndexOf("'--verify-tighten'", StringComparison.Ordinal),
+                done = s.IndexOf("== 완료:", StringComparison.Ordinal);
+            Assert.True(ilk > 0 && tight > ilk && done > tight, "★강화 전용 행렬 대조 = 인터락 봉인 대조 뒤 · 완료 앞");
+            Assert.Contains("if ($tightExit -ne 0) { Remove-ReleaseOutputs; Fail", s);
+            Assert.True(ReleaseHandshakeCli.IsInvocation(new[] { "--verify-tighten" }));
+
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll);
+                string mf = Path.Combine(dir, "RELEASE_MANIFEST.json"), sf = Path.Combine(dir, "master-seal.txt");
+                File.WriteAllText(mf, TightenManifest(dll, seal, SourceRules()));
+                File.WriteAllText(sf, seal + Environment.NewLine);
+                int Run(params string[] a) { var w = new StringWriter(); int c = ReleaseHandshakeCli.Run(a, w); _out.WriteLine(w.ToString().TrimEnd()); return c; }
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-tighten", zip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6"));
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-tighten", zip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "5"));
+                Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-tighten", zip, "--manifest", mf, "--seal-file", sf));
+                // [9/10] --verify-live-armed 키 수 고정: 6 = Ok · 7 = 거부 · 형식 오류 = 사용 오류 · 미지정 = 기존 동작
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-live-armed", zip, "--expect-tighten-keys", "6"));
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-live-armed", zip, "--expect-tighten-keys", "7"));
+                Assert.Equal(ReleaseHandshakeCli.ExitUsage, Run("--verify-live-armed", zip, "--expect-tighten-keys", "x"));
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, Run("--verify-live-armed", zip));
+                // 기입기 형식을 개명한 바이너리(키 표 판독 0): 가드 위반 + 키 수 고정 불일치 · 행렬 대조 = 기입기 없음
+                byte[] gone = (byte[])dll.Clone();
+                byte[] name = Encoding.UTF8.GetBytes(ShippedBinaryLiveArmedGuard.TightenWriterType + "\0");
+                int at = gone.AsSpan().IndexOf(name);
+                Assert.True(at > 0);
+                gone[at] = (byte)'X';
+                string goneZip = Ps51HostZip(dir, "gone.zip", gone);
+                var w2 = new StringWriter();
+                int c2 = ReleaseHandshakeCli.Run(new[] { "--verify-live-armed", goneZip, "--expect-tighten-keys", "6" }, w2);
+                _out.WriteLine(w2.ToString().TrimEnd());
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, c2);
+                Assert.Contains("강화 전용 키 0 ≠ 출하 고정 6", w2.ToString());
+                File.WriteAllText(mf, TightenManifest(gone, seal, SourceRules()));
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, Run("--verify-tighten", goneZip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6"));
             }
             finally { Directory.Delete(dir, true); }
         }

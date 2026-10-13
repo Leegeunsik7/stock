@@ -133,6 +133,8 @@ namespace MS2E.Infrastructure
         private readonly BlastRadiusLimiter?         _blastRadius;   // v5.0.0 — 카나리 검역창 명목 상한 물리 강제(null=무제한·하위호환)
         private readonly FatFingerVelocityInterlock? _fatFinger;    // v7.4.0 — Think Beyond: fat-finger 가격+폭주 명목속도 사출 방화벽(null=미배선·no-op)
         private long _forwarded;
+        private IOrderProposalObserver? _proposalObserver;   // [v12.18.2-DEV] 무장 판정 이전 제안 관측(시그널 엔진 · null = 미결선)
+        private long _observerFaults;
         private long _gatedOut;
         private long _sendErrors;   // Mission A: downstream throw 누적(원자)
 
@@ -160,6 +162,9 @@ namespace MS2E.Infrastructure
         public long Forwarded   => Interlocked.Read(ref _forwarded);
         /// <summary>미무장(fail-closed)으로 송출이 차단된 제안 수.</summary>
         public long GatedOut    => Interlocked.Read(ref _gatedOut);
+        /// <summary>[v12.18.2-DEV] 제안 관측자(무장 판정 이전 · 매 제안 1회). 관측 예외 = 계수만(처분 불변).</summary>
+        public IOrderProposalObserver? ProposalObserver { get => Volatile.Read(ref _proposalObserver); set => Volatile.Write(ref _proposalObserver, value); }
+        public long ObserverFaults => Interlocked.Read(ref _observerFaults);
         /// <summary>추월로 유실된 제안 누적 수(소비 지연 계측).</summary>
         public long Dropped     => _consumer.Dropped;
         /// <summary>Mission A — onSend throw(브로커 단절 등) 누적. 0 이 정상. 양수 시 비상 동결 확인 필수.</summary>
@@ -190,6 +195,10 @@ namespace MS2E.Infrastructure
                 // [v12.17.6 · 방향 A] 종결 스탬프 — 처분 경로(미무장 · 블래스트/fat-finger 동결 · 송출 · 하류 veto · throw)와 무관하게 정확히 1회.
                 //   관측자가 그 주문의 상관 슬롯을 즉시 회수한다(veto 주문 슬롯 누수 → 오탐 축출 · 슬롯 고갈 방지). break 도 finally 를 거친다.
                 bool pathForwarded = false;
+                if (Volatile.Read(ref _proposalObserver) is { } po)
+                {
+                    try { po.OnProposal(in p); } catch { Interlocked.Increment(ref _observerFaults); }
+                }
                 try
                 {
                     // ★무장 게이트 — 매 제안마다 재평가(런타임 후퇴 즉시 반영). 술어가 throw 하면(예: BrokerHub.IsArmed 의

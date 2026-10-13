@@ -1436,3 +1436,51 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 버전 12.18.0 · 태그 v12.18.0-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.4-GM 산출물 → release/superseded-v12.17.4-GM.
 - 출하 기록(2026-10-13): 태그 v12.18.0-GM = 454c0d9 · `release-v12.18.0-GM.zip` SHA-256 DEA3EE725906E3BC826232C652B0CE2397E3F6E44FF2C641E5E9356A639FFD74 · masterSeal 42B627E45253BC0CF26EC8B8EAFD30EDDF08661E875040694E526737B08D9E8E · 아티팩트 38 · 피어 기록 없음(-NoPeer).
 - [0/10]~[10/10] 전 단계 통과(3,698/3,698) · --verify-zip Ok · --verify-live-armed Ok(키 19 · 마스터 1 · UI 3/3 · 시뮬레이션 격리 49 형식(CLI 29) · 위반 0) · 핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF). 콜드 CLI 1회 정의 대조 7.3ms(프로세스 첫 호출 JIT 포함 — 1ms 예산은 웜 기준 · primary 재대조 81µs) · primary 재대조 GoldenMasterReleasePackagingTests 18/18.
+
+## 52. v12.18.1~2-DEV — 변동성 적응 확신 보정 · 시그널 churn 차단기 · 호스트 시그널 게이트 실결선 (2026-10-13)
+
+### 52.1 보정(v12.18.1-DEV)
+- `StockManager/Engines/VolatilityAdaptiveCalibrator.cs`: 정수 전용(Q8 bp) · EMV 시프트 α=2^-k(기본 k=5) · 효율비 · 호가 불균형 잡음 → `MicroRegime` Warmup/Trend/MeanReverting/Choppy → 요구 확신 9500/8500/9000/9500bp · ExitHold 히스테리시스 32 북.
+- `SignalChurnCircuitBreaker`: 60 버킷 InlineArray 러닝섬 O(1) · 분당 30 = 억제 · 60 = `StrategyAnomalyKind.ModelBreakdown` → 비트 27 Disarm(억제된 승인도 하드 한도 집계).
+- /aidash `.pd-cal` 스트립(국면 · 요구 확신 · churn) · 거부 사유 16 `RegimeThresholdNotMet` "국면 임계 미달 — 전방 거부/관망".
+- 정직: 1,000틱 링/ SIMD 대신 EMV · 스프레드 계산은 하되 판정 미사용 · 국면 경계는 실 호가 미보정.
+
+### 52.2 호스트 결선(v12.18.2-DEV)
+- `IOrderProposalObserver`: GatedOrderDispatcher 가 무장 검사 '앞'에서 호출 → 게이트 꺼짐(관찰 모드)에서도 churn 집계 · 비트 27 격발 보장(게이트 기본 off 에서 라우터 미도달 문제 교정).
+- `SignalGateRuntimeSwitch`(1초 폴링): 켜기 즉시 · 판독 실패 = 켜기 · 끄기 = 물리 키 둘 다 off 일 때만(키 판독 실패 = on 취급). 국면 거부는 주문 원장 미기록 · /aidash 라벨.
+- UiSettingWriteGuard 허용 목록에 Strategy.* 추가 요청은 거부(IL 규칙 ⑤ 호스트 안전 네임스페이스) → §53 강화 전용 경로로 대체.
+- 테스트: VolatilityCalibrationTests 14 · HostSignalGateIntegrationTests 10 · 변이 3/3 · 4/4 Red.
+
+## 53. v12.18.3-DEV — 강화 전용 UI 설정 경로(TightenOnlyUiSettingWriter) · 단조성 IL 가드 ⑦~⑩ (2026-10-13)
+- `src/02_Infrastructure/Engine/TightenOnlyUiSettingWriter.cs` 키 6: SignalGateEnabled · AdaptiveThreshold = false→true 만 · ConfidenceThresholdBp · AdaptiveMaxBp = 상향만 · ChurnSoftPerMin · ChurnHardPerMin = 하향만.
+  호스트 유효값(파싱 + 클램프) 비교 · 형식 불량 = 거부(폴백 대체 아님) · 환경변수 덮음 = 거부 · 판독-판정-기입 단일 잠금 · 무장/카나리/디스패치/브로커/미등재 키 = 무예외 폐기 + 사유 계수.
+- 런타임 하한(확신 · 최대 임계)은 올리기만 — 낮추기는 재기동 필요. AdaptiveThreshold · Churn* 는 재기동 반영.
+- `ShippedBinaryLiveArmedGuard` ⑦ 키 표 · 규칙 바이트 = 고정 명세 TightenSpec · 폴백/하한/상한 = 호스트 GetBool/GetInt 판독 상수 ⑧ IsTightening 비교 방향 ⑨ Judge 분기 · TryWrite brfalse · WriteStored 1회 ⑩ 진입점 TryWrite 1회 · DB 직접 기입 0.
+  경로 전체 부재 = 통과(구 바이너리 호환) — 출하 게이트에서 §54 가 닫는다.
+- 실측: 퍼즈 20만(완화 기입 0) · 1바이트 패치 6/6 거부 · 변이 4/4 Red · 판정 4만 회 0B.
+
+## 54. v12.18.1-GM Production Golden Master 출하 — 30대 인터락 · 강화 전용 6키 행렬 핀 고정 · 무추출 행렬 대조 (2026-10-13)
+
+### 54.1 명세(출하)
+- 인터락 30종 불변(비트 0~28 + StartupSanity 63 · 마스크 0x800000001FFFFFFF) — `--verify-interlocks` §51.2 그대로.
+- 강화 전용 행렬 6키(키|규칙|폴백|하한|상한): SignalGateEnabled|1|0|0|1 · AdaptiveThreshold|1|1|0|1 · ConfidenceThresholdBp|2|8500|5000|10000 ·
+  AdaptiveMaxBp|2|9500|5000|10000 · ChurnSoftPerMin|4|30|1|100000 · ChurnHardPerMin|4|60|2|100000 (규칙 1 = true 만 · 2 = ≥ · 4 = ≤).
+- 스크립트 `$ExpectedTightenKeys = 6`(= 가드 고정 명세 길이 — 테스트가 대조).
+
+### 54.2 매니페스트 확장(ms2e-multirepo-release/1 · 하위 호환)
+- `tightenRules`(선택 배열 · 있으면 ≥1) — 정규화 줄 `tighten=<행>` 을 interlock 줄 뒤에. 없으면 키 생략 = 구 매니페스트 해시 불변. 독립 무할당 판독기(ManifestSealStreamer)도 같은 규칙(빈 배열 = 둘 다 거부).
+- sync 는 태그 커밋 소스 `TightenOnlyUiSettingWriter.cs`(git ls-tree/show)를 파싱해 기록 · 판독 실패 = 기록 거부 · 파일 부재(구 태그) = 빈 목록.
+- 핸드셰이크 `TightenRuleMismatch`(22): 태그 소스에 표가 있는데 기록에서 뺐거나(조용한 누락) 값이 다르면 거부 · 기록 있는데 태그 소스 관측 불가 = 거부.
+
+### 54.3 [방향 A] `StockManager/Tools/ShippedTightenMatrixVerifier.cs` · CLI `--verify-tighten`
+- ① 매니페스트 자기 봉인 · liveArmed=false · 앵커 · tightenRules 개수 == 기대(6) == 가드 명세 · 행 형식 · 키/규칙 == 가드 명세.
+  ② 공용 로더 `ShippedInterlockManifestVerifier.LoadSealedHost`(MMF · 항목 정규화/중복 가드 · SHA-256 == 봉인 해시).
+  ③ `CompareMatrix`(힙 0): .cctor IL 스택 버퍼 해독 → ldstr 키 순서 = 매니페스트(#US UTF-16 BlobReader 직접 비교) · ldtoken→stsfld Fallbacks/Minimums/Maximums RVA 블롭 = 매니페스트 열 · get_Rules RVA 블롭 = 규칙 열 · IsTightening 규칙 비트 ↔ ==1/≥/≤ 정확히 1개씩 · 순서 · 상수 true 0 · 미정의 = false.
+- `--verify-live-armed --expect-tighten-keys 6`: 가드의 '경로 전체 부재 = 통과'를 출하 게이트에서 거부로 전환.
+- 스크립트: [9/10] verify-live-armed 키 수 고정 · [10/10] verify-interlocks 뒤 verify-tighten · 거부 = Remove-ReleaseOutputs(fail 줄 7).
+- 실측: 대조 1,000회 0B · 회당 ≈ 40µs(웜) · CLI 콜드 109µs. 패치 + 일관 재봉인 5종(폴백 9500→5000 · 규칙 2→4 · clt→cgt · 상수 true · #US 키 개명) 전부 거부. 변이 2/2 Red(방향 판정 끔 · 핸드셰이크 누락 판정 끔).
+- 테스트(GoldenMasterReleasePackagingTests §11) 6 + §3 출하 기록 행렬 대조. 방향 B(zip 항목 정규화 · 중복 가드)는 §51 로더 재사용.
+- 한계(정직): 검증기는 검사 대상과 같은 바이너리에 들어 있다(출하 CLI 가 자기 사본 판독) · 형식/메서드 이름 기반 탐색 · IL 방향 판정은 현재 컴파일러 패턴(clt/cgt + ceq 0) 고정 — 컴파일러가 다른 형태를 내면 거부(fail-closed)로 나타난다.
+
+### 54.4 출하
+- 버전 12.18.1 · 태그 v12.18.1-GM · `release-package.ps1 -NoPeer` · 형제 worktree · release/ 복사 · v12.18.0-GM 산출물 → release/superseded-v12.18.0-GM.

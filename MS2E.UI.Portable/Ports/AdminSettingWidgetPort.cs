@@ -11,6 +11,19 @@
 // ============================================================================
 namespace MS2E.UI.Portable.Ports
 {
+    /// <summary>[v12.18.3-DEV] 강화 전용 기입 판정 코드(호스트 TightenVerdict 와 같은 값 — 테스트 대조) · 정적 한글 라벨.</summary>
+    public static class TightenVerdictCode
+    {
+        public const int Tightened = 0, Unchanged = 1, UnknownKey = 2, Loosening = 3, Malformed = 4, EnvironmentOverride = 5, StoreFault = 6;
+        private static readonly string[] Labels =
+        {
+            "✅ 강화 적용됨", "변화 없음(이미 같은 값)", "⛔ 강화 전용 대상이 아닌 키 — 폐기", "⛔ 완화(느슨해지는 변경) 거부 — 기존 값 유지",
+            "⛔ 형식 불량 — 폐기", "⚠️ 환경변수가 이 설정을 덮고 있어 DB 기입이 무효 — 폐기", "⚠️ 저장 실패 — 기존 값 유지",
+        };
+        public static string Label(int code) => (uint)code < (uint)Labels.Length ? Labels[code] : "?";
+        public static int Count => Labels.Length;
+    }
+
     /// <summary>설정/관리자 위젯 Port — 콘크리트(DB/금고/LAN/LLM)를 은닉한 상태 조회 + 설정 기입.</summary>
     public interface IAdminSettingWidgetPort
     {
@@ -19,6 +32,12 @@ namespace MS2E.UI.Portable.Ports
         void SetSetting(string key, string value);
         /// <summary>비밀번호/시크릿 기입 — 어댑터가 DPAPI 암호화 저장(평문 미보관).</summary>
         void SetSecret(string key, string value);
+
+        // ── [v12.18.3-DEV] 전략 안전 설정 '강화 전용' 기입(완화 · 미등재 · 무장 키 = 폐기) ──
+        /// <summary>강화 전용 기입 — 반환 = TightenVerdictCode(0 강화됨 · 1 변화 없음 · 2 미등재 · 3 완화 거부 · 4 형식 불량 · 5 환경변수 덮음 · 6 저장 실패).</summary>
+        int TightenSetting(string key, string value);
+        /// <summary>강화 전용 키의 현재 유효값(호스트 precedence 환경변수 → DB → 폴백 · 불리언 0/1). 미등재 키 = false.</summary>
+        bool TryGetTightenable(string key, out long effective);
 
         // ── 거래 모드(paper/live 플래그 — 실 발주 무장과 무관) ──
         bool IsLive { get; }

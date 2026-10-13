@@ -18,6 +18,14 @@
 //  [방향 B] 산출값 NaN/∞ · 불균형 범위 이탈 · 1회 연산 > 10ms(StallMicros) = StrategyAnomalyInterlock sticky Disarm(재무장 = 물리 이중키).
 //  관제: 판단 상태가 바뀌거나(방향/등급/사유) PublishIntervalMicros 경과 시에만 IDecisionSink(DashboardSnapshotHub)로 사출 —
 //    호가마다 사출하면 관제 링(512)을 덮는다. 문자열 0(코드 · 수치만 — 텍스트는 UI 렌더 시 조립).
+//  [v12.18.1-DEV] 변동성 적응 임계(VolatilityAdaptiveCalibrator · 선택 결속): 피드별 호가로 국면(추세/회귀/횡보/워밍업)을 정수 판독 →
+//    종목 요구 확신 = max(고정 임계, 국면 임계 8500/9000/9500bp). 교차 모드 = 수신 피드 중 가장 높은 임계(보수). 고정 임계는 통과했지만
+//    국면 임계에 미달한 신호 = 사유 RegimeThresholdNotMet(관망) · 게이트 거부 계수 RejectedRegime. 국면/임계가 바뀔 때만 PublishCalibration 사출.
+//  [v12.18.2-DEV] 호스트 실배선: IOrderProposalObserver — GatedOrderDispatcher 드레인이 '무장 판정 이전'에 매 제안을 넘긴다. 게이트 꺼짐 ·
+//    미무장에서도 수량 ≤ 0 = 비트 27 · 모델 승인 계수(승인 서킷 브레이커 → 하드 초과 = 비트 27) · 그림자 판정(꺼짐이면 '켰다면 거부' 계수)이
+//    작동한다. 강제(SetGateEnforced true · 라우터 게이트 결속)일 때 AdmitSignal 은 같은 제안의 관측 판정(브레이커 판정 포함)을 재사용 —
+//    이중 계수 0. 국면 임계 거부는 관제 판단 근거로 사출(강제 = 거부 · 관측 = 관망 · 100ms 간격 상한 — 관제 링 덮어쓰기 방지).
+//    [방향 B] SignalChurnCircuitBreaker(선택 결속): 게이트가 승인한 시그널을 1분 창으로 세어 소프트 초과 = 억제 · 하드 초과 = 비트 27 Disarm.
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -32,6 +40,9 @@ namespace StockManager.Engines
     public interface IDecisionSink
     {
         void PublishDecision(int kind, long symbol, long scaleBp, long volatilityBp, long value, int reason);
+
+        /// <summary>[v12.18.1-DEV] 종목 국면 · 요구 확신 변경 통지(변경 시에만 · δ=0). 기본 = 무시(기존 싱크 호환).</summary>
+        void PublishCalibration(long symbol, int regime, int requiredBp) { }
     }
 
     /// <summary>라우터 전방 시그널 게이트(δ=0 · 예외 = 거부).</summary>
@@ -48,14 +59,17 @@ namespace StockManager.Engines
         CrossDisagree = 13,   // [교차 피드] 두 피드 신호 방향 불일치
         SingleSource = 14,    // [교차 피드] 한 피드만 신선(다른 피드 미수신 · 시각 이탈) — 확신 ½
         CrossSkewVeto = 15,   // [교차 피드 · 방향 B] 두 피드 수신 시각 격차 > 하드 임계(기본 1초) = 동시성 붕괴 — 확신 0
+        RegimeThresholdNotMet = 16,   // [v12.18.1-DEV] 고정 임계는 넘었지만 국면(횡보/회귀/워밍업) 상향 임계 미달 — 관망/전방 거부
     }
 
-    public enum StrategyAnomalyKind : byte { None = 0, NonFinite = 1, OutOfRange = 2, NonPositiveQty = 3, ComputeStall = 4, CrossFeedCrossed = 5 }
+    public enum StrategyAnomalyKind : byte { None = 0, NonFinite = 1, OutOfRange = 2, NonPositiveQty = 3, ComputeStall = 4, CrossFeedCrossed = 5,
+                                             ModelBreakdown = 6 }   // [v12.18.1-DEV · 방향 B] 1분 승인 시그널 > 하드 한도(SignalChurnCircuitBreaker)
 
     /// <summary>종목 시그널 판독본(seqlock 일관 사본).</summary>
     public readonly record struct QuantSignal(long SymbolCode, double Imbalance5, double MicroTrend, double VwapDeviationBp, double VolatilityBp,
                                               double Score, double Confidence, int Side, int Reason, long UpdatedMicros, long Books,
-                                              long CrossSkewMicros = -1, int Sources = 0, long KiwoomBid = 0, long KiwoomAsk = 0, long KisBid = 0, long KisAsk = 0);
+                                              long CrossSkewMicros = -1, int Sources = 0, long KiwoomBid = 0, long KiwoomAsk = 0, long KisBid = 0, long KisAsk = 0,
+                                              int RequiredBp = 0, MicroRegime Regime = MicroRegime.Warmup);
 
     // ════════════════════════════════════════════════════════════════════════
     // [방향 B] 전략 이상 인터락
@@ -74,8 +88,9 @@ namespace StockManager.Engines
         public long OutOfRange => Interlocked.Read(ref _outOfRange);
         public long NonPositive => Interlocked.Read(ref _nonPositive);
         public long Stalls => Interlocked.Read(ref _stalls);
-        private long _crossed;
+        private long _crossed, _breakdown;
         public long CrossedFeeds => Interlocked.Read(ref _crossed);
+        public long ModelBreakdowns => Interlocked.Read(ref _breakdown);
 
         public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
         {
@@ -94,6 +109,7 @@ namespace StockManager.Engines
                 case StrategyAnomalyKind.NonPositiveQty: Interlocked.Increment(ref _nonPositive); break;
                 case StrategyAnomalyKind.ComputeStall: Interlocked.Increment(ref _stalls); break;
                 case StrategyAnomalyKind.CrossFeedCrossed: Interlocked.Increment(ref _crossed); break;
+                case StrategyAnomalyKind.ModelBreakdown: Interlocked.Increment(ref _breakdown); break;
             }
             if (Interlocked.CompareExchange(ref _tripped, 1, 0) != 0) return;
             Volatile.Write(ref _first, (int)kind);
@@ -114,7 +130,7 @@ namespace StockManager.Engines
     // ════════════════════════════════════════════════════════════════════════
     // 시그널 엔진
     // ════════════════════════════════════════════════════════════════════════
-    public sealed class QuantSignalProvider : IQuantSignalGate
+    public sealed class QuantSignalProvider : IQuantSignalGate, IOrderProposalObserver
     {
         public const double DefaultConfidenceThreshold = 0.85;
         public const long DefaultMaxSignalAgeMicros = 1_000_000;
@@ -130,6 +146,7 @@ namespace StockManager.Engines
             public long Bid, Ask, RxMicros, Books;
             public double Imb5, Imb10Prev, Micro, Var, LastMid;
             public int HasImb10;
+            public CalibrationState Cal;                                         // [v12.18.1-DEV] 피드별 국면(피드 교대가 가짜 수익률을 만들지 않게)
         }
 
         private struct Slot
@@ -137,6 +154,8 @@ namespace StockManager.Engines
             public long Symbol, Seq, Books, UpdatedMicros, LastPublishMicros, LastCumVolume, CrossSkewMicros;
             public double Imb5, Micro, VwapNum, VwapDen, VwapDevBp, VolBp, Score, Conf;
             public int Lock, Side, Reason, LastPubKind, LastPubReason, LastPubSide, CrossedStreak, Sources;
+            public int RequiredBp, LastPubRequiredBp;
+            public MicroRegime Regime, LastPubRegime;
             public FeedState F0, F1;
         }
 
@@ -148,6 +167,10 @@ namespace StockManager.Engines
         private readonly double _threshold, _volSpikeBp, _vwapStretchBp;
         private readonly long _maxAgeMicros, _stallMicros, _publishIntervalMicros;
         private long _books, _trades, _invalidBooks, _tableFull, _published, _admitted, _rejStale, _rejLow, _rejSide, _rejNone, _rejAnomaly;
+        private readonly VolatilityAdaptiveCalibrator? _calibrator;
+        private readonly SignalChurnCircuitBreaker? _churn;
+        private long _rejRegime, _rejChurn, _calPublished;
+        private int _floorBp;                                                         // [v12.18.3] 런타임 확신 하한(올리기만 · 0 = 없음)
         // [교차 피드] 키움 + KIS 호가 교차 확인
         public const long DefaultCrossMaxSkewMicros = 500_000;
         public const int DefaultCrossedStreakToTrip = 3;
@@ -180,8 +203,10 @@ namespace StockManager.Engines
                                    long stallMicros = DefaultStallMicros, double volSpikeBp = DefaultVolSpikeBp, double vwapStretchBp = DefaultVwapStretchBp,
                                    long publishIntervalMicros = DefaultPublishIntervalMicros,
                                    bool crossConfirm = false, long crossMaxSkewMicros = DefaultCrossMaxSkewMicros, int crossedStreakToTrip = DefaultCrossedStreakToTrip,
-                                   long crossHardSkewMicros = DefaultCrossHardSkewMicros)
+                                   long crossHardSkewMicros = DefaultCrossHardSkewMicros,
+                                   VolatilityAdaptiveCalibrator? calibrator = null, SignalChurnCircuitBreaker? churn = null)
         {
+            _calibrator = calibrator; _churn = churn;
             if (crossHardSkewMicros < crossMaxSkewMicros) throw new ArgumentOutOfRangeException(nameof(crossHardSkewMicros), "하드 임계 ≥ 신선 임계");
             _crossHardSkewMicros = crossHardSkewMicros;
             if (crossMaxSkewMicros <= 0) throw new ArgumentOutOfRangeException(nameof(crossMaxSkewMicros));
@@ -210,6 +235,30 @@ namespace StockManager.Engines
         public long RejectedSideMismatch => Interlocked.Read(ref _rejSide);
         public long RejectedNoSignal => Interlocked.Read(ref _rejNone);
         public long RejectedAnomaly => Interlocked.Read(ref _rejAnomaly);
+        /// <summary>고정 임계는 넘었지만 국면 상향 임계 미달로 게이트 거부(횡보 휩소 차단 실측).</summary>
+        public long RejectedRegime => Interlocked.Read(ref _rejRegime);
+        /// <summary>[방향 B] 승인됐으나 1분 승인 한도로 억제/붕괴 판정되어 거부.</summary>
+        public long RejectedChurn => Interlocked.Read(ref _rejChurn);
+        public long CalibrationsPublished => Interlocked.Read(ref _calPublished);
+        public VolatilityAdaptiveCalibrator? Calibrator => _calibrator;
+        /// <summary>[v12.18.3-DEV] 런타임 확신 하한(bp · 0 = 생성 시 임계만).</summary>
+        public int ConfidenceFloorBp => Volatile.Read(ref _floorBp);
+
+        /// <summary>
+        /// [v12.18.3-DEV] 확신 하한 런타임 상향 — 올리기만(낮은 값 무시 · 상한 10,000). 게이트 · 관제 판정 = max(생성 임계, 하한, 국면 임계).
+        /// 하향은 재기동으로만. 반환 = 상향했는가.
+        /// </summary>
+        public bool RaiseConfidenceFloorBp(int bp)
+        {
+            if (bp > 10_000) bp = 10_000;
+            while (true)
+            {
+                int cur = Volatile.Read(ref _floorBp);
+                if (bp <= cur) return false;
+                if (Interlocked.CompareExchange(ref _floorBp, bp, cur) == cur) return true;
+            }
+        }
+        public SignalChurnCircuitBreaker? Churn => _churn;
 
         // ── 입력 ──
 
@@ -251,7 +300,8 @@ namespace StockManager.Engines
             int s = Acquire(b.SymbolCode);
             if (s < 0) { Interlocked.Increment(ref _tableFull); return; }
             ref var x = ref _slots[s];
-            int kind = 0, reason = 0, side = 0; long scaleBp = 0, volBpL = 0, value = 0; bool publish = false, signal;
+            int kind = 0, reason = 0, side = 0, requiredBp = 0; long scaleBp = 0, volBpL = 0, value = 0; bool publish = false, publishCal = false, signal;
+            MicroRegime regime = MicroRegime.Warmup;
             BeginWrite(ref x);
             try
             {
@@ -267,6 +317,7 @@ namespace StockManager.Engines
                 long nowRx = _nowMicros();
                 src.RxMicros = nowRx == 0 ? 1 : nowRx;
                 src.Books++;
+                _calibrator?.Observe(ref src.Cal, bestBid, bestAsk, bid5, ask5);    // 정수 · δ=0 · 이 슬롯 작성 잠금 아래 단일 작성자
                 signal = _crossConfirm || feed == FeedKiwoom;
                 if (signal)
                 {
@@ -331,11 +382,30 @@ namespace StockManager.Engines
                     { _anomaly.Trip(StrategyAnomalyKind.NonFinite); conf = 0; score = 0; side = 0; reason = (int)QuantReason.Anomaly; }
                     else if (Math.Abs(imb5) > 1.0 + 1e-12 || Math.Abs(imb10) > 1.0 + 1e-12 || conf > 1.0 + 1e-12)
                     { _anomaly.Trip(StrategyAnomalyKind.OutOfRange); conf = 0; reason = (int)QuantReason.Anomaly; }
+                    // [v12.18.1-DEV] 국면 임계 — 교차 모드 = 수신 피드 중 최고(보수) · 캘리브레이터 미결속 = 고정 임계 그대로
+                    double threshold = Math.Max(_threshold, Volatile.Read(ref _floorBp) / 10_000.0);
+                    if (_calibrator is { } cal)
+                    {
+                        if (!_crossConfirm) { requiredBp = x.F0.Cal.RequiredBp; regime = x.F0.Cal.Regime; }
+                        else
+                        {
+                            bool use0 = x.F0.Books > 0 && !IsFeedQuarantined(FeedKiwoom), use1 = x.F1.Books > 0 && !IsFeedQuarantined(FeedKis);
+                            if (use0) { requiredBp = x.F0.Cal.RequiredBp; regime = x.F0.Cal.Regime; }
+                            if (use1 && x.F1.Cal.RequiredBp > requiredBp) { requiredBp = x.F1.Cal.RequiredBp; regime = x.F1.Cal.Regime; }
+                        }
+                        if (requiredBp <= 0) { requiredBp = cal.MaxBp; regime = MicroRegime.Warmup; }   // 관측 없음 = 최대(fail-closed)
+                        threshold = Math.Max(threshold, requiredBp / 10_000.0);
+                        if (conf >= _threshold && conf < threshold && reason is not ((int)QuantReason.VolatilitySpikeVeto or (int)QuantReason.Anomaly or (int)QuantReason.CrossedFeed))
+                            reason = (int)QuantReason.RegimeThresholdNotMet;
+                    }
+                    x.RequiredBp = requiredBp; x.Regime = regime;
                     x.Score = score; x.Conf = conf; x.Side = side; x.Reason = reason;
                     long now = _nowMicros();
                     x.UpdatedMicros = now == 0 ? 1 : now;
                     x.Books++;
-                    kind = conf >= _threshold ? (side > 0 ? 1 : 2) : reason is (int)QuantReason.VolatilitySpikeVeto or (int)QuantReason.Anomaly or (int)QuantReason.CrossedFeed ? 5 : 4;   // DashDecisionKind
+                    kind = conf >= threshold ? (side > 0 ? 1 : 2) : reason is (int)QuantReason.VolatilitySpikeVeto or (int)QuantReason.Anomaly or (int)QuantReason.CrossedFeed ? 5 : 4;   // DashDecisionKind
+                    publishCal = _calibrator is not null && (regime != x.LastPubRegime || requiredBp != x.LastPubRequiredBp);
+                    if (publishCal) { x.LastPubRegime = regime; x.LastPubRequiredBp = requiredBp; }
                     publish = kind != x.LastPubKind || reason != x.LastPubReason || side != x.LastPubSide || now - x.LastPublishMicros >= _publishIntervalMicros;
                     if (publish) { x.LastPubKind = kind; x.LastPubReason = reason; x.LastPubSide = side; x.LastPublishMicros = now; }
                     scaleBp = double.IsFinite(conf) ? (long)(conf * 10_000) : 0;
@@ -352,6 +422,10 @@ namespace StockManager.Engines
             if (publish && _sink is { } sink)
             {
                 try { sink.PublishDecision(kind, b.SymbolCode, scaleBp, volBpL, value, reason); Interlocked.Increment(ref _published); } catch (Exception) { }
+            }
+            if (publishCal && _sink is { } calSink)
+            {
+                try { calSink.PublishCalibration(b.SymbolCode, (int)regime, requiredBp); Interlocked.Increment(ref _calPublished); } catch (Exception) { }
             }
         }
 
@@ -398,23 +472,120 @@ namespace StockManager.Engines
                 long s1 = Volatile.Read(ref x.Seq);
                 if ((s1 & 1) != 0) { Thread.SpinWait(4); continue; }
                 var copy = new QuantSignal(x.Symbol, x.Imb5, x.Micro, x.VwapDevBp, x.VolBp, x.Score, x.Conf, x.Side, x.Reason, x.UpdatedMicros, x.Books,
-                                           x.CrossSkewMicros, x.Sources, x.F0.Bid, x.F0.Ask, x.F1.Bid, x.F1.Ask);
+                                           x.CrossSkewMicros, x.Sources, x.F0.Bid, x.F0.Ask, x.F1.Bid, x.F1.Ask, x.RequiredBp, x.Regime);
                 Interlocked.MemoryBarrier();
                 if (Volatile.Read(ref x.Seq) == s1) { signal = copy; return copy.UpdatedMicros != 0; }
             }
             return false;
         }
 
-        /// <summary>라우터 전방 게이트(δ=0): 이상 미격발 ∧ 수량 &gt; 0 ∧ 신호 신선 ∧ 확신 ≥ 임계 ∧ 같은 방향.</summary>
+        private enum Judgement : byte { Approve = 0, NoSignal = 1, Stale = 2, Low = 3, Regime = 4, Side = 5 }
+
+        // 판정 코어(부작용 0 · δ=0) — 관측(OnProposal)과 강제(AdmitSignal)가 같은 규칙을 쓴다.
+        private Judgement Judge(in OrderProposal p, out long confBp, out long volBp)
+        {
+            confBp = 0; volBp = 0;
+            if (!TryGetSignal(p.SymbolCode, out var sig)) return Judgement.NoSignal;
+            confBp = double.IsFinite(sig.Confidence) ? (long)(sig.Confidence * 10_000) : 0;
+            volBp = double.IsFinite(sig.VolatilityBp) ? (long)sig.VolatilityBp : 0;
+            if (_nowMicros() - sig.UpdatedMicros > _maxAgeMicros) return Judgement.Stale;
+            if (!(sig.Confidence >= Math.Max(_threshold, Volatile.Read(ref _floorBp) / 10_000.0))) return Judgement.Low;   // NaN 도 거부 · 런타임 하한 포함
+            if (_calibrator is { } cal)
+            {
+                // ★Zero Whipsaw Bleed — 국면 임계(관측 없음 = 최대) 미달 = 거부. 판독본의 RequiredBp 는 확신과 같은 seqlock 사본(같은 호가 기준).
+                int req = sig.RequiredBp > 0 ? Math.Max(sig.RequiredBp, cal.ThresholdFor(sig.Regime)) : cal.MaxBp;   // 런타임 상향(RaiseMaxBp) 즉시 반영
+                if (!(sig.Confidence >= req / 10_000.0)) return Judgement.Regime;
+            }
+            int want = p.SideByte == 0 ? 1 : -1;
+            return sig.Side == want ? Judgement.Approve : Judgement.Side;
+        }
+
+        // ── [v12.18.2-DEV] 제안 관측(드레인 스레드 · 무장 판정 이전) ──
+        private long _observed, _shadowApproved, _shadowRejects, _shadowRegime, _gateDecisions, _lastGateDecisionMicros = long.MinValue;
+        private long _obsOrderId;
+        private int _obsValid, _enforced;
+        private ChurnVerdict _obsVerdict;
+        public long ObservedProposals => Interlocked.Read(ref _observed);
+        /// <summary>관측 판정 = 승인(브레이커 계수 대상).</summary>
+        public long ShadowApproved => Interlocked.Read(ref _shadowApproved);
+        /// <summary>관측 판정 = 거부(신호 없음 · 만료 · 확신/국면 미달 · 방향) — 게이트 꺼짐이면 '켰다면 거부됐을' 제안 수.</summary>
+        public long ShadowRejects => Interlocked.Read(ref _shadowRejects);
+        public long ShadowRegimeRejects => Interlocked.Read(ref _shadowRegime);
+        /// <summary>국면 임계 거부로 관제에 사출한 판단 근거 수.</summary>
+        public long GateDecisionsPublished => Interlocked.Read(ref _gateDecisions);
+        /// <summary>라우터 게이트 강제 여부(호스트 SignalGateRuntimeSwitch 가 라우터와 함께 갱신 — 관제 사출 종류 결정용).</summary>
+        public bool GateEnforced => Volatile.Read(ref _enforced) == 1;
+        public void SetGateEnforced(bool enforced) => Volatile.Write(ref _enforced, enforced ? 1 : 0);
+
+        /// <summary>
+        /// 드레인 제안 관측(δ=0 · 단일 드레인 스레드). 차단하지 않는다 — 수량 ≤ 0 · 승인 폭주는 비트 27(인터락 차단)로 반영되고,
+        /// 브레이커 판정은 같은 제안의 강제 판정(AdmitSignal)이 재사용한다.
+        /// </summary>
+        public void OnProposal(in OrderProposal p)
+        {
+            Interlocked.Increment(ref _observed);
+            Volatile.Write(ref _obsValid, 0);
+            if (p.QtyRaw <= 0 || p.PriceRaw < 0) { _anomaly.Trip(StrategyAnomalyKind.NonPositiveQty); Interlocked.Increment(ref _shadowRejects); return; }
+            var j = Judge(in p, out long confBp, out long volBp);
+            ChurnVerdict verdict = ChurnVerdict.Allowed;
+            if (j == Judgement.Approve)
+            {
+                Interlocked.Increment(ref _shadowApproved);
+                if (_churn is { } churn) verdict = churn.OnApproved(_nowMicros());       // ★하드 초과 = 비트 27(게이트 꺼짐 · 미무장에서도)
+            }
+            else
+            {
+                Interlocked.Increment(ref _shadowRejects);
+                if (j == Judgement.Regime)
+                {
+                    Interlocked.Increment(ref _shadowRegime);
+                    if (!GateEnforced) PublishGateDecision(p.SymbolCode, 4, confBp, volBp);   // 관측 = 관망(DashDecisionKind.Hold)
+                }
+            }
+            _obsOrderId = p.OrderId; _obsVerdict = verdict;
+            Volatile.Write(ref _obsValid, 1);
+        }
+
+        // 국면 임계 거부 판단 근거 사출 — 전 종목 공통 100ms 간격 상한(CAS · 실패 = 생략 · δ=0)
+        private void PublishGateDecision(long symbol, int kind, long confBp, long volBp)
+        {
+            if (_sink is not { } sink) return;
+            long now = _nowMicros(), last = Interlocked.Read(ref _lastGateDecisionMicros);
+            if (last != long.MinValue && now - last < 100_000) return;
+            if (Interlocked.CompareExchange(ref _lastGateDecisionMicros, now, last) != last) return;
+            try { sink.PublishDecision(kind, symbol, confBp, volBp, 0, (int)QuantReason.RegimeThresholdNotMet); Interlocked.Increment(ref _gateDecisions); } catch (Exception) { }
+        }
+
+        /// <summary>
+        /// 라우터 전방 게이트(δ=0): 이상 미격발 ∧ 수량 &gt; 0 ∧ 신호 신선 ∧ 확신 ≥ 임계(캘리브레이터 결속 시 max(고정, 국면 임계)) ∧ 같은 방향
+        /// ∧ [방향 B] 1분 승인 한도 이내. 거부는 라우터 · 분할기 진입 '전'(예약 · 자식 슬롯 · 대사 원장 기입 0).
+        /// 같은 제안을 드레인이 방금 관측했으면 그 브레이커 판정을 재사용(이중 계수 0) · 관측 없음(라우터 단독 사용) = 여기서 계수.
+        /// </summary>
         public bool AdmitSignal(in OrderProposal p)
         {
-            if (p.QtyRaw <= 0 || p.PriceRaw < 0) { _anomaly.Trip(StrategyAnomalyKind.NonPositiveQty); Interlocked.Increment(ref _rejAnomaly); return false; }
+            bool observed = Volatile.Read(ref _obsValid) == 1 && _obsOrderId == p.OrderId;
+            if (p.QtyRaw <= 0 || p.PriceRaw < 0)
+            {
+                if (!observed) _anomaly.Trip(StrategyAnomalyKind.NonPositiveQty);
+                Interlocked.Increment(ref _rejAnomaly); return false;
+            }
             if (_anomaly.Tripped) { Interlocked.Increment(ref _rejAnomaly); return false; }
-            if (!TryGetSignal(p.SymbolCode, out var sig)) { Interlocked.Increment(ref _rejNone); return false; }
-            if (_nowMicros() - sig.UpdatedMicros > _maxAgeMicros) { Interlocked.Increment(ref _rejStale); return false; }
-            if (!(sig.Confidence >= _threshold)) { Interlocked.Increment(ref _rejLow); return false; }   // NaN 도 거부
-            int want = p.SideByte == 0 ? 1 : -1;
-            if (sig.Side != want) { Interlocked.Increment(ref _rejSide); return false; }
+            switch (Judge(in p, out long confBp, out long volBp))
+            {
+                case Judgement.NoSignal: Interlocked.Increment(ref _rejNone); return false;
+                case Judgement.Stale: Interlocked.Increment(ref _rejStale); return false;
+                case Judgement.Low: Interlocked.Increment(ref _rejLow); return false;
+                case Judgement.Regime:
+                    Interlocked.Increment(ref _rejRegime);
+                    PublishGateDecision(p.SymbolCode, 5, confBp, volBp);                    // 강제 = 거부(DashDecisionKind.Veto)
+                    return false;
+                case Judgement.Side: Interlocked.Increment(ref _rejSide); return false;
+            }
+            if (_churn is { } churn)
+            {
+                ChurnVerdict v = observed ? _obsVerdict : churn.OnApproved(_nowMicros());
+                if (v != ChurnVerdict.Allowed) { Interlocked.Increment(ref _rejChurn); return false; }
+            }
             Interlocked.Increment(ref _admitted);
             return true;
         }

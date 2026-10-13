@@ -141,6 +141,12 @@ namespace StockManager.Blazor.Services
         private readonly LatencySpikeDegradationGuard _spikeGuard;
         private int _basePeriodMs = DefaultPeriodMs;
 
+        // ── [v12.18.1-DEV] 변동성 적응 임계(선택 결선) — 생산자 = 시그널 엔진 OnBook 스레드 · 1 원자 long(종목 << 24 | 국면 << 16 | bp) ──
+        private StockManager.Engines.VolatilityAdaptiveCalibrator? _calibrator;
+        private StockManager.Engines.SignalChurnCircuitBreaker? _churn;
+        private long _calPacked, _calUpdates;
+        private StockManager.Engines.SignalGateRuntimeSwitch? _gateSwitch;
+
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
         /// <param name="views">브로커별 계좌 뷰(인덱스 = 브로커 · null 슬롯 = 미결선).</param>
@@ -194,6 +200,25 @@ namespace StockManager.Blazor.Services
         /// <summary>[방향 B] AI 판단 근거 1건(코드 · 수치만 — 문자열 0). kind = DashDecisionKind · reason = 전략 정의 코드(또는 인터락 비트).</summary>
         public void PublishDecision(int kind, long symbol, long scaleBp, long volatilityBp, long value, int reason)
             => _decisions.Publish(new DashDecision { Ticks = _nowTicks(), Kind = kind, Symbol = symbol, ScaleBp = scaleBp, VolatilityBp = volatilityBp, Value = value, Reason = reason });
+
+        /// <summary>[v12.18.1-DEV] 캘리브레이터 · 승인 서킷 브레이커 결선(호스트 조립 1회 — 허브가 시그널 엔진보다 먼저 생성되므로 사후 결선).</summary>
+        public void AttachCalibration(StockManager.Engines.VolatilityAdaptiveCalibrator calibrator, StockManager.Engines.SignalChurnCircuitBreaker? churn = null)
+        {
+            Volatile.Write(ref _churn, churn);
+            Volatile.Write(ref _calibrator, calibrator ?? throw new ArgumentNullException(nameof(calibrator)));
+        }
+
+        /// <summary>[v12.18.2-DEV] 시그널 게이트 런타임 토글 결선(모드 · 거부 계수 관제).</summary>
+        public void AttachSignalGate(StockManager.Engines.SignalGateRuntimeSwitch gateSwitch)
+            => Volatile.Write(ref _gateSwitch, gateSwitch ?? throw new ArgumentNullException(nameof(gateSwitch)));
+
+        /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
+        public void PublishCalibration(long symbol, int regime, int requiredBp)
+        {
+            long sym = (ulong)symbol < (1UL << 39) ? symbol : 0;
+            Interlocked.Exchange(ref _calPacked, (sym << 24) | ((long)(regime & 0xFF) << 16) | (long)(requiredBp & 0xFFFF));
+            Interlocked.Increment(ref _calUpdates);
+        }
 
         /// <summary>인터락 비트 전이(포렌식 기록기 체인 · Trip 스레드 · δ=0). 차단은 이미 반영된 뒤다(관측이 차단을 늦추지 못함).</summary>
         public void OnTransition(long raisedBits, long clearedBits, long maskAfter)
@@ -264,6 +289,11 @@ namespace StockManager.Blazor.Services
             sig = sig * 31 + (_mask?.BoundMask ?? 0);
             sig = sig * 31 + Interlocked.Read(ref _ticksSeen);
             if (_orderPath is { } opSig) sig = sig * 31 + opSig.EgressForwarded + opSig.EgressVetoed * 7 + opSig.Begun * 13 + opSig.Reclaimed * 17;
+            var churn = Volatile.Read(ref _churn);
+            sig = sig * 31 + Interlocked.Read(ref _calPacked) + Interlocked.Read(ref _calUpdates) * 7;
+            if (churn is not null) sig = sig * 31 + churn.LastWindowCount + churn.Suppressed * 7 + churn.Breakdowns * 13;
+            var gs = Volatile.Read(ref _gateSwitch);
+            if (gs is not null) sig = sig * 31 + gs.Mode + gs.Signals.ObservedProposals * 7 + gs.Signals.RejectedRegime * 13 + gs.DisableRefused * 17;
             for (int b = 0; b < _views.Length && b < Brokers; b++)
             {
                 var v = _views[b];
@@ -323,6 +353,21 @@ namespace StockManager.Blazor.Services
             Array.Copy(_lat2, _latCount - tc, f.LatencyTrend, 0, tc);
             f.LatencyTrendCount = tc;
             f.LatencyThrottled = _spikeGuard.Degraded; f.PublishPeriodMs = CurrentPeriodMs;
+            var cal = Volatile.Read(ref _calibrator);
+            long packed = Interlocked.Read(ref _calPacked);
+            f.CalibrationBound = cal is not null;
+            f.CalibrationUpdates = Interlocked.Read(ref _calUpdates);
+            f.BaseConfidenceBp = cal?.BaseBp ?? 0;
+            if (cal is null) { f.Regime = DashRegime.Unbound; f.RequiredConfidenceBp = 0; f.CalibrationSymbol = 0; }
+            else if (f.CalibrationUpdates == 0) { f.Regime = DashRegime.Warmup; f.RequiredConfidenceBp = cal.MaxBp; f.CalibrationSymbol = 0; }   // 관측 전 = 최대(엔진과 같은 fail-closed)
+            else { f.Regime = (int)((packed >> 16) & 0xFF); f.RequiredConfidenceBp = (int)(packed & 0xFFFF); f.CalibrationSymbol = packed >> 24; }
+            f.ChurnBound = churn is not null;
+            f.ChurnWindow = churn?.LastWindowCount ?? 0; f.ChurnSuppressed = churn?.Suppressed ?? 0; f.ChurnBreakdowns = churn?.Breakdowns ?? 0;
+            f.ChurnSoft = churn?.SoftPerMinute ?? 0; f.ChurnHard = churn?.HardPerMinute ?? 0;
+            f.GateMode = gs is null ? DashGateMode.Unbound : gs.Mode;
+            f.GateObserved = gs?.Signals.ObservedProposals ?? 0; f.GateRegimeRejects = gs?.Signals.RejectedRegime ?? 0;
+            f.GateShadowRejects = gs?.Signals.ShadowRejects ?? 0; f.GateShadowRegime = gs?.Signals.ShadowRegimeRejects ?? 0;
+            f.GateChurnRejects = gs?.Signals.RejectedChurn ?? 0; f.GateDisableRefused = gs?.DisableRefused ?? 0;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

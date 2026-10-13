@@ -1733,16 +1733,42 @@ namespace StockManager.Blazor
             strategyAnomaly.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.StrategyAnomaly);
             services.AddSingleton(strategyAnomaly);
             //   [교차 피드] KIS 호가 구독이 있으면 교차 확인 모드 — 두 피드 일치 · 꼬임 Disarm · 단일 출처 ½ 감쇄(`Strategy.CrossMaxSkewMs` 기본 500).
+            //   [v12.18.1-DEV] 변동성 적응 임계 — 국면(추세/회귀/횡보/워밍업) → 요구 확신 기본 ~ `Strategy.AdaptiveMaxBp`(9500) · 정수 · δ=0 ·
+            //   `Strategy.AdaptiveThreshold`(기본 켜짐 — 끄면 고정 임계). [방향 B] 1분 승인 > `Strategy.ChurnSoftPerMin`(30) = 억제 ·
+            //   > `Strategy.ChurnHardPerMin`(60) = 알파 모델 붕괴 → 비트 27 Disarm. 국면/확신 거부 · 승인 억제는 시그널 게이트 강제 모드에서만 발주를 거른다
+            //   (모델 붕괴 · 수량 ≤ 0 비트 27 은 관측 모드에서도 — 아래 [v12.18.2] 참고).
+            int confidenceBaseBp = cfg.GetInt("Strategy.ConfidenceThresholdBp", 8_500, 5_000, 10_000);
+            StockManager.Engines.VolatilityAdaptiveCalibrator? adaptiveCalibrator = cfg.GetBool("Strategy.AdaptiveThreshold", true)
+                ? new StockManager.Engines.VolatilityAdaptiveCalibrator(confidenceBaseBp, Math.Max(confidenceBaseBp, cfg.GetInt("Strategy.AdaptiveMaxBp", 9_500, 5_000, 10_000)))
+                : null;
+            int churnSoft = cfg.GetInt("Strategy.ChurnSoftPerMin", 30, 1, 100_000);
+            var signalChurn = new StockManager.Engines.SignalChurnCircuitBreaker(strategyAnomaly, churnSoft,
+                Math.Max(churnSoft + 1, cfg.GetInt("Strategy.ChurnHardPerMin", 60, 2, 100_000)));
             var quantSignals = new StockManager.Engines.QuantSignalProvider(strategyAnomaly, dashHub,
-                confidenceThreshold: cfg.GetInt("Strategy.ConfidenceThresholdBp", 8_500, 5_000, 10_000) / 10_000.0,
+                confidenceThreshold: confidenceBaseBp / 10_000.0,
                 crossConfirm: kisBookSymbols.Length > 0,
                 crossMaxSkewMicros: cfg.GetInt("Strategy.CrossMaxSkewMs", 500, 50, 10_000) * 1000L,
-                crossHardSkewMicros: cfg.GetInt("Strategy.CrossHardSkewMs", 1_000, 50, 60_000) * 1000L);   // [방향 B] 시각 격차 > 1초 = 교차 확신 0
+                crossHardSkewMicros: cfg.GetInt("Strategy.CrossHardSkewMs", 1_000, 50, 60_000) * 1000L,   // [방향 B] 시각 격차 > 1초 = 교차 확신 0
+                calibrator: adaptiveCalibrator, churn: signalChurn);
+            if (adaptiveCalibrator is not null) dashHub.AttachCalibration(adaptiveCalibrator, signalChurn);
             Volatile.Write(ref quantRef, quantSignals);
             bridge.OrderBookReceived += b => quantSignals.OnBook(in b);
             bridge.TickReceived += t => quantSignals.OnTrade(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);
             services.AddSingleton(quantSignals);
-            if (cfg.GetBool("Strategy.SignalGateEnabled", false)) routerGate.EnableSignalGate(quantSignals);
+            // [v12.18.2-DEV] 시그널 게이트 실배선 — ① 드레인 제안 관측(무장 판정 이전 · 항상): 게이트 꺼짐/미무장에서도 수량 ≤ 0 · 승인 폭주 = 비트 27 ·
+            //   그림자 판정 계수. ② 강제 = `Strategy.SignalGateEnabled`(기본 false) 런타임 토글 — 1초 콜드 판독 · 켜기 즉시 · 끄기는 물리 키 둘 다 꺼졌을 때만.
+            //   Strategy.* 는 순수 UI 기입 허용 목록 밖(호스트 안전 네임스페이스 — 운영자 경로로만 토글).
+            ringDispatcher.ProposalObserver = quantSignals;
+            var signalGateSwitch = new StockManager.Engines.SignalGateRuntimeSwitch(routerGate, quantSignals,
+                desired: () => cfg.GetBool("Strategy.SignalGateEnabled", false),
+                anyKeyOn: () => cfg.GetBool("Dispatch.ValveWired", false) || cfg.GetBool("Dispatch.LiveArmingWired", false),
+                confidenceFloorBp: () => cfg.GetInt("Strategy.ConfidenceThresholdBp", 8_500, 5_000, 10_000),   // [v12.18.3] 강화 전용 UI 기입 실시간 반영(상향만)
+                adaptiveMaxBp: () => cfg.GetInt("Strategy.AdaptiveMaxBp", 9_500, 5_000, 10_000));
+            signalGateSwitch.Poll();
+            services.AddSingleton(signalGateSwitch);
+            dashHub.AttachSignalGate(signalGateSwitch);
+            var signalGateTimer = new System.Threading.Timer(_ => { try { signalGateSwitch.Poll(); } catch { } }, null, 1_000, 1_000);
+            FormClosed += (_, _) => signalGateTimer.Dispose();
             var childEvalTimer = new System.Threading.Timer(_ =>
             {
                 try { childMatrix.Evaluate(); } catch { }

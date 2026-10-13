@@ -7,7 +7,8 @@
 //  기준 구현(MultiRepoReleaseManifest.CanonicalHash · JsonDocument)과 '독립된 두 번째 파서'다 — 핸드셰이크는 두 판독이 모두
 //  통과해야 Ok(파서 차이 공격 차단: 중복 키 · 이스케이프로 같은 값을 다르게 보이게 하는 위조는 여기서 NonCanonical/Malformed).
 //
-//  정규화 규칙(기준 구현과 1:1): "키=값\n" 줄 · schema→…→liveArmedDefault · interlock(기록 순서) · artifact=이름|SHA(대문자 · 이름 서수 정렬) ·
+//  정규화 규칙(기준 구현과 1:1): "키=값\n" 줄 · schema→…→liveArmedDefault · interlock(기록 순서) · tighten(기록 순서 · v12.18.1-GM · 있을 때) ·
+//    artifact=이름|SHA(대문자 · 이름 서수 정렬) ·
 //    peer.*(있을 때) · 해시류 대문자 · 커밋 소문자 · peer.rootHash 원문.
 //  엄격(fail-closed) 차이: 문자열 이스케이프 · 비 ASCII 이름 · 중복 키 · 필수 키 누락 · 버퍼/개수 초과 = 거부(Build 산출물에는 없음).
 //  δ=0 범위(정직): Verify(판독·정규화·해시·대조) 0B 실측. 생성자(고정 버퍼 1회 확보)와 파일 읽기 진입(FileStream)은 콜드.
@@ -28,7 +29,7 @@ namespace StockManager.Tools
     public sealed class ManifestSealStreamer
     {
         public const int DefaultCapacity = 64 * 1024;
-        public const int MaxArtifacts = 512, MaxInterlocks = 128;
+        public const int MaxArtifacts = 512, MaxInterlocks = 128, MaxTightenRules = 64;
 
         // 필드 식별(정규화 순서)
         private const int FSchema = 0, FVersion = 1, FTag = 2, FSource = 3, FSig = 4, FSeal = 5, FGenesis = 6, FZipName = 7, FZip = 8, FShim = 9,
@@ -38,9 +39,10 @@ namespace StockManager.Tools
         private readonly byte[] _input, _canon;                 // POH pinned — GC 이동 0 · 재사용
         private readonly int[] _fOff = new int[FieldCount], _fLen = new int[FieldCount];
         private readonly int[] _ilOff = new int[MaxInterlocks], _ilLen = new int[MaxInterlocks];
+        private readonly int[] _tlOff = new int[MaxTightenRules], _tlLen = new int[MaxTightenRules];
         private readonly int[] _anOff = new int[MaxArtifacts], _anLen = new int[MaxArtifacts], _ahOff = new int[MaxArtifacts], _ahLen = new int[MaxArtifacts], _order = new int[MaxArtifacts];
         private readonly byte[] _seal = new byte[32], _zip = new byte[32], _genesis = new byte[32], _hash = new byte[32], _calc = new byte[32];
-        private int _length, _artifacts, _interlocks, _declaredCount;
+        private int _length, _artifacts, _interlocks, _tighten, _declaredCount;
         private bool _liveArmed, _hasPeer;
 
         public ManifestSealStreamer(int capacity = DefaultCapacity)
@@ -54,6 +56,7 @@ namespace StockManager.Tools
         public int Length => _length;
         public int ArtifactCount => _artifacts;
         public int InterlockCount => _interlocks;
+        public int TightenRuleCount => _tighten;
         public ReadOnlySpan<byte> MasterSeal => _seal;
         public ReadOnlySpan<byte> ZipSha256 => _zip;
         public ReadOnlySpan<byte> GenesisHeadHash => _genesis;
@@ -105,8 +108,8 @@ namespace StockManager.Tools
         private ManifestStreamVerdict Parse(ReadOnlySpan<byte> json)
         {
             Array.Clear(_fLen); Array.Fill(_fOff, -1);
-            _artifacts = 0; _interlocks = 0; _declaredCount = -1; _liveArmed = true; _hasPeer = false;
-            bool seenLive = false, seenIl = false, seenArts = false, seenPeer = false;
+            _artifacts = 0; _interlocks = 0; _tighten = 0; _declaredCount = -1; _liveArmed = true; _hasPeer = false;
+            bool seenLive = false, seenIl = false, seenArts = false, seenPeer = false, seenTl = false;
             try
             {
                 var r = new Utf8JsonReader(json, new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 8 });
@@ -144,6 +147,19 @@ namespace StockManager.Tools
                             if (_interlocks == MaxInterlocks) return ManifestStreamVerdict.TooLarge;
                             _ilOff[_interlocks] = (int)r.TokenStartIndex + 1; _ilLen[_interlocks] = r.ValueSpan.Length; _interlocks++;
                         }
+                    }
+                    else if (r.ValueTextEquals("tightenRules"u8))
+                    {
+                        // [v12.18.1-GM] 강화 전용 행렬(선택) — 있으면 1개 이상(빈 배열 = 기준 구현도 거부하는 비정규 형식)
+                        if (seenTl || !r.Read() || r.TokenType != JsonTokenType.StartArray) return ManifestStreamVerdict.Malformed;
+                        seenTl = true;
+                        while (r.Read() && r.TokenType != JsonTokenType.EndArray)
+                        {
+                            if (r.TokenType != JsonTokenType.String || r.ValueIsEscaped) return ManifestStreamVerdict.NonCanonical;
+                            if (_tighten == MaxTightenRules) return ManifestStreamVerdict.TooLarge;
+                            _tlOff[_tighten] = (int)r.TokenStartIndex + 1; _tlLen[_tighten] = r.ValueSpan.Length; _tighten++;
+                        }
+                        if (_tighten == 0) return ManifestStreamVerdict.NonCanonical;
                     }
                     else if (r.ValueTextEquals("artifacts"u8))
                     {
@@ -234,6 +250,8 @@ namespace StockManager.Tools
                 return -1;
             for (int i = 0; i < _interlocks; i++)
                 if (!Put(dst, ref w, "interlock="u8) || !Copy(dst, ref w, src.Slice(_ilOff[i], _ilLen[i]), Raw) || !Put(dst, ref w, "\n"u8)) return -1;
+            for (int i = 0; i < _tighten; i++)
+                if (!Put(dst, ref w, "tighten="u8) || !Copy(dst, ref w, src.Slice(_tlOff[i], _tlLen[i]), Raw) || !Put(dst, ref w, "\n"u8)) return -1;
             // 아티팩트 이름 서수 정렬(삽입 정렬 · 인덱스만 · 무할당)
             for (int i = 0; i < _artifacts; i++) _order[i] = i;
             for (int i = 1; i < _artifacts; i++)

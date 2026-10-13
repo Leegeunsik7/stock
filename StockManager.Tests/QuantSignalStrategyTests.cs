@@ -279,7 +279,8 @@ namespace StockManager.Tests
             Assert.Contains("strategyAnomaly.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.StrategyAnomaly);", form);
             Assert.Contains("new StockManager.Engines.QuantSignalProvider(strategyAnomaly, dashHub,", form);
             Assert.Contains("bridge.OrderBookReceived += b => quantSignals.OnBook(in b);", form);
-            Assert.Contains("if (cfg.GetBool(\"Strategy.SignalGateEnabled\", false)) routerGate.EnableSignalGate(quantSignals);", form);
+            Assert.Contains("desired: () => cfg.GetBool(\"Strategy.SignalGateEnabled\", false),", form);   // [v12.18.2] 런타임 토글(SignalGateRuntimeSwitch)
+            Assert.Contains("ringDispatcher.ProposalObserver = quantSignals;", form);
             Assert.True(form.IndexOf("strategyAnomaly.BindInterlock", StringComparison.Ordinal) < form.IndexOf("interlockMask.Seal(out long missingInterlocks)", StringComparison.Ordinal));
             Assert.Equal((27, 21), ((int)ArmingInterlockSource.StrategyAnomaly, (int)OrderRouteVerdict.SignalRejected));
             string sln = File.ReadAllText(Path.Combine(root, "StockManager.sln"));

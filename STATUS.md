@@ -1,16 +1,16 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.0-GM — Production Golden Master 출하(30대 인터락 봉인 무추출 대조 · 호스트 지연 스탬프 · 100ms 예산)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,698/3,698 Pass, infra-scan coupling 0, Phase114 coupled ≤ ratchet 40
+- **Active Milestone**: v12.18.1-GM — Production Golden Master 출하(30대 인터락 · 강화 전용 6키 행렬 핀 고정 · 무추출 행렬 대조)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,742/3,742 Pass, infra-scan coupling 0, Phase114 coupled ≤ ratchet 40
 - **Updated At**: 2026-10-13
 
 ## Completed Deliverables
-- 인터락 30종(비트 0~28 + StartupSanity 63 · 마스크 0x800000001FFFFFFF) — 비트 28 OrderPathLatency(p99 > 100ms 연속 3회 = Disarm)
-- 실발주 경로 스탬프 결선(링 발행 → 디스패처 종결 → 게이트 → 출구 → /aidash) · 미도달 슬롯 즉시 회수 · 주문당 141~232ns δ=0
-- ShippedInterlockManifestVerifier(--verify-interlocks): zip 호스트 DLL 정의 ↔ RELEASE_MANIFEST ↔ master-seal.txt · MMF 뷰 · 대조 114µs · 루프 0B
-- release-package.ps1 [10/10] 뒤 인터락 봉인 대조(명세 $ExpectedInterlocks=30) — 불일치 = 산출물 전량 폐기 · 변이 2/2 Red
-- HANDOVER §50(v12.17.5~6-DEV) · §51(v12.18.0-GM)
-- 출하: 태그 454c0d9 · zip DEA3EE72 · masterSeal 42B627E4 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과
+- 변동성 적응 확신 보정(정수 EMV · 국면 3종 · 8500~9500bp) · churn 차단기(비트 27) · 호스트 시그널 게이트 실결선(관찰 모드 포함)
+- 강화 전용 UI 기입기 6키(게이트/적응 = true 만 · 확신/최대 임계 = 상향만 · 승인 한도 = 하향만) · IL 가드 ⑦~⑩
+- 매니페스트 tightenRules(태그 소스 판독 · 하위 호환) · 핸드셰이크 TightenRuleMismatch(행렬 누락/변조 거부) · 스트리머 동등
+- ShippedTightenMatrixVerifier(--verify-tighten): zip 호스트 DLL IL 키 · 규칙 · 폴백/하한/상한 · 비교 방향 ↔ 매니페스트 ↔ 명세 — 대조 0B
+- --verify-live-armed --expect-tighten-keys 6(기입기 누락 출하 거부) · 패치+재봉인 5종 거부 · 변이 2/2 Red
+- HANDOVER §52~§54 · 버전 12.18.1
 
 ## Next Milestone
-- 실 장중 KIS VTS 세션 무장 시 실 브로커 출구 지연 실측 · QuantumVault 피어 정돈 후 피어 포함 재봉인
+- v12.18.1-GM 출하 기록(zip SHA · masterSeal) 확정 · 국면 경계 실 호가 보정 · 감사 해시 체인 로거(미착수)

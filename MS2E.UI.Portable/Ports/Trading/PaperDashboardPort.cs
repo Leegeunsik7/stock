@@ -46,6 +46,18 @@ namespace MS2E.UI.Portable.Ports.Trading
             => !bound || samples <= 0 ? Unmeasured : p99Nanos > SevereLagNanos ? SevereLag : p99Nanos > MicroSpikeNanos ? MicroSpike : Normal;
     }
 
+    /// <summary>[v12.18.1-DEV] 시장 국면 코드(엔진 MicroRegime 과 같은 값 · 4 = 캘리브레이터 미결선).</summary>
+    public static class DashRegime
+    {
+        public const int Warmup = 0, Trend = 1, MeanReverting = 2, Choppy = 3, Unbound = 4;
+    }
+
+    /// <summary>[v12.18.2-DEV] 시그널 게이트 모드(0 미결선 · 1 관측 · 2 강제).</summary>
+    public static class DashGateMode
+    {
+        public const int Unbound = 0, Observe = 1, Enforce = 2;
+    }
+
     public static class DashDecisionKind
     {
         public const int Entry = 1, Exit = 2, Scale = 3, Hold = 4, Veto = 5;
@@ -102,6 +114,19 @@ namespace MS2E.UI.Portable.Ports.Trading
         /// <summary>유효 추이 구간(복사 0 · 리스 동안만 유효).</summary>
         public ReadOnlySpan<long> LatencyTrendSpan => LatencyTrend.AsSpan(0, LatencyTrendCount);
         public ref readonly DashLatencyStage Latency(int stage) => ref LatencyStages[(uint)stage < (uint)LatencyStages.Length ? stage : DashLatencyGrade.SignalToEgress];
+
+        // [v12.18.1-DEV] 변동성 적응 임계 — 가장 최근 국면/임계가 바뀐 종목 1개(종목별 전체는 엔진 판독) · 미결선 = Regime Unbound.
+        public bool CalibrationBound;
+        public int Regime = DashRegime.Unbound, RequiredConfidenceBp, BaseConfidenceBp;
+        public long CalibrationSymbol, CalibrationUpdates;
+        /// <summary>[방향 B] 1분 승인 시그널 수 · 소프트/하드 한도 · 억제/붕괴 누적(미결선 = ChurnBound false).</summary>
+        public bool ChurnBound;
+        public long ChurnWindow, ChurnSuppressed, ChurnBreakdowns;
+        public int ChurnSoft, ChurnHard;
+
+        // [v12.18.2-DEV] 호스트 시그널 게이트 — 모드 · 관측 제안 수 · 국면 임계 거부(강제) · 그림자 거부(관측 판정) · 승인 억제 거부 · 끄기 거부(키 켜짐).
+        public int GateMode = DashGateMode.Unbound;
+        public long GateObserved, GateRegimeRejects, GateShadowRejects, GateShadowRegime, GateChurnRejects, GateDisableRefused;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();

@@ -77,6 +77,42 @@ else
                 }
             }
         </div>
+        <div class="pd-lat pd-cal">
+            <span class="pd-reg @SignalLabelMapper.RegimeClass(f.Regime)">국면 @SignalLabelMapper.RegimeLabel(f.Regime)</span>
+            <span class="pd-gate @SignalLabelMapper.GateModeClass(f.GateMode)">@SignalLabelMapper.GateModeLabel(f.GateMode)</span>
+            @if (f.GateMode == DashGateMode.Enforce)
+            {
+                <span class="pd-lat-b"><em>국면 거부</em> <b>@f.GateRegimeRejects.ToString("N0")</b> · 승인 억제 @f.GateChurnRejects.ToString("N0")</span>
+            }
+            else if (f.GateMode == DashGateMode.Observe)
+            {
+                <span class="pd-lat-b"><em>관측 제안</em> @f.GateObserved.ToString("N0") · 켰다면 거부 <b>@f.GateShadowRejects.ToString("N0")</b>(국면 @f.GateShadowRegime.ToString("N0"))</span>
+            }
+            @if (f.GateDisableRefused > 0)
+            {
+                <span class="pd-lat-throttle">게이트 끄기 거부 @f.GateDisableRefused.ToString("N0") — 물리 키가 켜진 동안은 해제 불가</span>
+            }
+            @if (!f.CalibrationBound)
+            {
+                <span class="pd-lat-off">변동성 적응 임계 미결선 — 고정 확신 임계로만 판정합니다.</span>
+            }
+            else
+            {
+                <span class="pd-lat-b pd-lat-main"><em>요구 확신</em> <b>@SignalLabelMapper.RequiredText(f.RequiredConfidenceBp)</b> (기본 @SignalLabelMapper.RequiredText(f.BaseConfidenceBp))</span>
+                @if (f.CalibrationSymbol > 0)
+                {
+                    <span class="pd-lat-b"><em>종목</em> @f.CalibrationSymbol.ToString("D6")</span>
+                }
+                @if (f.ChurnBound)
+                {
+                    <span class="pd-lat-b @(f.ChurnWindow > f.ChurnSoft ? "pd-churn-hot" : "")"><em>1분 승인</em> <b>@f.ChurnWindow</b> / 억제 @f.ChurnSoft · 붕괴 @f.ChurnHard</span>
+                    @if (f.ChurnBreakdowns > 0)
+                    {
+                        <span class="pd-lat-throttle">⛔ 알파 모델 붕괴 판정 — 비트 27 Disarm(재무장 = 물리 이중키)</span>
+                    }
+                }
+            }
+        </div>
         <div class="pd-kpis">
             <div class="pd-kpi"><span>평가 손익</span><b style="color:@Tone(f.EquityWon)">@Won(f.EquityWon)</b></div>
             <div class="pd-kpi"><span>실현</span><b style="color:@Tone(f.RealizedPnlWon)">@Won(f.RealizedPnlWon)</b></div>
@@ -235,6 +271,11 @@ else
     .pd-spark { width: 100%; height: 40px; margin-bottom: 6px; }
     .pd-lat { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 10px; font-size: 11.5px; }
     .pd-lat-grade { padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+    .pd-reg { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #616161; color: #fff; }
+    .pd-reg.trend { background: #2e7d32; } .pd-reg.revert { background: #f9a825; color: #111; } .pd-reg.chop { background: #E53935; }
+    .pd-churn-hot { outline: 1px solid #E53935; }
+    .pd-gate { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
+    .pd-gate.enforce { background: #1565c0; color: #fff; } .pd-gate.observe { background: #4e342e; color: #ffcc80; }
     .pd-lat-grade.ok { background: #2e7d32; color: #fff; } .pd-lat-grade.spike { background: #f9a825; color: #111; }
     .pd-lat-grade.lag { background: #E53935; color: #fff; } .pd-lat-grade.off { background: #3a3f4b; color: #ccc; }
     .pd-lat-b { background: #1d2230; border-radius: 6px; padding: 2px 8px; font-family: Consolas, monospace; }

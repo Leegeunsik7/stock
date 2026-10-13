@@ -16,4 +16,14 @@ namespace MS2E.Infrastructure
         /// <summary>드레인이 그 제안의 처분을 끝냄(forwarded = 실 송출 계상 여부). 드레인 스레드.</summary>
         void OnDispatchEnd(long orderId, bool forwarded);
     }
+
+    /// <summary>
+    /// [v12.18.2-DEV] 드레인된 제안 1건 관측(무장 판정 '이전' · 처분과 무관 · 드레인 스레드 단일 호출). 시그널 엔진이 구현해
+    /// 미무장/게이트 꺼짐 상태에서도 전략 이상(수량 ≤ 0) · 승인 폭주(모델 붕괴)를 판정한다 — 관측은 차단하지 않는다(차단은 인터락 비트).
+    /// ★구현 계약: δ=0 · 비차단 · 비throw(던져도 드레인이 삼킨다 — 관측 실패가 처분을 바꾸지 않음).
+    /// </summary>
+    public interface IOrderProposalObserver
+    {
+        void OnProposal(in OrderProposal proposal);
+    }
 }

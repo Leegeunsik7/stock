@@ -74,45 +74,10 @@ namespace StockManager.Tools
                 return R(InterlockSealVerdict.AnchorMismatch, "master-seal.txt ≠ 매니페스트 masterSeal(또는 64 hex 아님)");
             if (m.Interlocks.Count != expectedCount)
                 return R(InterlockSealVerdict.CountMismatch, $"매니페스트 인터락 {m.Interlocks.Count} ≠ 기대 {expectedCount}");
-            string? sealedSha = null;
-            foreach (var a in m.Artifacts)
-                if (string.Equals(a.Name.Replace('\\', '/'), HostEntry, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (sealedSha is not null) return R(InterlockSealVerdict.EntryDuplicate, "매니페스트 호스트 DLL 항목 중복");
-                    sealedSha = a.Sha256;
-                }
-            if (sealedSha is null) return R(InterlockSealVerdict.EntryMissing, "매니페스트 artifacts 에 " + HostEntry + " 없음");
 
             // ② MMF 뷰 · 항목 정규화/중복 가드 · 호스트 DLL 팽창 + 봉인 해시
-            byte[] image;
-            long t0 = Stopwatch.GetTimestamp();
-            try
-            {
-                long zipLen = new FileInfo(zipPath).Length;
-                using var mmf = MemoryMappedFile.CreateFromFile(zipPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
-                using var view = mmf.CreateViewStream(0, zipLen, MemoryMappedFileAccess.Read);   // 정확한 길이(페이지 반올림 0 패딩이 EOCD 탐색에 섞이지 않게)
-                using var zip = new ZipArchive(view, ZipArchiveMode.Read, leaveOpen: false);
-                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                ZipArchiveEntry? host = null;
-                foreach (var e in zip.Entries)
-                {
-                    string norm = e.FullName.Replace('\\', '/');
-                    if (!seen.Add(norm)) return R(InterlockSealVerdict.EntryDuplicate, "zip 항목 중복(정규화 후): " + norm);   // Windows 해제 시 덮어쓰기 모호
-                    if (string.Equals(norm, HostEntry, StringComparison.OrdinalIgnoreCase)) host = e;
-                }
-                if (host is null) return R(InterlockSealVerdict.EntryMissing, "zip 항목 없음: " + HostEntry);
-                if (host.Length <= 0 || host.Length > MaxHostImageBytes) return R(InterlockSealVerdict.PeUnreadable, "호스트 DLL 크기 이탈: " + host.Length);
-                image = GC.AllocateUninitializedArray<byte>((int)host.Length);
-                using (var s = host.Open()) s.ReadExactly(image);
-            }
-            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-            {
-                return R(InterlockSealVerdict.ZipUnreadable, "zip 판독 실패: " + ex.GetType().Name);
-            }
-            string sha = Convert.ToHexString(SHA256.HashData(image));
-            long inflateUs = Micros(Stopwatch.GetTimestamp() - t0);
-            if (!string.Equals(sha, sealedSha, StringComparison.OrdinalIgnoreCase))
-                return R(InterlockSealVerdict.ArtifactHashMismatch, "zip 호스트 DLL SHA-256 ≠ 매니페스트 봉인 해시(판독 대상 ≠ 봉인 대상)", sha: sha, inf: inflateUs);
+            var lv = LoadSealedHost(zipPath, m, out byte[] image, out string? sha, out long inflateUs, out string lwhy);
+            if (lv != InterlockSealVerdict.Ok) return R(lv, lwhy, sha: sha, inf: inflateUs);
 
             // ③ 정의 대조(복사 없는 PE 뷰)
             long t1 = Stopwatch.GetTimestamp();
@@ -141,6 +106,53 @@ namespace StockManager.Tools
                 _ => v.ToString(),
             };
             return R(v, detail, count, mask, sha, inflateUs, compareUs);
+        }
+
+        /// <summary>
+        /// ② 공용(인터락 · 강화 전용 행렬 검증기): 매니페스트 호스트 DLL 봉인 해시 1개 확정 → zip MMF 뷰 · 항목 정규화/중복 가드 →
+        /// 호스트 DLL 팽창 → SHA-256 == 봉인 해시. Ok 일 때만 image 가 '봉인된 바로 그 바이트'. 실패 판정은 3~7(ZipUnreadable ~ PeUnreadable)만.
+        /// </summary>
+        internal static InterlockSealVerdict LoadSealedHost(string zipPath, ReleaseManifestInput m, out byte[] image, out string? sha, out long inflateUs, out string why)
+        {
+            image = Array.Empty<byte>(); sha = null; inflateUs = 0; why = "";
+            string? sealedSha = null;
+            foreach (var a in m.Artifacts)
+                if (string.Equals(a.Name.Replace('\\', '/'), HostEntry, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (sealedSha is not null) { why = "매니페스트 호스트 DLL 항목 중복"; return InterlockSealVerdict.EntryDuplicate; }
+                    sealedSha = a.Sha256;
+                }
+            if (sealedSha is null) { why = "매니페스트 artifacts 에 " + HostEntry + " 없음"; return InterlockSealVerdict.EntryMissing; }
+            long t0 = Stopwatch.GetTimestamp();
+            try
+            {
+                long zipLen = new FileInfo(zipPath).Length;
+                using var mmf = MemoryMappedFile.CreateFromFile(zipPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+                using var view = mmf.CreateViewStream(0, zipLen, MemoryMappedFileAccess.Read);   // 정확한 길이(페이지 반올림 0 패딩이 EOCD 탐색에 섞이지 않게)
+                using var zip = new ZipArchive(view, ZipArchiveMode.Read, leaveOpen: false);
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                ZipArchiveEntry? host = null;
+                foreach (var e in zip.Entries)
+                {
+                    string norm = e.FullName.Replace('\\', '/');
+                    if (!seen.Add(norm)) { why = "zip 항목 중복(정규화 후): " + norm; return InterlockSealVerdict.EntryDuplicate; }   // Windows 해제 시 덮어쓰기 모호
+                    if (string.Equals(norm, HostEntry, StringComparison.OrdinalIgnoreCase)) host = e;
+                }
+                if (host is null) { why = "zip 항목 없음: " + HostEntry; return InterlockSealVerdict.EntryMissing; }
+                if (host.Length <= 0 || host.Length > MaxHostImageBytes) { why = "호스트 DLL 크기 이탈: " + host.Length; return InterlockSealVerdict.PeUnreadable; }
+                image = GC.AllocateUninitializedArray<byte>((int)host.Length);
+                using (var s = host.Open()) s.ReadExactly(image);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                why = "zip 판독 실패: " + ex.GetType().Name;
+                return InterlockSealVerdict.ZipUnreadable;
+            }
+            sha = Convert.ToHexString(SHA256.HashData(image));
+            inflateUs = Micros(Stopwatch.GetTimestamp() - t0);
+            if (!string.Equals(sha, sealedSha, StringComparison.OrdinalIgnoreCase))
+            { why = "zip 호스트 DLL SHA-256 ≠ 매니페스트 봉인 해시(판독 대상 ≠ 봉인 대상)"; return InterlockSealVerdict.ArtifactHashMismatch; }
+            return InterlockSealVerdict.Ok;
         }
 
         /// <summary>
@@ -189,6 +201,6 @@ namespace StockManager.Tools
             return mask == expectedMask ? InterlockSealVerdict.Ok : InterlockSealVerdict.MaskMismatch;
         }
 
-        private static long Micros(long ticks) => ticks * 1_000_000 / Stopwatch.Frequency;
+        internal static long Micros(long ticks) => ticks * 1_000_000 / Stopwatch.Frequency;
     }
 }

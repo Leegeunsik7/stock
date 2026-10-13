@@ -16,7 +16,7 @@ namespace MS2E.UI.Portable.Helpers
     {
         public const string Unknown = "미정의 코드";
 
-        // ── 판단 근거(QuantReason 코드 0..15 — 엔진 열거형과 같은 순서) ──
+        // ── 판단 근거(QuantReason 코드 0..16 — 엔진 열거형과 같은 순서) ──
         private static readonly string[] Reasons =
         {
             "근거 없음",                       // 0 None
@@ -35,10 +35,11 @@ namespace MS2E.UI.Portable.Helpers
             "키움↔KIS 방향 불일치",           // 13 CrossDisagree
             "단일 피드(확신 ½)",              // 14 SingleSource
             "피드 시각 이탈 > 1초 — 거부",     // 15 CrossSkewVeto
+            "국면 임계 미달 — 전방 거부/관망", // 16 RegimeThresholdNotMet
         };
 
         // 판단 근거 성격(배지 색): 0 중립 · 1 매수 근거 · 2 매도 근거 · 3 경고(거부/이상)
-        private static readonly byte[] ReasonTone = { 0, 1, 2, 1, 2, 0, 3, 0, 0, 0, 3, 0, 3, 0, 0, 3 };
+        private static readonly byte[] ReasonTone = { 0, 1, 2, 1, 2, 0, 3, 0, 0, 0, 3, 0, 3, 0, 0, 3, 0 };
 
         public static int ReasonCount => Reasons.Length;
         public static string Reason(int code) => (uint)code < (uint)Reasons.Length ? Reasons[code] : Unknown;
@@ -113,6 +114,24 @@ namespace MS2E.UI.Portable.Helpers
         /// <summary>배지 문구(정적).</summary>
         public static string BadgeText(int kind, long bp, int reason)
             => IsWarningReason(reason) ? "거부" : bp >= GateBp && kind == 1 ? "매수 확신" : bp >= GateBp && kind == 2 ? "매도 확신" : "보류";
+
+        // ── [v12.18.1-DEV] 시장 국면(DashRegime = 엔진 MicroRegime 0..3 + 4 미결선) · 요구 확신 ──
+        //  배지 색: 워밍업 회 · 추세 녹 · 회귀 황 · 횡보 적(임계 최대) · 미결선 회. 요구 확신 텍스트는 확신도 정적 캐시("95%") 재사용.
+        private static readonly string[] Regimes = { "워밍업", "추세", "회귀", "횡보(노이즈)", "미결선" };
+        private static readonly string[] RegimeClasses = { "warm", "trend", "revert", "chop", "off" };
+
+        public static int RegimeCount => Regimes.Length;
+        public static string RegimeLabel(int regime) => (uint)regime < (uint)Regimes.Length ? Regimes[regime] : Unknown;
+        public static string RegimeClass(int regime) => (uint)regime < (uint)RegimeClasses.Length ? RegimeClasses[regime] : "off";
+        /// <summary>요구 확신(bp) → "85%".."95%" 정적 문자열(0 이하 = "-").</summary>
+        public static string RequiredText(long bp) => bp <= 0 ? "-" : ConfidenceText(bp);
+
+        // ── [v12.18.2-DEV] 시그널 게이트 모드(DashGateMode 0 미결선 · 1 관측 · 2 강제) ──
+        private static readonly string[] GateModes = { "게이트 미결선", "게이트 관측(미차단)", "게이트 강제" };
+        private static readonly string[] GateModeClasses = { "off", "observe", "enforce" };
+        public static int GateModeCount => GateModes.Length;
+        public static string GateModeLabel(int mode) => (uint)mode < (uint)GateModes.Length ? GateModes[mode] : Unknown;
+        public static string GateModeClass(int mode) => (uint)mode < (uint)GateModeClasses.Length ? GateModeClasses[mode] : "off";
 
         // ── [v12.17.5-DEV] 주문 경로 지연 등급 · 구간 · 마이크로초 라벨 ──
         //  등급 코드 = DashLatencyGrade(0 정상 · 1 미세 정체 · 2 심각 지연 · 3 미계측). 배지 색: 정상 녹 · 미세 정체 황 · 심각 지연 적 · 미계측 회.

@@ -187,7 +187,12 @@ namespace StockManager.Simulation
 
         /// <param name="imbalanceMicros">체결 불균형 차단기 임계(호스트 Routing.ImbalanceMs · 하한 50ms · 기본 500ms).</param>
         /// <param name="stallThresholdMicros">송출 직전 정지 임계(시뮬레이션 기본 1초 — 테스트 호스트 스케줄 지터 오격발 방지 · 호스트 기본 5ms).</param>
-        public MultiBrokerDryRunHarness(long imbalanceMicros = 50_000, long stallThresholdMicros = 1_000_000, double confidenceThreshold = QuantSignalProvider.DefaultConfidenceThreshold)
+        /// <param name="calibrator">[v12.18.1-DEV] 변동성 적응 임계(null = 고정 임계 — 기존 드라이런과 동일).</param>
+        /// <param name="churnSoftPerMinute">[방향 B] 1분 승인 억제 한도(0 = 승인 서킷 브레이커 미결선).</param>
+        /// <param name="churnHardPerMinute">[방향 B] 1분 승인 붕괴 한도(&gt; 소프트 · 초과 = 비트 27 Disarm).</param>
+        public MultiBrokerDryRunHarness(long imbalanceMicros = 50_000, long stallThresholdMicros = 1_000_000, double confidenceThreshold = QuantSignalProvider.DefaultConfidenceThreshold,
+                                        VolatilityAdaptiveCalibrator? calibrator = null, int churnSoftPerMinute = 0, int churnHardPerMinute = 0,
+                                        bool signalGateEnforced = true)
         {
             Func<long> clock = () => Volatile.Read(ref _now);
             _price = new ReferencePriceFeedAdapter(capacityPow2: 256, maxAgeMicros: 3_000_000, nowMicros: clock);
@@ -200,8 +205,9 @@ namespace StockManager.Simulation
             _feedBreaker = new FeedDisconnectCircuitBreaker(_price, () => true);
             Gate = new RouterFeedGate(router, _price, _exec, _feedBreaker, depth: _depth, requireDepthForMarket: true);
 
-            Signals = new QuantSignalProvider(Anomaly, nowMicros: clock, capacityPow2: 64, confidenceThreshold: confidenceThreshold);
-            Gate.EnableSignalGate(Signals);
+            var churn = churnSoftPerMinute > 0 ? new SignalChurnCircuitBreaker(Anomaly, churnSoftPerMinute, churnHardPerMinute) : null;
+            Signals = new QuantSignalProvider(Anomaly, nowMicros: clock, capacityPow2: 64, confidenceThreshold: confidenceThreshold, calibrator: calibrator, churn: churn);
+            if (signalGateEnforced) { Gate.EnableSignalGate(Signals); Signals.SetGateEnforced(true); }   // [v12.18.2] false = 호스트 기본(관측 모드)
 
             // ★센티널 술어 = 물리 이중키만(UpstreamFault 와 무관) · 집계어 차단이면 무장이어도 전달 0
             Func<bool> keys = () => _valve && _liveArming;
@@ -233,6 +239,7 @@ namespace StockManager.Simulation
                                           routeGate: new StageStampingSplitGate(Gate, Stages), latencyProbe: TickToTrade, brokersByIndex: _brokerMap);
             Worker.EnableChildSplit(Matrix);
             _ring.PathObserver = Stages;                                            // [v12.17.6] 호스트와 동일: 발행 · 종결 스탬프(슬롯 즉시 회수)
+            Dispatcher.ProposalObserver = Signals;                                  // [v12.18.2] 호스트와 동일: 무장 판정 이전 제안 관측(비트 27 · 승인 계수)
             _onFill = f => { _exec.OnFill(f); Matrix.OnFill(f); };
         }
 

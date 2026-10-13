@@ -758,6 +758,8 @@ namespace StockManager.Simulation
         public string? GetSetting(string key) => _inner.GetSetting(key);
         public void SetSetting(string key, string value) => _inner.SetSetting(key, value);
         public void SetSecret(string key, string value) => _inner.SetSecret(key, value);
+        public int TightenSetting(string key, string value) => _inner.TightenSetting(key, value);
+        public bool TryGetTightenable(string key, out long effective) => _inner.TryGetTightenable(key, out effective);
         public bool IsLive => _inner.IsLive;
         public void SetLive(bool live) => _inner.SetLive(live);
         public string UpbitAccessKeyMasked => _inner.UpbitAccessKeyMasked;

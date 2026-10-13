@@ -30,6 +30,21 @@
 //      Program.Main 의 UI/DB 초기화 이전 조기 분기에서만 진입). 허용 CLI 참조 지점 수 = SimulationCliSites(보고).
 //   비공허성: 시뮬레이션 형식 ≥ 1(판독 대상 존재). 대상 토큰 = 같은 어셈블리 MethodDefinition · TypeDefinition 부모 MemberReference.
 //   한계(정직): 리플렉션(Activator · Type.GetType 문자열)으로 만든 인스턴스는 IL 토큰이 없어 보지 못한다 — 호스트에 그런 경로가 생기면 별도 가드 필요.
+//  [v12.18.3-DEV] ★강화 전용 UI 기입기(TightenOnlyUiSettingWriter) 단조성 IL 판독 — UI 가 Strategy.* 를 '더 엄격하게만' 쓸 수 있다는 보증이
+//   출하 바이너리에 실제로 있는가. 바이트 패치 · 잘못된 빌드로 완화 경로가 열리면 거부.
+//   ⑦ 키 표 · 규칙 비트: 형식 .cctor 의 ldstr 키 = 전부 'Strategy.' 이고 가드 고정 명세(TightenSpec)의 키 집합과 일치 · get_Rules 의 RVA 정적
+//      데이터(ldsflda → 바이트 블롭) 키별 규칙 = 명세 방향(게이트 · 적응 = TrueOnly · 확신/최대 임계 = NonDecreasing · 승인 한도 = NonIncreasing).
+//      .cctor 의 Fallbacks/Minimums/Maximums 정수 배열 초기화 블롭(ldtoken RVA 필드 → InitializeArray → stsfld) = 호스트가 그 키를 판독하는 모든 지점의 리터럴 인자
+//      (ldstr 키 → ldc 폴백[→ ldc 하한 → ldc 상한] → GetBool/GetInt). 폴백이 호스트보다 느슨하게 패치되면 '미설정 = 느슨한 현재값'으로 오인해 완화를 허용한다.
+//   ⑧ IsTightening 본문: 규칙 비트 판독(ldarg.0 · ldc 1/2/4 · and · brfalse) 순서대로 TrueOnly → `proposed == 1` · NonDecreasing →
+//      `proposed >= current`(ldarg.2 ldarg.1 clt ldc.i4.0 ceq) · NonIncreasing → `proposed <= current`(… cgt …) 각 정확히 1 · 역방향(ldarg.1 ldarg.2 비교) 0 ·
+//      상수 true 반환(ldc.i4.1; ret) 0 · 끝 = 미정의 규칙 false(ldc.i4.0; ret). clt ↔ cgt 1바이트 패치 = 거부.
+//   ⑨ Judge: call IsTightening 직후 조건 분기(brtrue/brfalse) · TryWrite: call Judge 뒤 첫 분기 = brfalse(Tightened = 0 일 때만 기입 쪽으로) ·
+//      WriteStored 호출 정확히 1 · Judge 뒤. 전 어셈블리에서 WriteStored 호출은 TryWrite 안에서만(우회 기입 0).
+//   ⑩ UI 진입점 AdminSettingWidgetAdapter.TightenSetting: TryWrite 호출 정확히 1 · LocalDatabase.SetSetting/SetSecret 직접 호출 0.
+//   비공허성: 강화 전용 경로의 어느 한 조각이라도 있으면(기입기 형식 · 진입점) 나머지 전부(키 표 · 규칙 블롭 · IsTightening · Judge · TryWrite ·
+//    진입점 · 호스트 판독 지점 키별 ≥1)가 있어야 한다. 경로 전체 부재 = UI 의 Strategy.* 기입 길 자체가 없음(⑤ 허용 목록이 막음) = 더 엄격 → 통과
+//    (v12.18.0-GM 이전 출하 바이너리). WriteStored 직접 호출 금지는 항상 적용.
 //  콜드 경로(출하 검증 1회) — 할당 무관. BCL 만 사용(System.Reflection.Metadata · System.Reflection.Emit.OpCodes 표).
 // ============================================================================
 using System;
@@ -50,7 +65,7 @@ namespace StockManager.Tools
         private static readonly string[] Keys = { "Dispatch.ValveWired", "Dispatch.LiveArmingWired" };
 
         public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0,
-                                             int SimulationTypes = 0, int SimulationCliSites = 0)
+                                             int SimulationTypes = 0, int SimulationCliSites = 0, int TightenKeys = 0, int TightenHostSites = 0)
         {
             public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
@@ -59,6 +74,16 @@ namespace StockManager.Tools
         private static readonly (string Type, string Method)[] UiWriters =
         {
             ("AdminSettingWidgetAdapter", "SetSetting"), ("AdminSettingWidgetAdapter", "SetSecret"), ("StrategyHubInfraAdapter", "SetSetting"),
+        };
+
+        // [v12.18.3-DEV] 강화 전용 기입기 — 형식 · 진입점 · 고정 명세(키 → 허용 방향). 키 추가 = 여기 등재(방향 결정은 리뷰 대상)가 강제된다.
+        public const string TightenWriterType = "TightenOnlyUiSettingWriter";
+        private const byte TightenTrueOnly = 1, TightenNonDecreasing = 2, TightenNonIncreasing = 4;
+        private static readonly (string Key, byte Rule)[] TightenSpec =
+        {
+            ("Strategy.SignalGateEnabled", TightenTrueOnly), ("Strategy.AdaptiveThreshold", TightenTrueOnly),
+            ("Strategy.ConfidenceThresholdBp", TightenNonDecreasing), ("Strategy.AdaptiveMaxBp", TightenNonDecreasing),
+            ("Strategy.ChurnSoftPerMin", TightenNonIncreasing), ("Strategy.ChurnHardPerMin", TightenNonIncreasing),
         };
 
         // [v12.17.4-GM] 시뮬레이션 격리 — 네임스페이스와 그것을 참조해도 되는 CLI 형식(조기 분기 전용).
@@ -137,6 +162,7 @@ namespace StockManager.Tools
             var perKey = new int[Keys.Length];
             var violations = new List<string>();
             var armedParam = LiveArmedParameterIndex(md);                       // 메서드 행 번호 → (liveArmed 매개변수 위치, 매개변수 수)
+            var tight = new TightenScan();
             foreach (var mh in md.MethodDefinitions)
             {
                 var m = md.GetMethodDefinition(mh);
@@ -155,6 +181,7 @@ namespace StockManager.Tools
                     }
                 if (tname == "UiSettingWriteGuard" && mname == ".cctor")
                     allowlistSites += CheckAllowlist(md, ins, violations);
+                TightenVisit(pe, md, ins, tname, mname, tight, violations);
                 var owner = m.GetDeclaringType();
                 if (!IsSimulation(md, owner))
                 {
@@ -211,8 +238,263 @@ namespace StockManager.Tools
                 else uiGuardSites++;
             if (allowlistSites == 0) violations.Add("UiSettingWriteGuard 허용 목록 초기화(.cctor 접두사 ldstr) 0 — 가드 대상 소실(비공허성 실패)");
             if (simTypes == 0) violations.Add("시뮬레이션 형식(" + SimulationNamespace + ") 0 — 격리 판독 대상 소실(비공허성 실패)");
+            int tightenHostSites = TightenFinish(tight, violations);
             // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
-            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites);
+            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites);
+        }
+
+        // ════════════ [v12.18.3-DEV] ⑦~⑩ 강화 전용 기입기 ════════════
+
+        private sealed class TightenScan
+        {
+            public List<string>? Keys;
+            public byte[]? Rules;
+            public int[]? Fallbacks, Minimums, Maximums;
+            public bool IsTightening, Judge, TryWrite, Entry;
+            public readonly List<(string Key, int Fallback, int Min, int Max)> HostSites = new();
+        }
+
+        private static void TightenVisit(PEReader pe, MetadataReader md, List<(OpCode Op, int Operand)> ins, string tname, string mname,
+                                         TightenScan t, List<string> violations)
+        {
+            // 호스트 판독 지점: ldstr 명세 키 → ldc 폴백 [→ ldc 하한 → ldc 상한] → GetBool/GetInt
+            for (int k = 0; k + 2 < ins.Count; k++)
+            {
+                if (ins[k].Op != OpCodes.Ldstr) continue;
+                string s = md.GetUserString(MetadataTokens.UserStringHandle(ins[k].Operand & 0x00FFFFFF));
+                if (SpecIndex(s) < 0) continue;
+                if (TryConst(ins[k + 1], out int fb) && IsCall(ins[k + 2].Op) && MethodName(md, ins[k + 2].Operand) == "GetBool")
+                    t.HostSites.Add((s, fb, 0, 1));
+                else if (k + 4 < ins.Count && TryConst(ins[k + 1], out fb) && TryConst(ins[k + 2], out int lo) && TryConst(ins[k + 3], out int hi)
+                         && IsCall(ins[k + 4].Op) && MethodName(md, ins[k + 4].Operand) == "GetInt")
+                    t.HostSites.Add((s, fb, lo, hi));
+            }
+            // ⑨ 전 어셈블리 WriteStored 호출 위치
+            if (!(tname == TightenWriterType && mname == "TryWrite"))
+                for (int k = 0; k < ins.Count; k++)
+                    if (IsCall(ins[k].Op) && MethodName(md, ins[k].Operand) == "WriteStored")
+                        violations.Add(tname + "." + mname + ": WriteStored 직접 호출 — 강화 전용 판정 우회 기입");
+            if (tname == "AdminSettingWidgetAdapter" && mname == "TightenSetting")
+            {
+                t.Entry = true;
+                int tryWrites = 0;
+                for (int k = 0; k < ins.Count; k++)
+                {
+                    if (!IsCall(ins[k].Op)) continue;
+                    var (type, name) = MethodOwner(md, ins[k].Operand);
+                    if (type == TightenWriterType && name == "TryWrite") tryWrites++;
+                    if (type == "LocalDatabase" && (name == "SetSetting" || name == "SetSecret")) violations.Add("AdminSettingWidgetAdapter.TightenSetting: DB 직접 기입 — 강화 전용 판정 우회");
+                }
+                if (tryWrites != 1) violations.Add("AdminSettingWidgetAdapter.TightenSetting: TryWrite 호출 " + tryWrites + "건(정확히 1 이어야 함)");
+            }
+            if (tname != TightenWriterType) return;
+            switch (mname)
+            {
+                case ".cctor":
+                    t.Keys = new List<string>();
+                    int lastToken = -1;
+                    for (int k = 0; k < ins.Count; k++)
+                    {
+                        if (ins[k].Op == OpCodes.Ldstr) t.Keys.Add(md.GetUserString(MetadataTokens.UserStringHandle(ins[k].Operand & 0x00FFFFFF)));
+                        if (ins[k].Op == OpCodes.Ldtoken) lastToken = k;
+                        if (ins[k].Op != OpCodes.Stsfld || lastToken < 0) continue;
+                        var fh = MetadataTokens.EntityHandle(ins[k].Operand);
+                        if (fh.Kind != HandleKind.FieldDefinition) continue;
+                        string fname = md.GetString(md.GetFieldDefinition((FieldDefinitionHandle)fh).Name);
+                        if (fname is not ("Fallbacks" or "Minimums" or "Maximums")) continue;
+                        var blob = ToInts(ReadRvaBlob(pe, md, ins.GetRange(lastToken, 1), 4, violations, ".cctor " + fname));
+                        if (fname == "Fallbacks") t.Fallbacks = blob; else if (fname == "Minimums") t.Minimums = blob; else t.Maximums = blob;
+                        lastToken = -1;
+                    }
+                    break;
+                case "get_Rules": t.Rules = ReadRvaBlob(pe, md, ins, 1, violations, mname); break;
+                case "IsTightening": t.IsTightening = true; CheckIsTightening(ins, violations); break;
+                case "Judge":
+                {
+                    t.Judge = true;
+                    int c = FindCall(md, ins, TightenWriterType, "IsTightening", 0);
+                    if (c < 0) violations.Add("TightenOnlyUiSettingWriter.Judge: IsTightening 호출 없음 — 단조성 판정 소실");
+                    else
+                    {
+                        var next = c + 1 < ins.Count ? ins[c + 1].Op : OpCodes.Nop;
+                        if (next != OpCodes.Brtrue && next != OpCodes.Brtrue_S && next != OpCodes.Brfalse && next != OpCodes.Brfalse_S)
+                            violations.Add("TightenOnlyUiSettingWriter.Judge: IsTightening 결과로 분기하지 않음(직후 " + next.Name + ") — 판정 무시");
+                    }
+                    break;
+                }
+                case "TryWrite":
+                {
+                    t.TryWrite = true;
+                    int judge = FindCall(md, ins, TightenWriterType, "Judge", 0), writes = 0, firstWrite = -1;
+                    for (int k = 0; k < ins.Count; k++)
+                        if (IsCall(ins[k].Op) && MethodName(md, ins[k].Operand) == "WriteStored") { writes++; if (firstWrite < 0) firstWrite = k; }
+                    if (judge < 0) { violations.Add("TightenOnlyUiSettingWriter.TryWrite: Judge 호출 없음 — 무판정 기입"); break; }
+                    if (writes != 1) violations.Add("TightenOnlyUiSettingWriter.TryWrite: WriteStored 호출 " + writes + "건(정확히 1 이어야 함)");
+                    else if (firstWrite < judge) violations.Add("TightenOnlyUiSettingWriter.TryWrite: WriteStored 가 Judge 보다 앞섬");
+                    OpCode branch = OpCodes.Nop;
+                    for (int k = judge + 1; k < ins.Count && k < firstWrite; k++)
+                        if (ins[k].Op.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch) { branch = ins[k].Op; break; }
+                    if (branch != OpCodes.Brfalse && branch != OpCodes.Brfalse_S)
+                        violations.Add("TightenOnlyUiSettingWriter.TryWrite: Judge 뒤 첫 분기가 brfalse(Tightened 일 때만 기입)가 아님(" + branch.Name + ")");
+                    break;
+                }
+            }
+        }
+
+        /// <summary>⑧ IsTightening 본문 — 규칙 비트 순서 · 비교 방향 · 상수 true 부재 · 미정의 규칙 false.</summary>
+        private static void CheckIsTightening(List<(OpCode Op, int Operand)> ins, List<string> violations)
+        {
+            const string W = "TightenOnlyUiSettingWriter.IsTightening: ";
+            int Find(params OpCode[] seq)
+            {
+                int at = -1, n = 0;
+                for (int k = 0; k + seq.Length <= ins.Count; k++)
+                {
+                    bool ok = true;
+                    for (int j = 0; j < seq.Length && ok; j++) ok = ins[k + j].Op == seq[j];
+                    if (ok) { n++; if (at < 0) at = k; }
+                }
+                return n == 1 ? at : n == 0 ? -1 : -2;
+            }
+            int bit1 = Find(OpCodes.Ldarg_0, OpCodes.Ldc_I4_1, OpCodes.And), bit2 = Find(OpCodes.Ldarg_0, OpCodes.Ldc_I4_2, OpCodes.And), bit4 = Find(OpCodes.Ldarg_0, OpCodes.Ldc_I4_4, OpCodes.And);
+            int eq1 = Find(OpCodes.Ldarg_2, OpCodes.Ldc_I4_1, OpCodes.Conv_I8, OpCodes.Ceq);
+            int ge = Find(OpCodes.Ldarg_2, OpCodes.Ldarg_1, OpCodes.Clt, OpCodes.Ldc_I4_0, OpCodes.Ceq);
+            int le = Find(OpCodes.Ldarg_2, OpCodes.Ldarg_1, OpCodes.Cgt, OpCodes.Ldc_I4_0, OpCodes.Ceq);
+            if (bit1 < 0 || bit2 < 0 || bit4 < 0 || eq1 < 0 || ge < 0 || le < 0)
+                violations.Add(W + "규칙 비트/비교 패턴이 정확히 1개씩이 아님(비트 " + bit1 + "/" + bit2 + "/" + bit4 + " · ==1 " + eq1 + " · ≥ " + ge + " · ≤ " + le + ") — 단조성 방향 판독 불가");
+            else if (!(bit1 < eq1 && eq1 < bit2 && bit2 < ge && ge < bit4 && bit4 < le))
+                violations.Add(W + "규칙 비트 ↔ 비교 방향 대응 순서 이탈(TrueOnly → ==1 · NonDecreasing → ≥ · NonIncreasing → ≤)");
+            for (int k = 0; k + 1 < ins.Count; k++)
+            {
+                if (ins[k].Op == OpCodes.Ldc_I4_1 && ins[k + 1].Op == OpCodes.Ret) violations.Add(W + "상수 true 반환(ldc.i4.1; ret) — 무조건 통과");
+                if (ins[k].Op == OpCodes.Ldarg_1 && ins[k + 1].Op == OpCodes.Ldarg_2) violations.Add(W + "역방향 비교(current 먼저 적재) — 방향 판독 불가");
+            }
+            if (ins.Count < 2 || ins[^2].Op != OpCodes.Ldc_I4_0 || ins[^1].Op != OpCodes.Ret) violations.Add(W + "미정의 규칙 = false(ldc.i4.0; ret)로 끝나지 않음");
+        }
+
+        /// <summary>⑦ 키 표 · 규칙 블롭 · 폴백/하한/상한 블롭 ↔ 명세 · 호스트 판독 지점 대조. 반환 = 일치한 호스트 판독 지점 수.</summary>
+        private static int TightenFinish(TightenScan t, List<string> violations)
+        {
+            const string W = "TightenOnlyUiSettingWriter: ";
+            if (t.Keys is null && !t.IsTightening && !t.Judge && !t.TryWrite && !t.Entry) return 0;   // 경로 전체 부재 = UI 기입 길 없음(더 엄격)
+            if (t.Keys is null || t.Keys.Count == 0) { violations.Add(W + "키 표(.cctor ldstr) 0 — 강화 전용 판독 대상 소실(비공허성 실패)"); return 0; }
+            if (!t.IsTightening || !t.Judge || !t.TryWrite) violations.Add(W + "IsTightening/Judge/TryWrite 본문 부재 — 판독 대상 소실(비공허성 실패)");
+            if (!t.Entry) violations.Add("AdminSettingWidgetAdapter.TightenSetting 진입점 0 — 판독 대상 소실(비공허성 실패)");
+            int n = t.Keys.Count;
+            foreach (var k in t.Keys)
+                if (!k.StartsWith("Strategy.", StringComparison.Ordinal) || SpecIndex(k) < 0) violations.Add(W + "명세 밖 키 '" + k + "' — 강화 전용 대상은 Strategy.* 명세 키뿐");
+            if (n != TightenSpec.Length) violations.Add(W + "키 수 " + n + " ≠ 명세 " + TightenSpec.Length);
+            if (t.Rules is null || t.Fallbacks is null || t.Minimums is null || t.Maximums is null) { violations.Add(W + "규칙/폴백/하한/상한 정적 데이터 판독 불가"); return 0; }
+            if (t.Rules.Length != n || t.Fallbacks.Length != n || t.Minimums.Length != n || t.Maximums.Length != n) { violations.Add(W + "정적 데이터 길이 ≠ 키 수"); return 0; }
+            int matched = 0;
+            for (int i = 0; i < n; i++)
+            {
+                int s = SpecIndex(t.Keys[i]);
+                if (s >= 0 && t.Rules[i] != TightenSpec[s].Rule)
+                    violations.Add(W + "'" + t.Keys[i] + "' 규칙 " + t.Rules[i] + " ≠ 명세 " + TightenSpec[s].Rule + " — 허용 방향 변조");
+                int sites = 0;
+                foreach (var h in t.HostSites)
+                {
+                    if (h.Key != t.Keys[i]) continue;
+                    sites++;
+                    if (h.Fallback != t.Fallbacks[i] || h.Min != t.Minimums[i] || h.Max != t.Maximums[i])
+                        violations.Add(W + "'" + t.Keys[i] + "' 폴백/하한/상한 (" + t.Fallbacks[i] + "," + t.Minimums[i] + "," + t.Maximums[i] + ") ≠ 호스트 판독 (" + h.Fallback + "," + h.Min + "," + h.Max + ")");
+                    else matched++;
+                }
+                if (sites == 0) violations.Add(W + "'" + t.Keys[i] + "' 호스트 판독 지점 0 — 유효값 대조 불가(비공허성 실패)");
+            }
+            return matched;
+        }
+
+        /// <summary>[v12.18.1-GM] 고정 명세(키 → 허용 방향) 공개 판독 — 출하 행렬 검증기가 매니페스트 ↔ 명세 ↔ 바이너리 3자 대조에 쓴다.</summary>
+        public static int TightenSpecCount => TightenSpec.Length;
+
+        public static bool TryTightenSpec(string key, out byte rule)
+        {
+            int i = SpecIndex(key);
+            rule = i >= 0 ? TightenSpec[i].Rule : (byte)0;
+            return i >= 0;
+        }
+
+        private static int SpecIndex(string key)
+        {
+            for (int i = 0; i < TightenSpec.Length; i++) if (TightenSpec[i].Key == key) return i;
+            return -1;
+        }
+
+        private static bool IsCall(OpCode op) => op == OpCodes.Call || op == OpCodes.Callvirt;
+
+        private static int FindCall(MetadataReader md, List<(OpCode Op, int Operand)> ins, string type, string name, int from)
+        {
+            for (int k = from; k < ins.Count; k++)
+                if (IsCall(ins[k].Op) && MethodOwner(md, ins[k].Operand) is var (t, n) && t == type && n == name) return k;
+            return -1;
+        }
+
+        private static bool TryConst((OpCode Op, int Operand) i, out int v)
+        {
+            var o = i.Op;
+            if (o == OpCodes.Ldc_I4_M1) { v = -1; return true; }
+            if (o == OpCodes.Ldc_I4_0) { v = 0; return true; } if (o == OpCodes.Ldc_I4_1) { v = 1; return true; } if (o == OpCodes.Ldc_I4_2) { v = 2; return true; }
+            if (o == OpCodes.Ldc_I4_3) { v = 3; return true; } if (o == OpCodes.Ldc_I4_4) { v = 4; return true; } if (o == OpCodes.Ldc_I4_5) { v = 5; return true; }
+            if (o == OpCodes.Ldc_I4_6) { v = 6; return true; } if (o == OpCodes.Ldc_I4_7) { v = 7; return true; } if (o == OpCodes.Ldc_I4_8) { v = 8; return true; }
+            if (o == OpCodes.Ldc_I4_S) { v = (sbyte)(byte)i.Operand; return true; }
+            if (o == OpCodes.Ldc_I4) { v = i.Operand; return true; }
+            v = 0; return false;
+        }
+
+        /// <summary>정적 데이터 속성 본문(ldsflda F · ldc n · newobj ROS 또는 ldtoken F · call CreateSpan)의 RVA 블롭. elem = 원소 바이트 수.</summary>
+        private static byte[]? ReadRvaBlob(PEReader pe, MetadataReader md, List<(OpCode Op, int Operand)> ins, int elem, List<string> violations, string where)
+        {
+            for (int k = 0; k < ins.Count; k++)
+            {
+                if (ins[k].Op != OpCodes.Ldsflda && ins[k].Op != OpCodes.Ldtoken) continue;
+                var h = MetadataTokens.EntityHandle(ins[k].Operand);
+                if (h.Kind != HandleKind.FieldDefinition) continue;
+                var f = md.GetFieldDefinition((FieldDefinitionHandle)h);
+                int rva = f.GetRelativeVirtualAddress();
+                if (rva == 0) break;
+                // 블롭 크기 = 필드 형식(__StaticArrayInitTypeSize=N 또는 원시형)의 ClassLayout 크기
+                int size = FieldDataSize(md, f, elem);
+                if (size <= 0 || size % elem != 0) break;
+                var block = pe.GetSectionData(rva);
+                if (block.Length < size) break;
+                var bytes = new byte[size];
+                block.GetContent(0, size).CopyTo(bytes);
+                return bytes;
+            }
+            violations.Add("TightenOnlyUiSettingWriter." + where + ": 정적 데이터(RVA) 판독 불가");
+            return null;
+        }
+
+        private static int FieldDataSize(MetadataReader md, FieldDefinition f, int elem)
+        {
+            var blob = md.GetBlobReader(f.Signature);
+            if (blob.ReadSignatureHeader().Kind != SignatureKind.Field) return -1;
+            var code = blob.ReadSignatureTypeCode();
+            if (code == SignatureTypeCode.TypeHandle)
+            {
+                var th = blob.ReadTypeHandle();
+                if (th.Kind != HandleKind.TypeDefinition) return -1;
+                var layout = md.GetTypeDefinition((TypeDefinitionHandle)th).GetLayout();
+                return layout.IsDefault ? -1 : layout.Size;
+            }
+            return code switch
+            {
+                SignatureTypeCode.Byte or SignatureTypeCode.SByte => 1,
+                SignatureTypeCode.Int16 or SignatureTypeCode.UInt16 => 2,
+                SignatureTypeCode.Int32 or SignatureTypeCode.UInt32 => 4,
+                SignatureTypeCode.Int64 or SignatureTypeCode.UInt64 => 8,
+                _ => -1,
+            };
+        }
+
+        private static int[]? ToInts(byte[]? b)
+        {
+            if (b is null) return null;
+            var r = new int[b.Length / 4];
+            for (int i = 0; i < r.Length; i++) r[i] = BitConverter.ToInt32(b, i * 4);
+            return r;
         }
 
         /// <summary>④ 기입자 본문: ldarg.1 → call Admit → brfalse, 그리고 DB 기입 정확히 1회 · Admit 뒤.</summary>

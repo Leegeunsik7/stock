@@ -136,6 +136,21 @@
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_nightlyMsg.Length > 0) { <span>@_nightlyMsg</span> } else { <span>텔레그램 키(거래 설정)·SMTP 중 설정된 채널로만 발송. 비밀번호는 DPAPI 암호화 저장.</span> }</div>
     </div>
 
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">🛡️ 시그널 게이트 안전 강화(강화 전용)</div>
+        <div style="color:var(--sub);font-size:12.5px;margin-bottom:12px">
+            더 엄격해지는 방향으로만 바꿀 수 있습니다 — 게이트 끄기 · 임계 낮추기 · 승인 한도 늘리기는 화면에서 거부됩니다(운영자 환경변수/관리 DB 로만).
+            게이트 · 확신 임계 · 횡보 최대 임계는 1초 안에 반영, 적응 임계 사용 · 승인 한도는 다음 기동부터 반영됩니다.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <button class="addbtn" @onclick="TightenGate" disabled="@(_gateOn)">@(_gateOn ? "게이트 강제 켜짐" : "시그널 게이트 강제 켜기")</button>
+            <div><label class="flbl">확신 임계(bp · 현재 @_confBp)</label><input class="fin" style="width:90px" type="number" min="@_confBp" max="10000" @bind="_confInput" /></div>
+            <div><label class="flbl">횡보 최대 임계(bp · 현재 @_maxBp)</label><input class="fin" style="width:90px" type="number" min="@_maxBp" max="10000" @bind="_maxInput" /></div>
+            <button class="addbtn" @onclick="TightenThresholds">상향 적용</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_tightenMsg.Length > 0) { <span>@_tightenMsg</span> } else { <span>완화 시도는 기존 값을 그대로 두고 폐기됩니다.</span> }</div>
+    </div>
+
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px">
         <div style="font-weight:700;margin-bottom:14px">빠른 설정</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -163,6 +178,10 @@
     private bool _nightlyEnabled;
     private int _nightlyHour = 6, _smtpPort = 587;
     private string _smtp = "", _emailTo = "", _emailUser = "", _emailPass = "", _nightlyMsg = "";
+    private bool _gateOn;
+    private long _confBp, _maxBp;
+    private int _confInput, _maxInput;
+    private string _tightenMsg = "";
 
     protected override void OnInitialized()
     {
@@ -186,6 +205,29 @@
         _smtp = Settings.GetSetting("Email.Smtp") ?? ""; _emailTo = Settings.GetSetting("Email.To") ?? "";
         _emailUser = Settings.GetSetting("Email.User") ?? "";
         if (int.TryParse(Settings.GetSetting("Email.Port"), out var ep) && ep > 0) _smtpPort = ep;
+        LoadTightenable();
+    }
+
+    private void LoadTightenable()
+    {
+        _gateOn = Settings.TryGetTightenable("Strategy.SignalGateEnabled", out var g) && g == 1;
+        if (Settings.TryGetTightenable("Strategy.ConfidenceThresholdBp", out var c)) _confBp = c;
+        if (Settings.TryGetTightenable("Strategy.AdaptiveMaxBp", out var m)) _maxBp = m;
+        _confInput = (int)_confBp; _maxInput = (int)_maxBp;
+    }
+
+    private void TightenGate()
+    {
+        _tightenMsg = "게이트: " + TightenVerdictCode.Label(Settings.TightenSetting("Strategy.SignalGateEnabled", "true"));
+        LoadTightenable();
+    }
+
+    private void TightenThresholds()
+    {
+        string c = TightenVerdictCode.Label(Settings.TightenSetting("Strategy.ConfidenceThresholdBp", _confInput.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        string m = TightenVerdictCode.Label(Settings.TightenSetting("Strategy.AdaptiveMaxBp", _maxInput.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        _tightenMsg = "확신 임계: " + c + " · 횡보 최대 임계: " + m;
+        LoadTightenable();
     }
 
     private void ApplyNightly()
