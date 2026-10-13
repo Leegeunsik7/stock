@@ -10,6 +10,7 @@
 - ShippedInterlockManifestVerifier(--verify-interlocks): zip 호스트 DLL 정의 ↔ RELEASE_MANIFEST ↔ master-seal.txt · MMF 뷰 · 대조 114µs · 루프 0B
 - release-package.ps1 [10/10] 뒤 인터락 봉인 대조(명세 $ExpectedInterlocks=30) — 불일치 = 산출물 전량 폐기 · 변이 2/2 Red
 - HANDOVER §50(v12.17.5~6-DEV) · §51(v12.18.0-GM)
+- 출하: 태그 454c0d9 · zip DEA3EE72 · masterSeal 42B627E4 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과
 
 ## Next Milestone
 - 실 장중 KIS VTS 세션 무장 시 실 브로커 출구 지연 실측 · QuantumVault 피어 정돈 후 피어 포함 재봉인

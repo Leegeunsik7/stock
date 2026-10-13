@@ -1434,3 +1434,5 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 51.3 출하
 - 버전 12.18.0 · 태그 v12.18.0-GM · `release-package.ps1 -NoPeer` · 형제 worktree(GIT_CONFIG safe.directory + core.commitGraph=false) · release/ 복사 · v12.17.4-GM 산출물 → release/superseded-v12.17.4-GM.
+- 출하 기록(2026-10-13): 태그 v12.18.0-GM = 454c0d9 · `release-v12.18.0-GM.zip` SHA-256 DEA3EE725906E3BC826232C652B0CE2397E3F6E44FF2C641E5E9356A639FFD74 · masterSeal 42B627E45253BC0CF26EC8B8EAFD30EDDF08661E875040694E526737B08D9E8E · 아티팩트 38 · 피어 기록 없음(-NoPeer).
+- [0/10]~[10/10] 전 단계 통과(3,698/3,698) · --verify-zip Ok · --verify-live-armed Ok(키 19 · 마스터 1 · UI 3/3 · 시뮬레이션 격리 49 형식(CLI 29) · 위반 0) · 핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF). 콜드 CLI 1회 정의 대조 7.3ms(프로세스 첫 호출 JIT 포함 — 1ms 예산은 웜 기준 · primary 재대조 81µs) · primary 재대조 GoldenMasterReleasePackagingTests 18/18.
