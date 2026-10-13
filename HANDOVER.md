@@ -1574,3 +1574,12 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 구 출하물 호환: v12.18.2-GM zip = 요구 없음 Ok · 요구 시 AuditTelemetryMissing(배지 이전 바이너리).
 - 시험(GoldenMasterReleasePackagingTests §13 · 3): 실 빌드 Ok + 0B + CLI · 일관 재봉인 패치 9종(Volatile.Read→Monitor.Enter · _snapSeq→_gate/_head · 값 newobj→참조 형식 · →CopyHead ·
   닫기 증가 제거 · 허브 Snapshot→PollIntegrity · 어댑터 Snapshot→CopyHead = Unsafe · 호스트 AttachAuditLedger 제거 = Missing) — 전부 행렬 + ⑪ 은 통과하는 바이너리.
+
+### 58.3 출하
+- 버전 12.18.3 · 태그 v12.18.3-GM = f1a9bcf · `release-package.ps1 -NoPeer` · 형제 worktree · release/ 복사 · v12.18.2-GM 산출물 → release/superseded-v12.18.2-GM.
+- 출하 기록(2026-10-13): `release-v12.18.3-GM.zip` SHA-256 153C2841AE9776A7370DCC0C7C6C239C868AB1C947477DEA0D03C7F325A3D07D · masterSeal 75D15D198784A66074D4D97E72D02CC9903D3D35A60AF55C526F3B7F89C7CCF8 · 아티팩트 38 · 피어 기록 없음(-NoPeer) · tightenRules 6.
+- [0/10]~[10/10] 전 단계 통과(3,767/3,767 · coupling 0) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · ⑪ 적용 · 위반 0) ·
+  핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF) · --verify-tighten Ok(6 · ⑪ 선기록 결선 · ⑤ 관제 배지 무잠금 결선).
+- 콜드 CLI 1회 대조: 인터락 7.5ms · 행렬+⑪+⑤ 30.0ms(프로세스 첫 호출 JIT 포함). primary 재대조(GoldenMasterReleasePackagingTests) 30/30.
+- 정직: 사전 전체 스위트 1회차에서 MmfIpcFabricTests.Backpressure_RealThreads_ReaderStall_NoFalsePoison 1건 실패(이미 ConcurrencyStress · 20ms 임계 실 스레드 시험 —
+  타 컬렉션 병렬 CPU 경합). 단독 5/5 통과 · 재실행 3,767/3,767 · 패키저 내 실행 3,767/3,767. 이번 변경은 IPC 무관 — 코드 수정 없음(기록만).
