@@ -1643,3 +1643,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - [0/10]~[10/10] 전 단계 통과(오중 빌드 0W/0E · 3,776/3,776 · coupling 0) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · ⑪ 적용 · 위반 0) ·
   핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF) · --verify-tighten Ok(6 · ⑪ · ⑤ · ⑥ IPC 패브릭 무슬립 위상).
 - primary 재대조(GoldenMasterReleasePackagingTests) 33/33 — 출하 레코드 시험이 ⑪+⑤+⑥ 를 실 출하 zip 에 재수검.
+
+## 61. v12.18.5-GM — 이중 저장소 교차 봉인 출하 라인 · 피어 철회 드리프트 방어 · [0/10] 피어 정돈 하드 게이트 (2026-10-13)
+
+### 61.1 버전 계보
+- v12.18.4-GM(d893f1b · 단독 출하 §60.3) 불변 보존. 드리프트 방어 · 게이트는 태그 이후 코드라 12.18.5 로 범프(§47.3 런북 — 봉인된 출하물 덮어쓰기 금지).
+- 태그 v12.18.5-GM = d44c35b(미출하 · 미푸시 상태에서 03de6de → cd6e55a → d44c35b 로 재지정).
+
+### 61.2 [방향 B] 피어 철회 드리프트 방어(`StockManager/Tools/PeerDriftGuard.cs` · `--peer-drift`)
+- [0/10] 고정 = 피어 브랜치(symbolic-ref · 분리 HEAD = 중단) · HEAD · 봉인 매니페스트 SHA-256. 현재 피어와 대조(읽기 전용 · --no-optional-locks):
+  같은 커밋 다른 브랜치 전환(기존 HEAD 고정은 통과하던 경우) · 분리 HEAD · 1커밋 전진(문서만이라도) · 재봉인/1비트/삭제 · 미커밋 코드 = 거부.
+- 스크립트 Assert-PeerPinned: [7/10] zip 직전 · [10/10] 동기화 전 · 완료 직전 — 이동 = 스테이징 + 출하 산출물 전량 폐기(`Remove-ReleaseOutputs; Fail` 7 → 8).
+
+### 61.3 [0/10] 피어 정돈 하드 게이트(`--peer-readiness`)
+- 고정 직후 PeerReadinessProbe 판정 — NotReady(★ManifestStale: sealedAtUtc < 피어 HEAD 커밋 시각 · 1초라도) = 기존 산출물 폐기 · [1/10] 이전 Fail(exit 1).
+  판정 직후 --peer-drift 재대조(Ready 판정 = 고정한 상태). 깨끗한 작업 트리엔 판정기가 없어 호스트만 먼저 컴파일(-warnaserror).
+- 실측(형제 worktree · 태그 d44c35b · -NoPeer 없이): QuantumVault 50d8c42 · 봉인 2026-10-07 = ManifestStale → [0/10] exit 1 · [1/10] 미진입 · 산출물 0.
+- 시험: PeerDriftGuardTests 12(실 임시 git — 판정 · CLI 0/2/64 · 브랜치 이름 주입 · 피어 .git 바이트 불변 · 1초 낡음 거부/같은 시각 통과 · 스크립트 순서) ·
+  출하 레코드 시험 = 피어 기록 시 교차 지문 형식 + 피어가 그 커밋/봉인이면 드리프트 재대조. 전체 스위트 3,788/3,788 · sln 0W/0E.
+
+### 61.4 출하(보류)
+- QuantumVault 재봉인 미완(HEAD 50d8c42 · RELEASE_MANIFEST sealedAtUtc 2026-10-07T03:59:36Z) — 운영자 터미널의 seal_v2.8.0.ps1(서명 시드 = 자격 증명 관리자) 대기.
+  재봉인 → --peer-readiness 0 → 태그 기준 worktree 에서 -NoPeer 없이 패키징 → release-v12.18.5-GM.zip · v12.18.4-GM 산출물 → release/superseded-v12.18.4-GM.
