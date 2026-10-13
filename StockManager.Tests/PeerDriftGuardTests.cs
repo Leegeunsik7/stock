@@ -173,6 +173,44 @@ namespace StockManager.Tests
             Assert.Equal(refb, Snap(Path.Combine("refs", "heads", "master")));
         }
 
+        // ════════════ §4 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트(--peer-readiness · 낡은 봉인 1초 = 거부) ════════════
+
+        [Fact]
+        public void ReadinessGate_ManifestSealedOneSecondBeforeHead_Stale_Cli2_ResealAfter_Cli0()
+        {
+            var (repo, _, _, _) = PinnedPeer("stale");
+            string? ct = GitRepoProbe.Git(repo, "log", "-1", "--format=%cI", "HEAD");
+            Assert.NotNull(ct);
+            var headAt = DateTimeOffset.Parse(ct!, System.Globalization.CultureInfo.InvariantCulture);
+            void Seal(DateTimeOffset at) => File.WriteAllText(ManifestPath(repo),
+                "{\"rootHash\":\"" + new string('b', 64) + "\",\"sealedAtUtc\":\"" + at.UtcDateTime.ToString("O") + "\"}");
+            Seal(headAt.AddSeconds(-1));                                                              // HEAD 커밋 1초 전 봉인 = 낡음
+            var r = PeerReadinessProbe.Probe(repo);
+            _out.WriteLine("[0/10 게이트] 1초 낡음 → " + string.Join(" | ", r.Issues));
+            Assert.False(r.Ready);
+            Assert.Contains(r.Issues, i => i.Issue == PeerReadinessIssue.ManifestStale);
+            Assert.Equal(ReleaseHandshakeCli.ExitRejected, Cli(ReleaseHandshakeCli.PeerReadinessFlag, repo));   // 스크립트: exit ≠ 0 → Fail(착수 거부)
+            Seal(headAt);                                                                             // HEAD 와 같은 시각 = 재봉인 인정(경계)
+            Assert.Equal(ReleaseHandshakeCli.ExitOk, Cli(ReleaseHandshakeCli.PeerReadinessFlag, repo));
+        }
+
+        [Fact]
+        public void PackageScript_Step0_ReadinessHardGate_BeforePurgeAndBuild_DriftRecheckedAfter()
+        {
+            string dir = AppContext.BaseDirectory;
+            while (dir is not null && !File.Exists(Path.Combine(dir, "release-package.ps1"))) dir = Path.GetDirectoryName(dir)!;
+            string s = File.ReadAllText(Path.Combine(dir!, "release-package.ps1"));
+            int pinSha = s.IndexOf("$peerPinSha = (Get-FileHash", StringComparison.Ordinal);
+            int gate = s.IndexOf("$readyExit = Invoke-HostCli @('--peer-readiness', ('\"' + $PeerRepo + '\"')) \"peer-readiness\"", StringComparison.Ordinal);
+            int fail = s.IndexOf("if ($readyExit -ne 0) { Fail ", StringComparison.Ordinal);
+            int recheck = s.IndexOf("\"peer-drift-readiness\"", StringComparison.Ordinal);
+            int purge = Regex.Match(s, @"^Remove-ReleaseOutputs\r?$", RegexOptions.Multiline).Index;
+            int step1 = s.IndexOf("Step 1 ", StringComparison.Ordinal);
+            _out.WriteLine($"[0/10 결선] 고정 {pinSha} < 판정 {gate} < 거부 {fail} < 재대조 {recheck} < 폐기 {purge} < [1/10] {step1}");
+            Assert.True(pinSha > 0 && pinSha < gate && gate < fail && fail < recheck && recheck < purge && purge < step1, "Ready 게이트 = 고정 뒤 · 기존 산출물 폐기/빌드 앞");
+            Assert.Contains("if (-not (Test-Path -LiteralPath $hostExe))", s);                     // 깨끗한 작업 트리 = 판정기 먼저 컴파일
+        }
+
         // ════════════ §3 스크립트 결선 ════════════
 
         [Fact]

@@ -160,7 +160,21 @@ if (-not $NoPeer) {
     if ($LASTEXITCODE -ne 0 -or -not $peerPinBranch) { Fail "피어 분리 HEAD(브랜치 없음) — 교차 봉인할 브랜치를 체크아웃한 뒤 재실행: $PeerRepo" }
     $peerPinBranch = "$peerPinBranch".Trim()
     $peerPinSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $peerManifest).Hash
-    Write-Host "  OK: 피어 $PeerRepo 미커밋 코드 0 · 봉인 매니페스트 존재 · 고정 $peerPinBranch@$($peerPinHead.Substring(0, 10))" -ForegroundColor DarkGreen
+    # [v12.18.5-GM] 피어 정돈 완료 하드 게이트(--peer-readiness · PeerReadinessProbe) — 미커밋 코드 · 키 원문 의심 파일 · 매니페스트 누락/무효 ·
+    #   ★낡은 봉인(sealedAtUtc < 피어 HEAD 커밋 시각 — 1초라도) = 패키징 착수 거부(exit 1 · 산출물 폐기/생성 0).
+    #   (수정 전: 위 사전 점검은 '깨끗함 · 매니페스트 존재'만 봐서, 현재 HEAD 이전에 봉인된 피어 매니페스트로도 교차 봉인이 진행됐다.)
+    #   판정기는 호스트 CLI 라 깨끗한 작업 트리에선 아직 없다 → 호스트만 먼저 컴파일(-warnaserror · 출하 단계 아님 — [2/10] 이 sln 전체를 다시 빌드).
+    #   판정 직후 드리프트 재대조 — Ready 판정이 '방금 고정한' 브랜치/HEAD/매니페스트에 대한 것임을 보증(판정 중 피어 이동 = 중단).
+    if (-not (Test-Path -LiteralPath $hostExe)) {
+        dotnet build $hostProj -c Release -m:1 -warnaserror | Out-Host
+        if ($LASTEXITCODE -ne 0) { Fail "피어 판정기(호스트 CLI) 빌드 실패(exit $LASTEXITCODE)" }
+    }
+    New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+    $readyExit = Invoke-HostCli @('--peer-readiness', ('"' + $PeerRepo + '"')) "peer-readiness"
+    if ($readyExit -ne 0) { Fail "피어 NotReady(exit=$readyExit · 낡은 봉인 ManifestStale 포함) — 피어 재봉인/정돈 뒤 재실행(-NoPeer 로 명시 생략 가능)" }
+    $pinExit = Invoke-HostCli @('--peer-drift', ('"' + $PeerRepo + '"'), '--pin-peer-branch', $peerPinBranch, '--pin-peer-head', $peerPinHead, '--pin-peer-manifest', $peerPinSha) "peer-drift-readiness"
+    if ($pinExit -ne 0) { Fail "피어가 Ready 판정 중 이동(exit=$pinExit) — 재실행" }
+    Write-Host "  OK: 피어 $PeerRepo Ready(미커밋 코드 0 · 키 의심 0 · HEAD 이후 재봉인) · 고정 $peerPinBranch@$($peerPinHead.Substring(0, 10))" -ForegroundColor DarkGreen
 }
 # [출하 롤백 가드 · v12.15.0-GM] 사전 검사 통과 = 이번 실행이 같은 버전의 기존 출하 산출물을 대체한다 → 빌드 전에 전량 폐기.
 #   이후 어느 단계([1]~[10])에서 실패해도 release\ 에 이 버전의 zip · .sha256 · master-seal.txt · RELEASE_MANIFEST.json 이 남지 않는다.
