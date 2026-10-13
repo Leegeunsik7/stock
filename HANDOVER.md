@@ -1536,3 +1536,6 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 
 ### 56.3 출하
 - 버전 12.18.2 · 태그 v12.18.2-GM · `release-package.ps1 -NoPeer` · 형제 worktree · release/ 복사 · v12.18.1-GM 산출물 → release/superseded-v12.18.1-GM.
+- 출하 기록(2026-10-13): 태그 v12.18.2-GM = 80c0ed4 · `release-v12.18.2-GM.zip` SHA-256 EA3090065D6DCE5DB97A9D7209721796969001AD66D20D82FB784FB632E33C16 · masterSeal 45E55800F2D34E12B345D4E93910B8C60F6EE76598D2BB8DDCE6F96C183B5F82 · 아티팩트 38 · 피어 기록 없음(-NoPeer) · tightenRules 6.
+- [0/10]~[10/10] 전 단계 통과(3,756/3,756) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · 감사 원장 ⑪ 적용 · 위반 0) · 핸드셰이크 Ok · --verify-interlocks Ok(30) · --verify-tighten Ok(6 · 감사 원장 선기록 결선).
+- 콜드 CLI 1회 대조: 인터락 7.1ms · 행렬+결선 19.7ms(프로세스 첫 호출 JIT 포함 — 웜 기준 행렬 ≈ 40µs · 결선 ≈ 70µs). primary 재대조(§3 · §12) 27/27.

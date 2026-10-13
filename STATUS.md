@@ -9,6 +9,7 @@
 - CheckAuditWiring: zip 호스트 DLL TryWrite 선기록(Judge < Append < WriteStored · 직후 분기) · 진입점 ldnull 0 — 0B · ≈ 70µs
 - --require-audit-ledger(두 CLI): 싱크 형식 개명으로 가드 ⑪을 '생략'시키는 빈틈 차단 · 패치+재봉인 4종 거부 · 변이 1/1 Red
 - 인터락 30 · 강화 전용 6키 · 감사 원장 결선을 출하 게이트에서 함께 대조 · HANDOVER §56 · 버전 12.18.2
+- 출하: 태그 v12.18.2-GM(80c0ed4) · zip EA309006 · masterSeal 45E55800 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과
 
 ## Next Milestone
-- v12.18.2-GM 출하 기록 확정 · 감사 원장 상태 UI 노출 · 원장 보관/교체 운영 절차
+- 감사 원장 상태 UI 노출 · 원장 보관/교체 운영 절차 · 피어(QuantumVault) 정돈 후 피어 포함 재출하
