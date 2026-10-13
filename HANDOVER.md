@@ -1636,3 +1636,10 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 시험(GoldenMasterReleasePackagingTests §14 · 3): 실 빌드 Ok + 0B + CLI · 타 어셈블리 = Missing · 일관 재봉인 패치 5종(TryConsume MemoryBarrier→Sleep · Enter Increment→SpinOnce(전이) ·
   TryPublish Enter→Dispose(드레인 유입) · Dispose SpinOnce→Sleep = Blocking · 생성자 시계 ldftn 이탈 = ClockDrift) — 전부 행렬 + ⑪ + ⑤ 는 통과하는 바이너리.
 - 구 출하물: v12.18.3-GM zip 도 ⑥ Ok(패브릭 소스 무변경 — v12.18.4-DEV 결정론화는 테스트 하네스 쪽).
+
+### 60.3 출하
+- 버전 12.18.4 · 태그 v12.18.4-GM = d893f1b · `release-package.ps1 -NoPeer` · 형제 worktree · release/ 복사 · v12.18.3-GM 산출물 → release/superseded-v12.18.3-GM.
+- 출하 기록(2026-10-13): `release-v12.18.4-GM.zip` SHA-256 FA7830F7AD54288C479E88CA431C70E46646B3FB13125F3DDC68D83C215E56E2 · masterSeal 5C2597E464150233A4D338C041DA1D020FBA89EE5485D0759AD442CAD03F8480 · 아티팩트 38 · 피어 기록 없음(-NoPeer) · tightenRules 6.
+- [0/10]~[10/10] 전 단계 통과(오중 빌드 0W/0E · 3,776/3,776 · coupling 0) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · ⑪ 적용 · 위반 0) ·
+  핸드셰이크 Ok · --verify-interlocks Ok(30 · 0x800000001FFFFFFF) · --verify-tighten Ok(6 · ⑪ · ⑤ · ⑥ IPC 패브릭 무슬립 위상).
+- primary 재대조(GoldenMasterReleasePackagingTests) 33/33 — 출하 레코드 시험이 ⑪+⑤+⑥ 를 실 출하 zip 에 재수검.
