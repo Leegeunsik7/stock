@@ -146,6 +146,7 @@ namespace StockManager.Blazor.Services
         private StockManager.Engines.SignalChurnCircuitBreaker? _churn;
         private long _calPacked, _calUpdates;
         private StockManager.Engines.SignalGateRuntimeSwitch? _gateSwitch;
+        private StockManager.Security.MonotonicSettingAuditLog? _auditLedger;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -211,6 +212,10 @@ namespace StockManager.Blazor.Services
         /// <summary>[v12.18.2-DEV] 시그널 게이트 런타임 토글 결선(모드 · 거부 계수 관제).</summary>
         public void AttachSignalGate(StockManager.Engines.SignalGateRuntimeSwitch gateSwitch)
             => Volatile.Write(ref _gateSwitch, gateSwitch ?? throw new ArgumentNullException(nameof(gateSwitch)));
+
+        /// <summary>[v12.18.3-DEV] 감사 원장 관제 결선 — 프레임마다 seqlock 스냅샷(원장 체인 잠금 미사용 · 원장 영역 미접근 · 할당 0).</summary>
+        public void AttachAuditLedger(StockManager.Security.MonotonicSettingAuditLog ledger)
+            => Volatile.Write(ref _auditLedger, ledger ?? throw new ArgumentNullException(nameof(ledger)));
 
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
@@ -294,6 +299,9 @@ namespace StockManager.Blazor.Services
             if (churn is not null) sig = sig * 31 + churn.LastWindowCount + churn.Suppressed * 7 + churn.Breakdowns * 13;
             var gs = Volatile.Read(ref _gateSwitch);
             if (gs is not null) sig = sig * 31 + gs.Mode + gs.Signals.ObservedProposals * 7 + gs.Signals.RejectedRegime * 13 + gs.DisableRefused * 17;
+            var al = Volatile.Read(ref _auditLedger);
+            var aSnap = al?.Snapshot() ?? default;
+            if (al is not null) sig = sig * 31 + aSnap.Version + (int)aSnap.FreezeCause * 7 + (aSnap.Contended ? 13 : 0);   // 기록 · 동결 = 즉시 재게시
             for (int b = 0; b < _views.Length && b < Brokers; b++)
             {
                 var v = _views[b];
@@ -368,6 +376,9 @@ namespace StockManager.Blazor.Services
             f.GateObserved = gs?.Signals.ObservedProposals ?? 0; f.GateRegimeRejects = gs?.Signals.RejectedRegime ?? 0;
             f.GateShadowRejects = gs?.Signals.ShadowRejects ?? 0; f.GateShadowRegime = gs?.Signals.ShadowRegimeRejects ?? 0;
             f.GateChurnRejects = gs?.Signals.RejectedChurn ?? 0; f.GateDisableRefused = gs?.DisableRefused ?? 0;
+            f.AuditState = al is null ? DashAuditLedger.Unbound : (int)aSnap.State;
+            f.AuditCount = aSnap.Count; f.AuditCapacity = aSnap.Capacity; f.AuditUsedPercent = aSnap.UsedPercent;
+            f.AuditFreezeCause = aSnap.Contended ? DashAuditLedger.CauseNone : (int)aSnap.FreezeCause; f.AuditHeadPrefix = aSnap.HeadPrefix;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

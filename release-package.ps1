@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.18.2-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.18.3-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -37,6 +37,9 @@
 #              (가드의 '경로 전체 부재 = 통과'를 출하 게이트에서 닫음). 불일치 · 누락 = 출하 산출물 전량 폐기.
 #            + [v12.18.2-GM · 방향 A] 감사 원장 결선 강제(--require-audit-ledger · 두 CLI 모두) — 기입기 TryWrite 의 ITightenAuditSink.Append
 #              선기록(Judge < Append < WriteStored · 직후 조건 분기) · 진입점 감사 인자 ≠ null · 형식 부재(= 규칙 ⑪ 조용한 생략) = 출하 산출물 전량 폐기.
+#            + [v12.18.3-GM · 방향 A] 관제 배지 결선 강제(--require-audit-telemetry · --verify-tighten) — 원장 Snapshot() = 순수 seqlock 판독자
+#              (잠금/원장 메서드/_gate·_hasher·_head/기록/할당 0) · PublishSnapshot 시퀀스 증가 2 · 허브 PumpCore/어댑터 TryGetAuditLedger 의 Snapshot 호출 1 ·
+#              호스트 AttachAuditLedger 1. 배지 결선 누락 · 잠금 간섭 = 출하 산출물 전량 폐기.
 #   전부 실패-닫힘: 어느 단계든 실패하면 즉시 중단, 불완전 zip 은 남기지 않는다.
 #
 #   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]
@@ -300,7 +303,7 @@ $hsExit = Invoke-HostCli (@('--release-handshake') + $hsArgs) "handshake"
 if ($hsExit -ne 0) { Remove-ReleaseOutputs; Fail "다중 저장소 핸드셰이크 거부(exit=$hsExit) — 출하 산출물 전량 폐기" }
 $ilkExit = Invoke-HostCli @('--verify-interlocks', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-interlocks', "$ExpectedInterlocks") "verify-interlocks"
 if ($ilkExit -ne 0) { Remove-ReleaseOutputs; Fail "30대 인터락 봉인 대조 거부(exit=$ilkExit) — 출하 산출물 전량 폐기" }
-$tightExit = Invoke-HostCli @('--verify-tighten', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger') "verify-tighten"
+$tightExit = Invoke-HostCli @('--verify-tighten', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger', '--require-audit-telemetry') "verify-tighten"
 if ($tightExit -ne 0) { Remove-ReleaseOutputs; Fail "강화 전용 단조성 행렬 대조 거부(exit=$tightExit) — 출하 산출물 전량 폐기" }
 
 Write-Host "== 완료: $zipOut (SHA-256 $zipSha) · RELEASE_MANIFEST.json 봉인 ==" -ForegroundColor Green

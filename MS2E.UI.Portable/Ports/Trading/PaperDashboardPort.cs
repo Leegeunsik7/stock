@@ -52,6 +52,15 @@ namespace MS2E.UI.Portable.Ports.Trading
         public const int Warmup = 0, Trend = 1, MeanReverting = 2, Choppy = 3, Unbound = 4;
     }
 
+    /// <summary>
+    /// [v12.18.3-DEV] 강화 전용 설정 감사 원장 상태(호스트 AuditLedgerState 와 같은 값 · 0 = 미결선) · 동결 원인(AuditFreezeCause 와 같은 값).
+    /// </summary>
+    public static class DashAuditLedger
+    {
+        public const int Unbound = 0, Normal = 1, Saturating = 2, Frozen = 3;
+        public const int CauseNone = 0, CauseChainBroken = 1, CauseFull = 2, CauseUnavailable = 3;
+    }
+
     /// <summary>[v12.18.2-DEV] 시그널 게이트 모드(0 미결선 · 1 관측 · 2 강제).</summary>
     public static class DashGateMode
     {
@@ -127,6 +136,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         // [v12.18.2-DEV] 호스트 시그널 게이트 — 모드 · 관측 제안 수 · 국면 임계 거부(강제) · 그림자 거부(관측 판정) · 승인 억제 거부 · 끄기 거부(키 켜짐).
         public int GateMode = DashGateMode.Unbound;
         public long GateObserved, GateRegimeRejects, GateShadowRejects, GateShadowRegime, GateChurnRejects, GateDisableRefused;
+
+        // [v12.18.3-DEV] 감사 원장 — 상태(DashAuditLedger) · 레코드 수/용량 · 사용률 · 동결 원인 · 머리 해시 상위 8바이트(빅 엔디언).
+        public int AuditState = DashAuditLedger.Unbound, AuditCount, AuditCapacity, AuditUsedPercent, AuditFreezeCause;
+        public ulong AuditHeadPrefix;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();

@@ -536,7 +536,7 @@ namespace StockManager.Tests
                 // 전체 영역(가득 찬 2,048 레코드 · 256KB) 검증 시간 — 웜 최솟값
                 Span<byte> h = stackalloc byte[32];
                 long best = long.MaxValue;
-                for (int i = 0; i < 7; i++)
+                for (int i = 0; i < 25; i++)                                                 // 웜 최솟값(예산 여유 ≈ 25% — 부하 잡음은 최솟값으로 제거)
                 {
                     Assert.Equal(AuditChainVerdict.Ok, MonotonicSettingAuditLog.VerifyFile(f, out int n, h, out _, out long us));
                     Assert.Equal(MonotonicSettingAuditLog.DefaultCapacity, n);

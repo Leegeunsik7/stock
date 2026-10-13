@@ -25,6 +25,11 @@ namespace MS2E.UI.Portable.Ports
         public static int Count => Labels.Length;
     }
 
+    /// <summary>
+    /// [v12.18.3-DEV] 감사 원장 관제 배지(값 형식 · 할당 0). State/FreezeCause = DashAuditLedger 코드 · HeadPrefix = 머리 해시 상위 8바이트.
+    /// </summary>
+    public readonly record struct AuditLedgerBadge(int State, int Count, int Capacity, int UsedPercent, int FreezeCause, ulong HeadPrefix);
+
     /// <summary>설정/관리자 위젯 Port — 콘크리트(DB/금고/LAN/LLM)를 은닉한 상태 조회 + 설정 기입.</summary>
     public interface IAdminSettingWidgetPort
     {
@@ -39,6 +44,8 @@ namespace MS2E.UI.Portable.Ports
         int TightenSetting(string key, string value);
         /// <summary>강화 전용 키의 현재 유효값(호스트 precedence 환경변수 → DB → 폴백 · 불리언 0/1). 미등재 키 = false.</summary>
         bool TryGetTightenable(string key, out long effective);
+        /// <summary>[v12.18.3-DEV] 감사 원장 관제 상태(원장 체인 잠금 미사용 · 할당 0). 원장 미결선 = false.</summary>
+        bool TryGetAuditLedger(out AuditLedgerBadge badge);
 
         // ── 거래 모드(paper/live 플래그 — 실 발주 무장과 무관) ──
         bool IsLive { get; }

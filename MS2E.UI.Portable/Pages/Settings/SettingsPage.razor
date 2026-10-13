@@ -149,6 +149,29 @@
             <button class="addbtn" @onclick="TightenThresholds">상향 적용</button>
         </div>
         <div style="margin-top:10px;font-size:12px;color:var(--sub)">@if (_tightenMsg.Length > 0) { <span>@_tightenMsg</span> } else { <span>완화 시도는 기존 값을 그대로 두고 폐기됩니다.</span> }</div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px">
+            <span style="padding:2px 8px;border-radius:6px;font-weight:600;background:@AuditBadgeColor;color:@AuditBadgeInk">📜 @SignalLabelMapper.AuditStateLabel(_audit.State, _audit.FreezeCause)</span>
+            @if (_auditBound)
+            {
+                <span>기록 @(_audit.Count) / @(_audit.Capacity) (@SignalLabelMapper.AuditUsedText(_audit.UsedPercent))</span>
+                <span style="display:inline-flex;gap:2px">
+                    @for (int i = 0; i < SignalLabelMapper.HeadSwatchCount; i++)
+                    {
+                        <i style="display:inline-block;width:9px;height:13px;border-radius:2px;background:@SignalLabelMapper.HeadSwatch(_audit.HeadPrefix, i)"></i>
+                    }
+                </span>
+                <code title="머리 해시 상위 8바이트 — 기억해 둔 지문과 다르면 원장이 바뀐 것">@SignalLabelMapper.HeadHex(_audit.HeadPrefix)</code>
+                <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line);padding:2px 10px" @onclick="LoadAudit">새로고침</button>
+            }
+        </div>
+        @if (_audit.State == DashAuditLedger.Frozen)
+        {
+            <div style="margin-top:6px;font-size:12px;color:#ce93d8">원장이 동결되어 이 화면의 모든 강화 기입이 거부됩니다(비트 27). 원장 파일을 보관한 뒤 재기동하세요.</div>
+        }
+        else if (_audit.State == DashAuditLedger.Saturating)
+        {
+            <div style="margin-top:6px;font-size:12px;color:#ffb300">원장 사용률이 90% 를 넘었습니다 — 가득 차면 설정 변경이 동결됩니다. 원장 파일 보관 후 재기동을 준비하세요.</div>
+        }
     </div>
 
     <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px">
@@ -182,6 +205,16 @@
     private long _confBp, _maxBp;
     private int _confInput, _maxInput;
     private string _tightenMsg = "";
+    private bool _auditBound;
+    private AuditLedgerBadge _audit;
+    private string AuditBadgeColor => _audit.State switch { DashAuditLedger.Normal => "#2e7d32", DashAuditLedger.Saturating => "#f9a825", DashAuditLedger.Frozen => "#6a1b9a", _ => "#3a3f4b" };
+    private string AuditBadgeInk => _audit.State == DashAuditLedger.Saturating ? "#111" : "#fff";
+
+    private void LoadAudit()
+    {
+        _auditBound = Settings.TryGetAuditLedger(out _audit);
+        if (!_auditBound) _audit = default;                                            // 미결선 = State 0
+    }
 
     protected override void OnInitialized()
     {
@@ -214,6 +247,7 @@
         if (Settings.TryGetTightenable("Strategy.ConfidenceThresholdBp", out var c)) _confBp = c;
         if (Settings.TryGetTightenable("Strategy.AdaptiveMaxBp", out var m)) _maxBp = m;
         _confInput = (int)_confBp; _maxInput = (int)_maxBp;
+        LoadAudit();
     }
 
     private void TightenGate()

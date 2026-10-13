@@ -1,15 +1,16 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.2-GM — Production Golden Master 출하(감사 원장 · 규칙 ⑪ 출하 강제 · 강화 전용 6키 · 30대 인터락)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 3,756/3,756 Pass, infra-scan coupling 0, Phase114 coupled ≤ ratchet 40
+- **Active Milestone**: v12.18.3-GM — Production Golden Master(관제 배지 · 재사용 IncrementalHash · 규칙 ⑪ · 강화 전용 6키 · 30대 인터락) + 배지 무잠금 결선 IL 수검
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0, 전역 테스트 Pass, infra-scan coupling 0, PureShell coupled 40 = ratchet 40
 - **Updated At**: 2026-10-13
 
 ## Completed Deliverables
-- 감사 원장 MonotonicSettingAuditLog(MMF 해시 체인 · 변조/가득 참 = 동결 + 비트 27 · --verify-audit-chain) — §55
-- CheckAuditWiring: zip 호스트 DLL TryWrite 선기록(Judge < Append < WriteStored · 직후 분기) · 진입점 ldnull 0 — 0B · ≈ 70µs
-- --require-audit-ledger(두 CLI): 싱크 형식 개명으로 가드 ⑪을 '생략'시키는 빈틈 차단 · 패치+재봉인 4종 거부 · 변이 1/1 Red
-- 인터락 30 · 강화 전용 6키 · 감사 원장 결선을 출하 게이트에서 함께 대조 · HANDOVER §56 · 버전 12.18.2
-- 출하: 태그 v12.18.2-GM(80c0ed4) · zip EA309006 · masterSeal 45E55800 · 아티팩트 38 · -NoPeer · [0/10]~[10/10] 통과
+- v12.18.3-DEV 관제 배지(Snapshot seqlock · /aidash · 설정 '안전 강화' · 포화 ≥ 90% · 머리 해시 지문) 출하 대상 편입
+- 원장 해시 = 재사용 IncrementalHash(2,048 레코드 검증 485 → 237µs · 0B · 결과 바이트 동일)
+- [방향 A] CheckAuditTelemetry: Snapshot 잠금/원장 호출/_gate·_hasher·_head/기록/할당 0 · seqlock 판독 ≥ 2 · 게시 증가 2 · 허브/어댑터 Snapshot 1 · 호스트 결선 1
+- IlCursor 스트리밍 IL 해독기(버퍼 0) · Decode 재구성 · --require-audit-telemetry → [10/10] --verify-tighten 강제(위반 = 산출물 폐기)
+- 패치 9종 거부 · 수검 200회 0B · v12.18.2-GM 출하물 = 요구 시만 거부(호환) · HANDOVER §58
+- 방향 B(zip 정규화 · 중복 가드)는 v12.17.0-GM 기출하 — 재구현 없음
 
 ## Next Milestone
-- 감사 원장 상태 UI 노출 · 원장 보관/교체 운영 절차 · 피어(QuantumVault) 정돈 후 피어 포함 재출하
+- 설정 화면 실시간 갱신(허브 구독) 검토 · 원장 보관/교체 운영 절차

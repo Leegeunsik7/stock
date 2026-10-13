@@ -48,6 +48,15 @@ namespace MS2E.Infrastructure
             return true;
         }
 
+        // [v12.18.3-DEV] 감사 원장 관제 — seqlock 스냅샷(원장 체인 잠금 미사용 · 할당 0). 원장이 아닌 싱크(테스트 대역) = 미결선.
+        public bool TryGetAuditLedger(out AuditLedgerBadge badge)
+        {
+            if (_audit is not StockManager.Security.MonotonicSettingAuditLog log) { badge = default; return false; }
+            var s = log.Snapshot();
+            badge = new AuditLedgerBadge((int)s.State, s.Count, s.Capacity, s.UsedPercent, s.Contended ? 0 : (int)s.FreezeCause, s.HeadPrefix);
+            return true;
+        }
+
         /// <summary>호스트 precedence(환경변수 → DB)와 같은 판독 · DB 기입.</summary>
         private sealed class TightenStore : ITightenSettingStore
         {

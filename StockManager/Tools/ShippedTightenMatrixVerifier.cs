@@ -23,6 +23,16 @@
 //      Append 직후 조건 분기(기록 실패 = 기입 0) · AdminSettingWidgetAdapter.TightenSetting — TryWrite 호출 정확히 1 · 감사 인자(직전 비 nop) ≠ ldnull.
 //      ShippedBinaryLiveArmedGuard ⑪과 같은 규칙의 독립 구현(문자열 0 · 스택 해독기) — 가드는 형식이 없으면 ⑪을 생략하지만 여기서는 부재 = 거부.
 //
+//   ⑤ [v12.18.3-GM · 방향 A] 감사 원장 관제 배지 결선(CheckAuditTelemetry · 힙 0 · requireAuditTelemetry 일 때) — 'UI 조회가 체인 잠금에 간섭하지 않음'을 출하 IL 로 수검:
+//      StockManager.Security.MonotonicSettingAuditLog 정의 1개 · Snapshot()/PublishSnapshot() 각 1개.
+//      Snapshot 본문 = 순수 seqlock 판독자: Volatile.Read(ref _snapSeq) ≥ 2(전후 시퀀스 대조) · 잠금 형식(Monitor/SpinLock/Mutex/SemaphoreSlim/
+//      ReaderWriterLockSlim/Lock/WaitHandle) 호출 0 · 원장 자기 메서드 호출 0(잠금 진입 경로 차단) · _gate/_hasher/_head 필드 접근 0(체인 잠금 · 해시기 ·
+//      기록자 머리 버퍼 = 찢긴 읽기) · 필드 기록(stfld/stsfld) 0(판독자 = 무기록) · newarr/box/ldftn/ldvirtftn/calli 0 · newobj 는 값 형식 AuditLedgerSnapshot 만.
+//      PublishSnapshot 본문 = Interlocked.Increment(ref _snapSeq) 정확히 2(홀수 열기 · 짝수 닫기).
+//      소비자: DashboardSnapshotHub.PumpCore · AdminSettingWidgetAdapter.TryGetAuditLedger 각각 Snapshot 호출 정확히 1 · 그 외 원장 메서드 호출 0
+//      (CopyHead/PollIntegrity/Append/Verify = _gate 경로) · BlazorHomeForm(중첩 클로저 포함) 의 DashboardSnapshotHub.AttachAuditLedger 호출 정확히 1.
+//      부재 = AuditTelemetryMissing · 규칙 이탈 = AuditTelemetryUnsafe. 해독은 IlCursor(스트리밍 · 버퍼 0) — PumpCore 처럼 큰 본문도 길이 제한 없음.
+//
 //  δ=0 범위(정직): ③ CompareMatrix 는 힙 0(테스트 실측 — PEMemoryBlock/BlobReader 는 구조체 · 명령 버퍼 stackalloc).
 //   ①의 JSON 파싱 · 행 문자열 분해와 ②의 팽창 버퍼 · PEReader 생성은 콜드 경로라 할당한다. 시간도 ②와 ③을 분리해 보고한다.
 // ============================================================================
@@ -47,6 +57,8 @@ namespace StockManager.Tools
         RuleMismatch = 13, FallbackMismatch = 14, MinimumMismatch = 15, MaximumMismatch = 16, DirectionMismatch = 17,
         AuditLedgerMissing = 18,   // [v12.18.2-GM] ITightenAuditSink 정의 · TryWrite 의 Append 호출 · 진입점 없음
         AuditLedgerBypass = 19,    // [v12.18.2-GM] Append 중복 · 순서(Judge < Append < WriteStored) · 직후 분기 · 진입점 ldnull 이탈
+        AuditTelemetryMissing = 20, // [v12.18.3-GM] 원장 Snapshot/PublishSnapshot · 허브/어댑터 소비자 · 호스트 AttachAuditLedger 결선 없음
+        AuditTelemetryUnsafe = 21,  // [v12.18.3-GM] Snapshot 잠금/원장 메서드/금지 필드/기록/할당 · seqlock 이탈 · 소비자의 잠금 경로 호출
     }
 
     /// <summary>매니페스트 행 1개 — 키 · 규칙 비트(1 TrueOnly · 2 NonDecreasing · 4 NonIncreasing) · 호스트 폴백 · 하한 · 상한.</summary>
@@ -69,6 +81,15 @@ namespace StockManager.Tools
                              OpLdc4 = 0x1A, OpRet = 0x2A, OpAnd = 0x5F, OpConvI8 = 0x6A, OpLdstr = 0x72, OpStsfld = 0x80, OpLdsflda = 0x7F,
                              OpLdtoken = 0xD0, OpCeq = 0xFE01, OpCgt = 0xFE02, OpClt = 0xFE04, OpNop = 0x00, OpLdnull = 0x14, OpCall = 0x28, OpCallvirt = 0x6F;
         public const string AuditSinkName = ShippedBinaryLiveArmedGuard.TightenAuditSinkType, AdapterName = "AdminSettingWidgetAdapter";
+
+        // [v12.18.3-GM] ⑤ 관제 배지 결선 판독 대상
+        public const string LedgerNamespace = "StockManager.Security", LedgerName = "MonotonicSettingAuditLog", SnapshotValueName = "AuditLedgerSnapshot",
+                            HubNamespace = "StockManager.Blazor.Services", HubName = "DashboardSnapshotHub", HubPump = "PumpCore",
+                            HostNamespace = "StockManager.Blazor", HostName = "BlazorHomeForm", AdapterBadge = "TryGetAuditLedger";
+        private const ushort OpLdfld = 0x7B, OpLdflda = 0x7C, OpStfld = 0x7D, OpNewobj = 0x73, OpNewarr = 0x8D, OpBox = 0x8C,
+                             OpCalli = 0x29, OpLdftn = 0xFE06, OpLdvirtftn = 0xFE07;
+        private static readonly string[] LockTypes = { "Monitor", "SpinLock", "Mutex", "SemaphoreSlim", "ReaderWriterLockSlim", "Lock", "WaitHandle" };
+        private static readonly string[] ForbiddenFields = { "_gate", "_hasher", "_head" };
 
         static ShippedTightenMatrixVerifier()
         {
@@ -106,7 +127,8 @@ namespace StockManager.Tools
         }
 
         /// <summary>출하 zip ↔ 매니페스트(json) tightenRules ↔ 가드 고정 명세 ↔ 외부 앵커(master-seal.txt 내용) 대조.</summary>
-        public static TightenSealReport Verify(string zipPath, string manifestJson, string anchorText, int expectedKeys, bool requireAuditLedger = false)
+        public static TightenSealReport Verify(string zipPath, string manifestJson, string anchorText, int expectedKeys, bool requireAuditLedger = false,
+                                               bool requireAuditTelemetry = false)
         {
             TightenSealReport R(TightenSealVerdict v, string d, int n = 0, string? sha = null, long inf = 0, long cmp = 0) => new(v, d, n, sha, inf, cmp);
 
@@ -146,6 +168,7 @@ namespace StockManager.Tools
                 var md = pe.GetMetadataReader();
                 v = CompareMatrix(pe, md, rows, out at);
                 if (v == TightenSealVerdict.Ok && requireAuditLedger) v = CheckAuditWiring(pe, md);
+                if (v == TightenSealVerdict.Ok && requireAuditTelemetry) v = CheckAuditTelemetry(pe, md);
             }
             catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or ArgumentException or IndexOutOfRangeException)
             {
@@ -155,7 +178,8 @@ namespace StockManager.Tools
             string Row(int i) => i >= 0 && i < rows.Length ? $"#{i} '{rows[i].Key}'" : $"#{i}";
             string detail = v switch
             {
-                TightenSealVerdict.Ok => $"강화 전용 키 {rows.Length} · 키 순서 · 규칙(==1 / ≥ / ≤) · 폴백 · 하한 · 상한 = 매니페스트 = 명세 · 호스트 DLL = 봉인 해시" + (requireAuditLedger ? " · 감사 원장 선기록 결선(⑪)" : ""),
+                TightenSealVerdict.Ok => $"강화 전용 키 {rows.Length} · 키 순서 · 규칙(==1 / ≥ / ≤) · 폴백 · 하한 · 상한 = 매니페스트 = 명세 · 호스트 DLL = 봉인 해시" + (requireAuditLedger ? " · 감사 원장 선기록 결선(⑪)" : "")
+                                         + (requireAuditTelemetry ? " · 관제 배지 무잠금 seqlock 결선(⑤)" : ""),
                 TightenSealVerdict.WriterMissing => WriterNamespace + "." + WriterName + " 정의 또는 .cctor/get_Rules/IsTightening 본문 없음",
                 TightenSealVerdict.WriterAmbiguous => WriterNamespace + "." + WriterName + " 정의/본문 2개 이상",
                 TightenSealVerdict.CountMismatch => $"바이너리 키 표 · 정적 데이터 길이 ≠ 매니페스트 {rows.Length}",
@@ -167,6 +191,8 @@ namespace StockManager.Tools
                 TightenSealVerdict.DirectionMismatch => "IsTightening 비교 방향/규칙 비트 대응 이탈(==1 · ≥ · ≤ 정확히 1개씩 · 상수 true 0 · 미정의 = false)",
                 TightenSealVerdict.AuditLedgerMissing => "감사 원장 결선 없음(ITightenAuditSink 정의 · TryWrite Append 호출 · TightenSetting 진입점)",
                 TightenSealVerdict.AuditLedgerBypass => "감사 원장 우회(Append 정확히 1 · Judge < Append < WriteStored · 직후 조건 분기 · 진입점 감사 인자 ≠ null)",
+                TightenSealVerdict.AuditTelemetryMissing => "관제 배지 결선 없음(원장 Snapshot/PublishSnapshot · 허브 PumpCore/어댑터 TryGetAuditLedger 의 Snapshot 호출 · 호스트 AttachAuditLedger)",
+                TightenSealVerdict.AuditTelemetryUnsafe => "관제 배지 잠금 간섭(Snapshot: seqlock 판독 ≥ 2 · 잠금/원장 메서드/_gate·_hasher·_head/기록/할당 0 · PublishSnapshot 시퀀스 증가 정확히 2 · 소비자 Snapshot 정확히 1 · 그 외 원장 호출 0)",
                 _ => v.ToString(),
             };
             return R(v, detail, rows.Length, sha, inflateUs, compareUs);
@@ -306,6 +332,186 @@ namespace StockManager.Tools
             return calls == 1 ? TightenSealVerdict.Ok : calls == 0 ? TightenSealVerdict.AuditLedgerMissing : TightenSealVerdict.AuditLedgerBypass;
         }
 
+        /// <summary>
+        /// ⑤ 관제 배지 결선 판정(힙 0 — 이름 비교 MetadataStringComparer · IlCursor 스트리밍 해독 · 버퍼 0).
+        /// 판독자(Snapshot)가 체인 잠금 · 해시기 · 기록자 머리 버퍼에 닿지 않고 seqlock 사본만 읽는지, 소비자가 그 판독자만 부르는지 본다.
+        /// </summary>
+        public static TightenSealVerdict CheckAuditTelemetry(PEReader pe, MetadataReader md)
+        {
+            TypeDefinitionHandle ledger = default, host = default;
+            int ledgers = 0, hosts = 0, snapRva = 0, nSnap = 0, pubRva = 0, nPub = 0, pumpRva = 0, nPump = 0, nAttachDef = 0, badgeRva = 0, nBadge = 0;
+            foreach (var th in md.TypeDefinitions)
+            {
+                var td = md.GetTypeDefinition(th);
+                if (md.StringComparer.Equals(td.Namespace, HostNamespace) && md.StringComparer.Equals(td.Name, HostName)) { host = th; hosts++; continue; }
+                bool isLedger = md.StringComparer.Equals(td.Namespace, LedgerNamespace) && md.StringComparer.Equals(td.Name, LedgerName);
+                bool isHub = !isLedger && md.StringComparer.Equals(td.Namespace, HubNamespace) && md.StringComparer.Equals(td.Name, HubName);
+                bool isAdapter = !isLedger && !isHub && md.StringComparer.Equals(td.Namespace, WriterNamespace) && md.StringComparer.Equals(td.Name, AdapterName);
+                if (!isLedger && !isHub && !isAdapter) continue;
+                if (isLedger) { ledger = th; ledgers++; }
+                foreach (var mh in td.GetMethods())
+                {
+                    var m = md.GetMethodDefinition(mh);
+                    if (isLedger)
+                    {
+                        if (md.StringComparer.Equals(m.Name, "Snapshot")) { snapRva = m.RelativeVirtualAddress; nSnap++; }
+                        else if (md.StringComparer.Equals(m.Name, "PublishSnapshot")) { pubRva = m.RelativeVirtualAddress; nPub++; }
+                    }
+                    else if (isHub)
+                    {
+                        if (md.StringComparer.Equals(m.Name, HubPump)) { pumpRva = m.RelativeVirtualAddress; nPump++; }
+                        else if (md.StringComparer.Equals(m.Name, "AttachAuditLedger")) nAttachDef++;
+                    }
+                    else if (md.StringComparer.Equals(m.Name, AdapterBadge)) { badgeRva = m.RelativeVirtualAddress; nBadge++; }
+                }
+            }
+            if (ledgers == 0 || hosts == 0 || nSnap == 0 || nPub == 0 || nPump == 0 || nAttachDef == 0 || nBadge == 0
+                || snapRva == 0 || pubRva == 0 || pumpRva == 0 || badgeRva == 0) return TightenSealVerdict.AuditTelemetryMissing;
+            if (ledgers > 1 || hosts > 1 || nSnap > 1 || nPub > 1 || nPump > 1 || nAttachDef > 1 || nBadge > 1) return TightenSealVerdict.WriterAmbiguous;
+
+            // (a) 판독자 — 순수 seqlock(전후 시퀀스 판독 ≥ 2) · 잠금/원장 호출/금지 필드/기록/할당 0
+            var c = IlCursor.Open(pe, snapRva);
+            ushort prev = 0; int prevArg = 0, seqReads = 0;
+            while (c.Next(out ushort op, out int arg))
+            {
+                if (op == OpCall || op == OpCallvirt)
+                {
+                    // 해석 불가 피호출자 = 판정 불가 → 거부(fail-closed)
+                    if (!TryCallee(md, arg, out var type, out _, out var owner)) return TightenSealVerdict.AuditTelemetryUnsafe;
+                    if (owner == ledger || NamedAny(md, type, LockTypes)) return TightenSealVerdict.AuditTelemetryUnsafe;
+                    if (prev == OpLdflda && FieldNamed(md, prevArg, "_snapSeq") && IsMethod(md, arg, "Volatile", "Read")) seqReads++;
+                }
+                else if ((op == OpLdfld || op == OpLdflda) && FieldNamedAny(md, arg, ForbiddenFields)) return TightenSealVerdict.AuditTelemetryUnsafe;
+                else if (op == OpStfld || op == OpStsfld || op == OpNewarr || op == OpBox || op == OpCalli || op == OpLdftn || op == OpLdvirtftn)
+                    return TightenSealVerdict.AuditTelemetryUnsafe;
+                else if (op == OpNewobj && !IsValueCtor(md, arg, SnapshotValueName)) return TightenSealVerdict.AuditTelemetryUnsafe;
+                prev = op; prevArg = arg;
+            }
+            if (c.Bad) return TightenSealVerdict.AuditTelemetryMissing;
+            if (seqReads < 2) return TightenSealVerdict.AuditTelemetryUnsafe;
+
+            // (b) 게시자 — 시퀀스 증가 정확히 2(홀수 열기 · 짝수 닫기)
+            c = IlCursor.Open(pe, pubRva);
+            prev = 0; prevArg = 0;
+            int bumps = 0;
+            while (c.Next(out ushort op, out int arg))
+            {
+                if (op == OpCall && prev == OpLdflda && FieldNamed(md, prevArg, "_snapSeq") && IsMethod(md, arg, "Interlocked", "Increment")) bumps++;
+                prev = op; prevArg = arg;
+            }
+            if (c.Bad) return TightenSealVerdict.AuditTelemetryMissing;
+            if (bumps != 2) return TightenSealVerdict.AuditTelemetryUnsafe;
+
+            // (c) 소비자 — Snapshot 정확히 1 · 그 외 원장 메서드 0
+            var hub = CountSnapshotCalls(pe, md, pumpRva, ledger);
+            var badge = CountSnapshotCalls(pe, md, badgeRva, ledger);
+            if (hub == -2 || badge == -2) return TightenSealVerdict.AuditTelemetryMissing;
+            if (hub == -1 || badge == -1 || hub > 1 || badge > 1) return TightenSealVerdict.AuditTelemetryUnsafe;
+            if (hub == 0 || badge == 0) return TightenSealVerdict.AuditTelemetryMissing;
+
+            // (d) 호스트 결선 — BlazorHomeForm(중첩 클로저 형식 포함) 의 AttachAuditLedger 호출 정확히 1
+            int attaches = 0;
+            foreach (var th in md.TypeDefinitions)
+            {
+                var outer = th;
+                for (var d = md.GetTypeDefinition(outer).GetDeclaringType(); !d.IsNil; d = md.GetTypeDefinition(outer).GetDeclaringType()) outer = d;
+                if (outer != host) continue;
+                foreach (var mh in md.GetTypeDefinition(th).GetMethods())
+                {
+                    int rva = md.GetMethodDefinition(mh).RelativeVirtualAddress;
+                    if (rva == 0) continue;
+                    c = IlCursor.Open(pe, rva);
+                    while (c.Next(out ushort op, out int arg))
+                        if ((op == OpCall || op == OpCallvirt) && IsMethod(md, arg, HubName, "AttachAuditLedger")) attaches++;
+                    if (c.Bad) return TightenSealVerdict.AuditTelemetryMissing;
+                }
+            }
+            return attaches == 1 ? TightenSealVerdict.Ok : attaches == 0 ? TightenSealVerdict.AuditTelemetryMissing : TightenSealVerdict.WriterAmbiguous;
+        }
+
+        // 소비자 본문의 원장 Snapshot 호출 수 · 그 외 원장 메서드 호출 = -1 · 해독 실패 = -2
+        private static int CountSnapshotCalls(PEReader pe, MetadataReader md, int rva, TypeDefinitionHandle ledger)
+        {
+            var c = IlCursor.Open(pe, rva);
+            int n = 0;
+            while (c.Next(out ushort op, out int arg))
+            {
+                if (op != OpCall && op != OpCallvirt) continue;
+                if (!TryCallee(md, arg, out _, out var name, out var owner) || owner != ledger) continue;
+                if (!md.StringComparer.Equals(name, "Snapshot")) return -1;
+                n++;
+            }
+            return c.Bad ? -2 : n;
+        }
+
+        /// <summary>
+        /// 호출 토큰 → (선언 형식 이름, 메서드 이름, 같은 어셈블리 소유 TypeDef). MethodDefinition · MemberReference(TypeDef/TypeRef/제네릭 인스턴스 TypeSpec 부모) ·
+        /// MethodSpecification(제네릭 메서드 → 원 메서드). 해석 불가 = false.
+        /// </summary>
+        private static bool TryCallee(MetadataReader md, int token, out StringHandle type, out StringHandle name, out TypeDefinitionHandle owner)
+        {
+            type = default; name = default; owner = default;
+            var h = MetadataTokens.EntityHandle(token);
+            if (h.Kind == HandleKind.MethodSpecification) h = md.GetMethodSpecification((MethodSpecificationHandle)h).Method;
+            if (h.Kind == HandleKind.MethodDefinition)
+            {
+                var m = md.GetMethodDefinition((MethodDefinitionHandle)h);
+                owner = m.GetDeclaringType(); type = md.GetTypeDefinition(owner).Name; name = m.Name;
+                return true;
+            }
+            if (h.Kind != HandleKind.MemberReference) return false;
+            var r = md.GetMemberReference((MemberReferenceHandle)h);
+            name = r.Name;
+            EntityHandle p = r.Parent;
+            if (p.Kind == HandleKind.TypeSpecification)
+            {
+                // GenericInst (Class|ValueType) TypeDefOrRef … — 원 형식만 읽는다
+                var b = md.GetBlobReader(md.GetTypeSpecification((TypeSpecificationHandle)p).Signature);
+                if (b.ReadSignatureTypeCode() != SignatureTypeCode.GenericTypeInstance) return false;
+                b.ReadSignatureTypeCode();
+                p = b.ReadTypeHandle();
+            }
+            if (p.Kind == HandleKind.TypeDefinition) { owner = (TypeDefinitionHandle)p; type = md.GetTypeDefinition(owner).Name; return true; }
+            if (p.Kind == HandleKind.TypeReference) { type = md.GetTypeReference((TypeReferenceHandle)p).Name; return true; }
+            return false;
+        }
+
+        private static bool NamedAny(MetadataReader md, StringHandle s, string[] names)
+        {
+            foreach (var n in names) if (md.StringComparer.Equals(s, n)) return true;
+            return false;
+        }
+
+        private static bool FieldNamed(MetadataReader md, int token, string name)
+        {
+            var h = MetadataTokens.EntityHandle(token);
+            return h.Kind switch
+            {
+                HandleKind.FieldDefinition => md.StringComparer.Equals(md.GetFieldDefinition((FieldDefinitionHandle)h).Name, name),
+                HandleKind.MemberReference => md.StringComparer.Equals(md.GetMemberReference((MemberReferenceHandle)h).Name, name),
+                _ => false,
+            };
+        }
+
+        private static bool FieldNamedAny(MetadataReader md, int token, string[] names)
+        {
+            foreach (var n in names) if (FieldNamed(md, token, n)) return true;
+            return false;
+        }
+
+        /// <summary>newobj 피연산자가 같은 어셈블리 값 형식(기반 = System.ValueType) 의 생성자인가 — 값 형식 newobj = 스택 생성(힙 0).</summary>
+        private static bool IsValueCtor(MetadataReader md, int token, string type)
+        {
+            var h = MetadataTokens.EntityHandle(token);
+            if (h.Kind != HandleKind.MethodDefinition) return false;
+            var m = md.GetMethodDefinition((MethodDefinitionHandle)h);
+            if (!md.StringComparer.Equals(m.Name, ".ctor")) return false;
+            var td = md.GetTypeDefinition(m.GetDeclaringType());
+            if (!md.StringComparer.Equals(td.Name, type) || td.BaseType.Kind != HandleKind.TypeReference) return false;
+            var bt = md.GetTypeReference((TypeReferenceHandle)td.BaseType);
+            return md.StringComparer.Equals(bt.Namespace, "System") && md.StringComparer.Equals(bt.Name, "ValueType");
+        }
+
         // 조건 분기(brfalse/brtrue/beq…blt.un — 짧은 형식 0x2C~0x37 · 긴 형식 0x39~0x44)
         private static bool IsCondBranch(ushort op) => op is >= 0x2C and <= 0x37 or >= 0x39 and <= 0x44;
 
@@ -425,65 +631,93 @@ namespace StockManager.Tools
         }
 
         /// <summary>
-        /// 메서드 본문 해독(힙 0) — tiny/fat 헤더 → 코드 바이트 → (옵코드, 4바이트 피연산자) 열. 미지 옵코드 · 버퍼 초과 · 잘린 본문 = -1.
-        /// 피연산자는 토큰/정수(4바이트)만 보존한다 — 이 판독에 필요한 건 ldstr · ldtoken · stsfld · ldsflda 토큰뿐.
+        /// 메서드 본문 해독(힙 0) — IlCursor 로 (옵코드, 4바이트 피연산자) 열을 버퍼에 채운다. 미지 옵코드 · 버퍼 초과 · 잘린 본문 = -1.
+        /// 피연산자는 토큰/정수(4바이트)만 보존한다 — 이 판독에 필요한 건 ldstr · ldtoken · stsfld · ldsflda · call 토큰뿐.
         /// </summary>
         private static int Decode(PEReader pe, int rva, Span<ushort> ops, Span<int> args)
         {
-            var block = pe.GetSectionData(rva);
-            if (block.Length < 1) return -1;
-            var head = block.GetReader();
-            byte b0 = head.ReadByte();
-            int codeStart, codeSize;
-            if ((b0 & 0x3) == 0x2) { codeStart = 1; codeSize = b0 >> 2; }
-            else if ((b0 & 0x3) == 0x3)
-            {
-                if (block.Length < 12) return -1;
-                byte b1 = head.ReadByte();
-                codeStart = (b1 >> 4) * 4;
-                head.ReadUInt16();                                                     // max stack
-                codeSize = head.ReadInt32();
-                if (codeStart < 12) return -1;
-            }
-            else return -1;
-            if (codeSize < 0 || codeStart + codeSize > block.Length) return -1;
-            var r = block.GetReader(codeStart, codeSize);
+            var c = IlCursor.Open(pe, rva);
             int n = 0;
-            while (r.RemainingBytes > 0)
+            while (c.Next(out ushort op, out int arg))
             {
                 if (n == ops.Length) return -1;
-                byte b = r.ReadByte();
-                ushort op; byte size;
+                ops[n] = op; args[n] = arg; n++;
+            }
+            return c.Bad ? -1 : n;
+        }
+
+        /// <summary>
+        /// [v12.18.3-GM] 메서드 본문 스트리밍 해독기(힙 0 · 버퍼 0 · 길이 제한 없음) — tiny/fat 헤더 → 코드 바이트 → 명령 1개씩.
+        /// switch 표는 건너뛰고 4바이트 피연산자(토큰/정수)와 1바이트 피연산자만 보존한다. 미지 옵코드 · 잘린 본문 · 잘못된 헤더 = Bad(호출자 = 거부).
+        /// </summary>
+        private struct IlCursor
+        {
+            private BlobReader _r;
+            public bool Bad;
+
+            public static IlCursor Open(PEReader pe, int rva)
+            {
+                var c = new IlCursor { Bad = true };
+                if (rva <= 0) return c;
+                var block = pe.GetSectionData(rva);
+                if (block.Length < 1) return c;
+                var head = block.GetReader();
+                byte b0 = head.ReadByte();
+                int codeStart, codeSize;
+                if ((b0 & 0x3) == 0x2) { codeStart = 1; codeSize = b0 >> 2; }
+                else if ((b0 & 0x3) == 0x3)
+                {
+                    if (block.Length < 12) return c;
+                    byte b1 = head.ReadByte();
+                    codeStart = (b1 >> 4) * 4;
+                    head.ReadUInt16();                                                 // max stack
+                    codeSize = head.ReadInt32();
+                    if (codeStart < 12) return c;
+                }
+                else return c;
+                if (codeSize < 0 || codeStart + codeSize > block.Length) return c;
+                c._r = block.GetReader(codeStart, codeSize);
+                c.Bad = false;
+                return c;
+            }
+
+            /// <summary>다음 명령 · 끝 = false(Bad 그대로) · 해독 실패 = false + Bad.</summary>
+            public bool Next(out ushort op, out int arg)
+            {
+                op = 0; arg = 0;
+                if (Bad || _r.RemainingBytes == 0) return false;
+                byte b = _r.ReadByte();
+                byte size;
                 if (b == 0xFE)
                 {
-                    if (r.RemainingBytes < 1) return -1;
-                    byte b2 = r.ReadByte();
-                    if (!Known2[b2]) return -1;
+                    if (_r.RemainingBytes < 1) return Fail();
+                    byte b2 = _r.ReadByte();
+                    if (!Known2[b2]) return Fail();
                     op = (ushort)(0xFE00 | b2); size = Operand2[b2];
                 }
                 else
                 {
-                    if (!Known1[b]) return -1;
+                    if (!Known1[b]) return Fail();
                     op = b; size = Operand1[b];
                 }
-                int arg = 0;
                 if (size == SwitchOperand)
                 {
-                    if (r.RemainingBytes < 4) return -1;
-                    int count = r.ReadInt32();
-                    if (count < 0 || (long)count * 4 > r.RemainingBytes) return -1;
-                    r.Offset += count * 4;
+                    if (_r.RemainingBytes < 4) return Fail();
+                    int count = _r.ReadInt32();
+                    if (count < 0 || (long)count * 4 > _r.RemainingBytes) return Fail();
+                    _r.Offset += count * 4;
                 }
                 else if (size > 0)
                 {
-                    if (r.RemainingBytes < size) return -1;
-                    if (size == 4) arg = r.ReadInt32();
-                    else if (size == 1) arg = r.ReadByte();
-                    else r.Offset += size;
+                    if (_r.RemainingBytes < size) return Fail();
+                    if (size == 4) arg = _r.ReadInt32();
+                    else if (size == 1) arg = _r.ReadByte();
+                    else _r.Offset += size;
                 }
-                ops[n] = op; args[n] = arg; n++;
+                return true;
             }
-            return n;
+
+            private bool Fail() { Bad = true; return false; }
         }
     }
 }

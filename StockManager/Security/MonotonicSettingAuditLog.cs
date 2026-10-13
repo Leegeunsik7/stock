@@ -23,8 +23,15 @@
 //  거부 레코드 예산: 분당 60건 · 용량의 3/4 이후 거부 레코드 기록 중단(생략 수는 다음 레코드 [20,24)에 누계) — UI 거부 폭주가 원장을
 //   채워 강화(안전 방향) 기입까지 막는 것을 늦춘다. 강화 레코드는 예산 없음 — 가득 차면 동결(+비트 27). 운영자 조치 = 파일 보관 후 재기동(새 원장).
 //
-//  δ=0 범위(정직): Append(직렬화 · 해시 · 체인 재검증) · Verify · PollIntegrity 힙 0(테스트 실측 · 해시 = 정적 SHA256.HashData 스팬 오버로드
-//   — 주문의 IncrementalHash 인스턴스 대신 상태 없는 원샷: 매 호출 객체 0 · 동일 바이트 결과). 열기/생성(파일 · MMF · 뷰)은 콜드.
+//  δ=0 범위(정직): Append(직렬화 · 해시 · 체인 재검증) · Verify · PollIntegrity 힙 0(테스트 실측). 해시 = 원장마다 재사용하는 IncrementalHash
+//   (SHA-256 · 잠금 안에서만 사용 · TryGetHashAndReset 스팬 출력) — [v12.18.3-DEV 교정] 정적 SHA256.HashData 는 호출마다 알고리즘 핸들 경로를 타
+//   레코드 2,048개 검증이 이 호스트에서 ≈ 485µs → 부하 시 1ms 예산 초과(635~1,144µs 실측). 재사용 해시 ≈ 237µs(같은 바이트 결과).
+//   정적 Verify(외부 도구)는 호출당 IncrementalHash 1개를 시간 측정 구간 밖에서 만든다. 열기/생성(파일 · MMF · 뷰)은 콜드.
+//  [v12.18.3-DEV] 관제 스냅샷(Snapshot · AuditLedgerSnapshot): 기록자(잠금 안 · 단일)가 기록/동결 직후 seqlock 으로 게시한 사본을 판독자가
+//   잠금 없이 읽는다 — UI 조회는 체인 잠금(_gate)을 잡지 않고(경합 0) · 원장 영역을 읽지도 해시하지도 않는다(변조 판정은 기록자 몫 그대로).
+//   찢긴 읽기 = 재시도(기록은 사람 속도 — 실질 재시도 0) · 64회 실패 = 직전 일관 사본이 아니라 Contended 표지(fail-closed 표시: 동결로 보임).
+//   [방향 B] 포화 소프트 가드: 사용 ≥ 90%(용량 2,048 → 1,843) = Saturating — 기록은 계속하되 운영자에게 보관 · 재기동을 미리 알린다(1회 Trace).
+//   가득 참(100%) = 기존 동결 + 비트 27. 거부 레코드는 75% 부터 이미 생략(강화 레코드 자리 보존).
 //  한계(정직): 키 없는 SHA-256 체인이다 — 프로세스가 내려간 사이 파일 전체를 일관되게 다시 해시한 위조는 정적 검증만으로 구분할 수 없다
 //   (실행 중 메모리 앵커 · CLI --expect-head 외부 앵커가 그 몫). 기록 중 정전으로 찢긴 레코드 = 재기동 시 체인 불일치 → 동결(안전 쪽).
 // ============================================================================
@@ -47,6 +54,25 @@ namespace StockManager.Security
 
     public enum AuditFreezeCause : byte { None = 0, ChainBroken = 1, Full = 2, Unavailable = 3 }
 
+    /// <summary>원장 관제 상태(RCL DashAuditLedger 와 같은 값 — 0 = 미결선은 UI 전용).</summary>
+    public enum AuditLedgerState : byte { Normal = 1, Saturating = 2, Frozen = 3 }
+
+    /// <summary>
+    /// [v12.18.3-DEV] 원장 관제 스냅샷(값 형식 · 할당 0). HeadPrefix = 머리 해시 상위 8바이트(빅 엔디언 — 16진 문자열 앞 16자와 같은 순서).
+    /// Contended = seqlock 판독 실패(값 무효 — 표시는 동결 취급).
+    /// </summary>
+    public readonly record struct AuditLedgerSnapshot(int Count, int Capacity, AuditFreezeCause FreezeCause, AuditChainVerdict LastVerdict,
+                                                      ulong HeadPrefix, long Version, bool Contended = false)
+    {
+        public const int SaturationPercent = 90;
+        /// <summary>포화 경고 시작 레코드 수(용량 × 90% 내림 — 2,048 → 1,843).</summary>
+        public static int SaturationThreshold(int capacity) => (int)((long)capacity * SaturationPercent / 100);
+        public AuditLedgerState State => Contended || FreezeCause != AuditFreezeCause.None ? AuditLedgerState.Frozen
+                                       : Capacity > 0 && Count >= SaturationThreshold(Capacity) ? AuditLedgerState.Saturating : AuditLedgerState.Normal;
+        /// <summary>사용률(정수 % · 내림 · 0~100).</summary>
+        public int UsedPercent => Capacity <= 0 ? 0 : (int)Math.Min(100, (long)Count * 100 / Capacity);
+    }
+
     public sealed unsafe class MonotonicSettingAuditLog : ITightenAuditSink, IDisposable
     {
         public const int RecordSize = 128, HeaderSize = 128, HashOffset = 96, PrevOffset = 64, DefaultCapacity = 2048;
@@ -62,10 +88,16 @@ namespace StockManager.Security
         private readonly StrategyAnomalyInterlock _anomaly;
         private readonly Func<long> _utcTicks;
         private readonly byte[] _head = new byte[32];                  // 프로세스 메모리 앵커(파일 밖)
+        private readonly IncrementalHash _hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);   // _gate 안(또는 생성자)에서만 사용
         private int _count, _frozen, _disposed, _rejectsInWindow, _suppressed;
         private long _windowStart, _lastTicks;
         private AuditChainVerdict _lastVerdict;
         private long _appended, _rejectRecords, _suppressedTotal, _verifications;
+        // [v12.18.3-DEV] 관제 seqlock(기록자 = _gate 보유자 또는 생성자 — 단일) · 판독자 = 잠금 없음
+        private int _snapSeq, _snapCount, _snapFreeze, _snapVerdict;
+        private long _snapHead, _snapVersion, _saturationWarnings;
+        private bool _saturationNoticed;
+        public long SaturationWarnings => Interlocked.Read(ref _saturationWarnings);
 
         public int Capacity => _capacity;
         public int Count => Volatile.Read(ref _count);
@@ -123,12 +155,13 @@ namespace StockManager.Security
             }
             var region = Region;
             if (fresh) WriteHeader(region[..HeaderSize], capacity, _utcTicks());
-            var v = Verify(region, out _count, _head, out _);
+            var v = Verify(region, out _count, _head, out _, _hasher);
             Interlocked.Increment(ref _verifications);
             _lastVerdict = v;
             if (v != AuditChainVerdict.Ok) { FreezeAt(AuditFreezeCause.ChainBroken, v); return; }
             _lastTicks = _count == 0 ? 0 : BinaryPrimitives.ReadInt64LittleEndian(region.Slice(HeaderSize + (_count - 1) * RecordSize + 8, 8));
             if (_count == capacity) FreezeAt(AuditFreezeCause.Full, AuditChainVerdict.Ok);
+            PublishSnapshot();
         }
 
         private Span<byte> Region => _base == null ? Span<byte>.Empty : new Span<byte>(_base, _length);
@@ -171,13 +204,14 @@ namespace StockManager.Security
                 BinaryPrimitives.WriteInt64LittleEndian(slot[32..], current);
                 BinaryPrimitives.WriteInt64LittleEndian(slot[40..], proposed);
                 _head.CopyTo(slot[PrevOffset..]);
-                SHA256.HashData(slot[..HashOffset], slot[HashOffset..]);
+                Hash(_hasher, slot[..HashOffset], slot[HashOffset..]);
                 slot[HashOffset..].CopyTo(_head);
                 _lastTicks = ticks;
                 _suppressed = 0;
                 Volatile.Write(ref _count, _count + 1);
                 Interlocked.Increment(ref _appended);
                 if (rejection) Interlocked.Increment(ref _rejectRecords);
+                PublishSnapshot();
                 return true;
             }
         }
@@ -192,7 +226,7 @@ namespace StockManager.Security
         private bool CheckIntegrity()
         {
             Span<byte> head = stackalloc byte[32];
-            var v = Verify(Region, out int n, head, out _);
+            var v = Verify(Region, out int n, head, out _, _hasher);
             Interlocked.Increment(ref _verifications);
             if (v == AuditChainVerdict.Ok && (n != _count || !CryptographicOperations.FixedTimeEquals(head, _head))) v = AuditChainVerdict.AnchorMismatch;
             _lastVerdict = v;
@@ -204,8 +238,48 @@ namespace StockManager.Security
         private void FreezeAt(AuditFreezeCause cause, AuditChainVerdict v)
         {
             _lastVerdict = v;
-            if (Interlocked.CompareExchange(ref _frozen, (int)cause, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref _frozen, (int)cause, 0) != 0) { PublishSnapshot(); return; }
+            PublishSnapshot();                                                      // 관제가 비트 27 과 같은 순간 동결을 본다
             _anomaly.Trip(cause == AuditFreezeCause.Full ? StrategyAnomalyKind.AuditLedgerFull : StrategyAnomalyKind.AuditChainBroken);   // ★비트 27 원자 Disarm
+        }
+
+        // ── [v12.18.3-DEV] 관제 스냅샷(seqlock · 판독 잠금 0 · 할당 0) ──
+
+        // 기록자 전용(_gate 보유 또는 생성자). 홀수 = 기록 중.
+        private void PublishSnapshot()
+        {
+            Interlocked.Increment(ref _snapSeq);                                    // 홀수(전체 펜스)
+            Volatile.Write(ref _snapCount, _count);
+            Volatile.Write(ref _snapFreeze, Volatile.Read(ref _frozen));
+            Volatile.Write(ref _snapVerdict, (int)_lastVerdict);
+            Volatile.Write(ref _snapHead, (long)BinaryPrimitives.ReadUInt64BigEndian(_head));
+            Volatile.Write(ref _snapVersion, _snapVersion + 1);
+            Interlocked.Increment(ref _snapSeq);                                    // 짝수(전체 펜스)
+            if (!_saturationNoticed && _count >= AuditLedgerSnapshot.SaturationThreshold(_capacity))
+            {
+                // [방향 B] 포화 소프트 가드 — 1회 고지(콜드 · 기록자 스레드). 동결은 아직 아님(가득 참에서만).
+                _saturationNoticed = true;
+                Interlocked.Increment(ref _saturationWarnings);
+                System.Diagnostics.Trace.WriteLine("[AuditLedger] 사용 " + _count + "/" + _capacity + " ≥ 90% — 원장 보관 후 재기동 필요(가득 차면 설정 변경 동결 + 비트 27)");
+            }
+        }
+
+        /// <summary>관제 스냅샷(임의 스레드 · 체인 잠금 미사용 · 원장 영역 미접근 · 할당 0).</summary>
+        public AuditLedgerSnapshot Snapshot()
+        {
+            for (int spin = 0; spin < 64; spin++)
+            {
+                int s1 = Volatile.Read(ref _snapSeq);
+                if ((s1 & 1) != 0) { Thread.SpinWait(4); continue; }
+                int count = Volatile.Read(ref _snapCount), freeze = Volatile.Read(ref _snapFreeze), verdict = Volatile.Read(ref _snapVerdict);
+                long head = Volatile.Read(ref _snapHead), ver = Volatile.Read(ref _snapVersion);
+                if (Volatile.Read(ref _snapSeq) != s1) continue;
+                // 폐기 후 = 기록 불가(Frozen 속성과 같은 판정) — 동결 원인이 없으면 Unavailable 로 표시
+                var cause = (AuditFreezeCause)freeze;
+                if (cause == AuditFreezeCause.None && Volatile.Read(ref _disposed) != 0) cause = AuditFreezeCause.Unavailable;
+                return new AuditLedgerSnapshot(count, _capacity, cause, (AuditChainVerdict)verdict, (ulong)head, ver);
+            }
+            return new AuditLedgerSnapshot(0, _capacity, AuditFreezeCause.None, AuditChainVerdict.Ok, 0, 0, Contended: true);
         }
 
         // ── 정적 검증(힙 0) ──
@@ -214,6 +288,13 @@ namespace StockManager.Security
         /// 원장 영역 전체 검증. count = 유효 레코드 수 · head = 마지막 레코드 해시(빈 원장 = 헤더 해시) · at = 첫 불일치 레코드(헤더 = −1).
         /// </summary>
         public static AuditChainVerdict Verify(ReadOnlySpan<byte> region, out int count, Span<byte> head, out int at)
+        {
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            return Verify(region, out count, head, out at, hasher);
+        }
+
+        /// <summary>재사용 해시 경로(호출측이 hasher 단독 사용 보장 · 할당 0).</summary>
+        public static AuditChainVerdict Verify(ReadOnlySpan<byte> region, out int count, Span<byte> head, out int at, IncrementalHash hasher)
         {
             count = 0; at = -1;
             if (head.Length < 32 || region.Length < HeaderSize) return AuditChainVerdict.HeaderCorrupt;
@@ -225,7 +306,7 @@ namespace StockManager.Security
             int capacity = BinaryPrimitives.ReadInt32LittleEndian(h[16..]);
             if (capacity < 1 || region.Length != RegionBytes(capacity)) return AuditChainVerdict.HeaderCorrupt;
             Span<byte> calc = stackalloc byte[32];
-            SHA256.HashData(h[..HashOffset], calc);
+            Hash(hasher, h[..HashOffset], calc);
             if (!calc.SequenceEqual(h[HashOffset..])) return AuditChainVerdict.HeaderCorrupt;
             var prev = h[HashOffset..];
             long lastTicks = long.MinValue;
@@ -238,7 +319,7 @@ namespace StockManager.Security
                 at = i;
                 if (seq != (ulong)(i + 1)) return AuditChainVerdict.SequenceGap;
                 if (!r.Slice(PrevOffset, 32).SequenceEqual(prev)) return AuditChainVerdict.PrevHashMismatch;
-                SHA256.HashData(r[..HashOffset], calc);
+                Hash(hasher, r[..HashOffset], calc);
                 if (!calc.SequenceEqual(r[HashOffset..])) return AuditChainVerdict.RecordHashMismatch;
                 long ticks = BinaryPrimitives.ReadInt64LittleEndian(r[8..]);
                 if (ticks < lastTicks || ticks <= 0) return AuditChainVerdict.TimestampRegressed;
@@ -254,6 +335,12 @@ namespace StockManager.Security
             at = -1;
             prev.CopyTo(head);
             return AuditChainVerdict.Ok;
+        }
+
+        private static void Hash(IncrementalHash hasher, ReadOnlySpan<byte> data, Span<byte> destination)
+        {
+            hasher.AppendData(data);
+            if (!hasher.TryGetHashAndReset(destination, out int written) || written != 32) throw new CryptographicException("SHA-256 출력 길이");
         }
 
         private static void WriteHeader(Span<byte> h, int capacity, long createdTicks)
@@ -292,8 +379,9 @@ namespace StockManager.Security
                 view.SafeMemoryMappedViewHandle.AcquirePointer(ref p);
                 try
                 {
+                    using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);   // 측정 구간 밖(콜드 생성)
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                    var v = Verify(new ReadOnlySpan<byte>(p + view.PointerOffset, (int)len), out count, head, out at);
+                    var v = Verify(new ReadOnlySpan<byte>(p + view.PointerOffset, (int)len), out count, head, out at, hasher);
                     verifyMicros = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1_000_000 / System.Diagnostics.Stopwatch.Frequency;
                     return v;
                 }
@@ -309,10 +397,12 @@ namespace StockManager.Security
         {
             lock (_gate)
             {
-                if (_view is null || Interlocked.Exchange(ref _disposed, 1) != 0) return;
+                if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+                if (_view is null) { _hasher.Dispose(); return; }                     // 열기 실패 원장(뷰 없음)도 해시 핸들 반납
                 _view.Flush();
                 _view.SafeMemoryMappedViewHandle.ReleasePointer();
                 _view.Dispose();
+                _hasher.Dispose();
                 _mmf?.Dispose();
             }
         }

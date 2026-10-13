@@ -1539,3 +1539,38 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 기록(2026-10-13): 태그 v12.18.2-GM = 80c0ed4 · `release-v12.18.2-GM.zip` SHA-256 EA3090065D6DCE5DB97A9D7209721796969001AD66D20D82FB784FB632E33C16 · masterSeal 45E55800F2D34E12B345D4E93910B8C60F6EE76598D2BB8DDCE6F96C183B5F82 · 아티팩트 38 · 피어 기록 없음(-NoPeer) · tightenRules 6.
 - [0/10]~[10/10] 전 단계 통과(3,756/3,756) · --verify-zip Ok · --verify-live-armed Ok(키 21 · 마스터 1 · UI 3/3 · 시뮬레이션 49(CLI 29) · 강화 전용 키 6(호스트 판독 8) · 감사 원장 ⑪ 적용 · 위반 0) · 핸드셰이크 Ok · --verify-interlocks Ok(30) · --verify-tighten Ok(6 · 감사 원장 선기록 결선).
 - 콜드 CLI 1회 대조: 인터락 7.1ms · 행렬+결선 19.7ms(프로세스 첫 호출 JIT 포함 — 웜 기준 행렬 ≈ 40µs · 결선 ≈ 70µs). primary 재대조(§3 · §12) 27/27.
+
+## 57. v12.18.3-DEV — 감사 원장 관제 배지(설정 '안전 강화' · /aidash) · 무간섭 스냅샷 · 포화 경고 · 머리 해시 지문 (2026-10-13)
+- `MonotonicSettingAuditLog.Snapshot()` → `AuditLedgerSnapshot`(수 · 용량 · 동결 원인 · 판정 · 머리 해시 상위 8바이트 BE · 버전 · State · UsedPercent).
+  기록자(체인 잠금 보유 · 단일)가 기록/동결 직후 seqlock 게시 → 판독자는 잠금 0 · 원장 영역 접근 0 · 해시 0(51ns/회 · 0B). 64회 찢김 = Contended → 동결로 표시(fail-closed). 폐기 = 사용 불가.
+- 허브 `AttachAuditLedger` → 프레임 AuditState/Count/Capacity/UsedPercent/FreezeCause/HeadPrefix · 버전/원인 변화 = 즉시 재게시. 설정 포트 `TryGetAuditLedger(out AuditLedgerBadge)`(대역 싱크 = 미결선).
+- RCL: `DashAuditLedger` 코드 · `SignalLabelMapper` 상태/원인/사용률 정적 캐시 · [방향 A] `HeadHex`(16자 · 1칸 캐시 — 머리 변경 시만 할당) · `HeadSwatch`(상위 4니블 → 16색 팔레트 · 시세 적/청 제외).
+  /aidash 스트립 `.pd-audit` 배지 · 설정 '안전 강화' 패널 배지 + 기록 N/2048 + 지문 + 새로고침 · 동결/포화 안내 문구. RCL 엔진 형식 참조 0 · PureShell coupled 40 불변.
+- [방향 B] 포화 소프트 가드: 사용 ≥ 90%(2,048 → 1,843) = Saturating · 1회 Trace 고지 · 기록/무장 판정 불변 · 100% = 기존 동결(가득 참) + 비트 27.
+- 검증(AuditLedgerTelemetryTests 8): Snapshot 1만 · 라벨 1만 · 허브 펌프 200 = 0B · 체인 잠금 점유 중 즉시 반환 · 검증 횟수 불변 · 동시 기록 1,500 × 판독 65,536 찢김 0 · 변조 → Frozen → 허브 재게시 · 포화 90 → 경고 1회 → 가득 참 동결.
+- 정직: 허브 펌프 0B 실측은 변화 없는 펌프(서명 계산 + 스냅샷) 기준 · 설정 화면은 실시간 푸시가 아니라 진입/기입/새로고침 시 갱신(/aidash 는 50ms 프레임) ·
+  [교정] --verify-audit-chain 1ms 시험이 다른 테스트와 함께 돌 때 672~1,144µs 로 실패 — 정적 SHA256.HashData(호출마다 핸들 경로)를 원장별 재사용
+  IncrementalHash(잠금 안 단독 사용 · 스팬 출력)로 교체: 2,048 레코드 485 → 237µs(벤치) · 결합 실행 374~590µs · Append/Poll 0B 유지 · 결과 바이트 동일.
+  (주문 원안의 IncrementalHash 가 맞았다 — §55 의 '원샷이 동등' 판단 정정.) 웜 최솟값 표본 25 유지.
+
+## 58. v12.18.3-GM Production Golden Master — 관제 배지(§57) 출하 · 재사용 IncrementalHash · 규칙 ⑪ · 강화 전용 6키 · 30대 인터락 · 배지 무잠금 결선 IL 수검 (2026-10-13)
+
+### 58.1 명세(출하)
+- 30대 인터락(비트 0~28 + 63 · 구조 마스크 0x800000001FFFFFFF) 불변 · 강화 전용 6키 행렬(§54.1) 불변 · 규칙 ⑪(감사 원장 선기록 · §56) 불변.
+- §57 관제 배지(Snapshot seqlock · /aidash · 설정 '안전 강화') + 재사용 IncrementalHash(결과 바이트 동일 — 기존 원장 파일 그대로 검증) 출하.
+- 버전 12.18.3 · `release-package.ps1` 머리말 v12.18.3-GM · `$ExpectedInterlocks` 30 · `$ExpectedTightenKeys` 6 · `Remove-ReleaseOutputs; Fail` 7(폐기 경로 불변).
+- 주문 항목 대조: '[방향 B] Zip 항목 정규화 · 중복 가드'는 v12.17.0-GM(§6 · ZipEntryGuard)에서 이미 출하 게이트에 있다 — 이번은 방향 A 만 구현.
+
+### 58.2 [방향 A] 관제 배지 무잠금 결선 IL 수검(`ShippedTightenMatrixVerifier.CheckAuditTelemetry` · `--require-audit-telemetry`)
+- 출하 zip 호스트 DLL(무추출 · 로드 0 · 실행 0)에서 '텔레메트리 조회가 체인 잠금에 간섭하지 않음'을 IL 사실로 판정:
+  - `MonotonicSettingAuditLog.Snapshot` = 순수 seqlock 판독자: `Volatile.Read(ref _snapSeq)` ≥ 2 · 잠금 형식(Monitor/SpinLock/Mutex/SemaphoreSlim/ReaderWriterLockSlim/Lock/WaitHandle) 호출 0 ·
+    원장 자기 메서드 호출 0 · `_gate`/`_hasher`/`_head` 접근 0 · stfld/stsfld 0 · newarr/box/ldftn/ldvirtftn/calli 0 · newobj = 값 형식 AuditLedgerSnapshot 만(기반 System.ValueType 확인).
+  - `PublishSnapshot` = `Interlocked.Increment(ref _snapSeq)` 정확히 2.
+  - `DashboardSnapshotHub.PumpCore` · `AdminSettingWidgetAdapter.TryGetAuditLedger` = Snapshot 호출 정확히 1 · 그 외 원장 메서드(CopyHead/PollIntegrity/Append/Verify) 0.
+  - `BlazorHomeForm`(중첩 클로저 형식 포함) = `AttachAuditLedger` 호출 정확히 1.
+- 판정 20 AuditTelemetryMissing · 21 AuditTelemetryUnsafe(중복 정의 = WriterAmbiguous). 해석 불가 피호출자 = 거부(fail-closed).
+- 해독기 `IlCursor`(스트리밍 · 버퍼 0 · 길이 제한 없음 — PumpCore 같은 큰 본문) 신설, 기존 `Decode` 는 그 위로 재구성(동작 동일 · §11/§12 회귀 통과).
+- 힙 0(200회 루프 0B) · 웜 회당 ≈ 0.66ms(호스트 폼 전 메서드 스트리밍 포함). `[10/10] --verify-tighten` 에 `--require-audit-telemetry` 추가 — 배지 결선 누락 · 잠금 간섭 = 출하 산출물 전량 폐기.
+- 구 출하물 호환: v12.18.2-GM zip = 요구 없음 Ok · 요구 시 AuditTelemetryMissing(배지 이전 바이너리).
+- 시험(GoldenMasterReleasePackagingTests §13 · 3): 실 빌드 Ok + 0B + CLI · 일관 재봉인 패치 9종(Volatile.Read→Monitor.Enter · _snapSeq→_gate/_head · 값 newobj→참조 형식 · →CopyHead ·
+  닫기 증가 제거 · 허브 Snapshot→PollIntegrity · 어댑터 Snapshot→CopyHead = Unsafe · 호스트 AttachAuditLedger 제거 = Missing) — 전부 행렬 + ⑪ 은 통과하는 바이너리.

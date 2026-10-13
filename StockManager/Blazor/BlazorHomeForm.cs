@@ -1739,6 +1739,7 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.Infrastructure.ITightenAuditSink>(tightenAudit);
             services.AddSingleton(tightenAudit);
             FormClosed += (_, _) => tightenAudit.Dispose();
+            dashHub.AttachAuditLedger(tightenAudit);                                    // [v12.18.3-DEV] /aidash 원장 배지(스냅샷 · 체인 잠금 미사용)
             //   [교차 피드] KIS 호가 구독이 있으면 교차 확인 모드 — 두 피드 일치 · 꼬임 Disarm · 단일 출처 ½ 감쇄(`Strategy.CrossMaxSkewMs` 기본 500).
             //   [v12.18.1-DEV] 변동성 적응 임계 — 국면(추세/회귀/횡보/워밍업) → 요구 확신 기본 ~ `Strategy.AdaptiveMaxBp`(9500) · 정수 · δ=0 ·
             //   `Strategy.AdaptiveThreshold`(기본 켜짐 — 끄면 고정 임계). [방향 B] 1분 승인 > `Strategy.ChurnSoftPerMin`(30) = 억제 ·

@@ -80,6 +80,18 @@ else
         <div class="pd-lat pd-cal">
             <span class="pd-reg @SignalLabelMapper.RegimeClass(f.Regime)">국면 @SignalLabelMapper.RegimeLabel(f.Regime)</span>
             <span class="pd-gate @SignalLabelMapper.GateModeClass(f.GateMode)">@SignalLabelMapper.GateModeLabel(f.GateMode)</span>
+            <span class="pd-audit @SignalLabelMapper.AuditStateClass(f.AuditState)" title="강화 전용 설정 감사 원장(MMF 해시 체인)">
+                @SignalLabelMapper.AuditStateLabel(f.AuditState, f.AuditFreezeCause)
+                @if (f.AuditState != DashAuditLedger.Unbound)
+                {
+                    <em>@SignalLabelMapper.AuditUsedText(f.AuditUsedPercent)</em>
+                    @for (int i = 0; i < SignalLabelMapper.HeadSwatchCount; i++)
+                    {
+                        <i class="pd-sw" style="background:@SignalLabelMapper.HeadSwatch(f.AuditHeadPrefix, i)"></i>
+                    }
+                    <code>@SignalLabelMapper.HeadHex(f.AuditHeadPrefix)</code>
+                }
+            </span>
             @if (f.GateMode == DashGateMode.Enforce)
             {
                 <span class="pd-lat-b"><em>국면 거부</em> <b>@f.GateRegimeRejects.ToString("N0")</b> · 승인 억제 @f.GateChurnRejects.ToString("N0")</span>
@@ -275,6 +287,10 @@ else
     .pd-reg.trend { background: #2e7d32; } .pd-reg.revert { background: #f9a825; color: #111; } .pd-reg.chop { background: #E53935; }
     .pd-churn-hot { outline: 1px solid #E53935; }
     .pd-gate { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
+    .pd-audit { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
+    .pd-audit.ok { background: #2e7d32; color: #fff; } .pd-audit.sat { background: #f9a825; color: #111; } .pd-audit.frozen { background: #6a1b9a; color: #fff; }
+    .pd-audit em { font-style: normal; opacity: .85; } .pd-audit code { font-size: 11px; opacity: .9; }
+    .pd-sw { display: inline-block; width: 8px; height: 12px; border-radius: 2px; }
     .pd-gate.enforce { background: #1565c0; color: #fff; } .pd-gate.observe { background: #4e342e; color: #ffcc80; }
     .pd-lat-grade.ok { background: #2e7d32; color: #fff; } .pd-lat-grade.spike { background: #f9a825; color: #111; }
     .pd-lat-grade.lag { background: #E53935; color: #fff; } .pd-lat-grade.off { background: #3a3f4b; color: #ccc; }

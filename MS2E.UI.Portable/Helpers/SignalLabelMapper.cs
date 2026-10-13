@@ -9,6 +9,7 @@
 //  ★정직: Blazor 렌더 트리 · 속성 문자열화 자체는 프레임워크 할당이다 — 0B 보증 범위는 '라벨 조회 · 확신도 텍스트 · 스파크라인 좌표 작성'.
 // ============================================================================
 using System;
+using System.Threading;
 
 namespace MS2E.UI.Portable.Helpers
 {
@@ -125,6 +126,45 @@ namespace MS2E.UI.Portable.Helpers
         public static string RegimeClass(int regime) => (uint)regime < (uint)RegimeClasses.Length ? RegimeClasses[regime] : "off";
         /// <summary>요구 확신(bp) → "85%".."95%" 정적 문자열(0 이하 = "-").</summary>
         public static string RequiredText(long bp) => bp <= 0 ? "-" : ConfidenceText(bp);
+
+        // ── [v12.18.3-DEV] 감사 원장(DashAuditLedger 0 미결선 · 1 정상 · 2 포화 경고 · 3 동결) ──
+        //  라벨 · 클래스 · 사용률("N%") = 정적 캐시. 동결은 원인별 문구(체인 불일치 · 가득 참 · 열기 실패).
+        //  [방향 A] 머리 해시 지문: 상위 8바이트 → 16자 16진(직전 값 1칸 캐시 — 머리는 기록 때만 바뀌므로 50ms 렌더 반복 = 할당 0) +
+        //   상위 4니블 → 고정 팔레트 4색 견본(정적 문자열). 운영자가 기억해 둔 지문과 색/문자가 달라지면 원장이 바뀐 것이다.
+        private static readonly string[] AuditStates = { "원장 미결선", "원장 정상", "원장 90% — 보관 · 재기동 필요", "원장 동결" };
+        private static readonly string[] AuditStateClasses = { "off", "ok", "sat", "frozen" };
+        private static readonly string[] AuditCauses = { "", "해시 체인 불일치 · 손상", "가득 참", "열기 실패 · 사용 불가" };
+        private static readonly string[] AuditFrozenLabels = { "원장 동결", "원장 동결 — 해시 체인 불일치 · 손상", "원장 동결 — 가득 참", "원장 동결 — 열기 실패 · 사용 불가" };
+        /// <summary>견본 팔레트 16색(상승 적 #E53935 · 하강 청 #1E88E5 는 시세 의미라 제외).</summary>
+        private static readonly string[] Swatches =
+        {
+            "#6d4c41", "#8e24aa", "#3949ab", "#00897b", "#43a047", "#c0ca33", "#fdd835", "#fb8c00",
+            "#f4511e", "#d81b60", "#5e35b1", "#039be5", "#00acc1", "#7cb342", "#ffb300", "#546e7a",
+        };
+        private sealed class HexCache { public readonly ulong Key; public readonly string Text; public HexCache(ulong k, string t) { Key = k; Text = t; } }
+        private static HexCache _hex = new(0, "0000000000000000");
+
+        public static int AuditStateCount => AuditStates.Length;
+        public static int AuditCauseCount => AuditCauses.Length;
+        public static string AuditStateLabel(int state, int cause)
+            => state == 3 ? ((uint)cause < (uint)AuditFrozenLabels.Length ? AuditFrozenLabels[cause] : AuditFrozenLabels[0])
+             : (uint)state < (uint)AuditStates.Length ? AuditStates[state] : Unknown;
+        public static string AuditStateClass(int state) => (uint)state < (uint)AuditStateClasses.Length ? AuditStateClasses[state] : "frozen";
+        public static string AuditCauseLabel(int cause) => (uint)cause < (uint)AuditCauses.Length ? AuditCauses[cause] : Unknown;
+        /// <summary>사용률 % → "0%".."100%" 정적 문자열.</summary>
+        public static string AuditUsedText(int percent) => Percent[Math.Clamp(percent, 0, 100)];
+        /// <summary>머리 해시 상위 8바이트 → 16자 대문자 16진(같은 값 반복 = 캐시 · 할당 0).</summary>
+        public static string HeadHex(ulong prefix)
+        {
+            var c = Volatile.Read(ref _hex);
+            if (c.Key == prefix) return c.Text;
+            var n = new HexCache(prefix, prefix.ToString("X16", System.Globalization.CultureInfo.InvariantCulture));
+            Volatile.Write(ref _hex, n);
+            return n.Text;
+        }
+        /// <summary>지문 견본 i(0..3) 색 — 상위 니블 i 번째 → 팔레트(정적 · 할당 0).</summary>
+        public static string HeadSwatch(ulong prefix, int i) => Swatches[(int)((prefix >> (60 - 4 * Math.Clamp(i, 0, 3))) & 0xF)];
+        public const int HeadSwatchCount = 4;
 
         // ── [v12.18.2-DEV] 시그널 게이트 모드(DashGateMode 0 미결선 · 1 관측 · 2 강제) ──
         private static readonly string[] GateModes = { "게이트 미결선", "게이트 관측(미차단)", "게이트 강제" };

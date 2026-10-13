@@ -83,13 +83,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_2_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_3_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 2, 0), v);
-            Assert.Equal("12.18.2", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 3, 0), v);
+            Assert.Equal("12.18.3", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.2</Version>", csproj);
+            Assert.Contains("<Version>12.18.3</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -110,7 +110,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.2-GM Production Golden Master", s);
+            Assert.Contains("v12.18.3-GM Production Golden Master", s);
         }
 
         // ════════════ §3 실 출하 기록 ════════════
@@ -1193,7 +1193,7 @@ namespace StockManager.Tests
         {
             string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-live-armed\"", s);
-            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-tighten\"", s);
+            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry') \"verify-tighten\"", s);
             Assert.Equal(7, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가(폐기 경로 불변)
             string dir = TempDir();
             try
@@ -1218,6 +1218,170 @@ namespace StockManager.Tests
                 else _out.WriteLine("[감사 원장] v12.18.1-GM 출하물 없음 — 구 출하물 대조 생략");
             }
             finally { Directory.Delete(dir, true); }
+        }
+
+        // ════════════ §13 [v12.18.3-GM · 방향 A] 관제 배지 무잠금 seqlock 결선 무추출 · 무할당 수검 ════════════
+
+        private const string Ledger = ShippedTightenMatrixVerifier.LedgerName;
+
+        /// <summary>호출 명령(call/callvirt + 토큰) 5바이트 패턴의 파일 오프셋 — 정확히 1개여야 한다(패치 대상 모호성 차단).</summary>
+        private static int UniqueCallSite(byte[] dll, int token)
+        {
+            int found = -1, n = 0;
+            for (int i = 0; i + 5 <= dll.Length; i++)
+            {
+                if ((dll[i] != 0x28 && dll[i] != 0x6F) || BitConverter.ToInt32(dll, i + 1) != token) continue;
+                found = i; n++;
+            }
+            Assert.True(n == 1, $"호출 지점 {n}개(토큰 0x{token:X8})");
+            return found;
+        }
+
+        private static int MemberRefToken(byte[] dll, string type, string name)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            foreach (var h in md.MemberReferences)
+            {
+                var r = md.GetMemberReference(h);
+                if (md.GetString(r.Name) == name && r.Parent.Kind == HandleKind.TypeReference
+                    && md.GetString(md.GetTypeReference((TypeReferenceHandle)r.Parent).Name) == type) return MetadataTokens.GetToken(h);
+            }
+            throw new InvalidOperationException(type + "::" + name + " MemberRef 없음");
+        }
+
+        private static int FieldToken(byte[] dll, string type, string field)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            foreach (var h in md.FieldDefinitions)
+            {
+                var f = md.GetFieldDefinition(h);
+                if (md.GetString(f.Name) == field && md.GetString(md.GetTypeDefinition(f.GetDeclaringType()).Name) == type) return MetadataTokens.GetToken(h);
+            }
+            throw new InvalidOperationException(type + "." + field + " 없음");
+        }
+
+        private static bool IsField(byte[] dll, int token, string name)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            var h = MetadataTokens.EntityHandle(token);
+            return h.Kind == HandleKind.FieldDefinition && md.GetString(md.GetFieldDefinition((FieldDefinitionHandle)h).Name) == name;
+        }
+
+        [Fact]
+        public void AuditTelemetry_BuiltHost_Ps51Zip_SnapshotLockFree_Ok_InspectorZeroAlloc_Cli()
+        {
+            string dir = TempDir();
+            try
+            {
+                byte[] dll = File.ReadAllBytes(HostDll());
+                string seal = new string('E', 64);
+                string zip = Ps51HostZip(dir, "ok.zip", dll), json = TightenManifest(dll, seal, SourceRules());
+                var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true);
+                _out.WriteLine($"[관제 배지 결선] {r.Verdict} · {r.Detail} · 대조 {r.CompareMicros}µs");
+                Assert.True(r.Verdict == TightenSealVerdict.Ok, r.Verdict + " " + r.Detail);
+                Assert.Contains("관제 배지 무잠금 seqlock 결선(⑤)", r.Detail);
+
+                using var pe = new PEReader(System.Collections.Immutable.ImmutableArray.Create(dll));
+                var md = pe.GetMetadataReader();
+                Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.CheckAuditTelemetry(pe, md));
+                long alloc = MinAllocated(() => { for (int i = 0; i < 200; i++) ShippedTightenMatrixVerifier.CheckAuditTelemetry(pe, md); });
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 200; i++) ShippedTightenMatrixVerifier.CheckAuditTelemetry(pe, md);
+                sw.Stop();
+                _out.WriteLine($"[관제 배지 결선] 200회 할당 {alloc}B · 회당 {sw.Elapsed.TotalMicroseconds / 200:F1}µs");
+                Assert.Equal(0, alloc);
+
+                // 판독자 본문 실측 — 시퀀스 판독 ≥ 2 · _gate 미접근(소스 주석이 아니라 IL 사실)
+                var (_, _, ins) = TightenOnlySettingGuardTests.Body(dll, Ledger, "Snapshot");
+                int seq = ins.Count(i => i.Op == OpCodes.Ldflda && IsField(dll, i.Operand, "_snapSeq"));
+                Assert.True(seq >= 2, "Snapshot _snapSeq 판독 " + seq);
+                Assert.DoesNotContain(ins, i => (i.Op == OpCodes.Ldfld || i.Op == OpCodes.Ldflda) && IsField(dll, i.Operand, "_gate"));
+
+                string mf = Path.Combine(dir, "RELEASE_MANIFEST.json"), sf = Path.Combine(dir, "master-seal.txt");
+                File.WriteAllText(mf, json);
+                File.WriteAllText(sf, seal + Environment.NewLine);
+                var w = new StringWriter();
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, ReleaseHandshakeCli.Run(new[] { "--verify-tighten", zip, "--manifest", mf, "--seal-file", sf, "--expect-tighten-keys", "6",
+                                                                                       "--require-audit-ledger", "--require-audit-telemetry" }, w));
+                _out.WriteLine(w.ToString().TrimEnd());
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void AuditTelemetry_BinaryPatched_ConsistentlyResealed_Rejected_LedgerWiringUnaffected()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            var (soff, _, sins) = TightenOnlySettingGuardTests.Body(dll, Ledger, "Snapshot");
+            int seqLd = sins.FindIndex(i => i.Op == OpCodes.Ldflda && IsField(dll, i.Operand, "_snapSeq"));
+            Assert.True(seqLd >= 0 && sins[seqLd + 1].Op == OpCodes.Call, "Snapshot: ldflda _snapSeq; call Volatile.Read 예상");
+            int ctor = sins.FindIndex(i => i.Op == OpCodes.Newobj);
+            Assert.True(ctor >= 0, "Snapshot: 값 형식 newobj 예상");
+            var (poff, _, pins) = TightenOnlySettingGuardTests.Body(dll, Ledger, "PublishSnapshot");
+            int bump = -1;
+            for (int k = 1; k < pins.Count; k++)
+                if (pins[k].Op == OpCodes.Call && MonotonicSettingAuditLogTests.MethodName(dll, pins[k].Operand) == "Increment"
+                    && pins[k - 1].Op == OpCodes.Ldflda && IsField(dll, pins[k - 1].Operand, "_snapSeq")) bump = k;
+            Assert.True(bump > 0, "PublishSnapshot: 닫기 Interlocked.Increment(ref _snapSeq) 예상");
+            int snapTok = MonotonicSettingAuditLogTests.TokenOf(dll, Ledger, "Snapshot");
+            var (hoff, _, hins) = TightenOnlySettingGuardTests.Body(dll, ShippedTightenMatrixVerifier.HubName, ShippedTightenMatrixVerifier.HubPump);
+            int pumpCall = hoff + hins.Single(i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && i.Operand == snapTok).At;
+            var (aoff, _, ains) = TightenOnlySettingGuardTests.Body(dll, ShippedTightenMatrixVerifier.AdapterName, ShippedTightenMatrixVerifier.AdapterBadge);
+            int badgeCall = aoff + ains.Single(i => (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt) && i.Operand == snapTok).At;
+            int attach = UniqueCallSite(dll, MonotonicSettingAuditLogTests.TokenOf(dll, ShippedTightenMatrixVerifier.HubName, "AttachAuditLedger"));
+            static byte[] Tok(int t) => BitConverter.GetBytes(t);
+            const TightenSealVerdict U = TightenSealVerdict.AuditTelemetryUnsafe, M = TightenSealVerdict.AuditTelemetryMissing;
+
+            var cases = new (string Name, byte[] Bytes, TightenSealVerdict Expect)[]
+            {
+                ("판독자 Volatile.Read → Monitor.Enter(잠금)", Patch(dll, b => Tok(MemberRefToken(dll, "Monitor", "Enter")).CopyTo(b, soff + sins[seqLd + 1].At + 1)), U),
+                ("판독자 _snapSeq → _gate(체인 잠금 객체)", Patch(dll, b => Tok(FieldToken(dll, Ledger, "_gate")).CopyTo(b, soff + sins[seqLd].At + 1)), U),
+                ("판독자 _snapSeq → _head(기록자 머리 버퍼 · 찢긴 읽기)", Patch(dll, b => Tok(FieldToken(dll, Ledger, "_head")).CopyTo(b, soff + sins[seqLd].At + 1)), U),
+                ("판독자 값 newobj → 원장 참조 형식 생성(힙 할당)", Patch(dll, b => Tok(MonotonicSettingAuditLogTests.TokenOf(dll, Ledger, ".ctor")).CopyTo(b, soff + sins[ctor].At + 1)), U),
+                ("판독자 Volatile.Read → 원장 CopyHead(잠금 경로)", Patch(dll, b => Tok(MonotonicSettingAuditLogTests.TokenOf(dll, Ledger, "CopyHead")).CopyTo(b, soff + sins[seqLd + 1].At + 1)), U),
+                ("게시자 닫기 증가 제거(홀수 고착)", Patch(dll, b => { for (int k = 0; k < 5; k++) b[poff + pins[bump].At + k] = 0; }), U),
+                ("허브 Snapshot → PollIntegrity(전체 재검증 · _gate)", Patch(dll, b => Tok(MonotonicSettingAuditLogTests.TokenOf(dll, Ledger, "PollIntegrity")).CopyTo(b, pumpCall + 1)), U),
+                ("어댑터 Snapshot → CopyHead(_gate)", Patch(dll, b => Tok(MonotonicSettingAuditLogTests.TokenOf(dll, Ledger, "CopyHead")).CopyTo(b, badgeCall + 1)), U),
+                ("호스트 AttachAuditLedger 제거(배지 미결선)", Patch(dll, b => { b[attach] = 0x26; b[attach + 1] = 0x26; b[attach + 2] = 0; b[attach + 3] = 0; b[attach + 4] = 0; }), M),
+            };
+            string dir = TempDir();
+            try
+            {
+                string seal = new string('D', 64);
+                var rules = SourceRules();
+                int n = 0;
+                foreach (var (name, bytes, expect) in cases)
+                {
+                    string zip = Ps51HostZip(dir, "evil" + n++ + ".zip", bytes);
+                    string json = TightenManifest(bytes, seal, rules);
+                    var r = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true);
+                    _out.WriteLine($"[관제 패치] {name} → {r.Verdict}");
+                    Assert.Equal(expect, r.Verdict);
+                    // 요구 없음 = 기존 동작(행렬 + 원장 선기록 ⑪ 은 이 패치들과 무관하게 통과)
+                    Assert.Equal(TightenSealVerdict.Ok, ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true).Verdict);
+                }
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Fact]
+        public void AuditTelemetry_PreviousShipment_v12_18_2_GM_RejectedOnlyWhenRequired()
+        {
+            string root = RepoRoot();
+            string? d = new[] { Path.Combine(root, "release", "superseded-v12.18.2-GM"), Path.Combine(root, "release") }
+                .FirstOrDefault(x => File.Exists(Path.Combine(x, "release-v12.18.2-GM.zip")) && File.Exists(Path.Combine(x, "RELEASE_MANIFEST.json"))
+                                     && File.ReadAllText(Path.Combine(x, "RELEASE_MANIFEST.json")).Contains("\"v12.18.2-GM\"", StringComparison.Ordinal));
+            if (d is null) { _out.WriteLine("[관제 배지] v12.18.2-GM 출하물 없음 — 구 출하물 대조 생략"); return; }
+            string zip = Path.Combine(d, "release-v12.18.2-GM.zip"), json = File.ReadAllText(Path.Combine(d, "RELEASE_MANIFEST.json")),
+                   seal = File.ReadAllText(Path.Combine(d, "master-seal.txt"));
+            var old = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true);
+            var req = ShippedTightenMatrixVerifier.Verify(zip, json, seal, TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true);
+            _out.WriteLine($"[관제 배지] v12.18.2-GM: 요구 없음 {old.Verdict} · 요구 {req.Verdict}");
+            Assert.Equal(TightenSealVerdict.Ok, old.Verdict);                                   // 구 출하물 재수검 호환
+            Assert.Equal(TightenSealVerdict.AuditTelemetryMissing, req.Verdict);               // 배지 이전 바이너리 = 이번 출하 게이트 불통
         }
     }
 }
