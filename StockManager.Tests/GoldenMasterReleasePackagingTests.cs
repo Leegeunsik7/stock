@@ -4,6 +4,8 @@
 //  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.2(출하 zip 이름 · 태그 v12.18.2-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
+//  §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 실 실행 — 임시 호스트(태그 = HEAD)+피어(봉인 = HEAD 커밋 1초 전)로 release-package.ps1 구동:
+//     exit 1 · 판정기 exit=2(ManifestStale 단독) · [1/10] 진입 0 · zip/master-seal 생성 0 · 게이트 뒤 드리프트 재대조 미실행.
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
 //     매니페스트 자기 해시 · manifest.sig · master-seal.txt · zip SHA-256 · zip 무추출 재수검(Ok) · 소스 커밋 = 태그 커밋 ·
 //     인터락 30종(0~28 + StartupSanity) = 태그 소스 열거 = zip 호스트 DLL 정의(§10 검증기) · 아티팩트 38 · liveArmed 기본 false · 피어 기록(있으면 이름 대조 · -NoPeer 면 부재) · 1비트 변조 zip = 거부 · 스트리머 δ=0.
@@ -111,6 +113,82 @@ namespace StockManager.Tests
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
             Assert.Contains("v12.18.5-GM Production Golden Master", s);
+        }
+
+        // ════════════ §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 — 실 스크립트 실행(낡은 봉인 1초 = 빌드 전 거부) ════════════
+
+        [Fact]
+        public void PackageScript_Executed_StalePeerOneSecond_RejectedAtStep0_NoBuild_NoOutputs()
+        {
+            string tmp = Path.Combine(Path.GetTempPath(), "ms2e-gate0-" + Guid.NewGuid().ToString("N"));
+            string hostRepo = Path.Combine(tmp, "host"), peer = Path.Combine(tmp, "peer");
+            string link = Path.Combine(hostRepo, "StockManager", "bin", "Release", "net8.0-windows");
+            string realBin = Path.Combine(RepoRoot(), "StockManager", "bin", "Release", "net8.0-windows");
+            Assert.True(File.Exists(Path.Combine(realBin, "MS2E.StockSuite.exe")), "판정기(호스트 CLI) Release 산출물 필요");
+            void G(string dir, params string[] a) => Assert.NotNull(GitRepoProbe.Git(dir,
+                new[] { "-c", "user.name=probe", "-c", "user.email=probe@local", "-c", "commit.gpgsign=false" }.Concat(a).ToArray()));
+            try
+            {
+                // 호스트: 태그 v12.18.5-GM = HEAD · 미커밋 코드 0 (소스 사전 검사 통과) · 판정기는 실 Release 산출물 정션(512MB 복사 회피 · gitignore)
+                Directory.CreateDirectory(Path.Combine(hostRepo, "StockManager"));
+                Assert.NotNull(GitRepoProbe.Git(hostRepo, "init", "-q", "-b", "master"));
+                File.WriteAllBytes(Path.Combine(hostRepo, "release-package.ps1"), File.ReadAllBytes(Path.Combine(RepoRoot(), "release-package.ps1")));
+                File.WriteAllText(Path.Combine(hostRepo, "StockManager", "StockManager.csproj"), "<Project><PropertyGroup><Version>12.18.5</Version></PropertyGroup></Project>\n");
+                File.WriteAllText(Path.Combine(hostRepo, ".gitignore"), "StockManager/bin/\n");
+                G(hostRepo, "add", "-A");
+                G(hostRepo, "commit", "-q", "-m", "host");
+                G(hostRepo, "tag", "v12.18.5-GM");
+                Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+                var mk = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{realBin}\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+                mk.StandardOutput.ReadToEnd(); mk.WaitForExit();
+                Assert.Equal(0, mk.ExitCode);
+
+                // 피어: 브랜치 master · 깨끗함 · 봉인 = HEAD 커밋 1초 전(ManifestStale) — 기존 사전 점검(존재 · 깨끗함)은 통과하는 유일 결함
+                Directory.CreateDirectory(peer);
+                Assert.NotNull(GitRepoProbe.Git(peer, "init", "-q", "-b", "master"));
+                File.WriteAllText(Path.Combine(peer, ".gitignore"), "release/offline-bundle/\n");
+                File.WriteAllText(Path.Combine(peer, "Core.cs"), "class Core {}\n");
+                G(peer, "add", "-A");
+                G(peer, "commit", "-q", "-m", "init");
+                var headAt = DateTimeOffset.Parse(GitRepoProbe.Git(peer, "log", "-1", "--format=%cI", "HEAD")!, System.Globalization.CultureInfo.InvariantCulture);
+                string manifest = Path.Combine(peer, "release", "offline-bundle", "RELEASE_MANIFEST.json");
+                Directory.CreateDirectory(Path.GetDirectoryName(manifest)!);
+                File.WriteAllText(manifest, "{\"rootHash\":\"" + new string('b', 64) + "\",\"sealedAtUtc\":\"" + headAt.AddSeconds(-1).UtcDateTime.ToString("O") + "\"}");
+
+                var psi = new ProcessStartInfo("powershell.exe",
+                    $"-NoProfile -ExecutionPolicy Bypass -File \"{Path.Combine(hostRepo, "release-package.ps1")}\" -SkipWebOnlyGate -PeerRepo \"{peer}\"")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, WorkingDirectory = hostRepo };
+                var sw = Stopwatch.StartNew();
+                using var ps = Process.Start(psi)!;
+                string stdout = ps.StandardOutput.ReadToEnd();
+                if (!ps.WaitForExit(120_000)) { ps.Kill(true); Assert.Fail("스크립트 120초 무응답 — 게이트 미작동(빌드 진입) 의심"); }
+                sw.Stop();
+                _out.WriteLine($"[§13 실행] exit={ps.ExitCode} · {sw.ElapsedMilliseconds}ms\n{stdout}");
+
+                Assert.Equal(1, ps.ExitCode);                                                       // Fail = exit 1
+                Assert.Contains("[0/10]", stdout);
+                Assert.Contains("exit=2", stdout);                                                  // 판정기 ManifestStale = CLI 2 → 착수 거부
+                Assert.DoesNotContain("[1/10]", stdout);                                            // 빌드 단계 진입 0
+                Assert.DoesNotContain("[2/10]", stdout);
+                string report = File.ReadAllText(Path.Combine(hostRepo, "release", "cli-peer-readiness.txt"), Encoding.UTF8);
+                Assert.Contains("ManifestStale", report);
+                Assert.DoesNotContain("UncommittedCode", report);                                   // 거부 사유 = 낡은 봉인 단독
+                Assert.False(File.Exists(Path.Combine(hostRepo, "release", "release-v12.18.5-GM.zip")));
+                Assert.False(File.Exists(Path.Combine(hostRepo, "release", "master-seal.txt")));
+                Assert.False(File.Exists(Path.Combine(hostRepo, "release", "cli-peer-drift-readiness.txt")));   // 게이트 뒤 단계 미실행
+                Assert.True(sw.ElapsedMilliseconds < 60_000, $"[0/10] 거부 {sw.ElapsedMilliseconds}ms — 빌드 오버헤드 없이 끝나야 함");
+            }
+            finally
+            {
+                if (Directory.Exists(link)) Directory.Delete(link, false);                          // 정션만 제거(대상 실 산출물 보존)
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(tmp, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
+                    Directory.Delete(tmp, true);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
         }
 
         // ════════════ §3 실 출하 기록 ════════════

@@ -1665,3 +1665,12 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 ### 61.4 출하(보류)
 - QuantumVault 재봉인 미완(HEAD 50d8c42 · RELEASE_MANIFEST sealedAtUtc 2026-10-07T03:59:36Z) — 운영자 터미널의 seal_v2.8.0.ps1(서명 시드 = 자격 증명 관리자) 대기.
   재봉인 → --peer-readiness 0 → 태그 기준 worktree 에서 -NoPeer 없이 패키징 → release-v12.18.5-GM.zip · v12.18.4-GM 산출물 → release/superseded-v12.18.4-GM.
+
+### 61.5 [0/10] 게이트 실 스크립트 회귀 핀 · 피어 재탐침 (2026-10-14)
+- GoldenMasterReleasePackagingTests §13: 임시 호스트(태그 v12.18.5-GM = HEAD · 판정기 = 실 Release 산출물 정션) + 임시 피어(깨끗함 · 봉인 = HEAD 커밋 1초 전)로
+  release-package.ps1 실제 구동 → exit 1 · 판정기 exit=2(ManifestStale 단독) · [1/10]/[2/10] 미진입 · zip/master-seal 0 · 게이트 뒤 드리프트 재대조 미실행 · 실측 ~2.8s(빌드 0).
+  시험 전용 커밋(출하 바이너리 무관) — 출하는 계속 태그 d44c35b 기준 worktree.
+- QuantumVault 재탐침(HEAD 50d8c42): --peer-readiness exit 2 = ManifestStale(봉인 2026-10-07T03:59:36Z) + ★UncommittedCode(.serena/project.yml 신규).
+  태그 worktree 실 스크립트(-NoPeer 없이) = [0/10] 피어 미커밋 코드 사전 점검에서 먼저 exit 1(1.2s · 빌드 0 · release/ 생성 0). 출하 계속 보류(§61.4).
+- 운영자 조치: QuantumVault .serena/project.yml 정리(커밋/원복) + seal_v2.8.0.ps1 재봉인 → --peer-readiness 0 확인 후 §61.4 절차.
+- 전체 스위트 3,789/3,789 · sln + WebOnly Release -warnaserror 0W/0E · 래칫 40 불변(UI 변경 0).
