@@ -46,7 +46,7 @@ namespace StockManager.Tools
             return false;
         }
 
-        private static bool SamePath(string a, string b)
+        internal static bool SamePath(string a, string b)
             => string.Equals(Path.GetFullPath(a.Replace('/', Path.DirectorySeparatorChar)).TrimEnd(Path.DirectorySeparatorChar),
                              Path.GetFullPath(b.Replace('/', Path.DirectorySeparatorChar)).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
 

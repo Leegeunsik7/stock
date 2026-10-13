@@ -1198,7 +1198,7 @@ namespace StockManager.Tests
             string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-live-armed\"", s);
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') \"verify-tighten\"", s);
-            Assert.Equal(7, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가(폐기 경로 불변)
+            Assert.Equal(8, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가 · v12.18.4-GM: + 피어 드리프트 거부(Assert-PeerPinned)
             string dir = TempDir();
             try
             {

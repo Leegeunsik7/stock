@@ -632,7 +632,7 @@ namespace StockManager.Tools
         public const string PeerManifestDefault = "release/offline-bundle/RELEASE_MANIFEST.json";
 
         public static bool IsInvocation(string[]? args)
-            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], VerifyTightenFlag) || Eq(args[0], VerifyAuditChainFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
+            => args is { Length: > 0 } && (Eq(args[0], VerifyZipFlag) || Eq(args[0], VerifyLiveArmedFlag) || Eq(args[0], VerifyInterlocksFlag) || Eq(args[0], VerifyTightenFlag) || Eq(args[0], VerifyAuditChainFlag) || Eq(args[0], PeerReadinessFlag) || Eq(args[0], PeerWatchFlag) || Eq(args[0], PeerDriftGuard.DriftFlag) || Eq(args[0], SyncFlag) || Eq(args[0], HandshakeFlag));
 
         /// <summary>CLI 진입. --report &lt;파일&gt; 지정 시 같은 보고를 UTF-8 로 기록(PS 5.1 콘솔 코드페이지 무관 판독용).</summary>
         public static int Run(string[] args, TextWriter output)
@@ -685,6 +685,16 @@ namespace StockManager.Tools
                     }
                     output.WriteLine($"[peer-watch] 폴링 {w.Polls} · 전이 {w.Transitions} · 블랙박스 {box.TotalRecorded} · 런북 트리거 {w.RunbookTriggers}");
                     return fired ? ExitOk : ExitRejected;
+                }
+                if (Eq(args[0], PeerDriftGuard.DriftFlag))
+                {
+                    // [v12.18.4-GM · 방향 B] 피어 철회 드리프트 방어 — [0/10] 고정(브랜치 · HEAD · 봉인 매니페스트 SHA-256) ↔ 현재 피어(읽기 전용)
+                    string? peerRoot = Arg(args, 1), pb = o.GetValueOrDefault("--pin-peer-branch"), ph = o.GetValueOrDefault("--pin-peer-head"), pm = o.GetValueOrDefault("--pin-peer-manifest");
+                    if (peerRoot is null || !PeerDriftGuard.IsSafeBranch(pb) || !PeerDriftGuard.IsHex(ph, 40) || !PeerDriftGuard.IsHex(pm, 64))
+                    { output.WriteLine("[peer-drift] 사용: --peer-drift <피어 루트> --pin-peer-branch <브랜치> --pin-peer-head <40hex> --pin-peer-manifest <64hex> [--peer-manifest <상대 경로>]"); return ExitUsage; }
+                    var rep = PeerDriftGuard.Check(peerRoot, pb!, ph!, pm!, o.GetValueOrDefault("--peer-manifest") ?? PeerReadinessProbe.DefaultManifest);
+                    output.WriteLine($"[peer-drift] {rep.Verdict}: {rep.Detail}");
+                    return rep.Ok ? ExitOk : ExitRejected;
                 }
                 if (Eq(args[0], PeerReadinessFlag))
                 {

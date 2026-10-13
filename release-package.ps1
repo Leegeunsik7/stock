@@ -43,6 +43,9 @@
 #            + [v12.18.4-GM · 방향 A] IPC 패브릭 무슬립 위상 강제(--require-ipc-fabric · --verify-tighten) — MmfIpcFabric 핫 폐포(TryPublish/TryConsume/
 #              Beat/CheckPeerAlive 에서 닿는 같은 형식 메서드 전부) 차단 대기 0(Sleep/Yield/SpinWait/잠금/대기 핸들/Task 대기) · 형식 전체 Thread.Sleep/Yield ·
 #              Task.Delay · SpinWait.SpinUntil 0 · 생성자 기본 시계 = Stopwatch.GetTimestamp. 위반 = 출하 산출물 전량 폐기.
+#   [v12.18.4-GM · 방향 B] 피어 철회 드리프트 방어(PeerRevocationDriftSafeguard · --peer-drift) — [0/10] 이 피어 '브랜치'까지 고정(분리 HEAD = 중단)하고
+#     [7/10] zip 생성 직전 · [10/10] 동기화 전 · 완료 직전에 브랜치 · HEAD · 봉인 매니페스트 SHA-256 · 미커밋 코드 0 을 재판독.
+#     1비트라도 이동(브랜치 전환 · 1커밋 전진 · 재봉인) = 스테이징 · 출하 산출물 전량 폐기 후 중단(-NoPeer = 생략).
 #   전부 실패-닫힘: 어느 단계든 실패하면 즉시 중단, 불완전 zip 은 남기지 않는다.
 #
 #   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]
@@ -82,6 +85,18 @@ function Remove-ReleaseOutputs {
     foreach ($f in @($zipOut, "$zipOut.sha256", (Join-Path $releaseDir "master-seal.txt"), (Join-Path $releaseDir "RELEASE_MANIFEST.json"))) {
         Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
     }
+}
+
+# [v12.18.4-GM · 방향 B] 피어 철회 드리프트 방어 — [0/10] 고정(브랜치 · HEAD · 매니페스트 SHA-256)과 현재 피어 대조(호스트 CLI · 읽기 전용).
+#   이동 = 스테이징 폴더 · 출하 산출물 전량 폐기 후 중단. 호출 시점: [7/10] zip 직전 · [10/10] 동기화 전 · 완료 직전.
+function Assert-PeerPinned([string]$when) {
+    if ($NoPeer) { return }
+    $driftExit = Invoke-HostCli @('--peer-drift', ('"' + $PeerRepo + '"'), '--pin-peer-branch', $peerPinBranch, '--pin-peer-head', $peerPinHead, '--pin-peer-manifest', $peerPinSha) "peer-drift-$when"
+    if ($driftExit -ne 0) {
+        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+        Remove-ReleaseOutputs; Fail "피어 드리프트($when · exit=$driftExit) — [0/10] 고정 브랜치/HEAD/봉인 매니페스트 이탈 · 출하 산출물 전량 폐기"
+    }
+    Write-Host "  OK: 피어 고정 유지($when) — 브랜치 $peerPinBranch · HEAD $($peerPinHead.Substring(0, 10))" -ForegroundColor DarkGreen
 }
 
 # [릴리스 CI] 호스트 콜드 CLI(--verify-zip · --sync-release-manifest · --release-handshake) — 보고서는 UTF-8 파일(--report)로 판독.
@@ -140,8 +155,12 @@ if (-not $NoPeer) {
     $peerPinHead = (& git -C $PeerRepo rev-parse HEAD 2>$null)
     if ($LASTEXITCODE -ne 0 -or -not $peerPinHead) { Fail "피어 HEAD 판독 실패: $PeerRepo" }
     $peerPinHead = "$peerPinHead".Trim()
+    # [v12.18.4-GM · 방향 B] 브랜치도 고정 — 분리 HEAD = 출하가 묶을 계보 없음(중단). 이후 Assert-PeerPinned 가 대조.
+    $peerPinBranch = (& git -C $PeerRepo --no-optional-locks symbolic-ref --short -q HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $peerPinBranch) { Fail "피어 분리 HEAD(브랜치 없음) — 교차 봉인할 브랜치를 체크아웃한 뒤 재실행: $PeerRepo" }
+    $peerPinBranch = "$peerPinBranch".Trim()
     $peerPinSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $peerManifest).Hash
-    Write-Host "  OK: 피어 $PeerRepo 미커밋 코드 0 · 봉인 매니페스트 존재" -ForegroundColor DarkGreen
+    Write-Host "  OK: 피어 $PeerRepo 미커밋 코드 0 · 봉인 매니페스트 존재 · 고정 $peerPinBranch@$($peerPinHead.Substring(0, 10))" -ForegroundColor DarkGreen
 }
 # [출하 롤백 가드 · v12.15.0-GM] 사전 검사 통과 = 이번 실행이 같은 버전의 기존 출하 산출물을 대체한다 → 빌드 전에 전량 폐기.
 #   이후 어느 단계([1]~[10])에서 실패해도 release\ 에 이 버전의 zip · .sha256 · master-seal.txt · RELEASE_MANIFEST.json 이 남지 않는다.
@@ -258,6 +277,7 @@ if ($masterSeal -notmatch '^[0-9A-Fa-f]{64}$') { Fail "manifest.sig masterSeal �
 $stageCli = Invoke-SealCli $stage $masterSeal "stage"
 if ($stageCli -ne 0) { Fail "수검 CLI 드라이런 실패(exit=$stageCli · 2=변조/누락 3=앵커 미주입 4=미등재 바이너리) — 패키징 중단" }
 Write-Host "  수검 CLI 드라이런 통과(스테이징 · 앵커 일치 · 미등재 0)" -ForegroundColor DarkGreen
+Assert-PeerPinned "pre-zip"
 
 # ── [8/8] zip 패키징 + 사후 검증 ──
 Step 8 "zip 패키징 + 사후 검증..."
@@ -295,6 +315,7 @@ if ($armVerify -ne 0) { Remove-ReleaseOutputs; Fail "출하 바이너리 liveArm
 
 # ── [10/10] [방향 B] 다중 저장소 핸드셰이크(피어 읽기 전용) ──
 Step 10 "다중 저장소 매니페스트 원자 기록 + 독립 핸드셰이크..."
+Assert-PeerPinned "pre-sync"
 $hsArgs = @('--release-dir', ('"' + $releaseDir + '"'), '--repo', ('"' + $root + '"'), '--shim', ('"' + $shimDll + '"'))
 if (-not $NoPeer) {
     if (-not (Test-Path -LiteralPath (Join-Path $PeerRepo ".git"))) { Remove-ReleaseOutputs; Fail "피어 저장소 없음: $PeerRepo (-NoPeer 로 명시 생략 가능)" }
@@ -309,5 +330,6 @@ if ($ilkExit -ne 0) { Remove-ReleaseOutputs; Fail "30대 인터락 봉인 대조
 $tightExit = Invoke-HostCli @('--verify-tighten', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') "verify-tighten"
 if ($tightExit -ne 0) { Remove-ReleaseOutputs; Fail "강화 전용 단조성 행렬 대조 거부(exit=$tightExit) — 출하 산출물 전량 폐기" }
 
+Assert-PeerPinned "final"
 Write-Host "== 완료: $zipOut (SHA-256 $zipSha) · RELEASE_MANIFEST.json 봉인 ==" -ForegroundColor Green
 exit 0
