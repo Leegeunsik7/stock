@@ -1721,3 +1721,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   구독자 700µs 지연 주입 → 스파이크 +1 · 최대/마지막 ≥700µs · 배지 Spike · GC.Collect 동반 → GcSpike · 미결선 → 결선 후 첫 회차 정상 지표 ·
   실 타이머 첫 게시 ≤119ms 지표 전환 · Dispose 봉인(진행 중 20ms 회차 대기 · 이후 Pump false).
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,799/3,799 · 래칫 ≤40.
+
+## 63. v12.18.6-GM — 호스트 펌프 지터 텔레메트리 단독 출하(-NoPeer) · IL 규칙 ⑫ (2026-10-14)
+
+### 63.1 버전 · 태그
+- 12.18.5 → 12.18.6(csproj Version/Assembly/File · GoldenMasterFreeze/ReleasePackaging 핀 · 스크립트 머리말). 태그 v12.18.6-GM = 741fe17(fc3ce56 DEV 위).
+- QuantumVault 미접근(-NoPeer · 피어 조회/탐침 0) · 매니페스트 피어 기록 없음.
+
+### 63.2 [9/10] IL 규칙 ⑫ — 호스트 펌프 지터 결선(ShippedBinaryLiveArmedGuard)
+- DashboardSnapshotHub.AttachPumpJitter 호출 = BlazorHomeForm 트리에서만(≥1 · 보고 PumpJitterSites) · 조립 밖 결선 = 위반(시뮬레이션 · CLI 격리 형식 제외).
+- AttachJitter 직접 호출 = 허브 자신만 — 호스트가 외부 센티널을 배지에 결선 = 위반. AttachPumpJitter 본문 AttachJitter 정확히 1(측정 센티널 = 배지 센티널).
+- 비공허성: 진입점이 있는데 호스트 호출 0 = 위반. 진입점 부재(⑫ 이전 바이너리) = 미적용 → 출하 게이트 `--require-pump-jitter`(스크립트 [9/10])가 거부.
+- 시험 §15: 빌드 DLL Ok(1곳) · call 토큰 AttachPumpJitter→AttachJitter 패치 = 직접 결선 + 비공허성 거부 · CLI 요구 플래그 · v12.18.5-GM zip = ⑫ 0 → 플래그 거부.
+- §3 실 출하 기록: 12.18.6 이후 출하물 PumpJitterSites ≥ 1 요구.
+
+### 63.3 출하 실행(형제 worktree StockManager-gm-12.18.6-np · 태그 741fe17 · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [1]/[2] WebOnly · sln 전체(Host · Tests · PrimesBench · x86 KiwoomProxy · KiwoomComShim) -warnaserror ·
+  [3] 3,800/3,800 · [4] 결합도 · [5] 래칫 ≤40 통과 · [6] 이중키 조회 16 · 마스터 플래그 1 = false · [7] 아티팩트 38 · genesis v2 manifest.sig · 봉인 38 일치 ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 49(CLI 29) · 강화 키 6(호스트 판독 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 ⑥) · handshake Ok @741fe17626.
+- 산출물(release/): release-v12.18.6-GM.zip SHA-256 `9F1C12DF72CADDADC4FA41ABFB3B1F940D16DCD4F4423302CE24ECFCBAC1FE45` ·
+  masterSeal `1DDCE28A1AAD0BEA9943816A048A02D1D097A98ADD3FA7860EFD6A59C8C8826A` · sourceCommit 741fe17 · 피어 기록 없음(단독).
+- v12.18.5-GM 산출물 13건(zip 60276FC3… · masterSeal A019E3F7…) → release/superseded-v12.18.5-GM/ 이관. worktree 제거.
+- 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · GoldenMaster*/PeerDriftGuard/PureShellFitness 61/61 · 전체 스위트 3,800/3,800 · CLI --verify-live-armed --require-pump-jitter Ok.
