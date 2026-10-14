@@ -1141,11 +1141,14 @@ namespace StockManager.Blazor
                 onPass: r =>
                 {
                     if (r.Verdict >= StockManager.Adapters.OpenOrderVerdict.Divergence)
-                        try { Log.Warn($"[OpenOrder] 대사 {r.Verdict} — 브로커 {r.Rows}행 · 원장 {r.Ledger}건 · 불일치 {r.Mismatched} · 유령 {r.Ghosts} · 취소 {r.CancelsSent}건 송신"); } catch { }
+                        try { Log.Warn($"[OpenOrder] 대사 {r.Verdict} — 브로커 {r.Rows}행 · 원장 {r.Ledger}건 · 불일치 {r.Mismatched} · 유령 {r.Ghosts} · 취소 {r.CancelsSent}건 송신 · 무장 해제로 억제 {r.CancelsSuppressed}건"); } catch { }
                     Volatile.Read(ref kisPassHook)?.Invoke(r);
                 },
                 interval: TimeSpan.FromSeconds(cfg.GetInt("OpenOrder.IntervalSeconds", 30, 5, 600)));
             openOrderRecon.BindInterlock(interlockMask, MS2E.Core.ArmingInterlockSource.OpenOrderDivergence);
+            // [v12.18.7-DEV · 무장 가드] 유령 비상 취소(키움 · KIS TTTC0803U) = 실전 무장(liveArmed — 물리 키 ∧ 전 방어선)일 때만 송신.
+            //   무장 해제 = 송신 0 · 비트 22 Disarm 은 그대로(대사기가 판정 직후 · 자기 Disarm 이전에 1회 표본). 드라이런 스코프는 허가하지 않는다.
+            openOrderRecon.AttachCancelArming(liveArmed);
             Action<OpenOrderPayload> onOpenOrderRow = openOrderRecon.OnKiwoomRow;
             Action<OrderMappedPayload> onOrderMapped = execFeed.OnOrderMapped;
             bridge.OpenOrderReceived   += onOpenOrderRow;

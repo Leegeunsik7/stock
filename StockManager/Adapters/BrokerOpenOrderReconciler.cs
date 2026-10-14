@@ -16,6 +16,11 @@
 //  ⑤ 방향 B: Ghost = OpenOrderDivergence 비트 즉시 Raise(Disarm · sticky) + 브로커 미체결 전 행 비상 취소(원장 번호 직접 취소).
 //     취소는 패스당 상한(기본 4건 — 키움 주문 TR 초당 5회 미만)만 송신하고 '대기열'에 넣지 않는다. 남은 행은 다음 패스의 새 조회에
 //     여전히 미체결로 나타나면 그때 다시 취소 대상이 된다(상태 구동 — 큐잉·자동 재시도 금지 원칙 준수 · 같은 번호 5초 내 중복 취소 억제).
+//  [v12.18.7-DEV · 무장 가드] ★비상 취소는 브로커 상태를 바꾸는 송신이다 — 무장 술어(AttachCancelArming)가 참일 때만 송신(키움 · KIS 공통).
+//     거짓 · 미결속 · 예외 = 송신 0 + CancelsSuppressed 계수(비트 22 래치 · Disarm 은 무장과 무관하게 그대로 — 차단은 항상 먼저).
+//     ★판정 시점 = 유령 판정 직후 · 비트 22 Resync '이전' 1회 표본: 이 대사기 자신의 Disarm(비트 22 → 집계 마스크 Blocked)이 무장 술어를
+//     거짓으로 만들므로, 송신 직전에 재판정하면 무장 상태에서도 취소가 영영 나가지 않는다(설계 검토 중 확인). 같은 패스 안에서만 유효 —
+//     다음 패스는 비트 22 sticky 로 무장 거짓 → 남은 유령은 운용자 처리(물리 이중키 재무장 전 자동 송신 0).
 //  무장 차단(비트 22) = Ghost ∨ Divergence ∨ (필수 브로커 최초 대사 미확정) — 대사 전 신규 발주 100% 차단(Zero State Divergence).
 //  재무장 = 물리 이중키(TryRearm) + 새 대사 확정 필요.
 // ============================================================================
@@ -31,7 +36,8 @@ namespace StockManager.Adapters
 
     /// <summary>대사 패스 1회 결과(값 타입).</summary>
     public readonly record struct OpenOrderPassResult(OpenOrderVerdict Verdict, int Venue, int Rows, int Ledger, int Matched, int Mismatched,
-                                                      int Ghosts, int Unresolved, int CancelsSent, int AdoptMapped);
+                                                      int Ghosts, int Unresolved, int CancelsSent, int AdoptMapped,
+                                                      int CancelsSuppressed = 0);   // [v12.18.7-DEV] 무장 거짓으로 억제한 비상 취소 대상 행 수
 
     public sealed class BrokerOpenOrderReconciler : IArmingBlockSource
     {
@@ -218,6 +224,18 @@ namespace StockManager.Adapters
         /// <summary>[방향 B] KIS 유령 주문 비상 취소 결속(odno · ord_gno_brno → 브로커 접수 여부). 미결속 = KIS 유령은 차단만.</summary>
         public void AttachKisCanceller(Func<long, long, bool> cancel) => Volatile.Write(ref _kisCancel, cancel ?? throw new ArgumentNullException(nameof(cancel)));
 
+        private Func<bool>? _cancelArmed;
+        private long _cancelsSuppressed, _suppressedPasses;
+        /// <summary>
+        /// [v12.18.7-DEV · 무장 가드] 비상 취소 송신 허가 술어(호스트: 실전 무장 liveArmed). 미결속 = 송신 0(fail-closed).
+        /// ★비차단 · 이 대사기 재호출 금지(대사기 락 안에서 유령 판정 직후 1회 판독).
+        /// </summary>
+        public void AttachCancelArming(Func<bool> armed) => Volatile.Write(ref _cancelArmed, armed ?? throw new ArgumentNullException(nameof(armed)));
+        /// <summary>무장 거짓으로 송신하지 않은 비상 취소 대상 행 누적.</summary>
+        public long CancelsSuppressed => Interlocked.Read(ref _cancelsSuppressed);
+        /// <summary>억제가 일어난 유령 패스 누적.</summary>
+        public long SuppressedPasses => Interlocked.Read(ref _suppressedPasses);
+
         /// <summary>외부 조회(KIS REST 등) 송신 직전 호출 — 스냅샷 시퀀스 기록 · 행 버퍼 초기화.</summary>
         public void BeginSnapshot(int venue)
         {
@@ -380,15 +398,17 @@ namespace StockManager.Adapters
 
             var verdict = ghosts > 0 ? OpenOrderVerdict.Ghost : mismatched > 0 ? OpenOrderVerdict.Divergence
                         : unresolved > 0 ? OpenOrderVerdict.Inconclusive : OpenOrderVerdict.Confirmed;
-            int cancels = 0, mapped = 0;
+            int cancels = 0, mapped = 0, suppressed = 0;
             switch (verdict)
             {
                 case OpenOrderVerdict.Ghost:
                     Interlocked.Increment(ref _ghostPasses);
+                    bool armed = CancelArmedNow();                                         // ★자기 Disarm(비트 22) '이전' 표본
                     Volatile.Write(ref _ghost, 1);
-                    Volatile.Read(ref _link)?.Resync();                                    // ★Disarm 선반영(취소 송신보다 먼저)
+                    Volatile.Read(ref _link)?.Resync();                                    // ★Disarm 선반영(취소 송신보다 먼저 · 무장 무관)
                     if (venue == OpenOrderVenueKind.Kiwoom) mapped = AdoptMatchedLocked(ln);   // 확정 승계분 사상 → 취소 확인 통보가 호스트 슬롯으로 사상
-                    cancels = CancelRowsLocked(rows, venue, flight);
+                    if (armed) cancels = CancelRowsLocked(rows, venue, flight);
+                    else suppressed = SuppressCancelsLocked(rows);
                     break;
                 case OpenOrderVerdict.Divergence:
                     Interlocked.Increment(ref _divergences);
@@ -412,7 +432,24 @@ namespace StockManager.Adapters
             }
             flight?.Record(FlightEventKind.OpenOrderReconciled, 0, rows, ln, (long)verdict, venue);
             Volatile.Read(ref _forensic)?.Append(AuditEventKind.Reconciliation, PackTag(verdict, venue, ghosts, mismatched, rows), _nowTicks());
-            return new OpenOrderPassResult(verdict, venue, rows, ln, matched, mismatched, ghosts, unresolved, cancels, mapped);
+            return new OpenOrderPassResult(verdict, venue, rows, ln, matched, mismatched, ghosts, unresolved, cancels, mapped, suppressed);
+        }
+
+        // [v12.18.7-DEV · 무장 가드] 미결속 · 거짓 · 예외 = 거짓(fail-closed). δ=0(델리게이트 호출 1회).
+        private bool CancelArmedNow()
+        {
+            var f = Volatile.Read(ref _cancelArmed);
+            if (f is null) return false;
+            try { return f(); } catch (Exception) { return false; }
+        }
+
+        // 무장 거짓 = 송신 0 · 대상 행(잔량 > 0) 계수만 — 브로커 상태 변형 전문 0. 경고 로깅은 호스트 onPass(CancelsSuppressed > 0).
+        private int SuppressCancelsLocked(int rows)
+        {
+            int n = 0;
+            for (int r = 0; r < rows; r++) if (_rows[r].RemainingQty > 0) n++;
+            if (n > 0) { Interlocked.Add(ref _cancelsSuppressed, n); Interlocked.Increment(ref _suppressedPasses); }
+            return n;
         }
 
         // 행이 번호 미상 원장 건(미결속 · 사상 미도착)이거나 정정 진행 중 건의 새 번호일 수 있는가

@@ -1772,3 +1772,17 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - StockManager.Tests/Adapters/SessionRecoveryManagerTests 5: 사본 = 속성 일치 · 전 생애주기 분류(백오프 · 재접속 · 대사 · 복구 · 소진 · 불일치 우선) ·
   허브 결선 즉시/전이 즉시 재게시 · 무변경 게시 0 · 인덱스 범위 거부 · δ=0(사본 · 2관리자 펌프 유휴/전이 · 라벨) · 결선/순수성/래칫 ≤40.
 - 오중 빌드 Release -warnaserror 0W/0E · 전체 스위트 3,805/3,805. liveArmed:false 불변 · 실 브로커 송신 0 · QuantumVault 미접근. 버전 범프 없음(DEV).
+
+### 64.4 유령 비상 취소 무장 가드(BrokerOpenOrderReconciler · §64.1 ③ 교정)
+- 결함: CancelRowsLocked 가 무장 술어 미참조 → liveArmed:false 에서도 브로커 미체결(HTS/MTS 수동 주문 포함)에 실 취소 송신(키움 CancelByVenueNo · KIS TTTC0803U).
+- 교정: AttachCancelArming(Func<bool>) — 유령 판정 시 무장 표본 1회 · 참일 때만 CancelRowsLocked(패스당 ≤4 · 5초 중복 억제 그대로).
+  미결속 · 거짓 · 예외 = 송신 0 + CancelsSuppressed(행) · SuppressedPasses 계수 · OpenOrderPassResult.CancelsSuppressed(호스트 Log.Warn 표기). 키움 · KIS 공통.
+- 비트 22(OpenOrderDivergence) Raise · sticky · 한도 격리 = 무장 무관 그대로(차단 항상 먼저).
+- ★표본 시점 = 유령 판정 직후 · 자기 Disarm(비트 22 Resync) '이전': 호스트 liveArmed 는 집계 마스크 Blocked 를 포함 → 송신 직전 재판정이면
+  자기 비트 22 때문에 무장 상태에서도 송신 영영 0(설계 중 확인 · 시험 핀). 결과: 무장 중 유령 = 그 패스 ≤4건 송신 · 다음 패스부터 sticky 로 억제
+  (구 동작의 '패스마다 ≤4건 계속 정리'에서 축소 — 남은 유령은 운용자 처리 · 물리 이중키 재무장 전 자동 송신 0).
+- 호스트: openOrderRecon.AttachCancelArming(liveArmed) — 물리 키 ∧ 전 방어선. 드라이런 술어(armedPredicate)는 허가하지 않음(실 송신 = 실전 무장만).
+- 시험 리그(OpenOrder/KisOpenOrder Reconciliation · MultiBrokerRecoverySoakHarness)는 무장 경로 회귀라 명시적 무장 술어 결속.
+- 인터락 정의 불변: 14 AccountDivergence · 22 OpenOrderDivergence · 25 KiwoomBridgeLink · 30종(오더의 'ReconciliationMismatch'/'KiwoomLinkDead' 는 실 이름 아님 — 개명 안 함).
+- BrokerOpenOrderReconcilerTests 7: 무장 해제 KIS 6행 × 6패스 송신 0 · 억제 36 · 비트 22 · 키움 동일 · 미결속/예외 0 · 무장 = 상한 4 · Disarm 선반영 ·
+  호스트형 술어(!Blocked) 1패스 송신 4 → 2패스 억제 · 다른 방어선 차단 시 0 · δ=0(무장 해제 유령 패스 500회 0B) · 호스트 결선/순서/인터락 정의 핀.

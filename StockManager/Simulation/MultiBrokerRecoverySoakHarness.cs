@@ -99,6 +99,7 @@ namespace StockManager.Simulation
             Mask = new ArmingInterlockBitmask(ArmingInterlockSource.OpenOrderDivergence);
             Reconciler.BindInterlock(Mask, ArmingInterlockSource.OpenOrderDivergence);
             Reconciler.AttachKisCanceller((odno, org) => { Interlocked.Increment(ref _kisCancels); return true; });
+            Reconciler.AttachCancelArming(() => true);                          // [v12.18.7-DEV] 리허설 = 무장 경로(취소 수신자 = 이 하니스 · 실 브로커 0)
             KisSession = new KisSessionInterlock(null, KisBroker, () => NowMicros, silenceMicros: 3 * Sec);
             KisRecovery = new SessionRecoveryManager(KisBroker, on => Limits.SetSessionIsolated(KisBroker, on),
                 requestReconcile: () => Reconciler.RequestReconcile(OpenOrderVenueKind.Kis),

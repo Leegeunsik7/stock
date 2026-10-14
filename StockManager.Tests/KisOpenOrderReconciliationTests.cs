@@ -86,6 +86,7 @@ namespace StockManager.Tests
         private sealed class Rig
         {
             public long Now = 10_000 * Sec;
+            public bool Armed = true;
             public OpenOrderRig.Exec E = null!;
             public BrokerOpenOrderReconciler R = null!;
             public ArmingInterlockBitmask Mask = null!;
@@ -110,6 +111,7 @@ namespace StockManager.Tests
             r.Mask = new ArmingInterlockBitmask(ArmingInterlockSource.OpenOrderDivergence);
             r.R.BindInterlock(r.Mask, ArmingInterlockSource.OpenOrderDivergence);
             if (canceller) r.R.AttachKisCanceller((odno, org) => { r.Cancels.Add((odno, org)); return true; });
+            r.R.AttachCancelArming(() => r.Armed);                              // [v12.18.7-DEV] 무장 경로 회귀(기본 무장 · 무장 가드 시험은 BrokerOpenOrderReconcilerTests)
             r.Limits = new BrokerLimitFeedProvider(new IBrokerAccountView?[] { new BoundView(), new BoundView() });
             if (withRecovery)
                 r.M = new SessionRecoveryManager(1, on => r.Limits.SetSessionIsolated(1, on),

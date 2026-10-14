@@ -105,6 +105,7 @@ namespace StockManager.Tests
         {
             public Exec E = null!;
             public FakeVenue V = new();
+            public bool Armed = true;
             public long Ticks = 1_000_000 * TimeSpan.TicksPerSecond;
             public BrokerOpenOrderReconciler R = null!;
             public ArmingInterlockBitmask Mask = null!;
@@ -124,6 +125,7 @@ namespace StockManager.Tests
                                                 onPass: record ? r.Passes.Add : null, kiwoomPageCap: pageCap);
             r.Mask = mask ?? new ArmingInterlockBitmask(ArmingInterlockSource.OpenOrderDivergence);
             r.R.BindInterlock(r.Mask, ArmingInterlockSource.OpenOrderDivergence);
+            r.R.AttachCancelArming(() => r.Armed);                              // [v12.18.7-DEV] 무장 경로 회귀(기본 무장)
             return r;
         }
 
