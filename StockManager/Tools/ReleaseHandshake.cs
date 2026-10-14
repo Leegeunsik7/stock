@@ -710,13 +710,13 @@ namespace StockManager.Tools
                 {
                     // [v12.16.1-GM · 방향 B] 출하 zip 안 호스트 DLL 의 이중 물리 키 기본값을 IL 로 직접 판독(추출 · 로드 · 실행 0)
                     string? zip = Arg(args, 1);
-                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip> [--expect-tighten-keys <n>] [--require-audit-ledger] [--require-pump-jitter]"); return ExitUsage; }
+                    if (zip is null || !File.Exists(zip)) { output.WriteLine("[verify-live-armed] 사용: --verify-live-armed <zip> [--expect-tighten-keys <n>] [--require-audit-ledger] [--require-pump-jitter] [--require-cancel-arming]"); return ExitUsage; }
                     // [v12.18.1-GM] 강화 전용 키 수 고정(스크립트 = 6) — 가드의 '경로 전체 부재 = 통과'(구 바이너리 호환)를 출하 게이트에선 닫는다
                     int expectTighten = -1;
                     if (o.TryGetValue("--expect-tighten-keys", out string? et) && (!int.TryParse(et, out expectTighten) || expectTighten < 0))
                     { output.WriteLine("[verify-live-armed] --expect-tighten-keys <n> 형식 오류"); return ExitUsage; }
                     var r = ShippedBinaryLiveArmedGuard.ScanZip(zip);
-                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 강화 전용 키 {r.TightenKeys}(호스트 판독 {r.TightenHostSites}) · 감사 원장 ⑪ {(r.AuditLedgerAware ? "적용" : "없음")} · 펌프 지터 결선 ⑫ {r.PumpJitterSites} · 위반 {r.Violations.Count}");
+                    output.WriteLine($"[verify-live-armed] {(r.Ok ? "Ok" : "Rejected")}: 조회 지점 {r.Sites} · 마스터 플래그 생성 {r.MasterSites} · UI 설정 기입 가드 {r.UiGuardSites}/3 · 시뮬레이션 격리 형식 {r.SimulationTypes}(CLI 참조 {r.SimulationCliSites}) · 강화 전용 키 {r.TightenKeys}(호스트 판독 {r.TightenHostSites}) · 감사 원장 ⑪ {(r.AuditLedgerAware ? "적용" : "없음")} · 펌프 지터 결선 ⑫ {r.PumpJitterSites} · 유령 취소 무장 결선 ⑬ {r.CancelArmingSites} · 위반 {r.Violations.Count}");
                     foreach (var v in r.Violations) output.WriteLine("  " + v);
                     if (expectTighten >= 0 && r.TightenKeys != expectTighten)
                     {
@@ -733,6 +733,12 @@ namespace StockManager.Tools
                     if (o.ContainsKey("--require-pump-jitter") && r.PumpJitterSites == 0)
                     {
                         output.WriteLine("  호스트 펌프 지터 결선(AttachPumpJitter) 0 — /aidash 지터 미결선 출하 거부");
+                        return ExitRejected;
+                    }
+                    // [v12.18.7-GM] ⑬ 무장 가드 진입점 부재(구 바이너리 = 무장 무관 유령 취소 송신) = 출하 거부
+                    if (o.ContainsKey("--require-cancel-arming") && r.CancelArmingSites == 0)
+                    {
+                        output.WriteLine("  유령 취소 무장 술어 결선(AttachCancelArming) 0 — 무장 해제 중 브로커 취소 송신 가능 바이너리 출하 거부");
                         return ExitRejected;
                     }
                     return r.Ok ? ExitOk : ExitRejected;

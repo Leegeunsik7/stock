@@ -67,7 +67,8 @@ namespace StockManager.Tools
         public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0,
                                              int SimulationTypes = 0, int SimulationCliSites = 0, int TightenKeys = 0, int TightenHostSites = 0,
                                              bool AuditLedgerAware = false,   // [v12.18.2-GM] ITightenAuditSink 형식 존재 = 규칙 ⑪ 적용됨(없으면 ⑪ 생략 — 출하 게이트가 요구)
-                                             int PumpJitterSites = 0)         // [v12.18.6-GM] ⑫ 호스트 조립(BlazorHomeForm 트리) AttachPumpJitter 호출 수(출하 게이트가 ≥1 요구)
+                                             int PumpJitterSites = 0,         // [v12.18.6-GM] ⑫ 호스트 조립(BlazorHomeForm 트리) AttachPumpJitter 호출 수(출하 게이트가 ≥1 요구)
+                                             int CancelArmingSites = 0)       // [v12.18.7-GM] ⑬ 호스트 조립 AttachCancelArming 호출 수(출하 게이트가 ≥1 요구)
         {
             public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
@@ -90,6 +91,10 @@ namespace StockManager.Tools
 
         // [v12.18.6-GM] ⑫ 대시보드 펌프 지터 결선 — 허브 형식 · 결선 진입점 · 유일 허용 호스트 조립 형식.
         public const string DashHubType = "DashboardSnapshotHub", PumpJitterMethod = "AttachPumpJitter", JitterMethod = "AttachJitter", HostAssemblyType = "BlazorHomeForm";
+
+        // [v12.18.7-GM] ⑬ 유령 비상 취소 무장 가드 — 대사기 형식 · 취소 송신 메서드 · 무장 표본 · 결선 진입점.
+        public const string ReconcilerType = "BrokerOpenOrderReconciler", CancelSendMethod = "CancelRowsLocked", CancelArmedMethod = "CancelArmedNow",
+                            CancelArmingMethod = "AttachCancelArming";
 
         // [v12.17.4-GM] 시뮬레이션 격리 — 네임스페이스와 그것을 참조해도 되는 CLI 형식(조기 분기 전용).
         public const string SimulationNamespace = "StockManager.Simulation";
@@ -160,8 +165,9 @@ namespace StockManager.Tools
         {
             using var pe = new PEReader(peImage, PEStreamOptions.LeaveOpen | PEStreamOptions.PrefetchEntireImage);
             var md = pe.GetMetadataReader();
-            int sites = 0, masterSites = 0, allowlistSites = 0, simCliSites = 0, pumpJitterSites = 0;
-            bool pumpJitterDefined = false;
+            int sites = 0, masterSites = 0, allowlistSites = 0, simCliSites = 0, pumpJitterSites = 0, cancelArmingSites = 0;
+            bool pumpJitterDefined = false, cancelArmingDefined = false;
+            var cancelPending = new List<string>();                              // ⑬ 위반 보류(진입점 존재 확인 후 확정 — 메서드 순서 무관)
             int simTypes = 0;
             foreach (var th in md.TypeDefinitions) if (IsSimulation(md, th)) simTypes++;
             var writerSeen = new bool[UiWriters.Length];
@@ -191,6 +197,7 @@ namespace StockManager.Tools
                 TightenVisit(pe, md, ins, tname, mname, tight, violations);
                 var owner = m.GetDeclaringType();
                 PumpJitterVisit(md, ins, owner, tname, mname, ref pumpJitterSites, ref pumpJitterDefined, violations);
+                CancelArmingVisit(md, ins, owner, tname, mname, ref cancelArmingSites, ref cancelArmingDefined, cancelPending);
                 if (!IsSimulation(md, owner))
                 {
                     string outer = md.GetString(md.GetTypeDefinition(Outermost(md, owner)).Name);
@@ -248,9 +255,45 @@ namespace StockManager.Tools
             if (simTypes == 0) violations.Add("시뮬레이션 형식(" + SimulationNamespace + ") 0 — 격리 판독 대상 소실(비공허성 실패)");
             int tightenHostSites = TightenFinish(tight, violations);
             // ⑫ 비공허성: 결선 진입점이 있는데 호스트 조립 호출 0 = 배지 결선 소실(지터 미결선 출하)
+            // ⑬ 비공허성: 무장 결선 진입점이 있는데 호스트 호출 0 = 대사기 무장 술어 미결속(유령 취소 영구 억제 — 무장 시 정리 기능 소실)
+            if (cancelArmingDefined) violations.AddRange(cancelPending);
+            if (cancelArmingDefined && cancelArmingSites == 0) violations.Add(HostAssemblyType + ": " + ReconcilerType + "." + CancelArmingMethod + " 호출 0 — 유령 취소 무장 술어 미결선(비공허성 실패)");
             if (pumpJitterDefined && pumpJitterSites == 0) violations.Add(HostAssemblyType + ": " + DashHubType + "." + PumpJitterMethod + " 호출 0 — 호스트 펌프 지터 결선 소실(비공허성 실패)");
             // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
-            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites, tight.AuditAware, pumpJitterSites);
+            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites, tight.AuditAware, pumpJitterSites, cancelArmingSites);
+        }
+
+        // ════════════ [v12.18.7-GM] ⑬ 유령 비상 취소 무장 가드 ════════════
+        //  무장 결선 진입점(AttachCancelArming)이 있는 바이너리: 대사기 안 CancelRowsLocked(브로커 취소 송신) 호출마다 같은 메서드에서 그보다 앞선
+        //  CancelArmedNow 호출과, 그 사이 조건 분기(brfalse/brtrue)가 있어야 한다 — 표본 제거 · 분기 nop 패치 = 무장 무관 송신 = 위반.
+        //  CancelRowsLocked 호출은 대사기 형식 안에서만(우회 송신 0). AttachCancelArming 호출은 호스트 조립(BlazorHomeForm 트리) · 시뮬레이션만.
+        //  진입점 부재(구 바이너리) = ⑬ 미적용 → 출하 게이트 --require-cancel-arming 이 거부.
+        private static void CancelArmingVisit(MetadataReader md, List<(OpCode Op, int Operand)> ins, TypeDefinitionHandle owner, string tname, string mname,
+                                              ref int hostSites, ref bool defined, List<string> violations)
+        {
+            bool sim = IsSimulation(md, owner);
+            string outer = md.GetString(md.GetTypeDefinition(Outermost(md, owner)).Name);
+            if (tname == ReconcilerType && mname == CancelArmingMethod) defined = true;
+            int lastArmed = -1, lastBranch = -1;
+            for (int k = 0; k < ins.Count; k++)
+            {
+                var op = ins[k].Op;
+                if (op == OpCodes.Brfalse || op == OpCodes.Brfalse_S || op == OpCodes.Brtrue || op == OpCodes.Brtrue_S) lastBranch = k;
+                if (!IsCall(op)) continue;
+                var (type, name) = MethodOwner(md, ins[k].Operand);
+                if (type != ReconcilerType) continue;
+                if (name == CancelArmedMethod) lastArmed = k;
+                else if (name == CancelSendMethod)
+                {
+                    if (outer != ReconcilerType) violations.Add(outer + "." + mname + ": " + CancelSendMethod + " 대사기 밖 호출 — 무장 판정 우회 취소 송신");
+                    else if (lastArmed < 0 || lastBranch < lastArmed) violations.Add(ReconcilerType + "." + mname + ": " + CancelSendMethod + " 앞 " + CancelArmedMethod + " 표본 · 조건 분기 없음 — 무장 무관 취소 송신");
+                }
+                else if (name == CancelArmingMethod)
+                {
+                    if (outer == HostAssemblyType) hostSites++;
+                    else if (!sim) violations.Add(outer + "." + mname + ": " + CancelArmingMethod + " 호스트 조립 밖 결선");
+                }
+            }
         }
 
         // ════════════ [v12.18.6-GM] ⑫ 대시보드 펌프 지터 결선 ════════════

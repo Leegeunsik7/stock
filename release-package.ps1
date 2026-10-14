@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.18.6-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.18.7-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).
@@ -45,6 +45,8 @@
 #              Task.Delay · SpinWait.SpinUntil 0 · 생성자 기본 시계 = Stopwatch.GetTimestamp. 위반 = 출하 산출물 전량 폐기.
 #            + [v12.18.6-GM] 호스트 펌프 지터 결선 강제(--require-pump-jitter · [9/10] --verify-live-armed) — ⑫ BlazorHomeForm 트리의
 #              DashboardSnapshotHub.AttachPumpJitter ≥1 · 조립 밖 결선/AttachJitter 직접 결선 0 · 진입점 본문 AttachJitter 정확히 1. 위반 = 산출물 전량 폐기.
+#            + [v12.18.7-GM] 유령 취소 무장 가드 강제(--require-cancel-arming · [9/10] --verify-live-armed) — ⑬ BrokerOpenOrderReconciler 의
+#              CancelRowsLocked 호출마다 앞선 CancelArmedNow 표본 + 조건 분기 · 대사기 밖 송신 0 · 호스트 AttachCancelArming ≥1. 위반 = 산출물 전량 폐기.
 #   [v12.18.4-GM · 방향 B] 피어 철회 드리프트 방어(PeerRevocationDriftSafeguard · --peer-drift) — [0/10] 이 피어 '브랜치'까지 고정(분리 HEAD = 중단)하고
 #     [7/10] zip 생성 직전 · [10/10] 동기화 전 · 완료 직전에 브랜치 · HEAD · 봉인 매니페스트 SHA-256 · 미커밋 코드 0 을 재판독.
 #     1비트라도 이동(브랜치 전환 · 1커밋 전진 · 재봉인) = 스테이징 · 출하 산출물 전량 폐기 후 중단(-NoPeer = 생략).
@@ -326,7 +328,7 @@ Set-Content -LiteralPath "$zipOut.sha256" -Value ("{0}  {1}" -f $zipSha, (Split-
 Step 9 "출하 zip 무추출 수검(--verify-zip · 항목 스트림 해시 · 재계산 봉인 ↔ master-seal.txt)..."
 $zipVerify = Invoke-HostCli @('--verify-zip', ('"' + $zipOut + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"')) "verify-zip"
 if ($zipVerify -ne 0) { Remove-ReleaseOutputs; Fail "zip 무추출 수검 실패(exit=$zipVerify) — 출하 산출물 전량 폐기" }
-$armVerify = Invoke-HostCli @('--verify-live-armed', ('"' + $zipOut + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger', '--require-pump-jitter') "verify-live-armed"
+$armVerify = Invoke-HostCli @('--verify-live-armed', ('"' + $zipOut + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger', '--require-pump-jitter', '--require-cancel-arming') "verify-live-armed"
 if ($armVerify -ne 0) { Remove-ReleaseOutputs; Fail "출하 바이너리 liveArmed 기본값 판독 거부(exit=$armVerify) — 출하 산출물 전량 폐기" }
 
 # ── [10/10] [방향 B] 다중 저장소 핸드셰이크(피어 읽기 전용) ──
