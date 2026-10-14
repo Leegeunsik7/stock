@@ -7,7 +7,7 @@
 //     5초 유지 후 Normal 복귀(누적 보존) · 사본 판독은 작성자 스레드 상태 미접근.
 //  §4 동시성 — 작성자 스레드 연속 스파이크 · 판독 스레드 사본: 찢긴 사본 0(불변식 4종 대조).
 //  §5 Soak 하네스 통합 — LongSoakProfileHarness 실 측정 센티널을 허브에 결선 → 프레임 최악 K = 실표본.
-//  §6 래칫(≤40) · RCL 순수성 · 뷰 결선 · 호스트 정직 미결선(실 측정 생산자 없음 = 배지 '지터 미결선').
+//  §6 래칫(≤40) · RCL 순수성 · 뷰 결선 · 호스트 결선 = 펌프 실행 소요(AttachPumpJitter)뿐(시뮬레이션 하네스 미결선).
 // ============================================================================
 using System;
 using System.IO;
@@ -307,9 +307,10 @@ namespace StockManager.Tests.Telemetry
             Assert.Contains("SignalLabelMapper.JitterStateClass(f.JitterState)", view);
             Assert.Contains("SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotLast, f.JitterLastSpikeNanos)", view);
             Assert.DoesNotContain("$\"", view);
-            // 호스트 정직 미결선: 실 측정 생산자(센티널 작성자)는 Soak 하네스(시뮬레이션)뿐 — 호스트는 결선하지 않는다(배지 = '지터 미결선').
+            // 호스트 결선 = 자체 펌프 실행 소요(AttachPumpJitter · 펌프 지터 마일스톤)뿐 — 시뮬레이션 하네스 센티널 결선 0.
             string form = File.ReadAllText(Path.Combine(root, "StockManager", "Blazor", "BlazorHomeForm.cs"));
-            Assert.DoesNotContain("AttachJitter", form);
+            Assert.DoesNotContain("dashHub.AttachJitter(", form);
+            Assert.Contains("dashHub.AttachPumpJitter(", form);
             Assert.DoesNotContain("LongSoakProfileHarness", form);
             string shell = File.ReadAllText(Path.Combine(root, "StockManager", "Blazor", "Pages", "PaperTradingDashboard.razor"));
             Assert.DoesNotContain("@inject", shell);

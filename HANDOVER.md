@@ -1710,3 +1710,14 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - JitterTelemetryBindingTests 6: 정상 100만 표본 게시 0 · 값 정확 · δ=0(기록 · 스파이크 게시 · 판독 · 펌프 · 라벨) · 즉시 반영/5초 복귀 ·
   동시성 판독 604만 회(경합 107만) 찢김 0 · Soak 하네스 실 센티널 결선(표본 2.6만 · 최악 16) · 래칫 ≤40 · RCL 순수성 · 호스트 미결선 핀.
 - WebOnly + sln 전체 Release -warnaserror 0W/0E · 전체 스위트 3,795/3,795. 버전 범프 없음(DEV · 출하 v12.18.5-GM 불변).
+
+### 62.4 호스트 실 지터 결선 — 대시보드 펌프 실행 소요(2026-10-14)
+- 생산자 = DashboardSnapshotHub.Pump 자신(매매 핫패스 밖): 회차 전체(링 소비 · 조립 · 게시 · 구독자 통지)를 Begin/End(Stopwatch.GetTimestamp + Gen0 수집 차)로 측정 →
+  호스트 전용 센티널 기록(Kind = PumpJitterKind 1). 작성자 = 펌프(단일 진입 CAS로 직렬화 → 센티널 단일 작성자 계약 충족).
+- AttachPumpJitter(s) = 기록 결선 + AttachJitter(s). 이번 회차 측정은 다음 회차 판독에 반영(50ms 지연 · 정직). 500µs 초과 = 스파이크 · 구간 내 GC = GC 태그.
+- BlazorHomeForm: 센티널 생성 → AttachPumpJitter → Start. 종료 = 허브 Dispose(진행 중 회차 대기 후 _pumping=2 영구 봉인) → 센티널 Dispose(NativeMemory 해제 경합 0).
+- 시뮬레이션 격리 유지: 호스트는 Soak 하네스 미참조 · dashHub.AttachJitter 직접 호출 0(§6 핀 갱신 — AttachPumpJitter 존재 핀).
+- HostJitterInstrumentationTests 4: 결선 펌프(유휴 · 게시 · 스파이크 기록) δ=0 · 계측 단가 ≈91ns/회차(상한 1µs · 50ms 대비 0.0002%) ·
+  구독자 700µs 지연 주입 → 스파이크 +1 · 최대/마지막 ≥700µs · 배지 Spike · GC.Collect 동반 → GcSpike · 미결선 → 결선 후 첫 회차 정상 지표 ·
+  실 타이머 첫 게시 ≤119ms 지표 전환 · Dispose 봉인(진행 중 20ms 회차 대기 · 이후 Pump false).
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,799/3,799 · 래칫 ≤40.

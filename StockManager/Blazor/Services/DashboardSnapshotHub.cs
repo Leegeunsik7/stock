@@ -25,6 +25,10 @@
 //  [v12.18.6-DEV] 선택 결선 MicrosecondJitterSentinel(AttachJitter): 펌프가 회차마다 센티널 seqlock 사본(TryReadSnapshot · 잠금/대기/할당 0)을
 //   판독 → 임계 초과 누적이 늘면 5초간 스파이크(마지막 스파이크 GC 태그 = GC 유발) 배지 · 이후 정상 복귀. 경합 회차 = 직전 사본 유지(계수).
 //   센티널 작성자(측정 스레드)는 허브를 모른다 — 게시는 작성자의 드문 경로에서만 일어나므로 측정 핫패스 추가 비용 0.
+//  [v12.18.6-DEV · 펌프 지터] 호스트 실 지터 생산자 = 이 펌프 자신(AttachPumpJitter): 회차 실행 소요(PumpCore 전체 — 링 소비 · 조립 · 게시 · 통지)를
+//   Begin/End(Stopwatch.GetTimestamp + Gen0 수집 차 · 할당 0)로 재서 호스트 전용 센티널에 기록 + 같은 센티널을 AttachJitter 결선.
+//   작성자 = 펌프(단일 진입 CAS 로 직렬화 — 센티널 단일 작성자 계약 충족). 이번 회차 측정은 다음 회차 판독에 반영(50ms 지연 · 정직).
+//   Dispose = 진행 중 회차 종료 대기 후 펌프 영구 봉인 → 그 뒤 센티널 폐기(NativeMemory 해제)와 경합 0.
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -155,6 +159,10 @@ namespace StockManager.Blazor.Services
         private MicrosecondJitterSentinel? _jitter;
         private JitterSnapshot _jitSnap;
         private long _jitSeenSpikes = -1, _jitSpikeAt = long.MinValue, _jitterContended;
+        // ── [v12.18.6-DEV · 펌프 지터] 펌프 실행 소요 계측(작성자 = 펌프 · 단일 진입) ──
+        /// <summary>호스트 펌프 센티널 표본의 구간 종류(JitterSpike.Kind).</summary>
+        public const byte PumpJitterKind = 1;
+        private MicrosecondJitterSentinel? _pumpJitter;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -232,6 +240,16 @@ namespace StockManager.Blazor.Services
         public void AttachJitter(MicrosecondJitterSentinel sentinel)
             => Volatile.Write(ref _jitter, sentinel ?? throw new ArgumentNullException(nameof(sentinel)));
 
+        /// <summary>
+        /// [v12.18.6-DEV · 펌프 지터] 펌프 실행 소요를 센티널에 기록(작성자 = 펌프) + 같은 센티널을 AttachJitter 결선(호스트 실 지터 소스).
+        /// ★센티널은 이 허브 전용이어야 한다(다른 작성자 금지 — 단일 작성자 계약). 폐기는 허브 Dispose 뒤.
+        /// </summary>
+        public void AttachPumpJitter(MicrosecondJitterSentinel sentinel)
+        {
+            Volatile.Write(ref _pumpJitter, sentinel ?? throw new ArgumentNullException(nameof(sentinel)));
+            AttachJitter(sentinel);
+        }
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -272,10 +290,18 @@ namespace StockManager.Blazor.Services
         /// <summary>1회차 조립 + 게시(타이머 · 테스트 직접 호출). 반환 = 새 프레임 게시 여부. 예외는 계수만(호출자 전파 0).</summary>
         public bool Pump()
         {
-            if (Interlocked.CompareExchange(ref _pumping, 1, 0) != 0) return false;
-            try { return PumpCore(); }
-            catch (Exception) { Interlocked.Increment(ref _pumpFaults); return false; }
-            finally { Volatile.Write(ref _pumping, 0); }
+            if (Interlocked.CompareExchange(ref _pumping, 1, 0) != 0) return false;   // 1 = 진행 중 · 2 = 폐기 봉인
+            var pj = Volatile.Read(ref _pumpJitter);
+            long t0 = MicrosecondJitterSentinel.Begin(out int g0);
+            bool published = false;
+            try { published = PumpCore(); }
+            catch (Exception) { Interlocked.Increment(ref _pumpFaults); }
+            finally
+            {
+                try { pj?.End(t0, g0, PumpJitterKind, 0); } catch (ObjectDisposedException) { Interlocked.Increment(ref _pumpFaults); }
+                Volatile.Write(ref _pumping, 0);
+            }
+            return published;
         }
 
         private bool PumpCore()
@@ -628,6 +654,9 @@ namespace StockManager.Blazor.Services
         {
             Volatile.Write(ref _running, 0);
             Interlocked.Exchange(ref _timer, null)?.Dispose();
+            // 진행 중 회차 종료 대기 → 영구 봉인(2): 이후 Pump = false · 결선 센티널 폐기와 경합 0(구독자는 비동기 게시뿐 — 역대기 없음)
+            var spin = new SpinWait();
+            while (Interlocked.CompareExchange(ref _pumping, 2, 0) == 1) spin.SpinOnce();
         }
     }
 }
