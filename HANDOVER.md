@@ -1674,3 +1674,15 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   태그 worktree 실 스크립트(-NoPeer 없이) = [0/10] 피어 미커밋 코드 사전 점검에서 먼저 exit 1(1.2s · 빌드 0 · release/ 생성 0). 출하 계속 보류(§61.4).
 - 운영자 조치: QuantumVault .serena/project.yml 정리(커밋/원복) + seal_v2.8.0.ps1 재봉인 → --peer-readiness 0 확인 후 §61.4 절차.
 - 전체 스위트 3,789/3,789 · sln + WebOnly Release -warnaserror 0W/0E · 래칫 40 불변(UI 변경 0).
+
+### 61.6 출하 — v12.18.5-GM 단독(-NoPeer) (2026-10-14)
+- 결정: QuantumVault 피어 연동 중단 · StockManager 단독 출하(-NoPeer · 피어 조회/탐침 0). §61.4 양방향 보류 라인 종결.
+- 형제 worktree `StockManager-gm-12.18.5-np`(태그 v12.18.5-GM = d44c35b · 미커밋 0)에서 release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0:
+  [1]/[2] WebOnly · sln 전체(Host · Tests · PrimesBench · x86 KiwoomProxy · KiwoomComShim) -warnaserror 통과 · [3] 3,788/3,788(태그 소스 — §61.5 §13 시험은 태그 이후) ·
+  [4] 결합도 0 ≤ 117 · [5] 래칫 40 통과 · [6] 이중키 조회 16 · 마스터 플래그 1 = false · [7] 아티팩트 38 · genesis v2 manifest.sig · 봉인 38 일치 · 앵커 일치 ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 49 · 강화 키 6 · 원장 ⑪) ·
+  [10] interlocks Ok(30 · 마스크 0x800000001FFFFFFF) · tighten Ok(6 · 원장 ⑪ · seqlock ⑤ · IPC 패브릭 무대기·무슬립 ⑥) · handshake Ok @d44c35b587.
+- 산출물(release/): release-v12.18.5-GM.zip SHA-256 `60276FC322456A91B35A6F48A753F3664AC27C87E3F59B64DDBA65E073CE83E7` ·
+  masterSeal `A019E3F7DF70F3C297B73155C16519E1E2B2D00D816BAB00824DE11F1F15F560` · sourceCommit d44c35b · 피어 기록 없음(단독).
+- v12.18.4-GM 산출물 13건(zip FA7830F7… · masterSeal 5C2597E4…) → release/superseded-v12.18.4-GM/ 이관.
+- 메인 체크아웃(885fcfd) 재수검: GoldenMasterReleasePackagingTests · PeerDriftGuardTests · PureShellFitness 48/48 · 전체 스위트 3,789/3,789.
