@@ -191,6 +191,13 @@ namespace MS2E.UI.Portable.Helpers
             return n.Text;
         }
 
+        // ── [v12.18.7-DEV] 브로커 세션 배지(DashSession 0..7) — 녹 연결 · 황 대기/재접속/대사 · 적 소진/불일치 격리 · 회 미결선 ──
+        private static readonly string[] SessionStates = { "세션 미결선", "연결", "접속 대기", "재접속 대기(백오프)", "재접속 중", "대사 중", "소진 격리", "원장 불일치 격리" };
+        private static readonly string[] SessionStateClasses = { "off", "ok", "wait", "wait", "wait", "wait", "bad", "bad" };
+        public static int SessionStateCount => SessionStates.Length;
+        public static string SessionStateLabel(int state) => (uint)state < (uint)SessionStates.Length ? SessionStates[state] : Unknown;
+        public static string SessionStateClass(int state) => (uint)state < (uint)SessionStateClasses.Length ? SessionStateClasses[state] : "off";
+
         // ── [v12.18.2-DEV] 시그널 게이트 모드(DashGateMode 0 미결선 · 1 관측 · 2 강제) ──
         private static readonly string[] GateModes = { "게이트 미결선", "게이트 관측(미차단)", "게이트 강제" };
         private static readonly string[] GateModeClasses = { "off", "observe", "enforce" };

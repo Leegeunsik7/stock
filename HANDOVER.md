@@ -1744,3 +1744,31 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `1DDCE28A1AAD0BEA9943816A048A02D1D097A98ADD3FA7860EFD6A59C8C8826A` · sourceCommit 741fe17 · 피어 기록 없음(단독).
 - v12.18.5-GM 산출물 13건(zip 60276FC3… · masterSeal A019E3F7…) → release/superseded-v12.18.5-GM/ 이관. worktree 제거.
 - 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · GoldenMaster*/PeerDriftGuard/PureShellFitness 61/61 · 전체 스위트 3,800/3,800 · CLI --verify-live-armed --require-pump-jitter Ok.
+
+## 64. v12.18.7-DEV — /aidash 브로커 세션 복구 배지 (2026-10-14)
+
+### 64.1 전제 검증(오더 ↔ 실재) — 대부분 v12.17.0~1-GM 에서 이미 출하
+- SessionRecoveryManager(백오프 1·2·4·8·16s · 소진 5회 sticky · 침묵 강제 종료 · 재접속 후 대사 확정 전 격리) · RecoveryStateDriftMonitor(MMF 100/101) ·
+  KisRealtimeSession(PINGPONG 반송 · 장중 3초 침묵 = 비트 19 KisSession) · KisTokenLifecycle/KisLiveBroker(서버 expires_in · 만료 5분 전 갱신 · 실패 = 비트 18 KisAuth) ·
+  KisOpenOrderQuery(TTTC8001R) + BrokerOpenOrderReconciler(불일치/유령 = 비트 22 + 영구 래치 · 유령 비상 취소 TTTC0803U 패스당 ≤4) · 키움 링크 = 비트 25 KiwoomBridgeLink.
+- 오더 서술과 실재 차이(변경 안 함 · 운영자 결정 사항):
+  ① 비트 14 = AccountDivergence(BrokerCommTimeout 아님) — 키움 프록시 무응답은 기존 비트 25 + 수동 모드 복구 관리자 격리.
+  ② 백오프 상한 16s(오더 30s) · 토큰 선행 갱신 5분(오더 30분) — 출하된 동작 · 시험 핀 유지.
+  ③ ★유령 비상 취소는 liveArmed 와 무관하게 동작(실측 · BrokerOpenOrderReconciler.CancelRowsLocked — 무장 술어 미참조): KIS 자격 증명이 구성되면
+     (kisLive ≠ null → AttachKisCanceller) 로컬 미추적 미체결 = 유령 → 실 TTTC0803U 취소 송신(패스당 ≤4 · 5초 중복 억제). HTS/MTS 수동 주문도 대상.
+     취소 = 노출 축소 방향이라 의도된 설계일 수 있으나 '수동 주문 병행 계좌'에선 사고 — 운영자 결정 필요(무장 게이트 · 설정 옵트인 · 엔진 주문 식별 한정). 변경 안 함.
+  ④ GenesisPreFlightUpdater 는 무장 임대 재인증기(브로커 세션 무관) — 확장하지 않음. 1초 집계 대신 대시보드 50ms 펌프가 관리자 사본을 직접 판독.
+- 실제 공백 = /aidash 에 브로커 세션 상태 표시 0 → 이 마일스톤 범위.
+
+### 64.2 구현
+- SessionRecoveryManager.Snapshot(): 상태 · 수립 이력 · 소진/불일치 래치 · 격리 · 연속 실패/상한 · 단절/복구/시도 누적을 락 1회로 판독(record struct · 0B).
+- 포트: DashSession(0 미결선 · 1 연결 · 2 접속 대기 · 3 백오프 · 4 재접속 중 · 5 대사 중 · 6 소진 격리 · 7 불일치 격리 — 래치 우선) + DashBrokerSession · 프레임 Sessions/SessionCount.
+- DashboardSnapshotHub.AttachSessionRecovery(인덱스 = Broker · 0..3): 펌프가 사본 판독 → 서명(결선 표지 + 상태/래치/계수 — 결선 즉시 · 전이 즉시 재게시) → 프레임.
+  ★교정(시험 실측): 초기 상태(Connecting · 계수 0)는 서명 기여 0 → 결선 직후 재게시 누락 — 결선 표지(+1 + 인덱스)로 해소.
+- BlazorHomeForm: 드리프트 모니터 생성 뒤 kiwoomRecovery/kisRecovery 결선(판독 전용 — 격리/재접속 경로 무간섭). 브로커 연결 꺼짐 = '세션 복구 관리자 미결선' 정직 렌더.
+- 뷰: '브로커 한도' 카드 아래 '브로커 세션' 표(녹 연결 · 황 대기/백오프/재접속/대사 · 적 소진/불일치 · 실패 n/상한 · 단절 · 복구). SignalLabelMapper 정적 라벨/클래스.
+
+### 64.3 검증
+- StockManager.Tests/Adapters/SessionRecoveryManagerTests 5: 사본 = 속성 일치 · 전 생애주기 분류(백오프 · 재접속 · 대사 · 복구 · 소진 · 불일치 우선) ·
+  허브 결선 즉시/전이 즉시 재게시 · 무변경 게시 0 · 인덱스 범위 거부 · δ=0(사본 · 2관리자 펌프 유휴/전이 · 라벨) · 결선/순수성/래칫 ≤40.
+- 오중 빌드 Release -warnaserror 0W/0E · 전체 스위트 3,805/3,805. liveArmed:false 불변 · 실 브로커 송신 0 · QuantumVault 미접근. 버전 범프 없음(DEV).

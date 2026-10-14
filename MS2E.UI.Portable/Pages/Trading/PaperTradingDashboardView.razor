@@ -205,6 +205,20 @@ else
                     }
                     @if (f.LimitCount == 0) { <tr><td colspan="2" class="pd-empty">계좌 뷰 미결선</td></tr> }
                 </table>
+                <h3>브로커 세션</h3>
+                <table class="pd-tbl">
+                    @for (int i = 0; i < f.SessionCount; i++)
+                    {
+                        var s = f.Sessions[i];
+                        <tr>
+                            <td>@BrokerName(s.Broker)</td>
+                            <td><span class="pd-ses @SignalLabelMapper.SessionStateClass(s.State)">@SignalLabelMapper.SessionStateLabel(s.State)</span>
+                                @if (s.Failures > 0) { <em class="pd-ses-n">실패 @(s.Failures)/@(s.MaxFailures)</em> }</td>
+                            <td><em class="pd-ses-n">단절 @(s.Losses) · 복구 @(s.Recoveries)</em></td>
+                        </tr>
+                    }
+                    @if (f.SessionCount == 0) { <tr><td colspan="3" class="pd-empty">세션 복구 관리자 미결선(브로커 연결 꺼짐)</td></tr> }
+                </table>
                 <h3>체결 통보 피드 <small>(최근 @(f.FillCount)건)</small></h3>
                 <table class="pd-tbl">
                     @for (int i = 0; i < f.FillCount; i++)
@@ -304,6 +318,9 @@ else
     .pd-jit { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
     .pd-jit.ok { background: #2e7d32; color: #fff; } .pd-jit.spike { background: #f9a825; color: #111; } .pd-jit.gc { background: #E53935; color: #fff; }
     .pd-jit em { font-style: normal; font-weight: 400; opacity: .85; }
+    .pd-ses { padding: 1px 6px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
+    .pd-ses.ok { background: #2e7d32; color: #fff; } .pd-ses.wait { background: #f9a825; color: #111; } .pd-ses.bad { background: #E53935; color: #fff; }
+    .pd-ses-n { font-style: normal; opacity: .8; margin-left: 4px; }
     .pd-sw { display: inline-block; width: 8px; height: 12px; border-radius: 2px; }
     .pd-gate.enforce { background: #1565c0; color: #fff; } .pd-gate.observe { background: #4e342e; color: #ffcc80; }
     .pd-lat-grade.ok { background: #2e7d32; color: #fff; } .pd-lat-grade.spike { background: #f9a825; color: #111; }

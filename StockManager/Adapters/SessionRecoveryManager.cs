@@ -43,6 +43,10 @@ namespace StockManager.Adapters
 {
     public enum SessionRecoveryState : byte { Connecting = 0, Connected = 1, Backoff = 2, Reconciling = 3 }
 
+    /// <summary>[v12.18.7-DEV] 관제 사본(락 1회 일관 판독 · 값 형식 · 할당 0) — 상태 · 래치 · 연속 실패 · 누적 계수.</summary>
+    public readonly record struct SessionRecoverySnapshot(SessionRecoveryState State, bool EverConnected, bool Exhausted, bool Discrepancy, bool Isolated,
+                                                          int ConsecutiveFailures, int MaxFailures, long Losses, long Recoveries, long Attempts);
+
     public sealed class SessionRecoveryManager : IValueTaskSource<bool>
     {
         public const int DefaultMaxFailures = 5;
@@ -149,6 +153,15 @@ namespace StockManager.Adapters
         public long IsolationReasserts => Interlocked.Read(ref _reasserts);
         public long Isolations => Interlocked.Read(ref _isolations);
         public long Releases => Interlocked.Read(ref _releases);
+        public int MaxFailures => _maxFailures;
+
+        /// <summary>[v12.18.7-DEV] 관제 사본 — 상태 · 래치 · 연속 실패를 같은 락 1회로 판독(찢김 0 · 할당 0 · 대시보드 펌프용).</summary>
+        public SessionRecoverySnapshot Snapshot()
+        {
+            lock (_gate)
+                return new SessionRecoverySnapshot(_state, _everConnected, _exhausted, _discrepancy, _isolated, _failures, _maxFailures,
+                                                   Interlocked.Read(ref _losses), Interlocked.Read(ref _recoveries), Interlocked.Read(ref _attempts));
+        }
 
         /// <summary>연속 실패 n 회 뒤의 대기(1s · 2s · 4s · 8s · 16s 상한) — 시프트 정수 연산 · δ=0.</summary>
         public long BackoffTicksFor(int failures)

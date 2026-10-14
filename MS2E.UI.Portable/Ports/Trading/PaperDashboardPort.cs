@@ -25,6 +25,9 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>브로커 한도 지표(결속 여부 · 매수 여력 원).</summary>
     public struct DashBrokerLimit { public int Broker; public bool Bound; public long HeadroomWon; }
 
+    /// <summary>[v12.18.7-DEV] 브로커 세션 복구 상태 1개(DashSession 코드 · 연속 실패/상한 · 단절 · 복구 · 재접속 시도 누적).</summary>
+    public struct DashBrokerSession { public int Broker, State, Failures, MaxFailures; public long Losses, Recoveries, Attempts; }
+
     public struct DashEquityPoint { public long Ticks, EquityWon; }
 
     /// <summary>[v12.17.5-DEV] 주문 경로 구간 1개의 최근 창(≤ 1,000 부모) 분포 — ns · 백분위 = 지연 버킷 상한(≤ 관측 최대).</summary>
@@ -65,6 +68,21 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// [v12.18.6-DEV] 마이크로초 지터 센티널 배지(0 미결선 · 1 정상 · 2 스파이크 · 3 GC 유발 스파이크).
     /// 스파이크/GC = 최근 HoldTicks(5초) 안에 임계(기본 500µs) 초과 표본이 새로 들어옴 — 그 뒤엔 누적 수만 남기고 정상 복귀.
     /// </summary>
+    /// <summary>
+    /// [v12.18.7-DEV] 브로커 세션 배지 — 0 미결선(관리자 없음) · 1 연결 · 2 접속 대기(최초 미연결) · 3 재접속 대기(백오프) · 4 재접속 중 ·
+    /// 5 대사 중(재접속 후 미체결 대사 확정 전) · 6 소진 격리(sticky) · 7 원장 불일치 격리(sticky). 래치 = 상태보다 우선.
+    /// 2~5 = 신규 발주 격리(한도 0 · 블랙리스트 — 세션 수립 이력이 있을 때) · 6/7 = 물리 이중키 재설정 전 격리 유지.
+    /// </summary>
+    public static class DashSession
+    {
+        public const int Unbound = 0, Connected = 1, Waiting = 2, Backoff = 3, Reconnecting = 4, Reconciling = 5, Exhausted = 6, Discrepancy = 7;
+
+        /// <param name="state">SessionRecoveryState 원값(0 Connecting · 1 Connected · 2 Backoff · 3 Reconciling).</param>
+        public static int Classify(bool bound, int state, bool everConnected, bool exhausted, bool discrepancy)
+            => !bound ? Unbound : discrepancy ? Discrepancy : exhausted ? Exhausted
+             : state switch { 1 => Connected, 2 => Backoff, 3 => Reconciling, 0 => everConnected ? Reconnecting : Waiting, _ => Unbound };
+    }
+
     public static class DashJitter
     {
         public const int Unbound = 0, Normal = 1, Spike = 2, GcSpike = 3;
@@ -157,6 +175,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         // [v12.18.6-DEV] 마이크로초 지터 센티널 — 상태(DashJitter) · 임계 초과 누적/GC 누적 · 최대 · 마지막 스파이크 · 최악 K 표본 요약(개수 · K 번째 · GC 태그).
         public int JitterState = DashJitter.Unbound, JitterWorstCount, JitterWorstGcCount;
         public long JitterSpikes, JitterGcSpikes, JitterMaxNanos, JitterLastSpikeNanos, JitterWorstFloorNanos;
+
+        // [v12.18.7-DEV] 브로커 세션 복구 상태(결선된 관리자만 · 브로커 인덱스 순).
+        public readonly DashBrokerSession[] Sessions = new DashBrokerSession[MaxBrokers];
+        public int SessionCount;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();

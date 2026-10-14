@@ -1699,6 +1699,9 @@ namespace StockManager.Blazor
                 : null;
             // [Long-Soak · 방향 A] 세션 복구 상태 전이(체류 Stopwatch 틱) · 격리 작동 표류(2 펌프 지속) → MMF 블랙박스(100/101). 관리자 펌프 '뒤'에 펌프.
             var recoveryMonitor = new StockManager.Adapters.RecoveryStateDriftMonitor(blackbox, limitFeed, null, kiwoomRecovery, kisRecovery);
+            // [v12.18.7-DEV] /aidash 브로커 세션 배지(관리자 Snapshot 락 1회 · 판독 전용 — 격리/재접속 경로 무간섭)
+            if (kiwoomRecovery is not null) dashHub.AttachSessionRecovery(kiwoomRecovery);
+            if (kisRecovery is not null) dashHub.AttachSessionRecovery(kisRecovery);
             services.AddSingleton(recoveryMonitor);
             // [KIS 미체결 대사 · 추천 A] TTTC8001R 실배선 — 전용 1초 타이머(HTTP 블로킹)가 당일 미체결 페이지를 대사기 KIS venue 로 공급.
             //   KIS 한도 0 = 최초 확정 전 · 미확정(재접속 RequestReconcile) · 유령 · 불일치. 확정 = 복구 관리자 즉시 해제 통지.

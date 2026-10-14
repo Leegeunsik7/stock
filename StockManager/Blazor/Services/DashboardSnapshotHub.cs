@@ -163,6 +163,9 @@ namespace StockManager.Blazor.Services
         /// <summary>호스트 펌프 센티널 표본의 구간 종류(JitterSpike.Kind).</summary>
         public const byte PumpJitterKind = 1;
         private MicrosecondJitterSentinel? _pumpJitter;
+        // ── [v12.18.7-DEV] 브로커 세션 복구 관리자(선택 결선 · 인덱스 = 브로커) ──
+        private readonly SessionRecoveryManager?[] _sessions = new SessionRecoveryManager?[Brokers];
+        private readonly SessionRecoverySnapshot[] _sesSnap = new SessionRecoverySnapshot[Brokers];
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -248,6 +251,14 @@ namespace StockManager.Blazor.Services
         {
             Volatile.Write(ref _pumpJitter, sentinel ?? throw new ArgumentNullException(nameof(sentinel)));
             AttachJitter(sentinel);
+        }
+
+        /// <summary>[v12.18.7-DEV] 브로커 세션 복구 관리자 관제 결선(인덱스 = manager.Broker · 펌프가 Snapshot() 락 1회 판독 · 할당 0).</summary>
+        public void AttachSessionRecovery(SessionRecoveryManager manager)
+        {
+            ArgumentNullException.ThrowIfNull(manager);
+            if ((uint)manager.Broker >= (uint)Brokers) throw new ArgumentOutOfRangeException(nameof(manager), "브로커 인덱스 > " + (Brokers - 1));
+            Volatile.Write(ref _sessions[manager.Broker], manager);
         }
 
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
@@ -363,6 +374,13 @@ namespace StockManager.Blazor.Services
                 try { bound = v is not null && v.Bound; if (bound) v!.TryGetBuyHeadroomWon(out room); } catch (Exception) { bound = false; }
                 sig = sig * 31 + (bound ? room + 1 : 0);
             }
+            for (int b = 0; b < Brokers; b++)
+            {
+                var sm = Volatile.Read(ref _sessions[b]);
+                if (sm is null) continue;
+                var ss = _sesSnap[b] = sm.Snapshot();                                 // 결선 표지(+1 · 인덱스) = 초기 상태 0 이어도 결선 즉시 재게시
+                sig = sig * 31 + 1 + b * 3 + (int)ss.State * 7 + (ss.Exhausted ? 11 : 0) + (ss.Discrepancy ? 13 : 0) + ss.ConsecutiveFailures * 17 + ss.Losses * 19 + ss.Recoveries * 23;
+            }
             // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
             if (sig != _lastSignature || _pendingDirty) dirty = true;
             if (!dirty && _front is not null) return false;
@@ -404,6 +422,18 @@ namespace StockManager.Blazor.Services
                 f.Limits[lc++] = new DashBrokerLimit { Broker = b, Bound = bound, HeadroomWon = bound ? room : 0 };
             }
             f.LimitCount = lc;
+            int sc = 0;
+            for (int b = 0; b < Brokers; b++)
+            {
+                if (Volatile.Read(ref _sessions[b]) is null) continue;
+                ref readonly var ss = ref _sesSnap[b];
+                f.Sessions[sc++] = new DashBrokerSession
+                {
+                    Broker = b, State = DashSession.Classify(true, (int)ss.State, ss.EverConnected, ss.Exhausted, ss.Discrepancy),
+                    Failures = ss.ConsecutiveFailures, MaxFailures = ss.MaxFailures, Losses = ss.Losses, Recoveries = ss.Recoveries, Attempts = ss.Attempts,
+                };
+            }
+            f.SessionCount = sc;
             var op = _orderPath;
             f.LatencyBound = op is not null;
             for (int k = 0; k < DashLatencyGrade.StageCount; k++) f.LatencyStages[k] = _latStages[k];

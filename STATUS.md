@@ -1,16 +1,17 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.6-GM — 호스트 펌프 지터 텔레메트리 단독 출하(-NoPeer) · IL 규칙 ⑫
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,800/3,800 · 래칫 ≤40
+- **Active Milestone**: v12.18.7-DEV — /aidash 브로커 세션 복구 배지(키움 · KIS)
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,805/3,805 · 래칫 ≤40 · 출하 v12.18.6-GM(741fe17) 불변
 - **Updated At**: 2026-10-14
 
 ## Completed Deliverables
-- 출하 v12.18.6-GM: 태그 741fe17 · release-v12.18.6-GM.zip SHA-256 9F1C12DF72CADDAD… · masterSeal 1DDCE28A1AAD0BEA… · 아티팩트 38 · 피어 기록 없음
-- release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(형제 worktree · QuantumVault 미접근)
-- [9/10] verify-live-armed Ok: 이중키 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 49 · 강화 키 6 · 원장 ⑪ · 펌프 지터 ⑫ 1 · 위반 0
-- [10/10] 인터락 30(0x800000001FFFFFFF) · 강화 행렬 6(⑪ · seqlock ⑤ · IPC 패브릭 ⑥) · 핸드셰이크 Ok
-- IL 규칙 ⑫ + --require-pump-jitter(BlazorHomeForm 단독 AttachPumpJitter · AttachJitter 직접 결선 금지) · 시험 §15
-- v12.18.5-GM 산출물 → release/superseded-v12.18.5-GM/ · HANDOVER §63
+- SessionRecoveryManager.Snapshot(): 상태 · 래치 · 연속 실패/상한 · 누적 계수 락 1회 일관 판독(0B)
+- DashSession 8상태(연결 · 대기 · 백오프 · 재접속 · 대사 · 소진 · 불일치 · 미결선) + DashboardSnapshotHub.AttachSessionRecovery
+- BlazorHomeForm 키움/KIS 복구 관리자 결선 · /aidash '브로커 세션' 표(녹/황/적)
+- 교정: 초기 상태 결선 시 서명 기여 0 → 재게시 누락 — 결선 표지로 해소
+- SessionRecoveryManagerTests 5(분류 생애주기 · 즉시 재게시 · δ=0 · 래칫) · HANDOVER §64
+- 전제 검증: 세션 복구 · 백오프 · 토큰 갱신 · TTTC8001R 대사 · TTTC0803U 유령 취소는 v12.17.x 기출하
 
 ## Next Milestone
-- 실 호스트 기동 /aidash 지터 배지 육안 확인 · 태그/커밋 원격 푸시(운영자 승인)
+- 운영자 결정: 유령 비상 취소가 liveArmed 와 무관하게 실 송신(HTS 수동 주문도 대상) — 게이트/옵트인 여부
+- 오더 수치 차이(백오프 상한 16s vs 30s · 토큰 선행 5분 vs 30분 · 비트 14 의미) 조정 여부
