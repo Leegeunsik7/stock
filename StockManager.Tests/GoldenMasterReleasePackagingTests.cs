@@ -4,6 +4,8 @@
 //  §1 버전 정합 — 호스트 어셈블리 = ReleasePackager.DefaultVersion = 12.18.2(출하 zip 이름 · 태그 v12.18.2-GM 의 원천).
 //  §2 [방향 B · 실결함] 출하 롤백 가드 — 사전 검사 통과 직후 같은 버전 기존 산출물 전량 폐기(빌드 전) → [1]~[10] 어느 실패에도
 //     직전 실행 zip 이 '통과한 출하물'처럼 잔존하지 않음 · 빌드 -warnaserror(MSBuild 경고 포함 = 게이트와 같은 판정).
+//  §15 [v12.18.6-GM] ⑫ 호스트 펌프 지터 결선 IL 판독 — 빌드 DLL = BlazorHomeForm AttachPumpJitter 1곳 · 위반 0 · AttachJitter 직접 결선 토큰 패치 = 거부
+//     (직접 결선 + 비공허성) · CLI --require-pump-jitter 정상 Ok/패치 거부 · v12.18.5-GM 구 출하물 = ⑫ 미적용 Ok · 요구 플래그 = 거부.
 //  §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 실 실행 — 임시 호스트(태그 = HEAD)+피어(봉인 = HEAD 커밋 1초 전)로 release-package.ps1 구동:
 //     exit 1 · 판정기 exit=2(ManifestStale 단독) · [1/10] 진입 0 · zip/master-seal 생성 0 · 게이트 뒤 드리프트 재대조 미실행.
 //  §3 [Fail-Closed Tag & Seal] 실 출하 기록(release/ · 존재할 때만 — 태그 기준 깨끗한 작업 트리에서 생성 후 복사):
@@ -85,13 +87,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_5_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_6_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 5, 0), v);
-            Assert.Equal("12.18.5", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 6, 0), v);
+            Assert.Equal("12.18.6", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.5</Version>", csproj);
+            Assert.Contains("<Version>12.18.6</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -112,7 +114,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.5-GM Production Golden Master", s);
+            Assert.Contains("v12.18.6-GM Production Golden Master", s);
         }
 
         // ════════════ §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 — 실 스크립트 실행(낡은 봉인 1초 = 빌드 전 거부) ════════════
@@ -280,6 +282,8 @@ namespace StockManager.Tests
             Assert.Equal(TightenKeys, st.TightenRuleCount);
             // [v12.18.2-GM · 방향 A] 감사 원장 결선(⑪) — 출하 zip 호스트 DLL · 요구 플래그
             Assert.True(arm.AuditLedgerAware, "출하 바이너리 감사 원장 ⑪ 미적용");
+            // [v12.18.6-GM] ⑫ 호스트 펌프 지터 결선(12.18.6 이후 출하물) — 스크립트 [9/10] --require-pump-jitter 와 같은 요구
+            if (new Version(ver) >= new Version(12, 18, 6)) Assert.True(arm.PumpJitterSites >= 1, "출하 바이너리 호스트 펌프 지터 결선 ⑫ 0");
             var audit = ShippedTightenMatrixVerifier.Verify(zip, json, anchor, TightenKeys, requireAuditLedger: true);
             _out.WriteLine($"[출하] 감사 원장 결선 {audit.Verdict} · {audit.Detail}");
             Assert.Equal(TightenSealVerdict.Ok, audit.Verdict);
@@ -1289,7 +1293,7 @@ namespace StockManager.Tests
         public void AuditLedger_PackageScript_RequiresLedger_BothCalls_CliExitCodes()
         {
             string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
-            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger') \"verify-live-armed\"", s);
+            Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-pump-jitter') \"verify-live-armed\"", s);
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') \"verify-tighten\"", s);
             Assert.Equal(8, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가 · v12.18.4-GM: + 피어 드리프트 거부(Assert-PeerPinned)
             string dir = TempDir();
@@ -1618,6 +1622,70 @@ namespace StockManager.Tests
                                                         File.ReadAllText(Path.Combine(d, "master-seal.txt")), TightenKeys, requireAuditLedger: true, requireAuditTelemetry: true, requireIpcFabric: true);
             _out.WriteLine($"[IPC 위상] v12.18.3-GM: {r.Verdict} · {r.Detail}");
             Assert.Equal(TightenSealVerdict.Ok, r.Verdict);
+        }
+
+        // ════════════ §15 [v12.18.6-GM] ⑫ 호스트 펌프 지터 결선 IL 판독 ════════════
+
+        private static int MethodToken(byte[] dll, string typeName, string methodName)
+        {
+            using var pe = new PEReader(new MemoryStream(dll));
+            var md = pe.GetMetadataReader();
+            foreach (var th in md.TypeDefinitions)
+            {
+                var t = md.GetTypeDefinition(th);
+                if (md.GetString(t.Name) != typeName) continue;
+                foreach (var mh in t.GetMethods())
+                    if (md.GetString(md.GetMethodDefinition(mh).Name) == methodName) return MetadataTokens.GetToken(mh);
+            }
+            Assert.Fail(typeName + "." + methodName + " 없음");
+            return 0;
+        }
+
+        [Fact]
+        public void PumpJitterBinding_BuiltHost_HostAssemblyOnly_DirectBindPatch_Rejected_CliRequires()
+        {
+            byte[] dll = File.ReadAllBytes(HostDll());
+            var ok = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(dll));
+            _out.WriteLine($"[⑫] 펌프 지터 결선 {ok.PumpJitterSites} · 시뮬레이션 형식 {ok.SimulationTypes}(CLI {ok.SimulationCliSites}) · 위반 {ok.Violations.Count}");
+            Assert.True(ok.Ok, string.Join(" | ", ok.Violations));
+            Assert.Equal(1, ok.PumpJitterSites);                                                 // BlazorHomeForm 조립 1곳
+
+            // 호스트가 펌프 결선 대신 외부 센티널을 배지에 직접 결선(call/callvirt 4바이트 토큰 교체 — 같은 시그니처)
+            int from = MethodToken(dll, ShippedBinaryLiveArmedGuard.DashHubType, ShippedBinaryLiveArmedGuard.PumpJitterMethod);
+            int to = MethodToken(dll, ShippedBinaryLiveArmedGuard.DashHubType, ShippedBinaryLiveArmedGuard.JitterMethod);
+            var bad = (byte[])dll.Clone();
+            int patched = 0;
+            for (int i = 0; i + 4 < bad.Length; i++)
+                if ((bad[i] == 0x28 || bad[i] == 0x6F) && BitConverter.ToInt32(bad, i + 1) == from) { BitConverter.GetBytes(to).CopyTo(bad, i + 1); patched++; }
+            Assert.True(patched >= 1, "패치 " + patched);
+            var r = ShippedBinaryLiveArmedGuard.Scan(new MemoryStream(bad));
+            foreach (var v in r.Violations) _out.WriteLine("[⑫] 위반: " + v);
+            Assert.False(r.Ok);
+            Assert.Equal(0, r.PumpJitterSites);
+            Assert.Contains(r.Violations, v => v.StartsWith("BlazorHomeForm.", StringComparison.Ordinal) && v.Contains("직접 결선", StringComparison.Ordinal));
+            Assert.Contains(r.Violations, v => v.Contains("비공허성", StringComparison.Ordinal) && v.Contains("AttachPumpJitter", StringComparison.Ordinal));
+
+            // CLI: 정상 = Ok · 패치 = 거부 · 요구 플래그 + 결선 진입점 부재(⑫ 이전 바이너리) = 거부
+            string good = ZipWithHost(dll, "host\\MS2E.StockSuite.dll"), evil = ZipWithHost(bad, "host\\MS2E.StockSuite.dll");
+            try
+            {
+                var sw = new StringWriter();
+                Assert.Equal(ReleaseHandshakeCli.ExitOk, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, good, "--require-pump-jitter" }, sw));
+                Assert.Contains("펌프 지터 결선 ⑫ 1", sw.ToString());
+                Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, evil, "--require-pump-jitter" }, TextWriter.Null));
+            }
+            finally { File.Delete(good); File.Delete(evil); }
+
+            string root = RepoRoot();
+            string? d = new[] { Path.Combine(root, "release", "superseded-v12.18.5-GM"), Path.Combine(root, "release") }
+                .FirstOrDefault(x => File.Exists(Path.Combine(x, "release-v12.18.5-GM.zip")));
+            if (d is null) { _out.WriteLine("[⑫] v12.18.5-GM 출하물 없음 — 구 출하물 대조 생략"); return; }
+            string old = Path.Combine(d, "release-v12.18.5-GM.zip");
+            var o = ShippedBinaryLiveArmedGuard.ScanZip(old);
+            Assert.True(o.Ok, string.Join(" | ", o.Violations));                               // 진입점 부재 = ⑫ 미적용(구 바이너리 호환)
+            Assert.Equal(0, o.PumpJitterSites);
+            Assert.Equal(ReleaseHandshakeCli.ExitOk, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, old }, TextWriter.Null));
+            Assert.Equal(ReleaseHandshakeCli.ExitRejected, ReleaseHandshakeCli.Run(new[] { ReleaseHandshakeCli.VerifyLiveArmedFlag, old, "--require-pump-jitter" }, TextWriter.Null));
         }
     }
 }

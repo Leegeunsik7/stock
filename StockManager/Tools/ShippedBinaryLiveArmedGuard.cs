@@ -66,7 +66,8 @@ namespace StockManager.Tools
 
         public readonly record struct Result(int Sites, IReadOnlyList<string> Violations, int MasterSites = 0, int UiGuardSites = 0,
                                              int SimulationTypes = 0, int SimulationCliSites = 0, int TightenKeys = 0, int TightenHostSites = 0,
-                                             bool AuditLedgerAware = false)   // [v12.18.2-GM] ITightenAuditSink 형식 존재 = 규칙 ⑪ 적용됨(없으면 ⑪ 생략 — 출하 게이트가 요구)
+                                             bool AuditLedgerAware = false,   // [v12.18.2-GM] ITightenAuditSink 형식 존재 = 규칙 ⑪ 적용됨(없으면 ⑪ 생략 — 출하 게이트가 요구)
+                                             int PumpJitterSites = 0)         // [v12.18.6-GM] ⑫ 호스트 조립(BlazorHomeForm 트리) AttachPumpJitter 호출 수(출하 게이트가 ≥1 요구)
         {
             public bool Ok => Sites > 0 && MasterSites > 0 && UiGuardSites == UiWriters.Length && Violations.Count == 0;
         }
@@ -86,6 +87,9 @@ namespace StockManager.Tools
             ("Strategy.ConfidenceThresholdBp", TightenNonDecreasing), ("Strategy.AdaptiveMaxBp", TightenNonDecreasing),
             ("Strategy.ChurnSoftPerMin", TightenNonIncreasing), ("Strategy.ChurnHardPerMin", TightenNonIncreasing),
         };
+
+        // [v12.18.6-GM] ⑫ 대시보드 펌프 지터 결선 — 허브 형식 · 결선 진입점 · 유일 허용 호스트 조립 형식.
+        public const string DashHubType = "DashboardSnapshotHub", PumpJitterMethod = "AttachPumpJitter", JitterMethod = "AttachJitter", HostAssemblyType = "BlazorHomeForm";
 
         // [v12.17.4-GM] 시뮬레이션 격리 — 네임스페이스와 그것을 참조해도 되는 CLI 형식(조기 분기 전용).
         public const string SimulationNamespace = "StockManager.Simulation";
@@ -156,7 +160,8 @@ namespace StockManager.Tools
         {
             using var pe = new PEReader(peImage, PEStreamOptions.LeaveOpen | PEStreamOptions.PrefetchEntireImage);
             var md = pe.GetMetadataReader();
-            int sites = 0, masterSites = 0, allowlistSites = 0, simCliSites = 0;
+            int sites = 0, masterSites = 0, allowlistSites = 0, simCliSites = 0, pumpJitterSites = 0;
+            bool pumpJitterDefined = false;
             int simTypes = 0;
             foreach (var th in md.TypeDefinitions) if (IsSimulation(md, th)) simTypes++;
             var writerSeen = new bool[UiWriters.Length];
@@ -185,6 +190,7 @@ namespace StockManager.Tools
                     allowlistSites += CheckAllowlist(md, ins, violations);
                 TightenVisit(pe, md, ins, tname, mname, tight, violations);
                 var owner = m.GetDeclaringType();
+                PumpJitterVisit(md, ins, owner, tname, mname, ref pumpJitterSites, ref pumpJitterDefined, violations);
                 if (!IsSimulation(md, owner))
                 {
                     string outer = md.GetString(md.GetTypeDefinition(Outermost(md, owner)).Name);
@@ -241,8 +247,41 @@ namespace StockManager.Tools
             if (allowlistSites == 0) violations.Add("UiSettingWriteGuard 허용 목록 초기화(.cctor 접두사 ldstr) 0 — 가드 대상 소실(비공허성 실패)");
             if (simTypes == 0) violations.Add("시뮬레이션 형식(" + SimulationNamespace + ") 0 — 격리 판독 대상 소실(비공허성 실패)");
             int tightenHostSites = TightenFinish(tight, violations);
+            // ⑫ 비공허성: 결선 진입점이 있는데 호스트 조립 호출 0 = 배지 결선 소실(지터 미결선 출하)
+            if (pumpJitterDefined && pumpJitterSites == 0) violations.Add(HostAssemblyType + ": " + DashHubType + "." + PumpJitterMethod + " 호출 0 — 호스트 펌프 지터 결선 소실(비공허성 실패)");
             // UiGuardSites = 판독된 기입자 수 — 기입자 판정 위반은 Violations 로 거부된다
-            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites, tight.AuditAware);
+            return new Result(sites, violations, masterSites, uiGuardSites, simTypes, simCliSites, tight.Keys?.Count ?? 0, tightenHostSites, tight.AuditAware, pumpJitterSites);
+        }
+
+        // ════════════ [v12.18.6-GM] ⑫ 대시보드 펌프 지터 결선 ════════════
+        //  AttachPumpJitter = 센티널 작성자를 펌프로 고정하는 유일 경로 → 호출은 호스트 조립(BlazorHomeForm 트리)에서만(다른 작성자 결선 = 단일 작성자 계약 위반).
+        //  AttachJitter 직접 호출은 허브 자신(AttachPumpJitter 본문 · 정확히 1) · 시뮬레이션 · CLI 격리 형식만 — 호스트가 외부 센티널을 배지에 결선 = 위반.
+        private static void PumpJitterVisit(MetadataReader md, List<(OpCode Op, int Operand)> ins, TypeDefinitionHandle owner, string tname, string mname,
+                                            ref int hostSites, ref bool defined, List<string> violations)
+        {
+            bool sim = IsSimulation(md, owner);
+            string outer = md.GetString(md.GetTypeDefinition(Outermost(md, owner)).Name);
+            bool cli = Array.IndexOf(QuarantineCliTypes, outer) >= 0;
+            if (tname == DashHubType && mname == PumpJitterMethod)
+            {
+                defined = true;
+                int binds = 0;
+                for (int k = 0; k < ins.Count; k++) if (IsCall(ins[k].Op) && MethodOwner(md, ins[k].Operand) is (DashHubType, JitterMethod)) binds++;
+                if (binds != 1) violations.Add(DashHubType + "." + PumpJitterMethod + ": " + JitterMethod + " 호출 " + binds + "건(정확히 1 — 측정 센티널 = 배지 센티널)");
+            }
+            for (int k = 0; k < ins.Count; k++)
+            {
+                if (!IsCall(ins[k].Op) && ins[k].Op != OpCodes.Ldftn && ins[k].Op != OpCodes.Ldvirtftn) continue;
+                var (type, name) = MethodOwner(md, ins[k].Operand);
+                if (type != DashHubType) continue;
+                if (name == PumpJitterMethod)
+                {
+                    if (outer == HostAssemblyType) hostSites++;
+                    else if (!sim && !cli) violations.Add(outer + "." + mname + ": " + PumpJitterMethod + " 호스트 조립 밖 결선 — 펌프 센티널 단일 작성자 계약 위반");
+                }
+                else if (name == JitterMethod && outer != DashHubType && !sim && !cli)
+                    violations.Add(outer + "." + mname + ": " + JitterMethod + " 직접 결선 — 호스트 배지는 펌프 지터(AttachPumpJitter)만");
+            }
         }
 
         // ════════════ [v12.18.3-DEV] ⑦~⑩ 강화 전용 기입기 ════════════
