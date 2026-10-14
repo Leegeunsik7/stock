@@ -1786,3 +1786,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 인터락 정의 불변: 14 AccountDivergence · 22 OpenOrderDivergence · 25 KiwoomBridgeLink · 30종(오더의 'ReconciliationMismatch'/'KiwoomLinkDead' 는 실 이름 아님 — 개명 안 함).
 - BrokerOpenOrderReconcilerTests 7: 무장 해제 KIS 6행 × 6패스 송신 0 · 억제 36 · 비트 22 · 키움 동일 · 미결속/예외 0 · 무장 = 상한 4 · Disarm 선반영 ·
   호스트형 술어(!Blocked) 1패스 송신 4 → 2패스 억제 · 다른 방어선 차단 시 0 · δ=0(무장 해제 유령 패스 500회 0B) · 호스트 결선/순서/인터락 정의 핀.
+
+## 65. v12.18.7-GM — 브로커 안전 단독 출하(-NoPeer) · IL 규칙 ⑬ 유령 취소 무장 가드 (2026-10-14)
+
+### 65.1 버전 · 태그
+- 12.18.6 → 12.18.7(csproj · Freeze/Packaging 핀 · 스크립트 머리말). 태그 v12.18.7-GM = d8c2194(3e3a27c 세션 패널 · 7a36921 무장 가드 위).
+- QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음.
+
+### 65.2 [9/10] IL 규칙 ⑬ — 유령 비상 취소 무장 가드(ShippedBinaryLiveArmedGuard)
+- 적용 = BrokerOpenOrderReconciler.AttachCancelArming 존재 시: CancelRowsLocked(브로커 취소 송신) 호출마다 같은 메서드 안 앞선 CancelArmedNow 호출 +
+  그 뒤 조건 분기 · 대사기 밖 CancelRowsLocked 호출 0 · 호스트(BlazorHomeForm 트리) AttachCancelArming ≥1(CancelArmingSites) · 조립 밖 결선 = 위반.
+- 진입점 부재(구 바이너리 = 무장 무관 송신) = 미적용 → 출하 게이트 `--require-cancel-arming`(스크립트 [9/10])이 거부. v12.18.6-GM zip = 거부 확인.
+- 위반은 진입점 존재 확인 후 확정(메서드 열거 순서 무관 — 시험 중 구 바이너리 오탐 교정).
+- 시험 §16: 빌드 DLL Ok(1곳) · CancelArmedNow→get_GhostDetected 토큰 패치 = '무장 무관 취소 송신' 거부 · AttachCancelArming→AttachKisCanceller = 비공허성 거부 ·
+  CLI 요구 플래그 · 구 출하물 = ⑬ 0. §3 실 출하 기록: 12.18.7 이후 CancelArmingSites ≥ 1 요구.
+
+### 65.3 출하 실행(형제 worktree StockManager-gm-12.18.7-np · 태그 d8c2194 · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [1]/[2] 오중 빌드 -warnaserror · [3] 3,813/3,813 · [5] 래칫 ≤40 · [6] 이중키 조회 16 · 마스터 false ·
+  [7] 아티팩트 38 · 봉인 일치 · [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) ·
+  원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) · [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC ⑥) · handshake Ok @d8c2194441.
+- 산출물(release/): release-v12.18.7-GM.zip SHA-256 `5120E8FEF024373DE6D41A78190CB7AE32D45EFE852E68D4EE320227D09AD9B1` ·
+  masterSeal `B7B5092CACAD1FACD44FED198BB0A2AD2C82A22727B8E5B89F28022EFC8A5D26` · sourceCommit d8c2194 · 피어 기록 없음.
+- v12.18.6-GM 산출물 13건(zip 9F1C12DF… · masterSeal 1DDCE28A…) → release/superseded-v12.18.6-GM/. worktree 제거.
+- 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · CLI --verify-live-armed --require-pump-jitter --require-cancel-arming exit 0 · 전체 스위트 3,813/3,813.
