@@ -1686,3 +1686,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `A019E3F7DF70F3C297B73155C16519E1E2B2D00D816BAB00824DE11F1F15F560` · sourceCommit d44c35b · 피어 기록 없음(단독).
 - v12.18.4-GM 산출물 13건(zip FA7830F7… · masterSeal 5C2597E4…) → release/superseded-v12.18.4-GM/ 이관.
 - 메인 체크아웃(885fcfd) 재수검: GoldenMasterReleasePackagingTests · PeerDriftGuardTests · PureShellFitness 48/48 · 전체 스위트 3,789/3,789.
+
+## 62. v12.18.6-DEV — /aidash 마이크로초 지터 센티널 무할당 배지 (2026-10-14)
+
+### 62.1 전제 검증(오더 ↔ 실재)
+- MicrosecondJitterSentinel(StockManager/Telemetry) · LongSoakProfileHarness(Simulation) · DashboardSnapshotHub 실재.
+  /aidash 는 호스트 4줄 셸(StockManager/Blazor/Pages/PaperTradingDashboard.razor) → 실 뷰 = MS2E.UI.Portable/Pages/Trading/PaperTradingDashboardView.razor.
+  SignalLabelMapper = MS2E.UI.Portable/Helpers(RCL). 시험 폴더 StockManager.Tests/Telemetry 신설.
+- ★센티널 작성자는 Soak 하네스(시뮬레이션)뿐 — 호스트에 실 측정 생산자 없음. 시뮬레이션 형식을 호스트에 결선하면 [9/10] 시뮬레이션 격리 가드 위반 →
+  호스트는 결선하지 않음(배지 = '지터 미결선' 정직 렌더 · 숫자 날조 0). 실 생산자(예: 펌프/IPC 하트비트 계측) 결선은 별도 결정 사항.
+
+### 62.2 구현
+- JitterSnapshot(값 형식): 임계 초과 누적 · GC 누적 · 최대 · 마지막 스파이크(ns · GC 태그) · 최악 K 요약(개수 · K 번째 · GC 수) · Version.
+- 센티널 seqlock 게시: 드문 경로(스파이크 · 꼬리 진입 — 최대 갱신은 항상 꼬리 진입)와 Reset 에서만 → 정상 표본 경로 명령 추가 0.
+  TryReadSnapshot = 임의 스레드 · 잠금/대기/할당 0 · 4회 경합 = false(허브는 직전 사본 유지 · JitterContended 계수) · 관리 필드라 Dispose 후 판독 안전.
+- 허브 AttachJitter: 50ms 펌프마다 사본 판독 → 누적 증가 = 5초(DashJitter.HoldTicks) 스파이크 배지 · 마지막 GC 태그 = GC 유발 · 만료 = 정상 복귀 재게시.
+  첫 판독 = 기준선(결선 전 스파이크 ≠ 최근) · Reset(감소) ≠ 스파이크.
+- 포트: DashJitter(0 미결선 · 1 정상 녹 · 2 스파이크 황 · 3 GC 적) + 프레임 Jitter* 8필드. 뷰: 상단 스트립 주문 경로 배지 옆 지터 배지(스파이크 시 µs).
+- SignalLabelMapper: 상태 라벨/클래스 정적 배열 · JitterMicrosText(슬롯별 직전 값 1칸 캐시 — 값 불변 렌더 = 0B · 새 값 1회 = 문자열 1개).
+  ★정직: Blazor 렌더 트리와 뷰의 누적 수 ToString("N0")은 기존 배지와 같이 프레임워크/표시 할당 — 0B 보증 범위 = 수집 · 사본 · 펌프 · 라벨 조회.
+
+### 62.3 검증
+- JitterTelemetryBindingTests 6: 정상 100만 표본 게시 0 · 값 정확 · δ=0(기록 · 스파이크 게시 · 판독 · 펌프 · 라벨) · 즉시 반영/5초 복귀 ·
+  동시성 판독 604만 회(경합 107만) 찢김 0 · Soak 하네스 실 센티널 결선(표본 2.6만 · 최악 16) · 래칫 ≤40 · RCL 순수성 · 호스트 미결선 핀.
+- WebOnly + sln 전체 Release -warnaserror 0W/0E · 전체 스위트 3,795/3,795. 버전 범프 없음(DEV · 출하 v12.18.5-GM 불변).

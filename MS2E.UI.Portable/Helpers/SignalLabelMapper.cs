@@ -166,6 +166,31 @@ namespace MS2E.UI.Portable.Helpers
         public static string HeadSwatch(ulong prefix, int i) => Swatches[(int)((prefix >> (60 - 4 * Math.Clamp(i, 0, 3))) & 0xF)];
         public const int HeadSwatchCount = 4;
 
+        // ── [v12.18.6-DEV] 마이크로초 지터 센티널(DashJitter 0 미결선 · 1 정상 · 2 스파이크 · 3 GC 유발) ──
+        //  배지 색: 정상 녹(<500µs) · 스파이크 황 · GC 유발 적 · 미결선 회. 라벨 · 클래스 = 정적 캐시.
+        //  µs 수치("1,234µs"): 슬롯별 직전 값 1칸 캐시 — 최대/마지막 스파이크는 스파이크 때만 바뀌므로 50ms 렌더 반복 = 할당 0.
+        //   (새 값 1회 = 문자열 1개 생성 · 콜드.) 슬롯 0 = 최대 · 1 = 마지막 스파이크 · 2 = 최악 K 번째.
+        private static readonly string[] JitterStates = { "지터 미결선", "지터 정상", "지터 스파이크", "지터 스파이크 — GC 유발" };
+        private static readonly string[] JitterStateClasses = { "off", "ok", "spike", "gc" };
+        public const int JitterSlotMax = 0, JitterSlotLast = 1, JitterSlotFloor = 2;
+        private static readonly HexCache?[] _jitterUs = new HexCache?[3];
+
+        public static int JitterStateCount => JitterStates.Length;
+        public static string JitterStateLabel(int state) => (uint)state < (uint)JitterStates.Length ? JitterStates[state] : Unknown;
+        public static string JitterStateClass(int state) => (uint)state < (uint)JitterStateClasses.Length ? JitterStateClasses[state] : "off";
+        /// <summary>지연(ns) → "1,234µs"(내림 · 0 이하 = "-") — 슬롯별 직전 값 캐시(같은 값 반복 = 할당 0).</summary>
+        public static string JitterMicrosText(int slot, long nanos)
+        {
+            if (nanos <= 0) return "-";
+            int i = Math.Clamp(slot, 0, _jitterUs.Length - 1);
+            ulong key = (ulong)nanos / 1_000;
+            var c = Volatile.Read(ref _jitterUs[i]);
+            if (c is not null && c.Key == key) return c.Text;
+            var n = new HexCache(key, key.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "µs");
+            Volatile.Write(ref _jitterUs[i], n);
+            return n.Text;
+        }
+
         // ── [v12.18.2-DEV] 시그널 게이트 모드(DashGateMode 0 미결선 · 1 관측 · 2 강제) ──
         private static readonly string[] GateModes = { "게이트 미결선", "게이트 관측(미차단)", "게이트 강제" };
         private static readonly string[] GateModeClasses = { "off", "observe", "enforce" };

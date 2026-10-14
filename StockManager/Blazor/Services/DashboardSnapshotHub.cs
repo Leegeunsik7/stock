@@ -22,6 +22,9 @@
 //   정체 재관측 없이 2초 = 복귀. 감속 중 보류된 변경은 다음 허가 회차에 반드시 게시(유실 0).
 //   [v12.17.6] 호스트 결선 완료(BlazorHomeForm — 링 발행/종결 관측자 + 게이트/출구 데코레이터). liveArmed:false 기본 상태에선 디스패처가
 //   무장 게이트에서 전부 차단하므로 출구 도달 0 = '계측 대기 · 발행 N · 회수 N' 렌더(숫자 날조 0 · 계측 사슬이 살아 있음을 정직하게 표시).
+//  [v12.18.6-DEV] 선택 결선 MicrosecondJitterSentinel(AttachJitter): 펌프가 회차마다 센티널 seqlock 사본(TryReadSnapshot · 잠금/대기/할당 0)을
+//   판독 → 임계 초과 누적이 늘면 5초간 스파이크(마지막 스파이크 GC 태그 = GC 유발) 배지 · 이후 정상 복귀. 경합 회차 = 직전 사본 유지(계수).
+//   센티널 작성자(측정 스레드)는 허브를 모른다 — 게시는 작성자의 드문 경로에서만 일어나므로 측정 핫패스 추가 비용 0.
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -148,6 +151,11 @@ namespace StockManager.Blazor.Services
         private StockManager.Engines.SignalGateRuntimeSwitch? _gateSwitch;
         private StockManager.Security.MonotonicSettingAuditLog? _auditLedger;
 
+        // ── [v12.18.6-DEV] 마이크로초 지터 센티널(선택 결선 · 펌프 단일 스레드 상태) ──
+        private MicrosecondJitterSentinel? _jitter;
+        private JitterSnapshot _jitSnap;
+        private long _jitSeenSpikes = -1, _jitSpikeAt = long.MinValue, _jitterContended;
+
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
         /// <param name="views">브로커별 계좌 뷰(인덱스 = 브로커 · null 슬롯 = 미결선).</param>
@@ -217,6 +225,13 @@ namespace StockManager.Blazor.Services
         public void AttachAuditLedger(StockManager.Security.MonotonicSettingAuditLog ledger)
             => Volatile.Write(ref _auditLedger, ledger ?? throw new ArgumentNullException(nameof(ledger)));
 
+        /// <summary>
+        /// [v12.18.6-DEV] 마이크로초 지터 센티널 관제 결선 — 펌프는 seqlock 사본만 읽는다(작성자 스레드 · 링 · 꼬리 미접근 · 할당 0).
+        /// 결선 시점에 이미 쌓인 스파이크는 '최근'으로 보지 않는다(첫 판독 = 기준선).
+        /// </summary>
+        public void AttachJitter(MicrosecondJitterSentinel sentinel)
+            => Volatile.Write(ref _jitter, sentinel ?? throw new ArgumentNullException(nameof(sentinel)));
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -240,6 +255,8 @@ namespace StockManager.Blazor.Services
         public long TicksSeen => Interlocked.Read(ref _ticksSeen);
         public long PriceTableFull => Interlocked.Read(ref _priceTableFull);
         public bool OrderPathBound => _orderPath is not null;
+        /// <summary>[v12.18.6-DEV] 지터 사본 판독 경합(직전 사본 유지) 누적.</summary>
+        public long JitterContended => Interlocked.Read(ref _jitterContended);
         /// <summary>[방향 B] 감속 가드(판독 전용 용도 · 상태 변경은 펌프만).</summary>
         public LatencySpikeDegradationGuard LatencyGuard => _spikeGuard;
         /// <summary>현재 게시 주기(ms) — 감속 중 = max(기본 주기, 감속 주기).</summary>
@@ -302,6 +319,17 @@ namespace StockManager.Blazor.Services
             var al = Volatile.Read(ref _auditLedger);
             var aSnap = al?.Snapshot() ?? default;
             if (al is not null) sig = sig * 31 + aSnap.Version + (int)aSnap.FreezeCause * 7 + (aSnap.Contended ? 13 : 0);   // 기록 · 동결 = 즉시 재게시
+            var jit = Volatile.Read(ref _jitter);
+            bool jitHot = false;
+            if (jit is not null)
+            {
+                if (jit.TryReadSnapshot(out var js)) _jitSnap = js; else Interlocked.Increment(ref _jitterContended);
+                long spikes = _jitSnap.SpikeCountOver500Us;
+                if (_jitSeenSpikes >= 0 && spikes > _jitSeenSpikes) _jitSpikeAt = nowT;      // 새 스파이크 = 즉시 재게시(서명 변경)
+                _jitSeenSpikes = spikes;
+                jitHot = _jitSpikeAt != long.MinValue && nowT - _jitSpikeAt < DashJitter.HoldTicks;
+                sig = sig * 31 + _jitSnap.Version + (jitHot ? 7 : 0);                        // 유지 만료 = 정상 복귀 재게시
+            }
             for (int b = 0; b < _views.Length && b < Brokers; b++)
             {
                 var v = _views[b];
@@ -379,6 +407,11 @@ namespace StockManager.Blazor.Services
             f.AuditState = al is null ? DashAuditLedger.Unbound : (int)aSnap.State;
             f.AuditCount = aSnap.Count; f.AuditCapacity = aSnap.Capacity; f.AuditUsedPercent = aSnap.UsedPercent;
             f.AuditFreezeCause = aSnap.Contended ? DashAuditLedger.CauseNone : (int)aSnap.FreezeCause; f.AuditHeadPrefix = aSnap.HeadPrefix;
+            ref readonly var jv = ref _jitSnap;
+            f.JitterState = DashJitter.Classify(jit is not null, jitHot, jv.LastSpikeGcTagged);
+            f.JitterSpikes = jv.SpikeCountOver500Us; f.JitterGcSpikes = jv.GcSpikeCount; f.JitterMaxNanos = jv.MaxJitterNanos;
+            f.JitterLastSpikeNanos = jv.LastSpikeNanos; f.JitterWorstCount = jv.WorstSampleCount;
+            f.JitterWorstFloorNanos = jv.WorstSampleFloorNanos; f.JitterWorstGcCount = jv.WorstSampleGcCount;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

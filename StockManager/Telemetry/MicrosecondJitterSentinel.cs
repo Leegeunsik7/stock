@@ -11,10 +11,13 @@
 //  사용: long t0 = Begin(out int g0); …측정 구간…; End(t0, g0, kind, simMicros). Begin/End = Stopwatch.GetTimestamp + GC.CollectionCount(0)(FCALL · 할당 0).
 //  ★스레드 계약: 단일 작성자(측정 스레드). 판독(CopySpikes · CopyTail · 계수)은 같은 스레드 또는 작성 정지 후(콜드).
 //  δ=0: Begin · End · Record 힙 0(비관리 메모리 · 인라인 히스토그램 구조체). 생성/Dispose = 콜드(NativeMemory 할당/해제 1회).
+//  [v12.18.6-DEV] 관제 사본(JitterSnapshot · seqlock): 드문 경로(스파이크 · 꼬리 진입)와 Reset 에서만 게시 → 임의 스레드 TryReadSnapshot
+//   (잠금 · 대기 · 할당 0 · 경합 시 false — 호출자는 직전 값 유지). 정상 표본 경로 명령 추가 0.
 // ============================================================================
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace StockManager.Telemetry
 {
@@ -44,6 +47,11 @@ namespace StockManager.Telemetry
         private long _sequence, _spikes, _gcSpikes, _overwritten, _maxNanos, _sumNanos;
         private int _tailCount;
         private LatencyHistogram _histogram;             // 인라인 108 버킷(관리 배열 0)
+        private long _lastSpikeNanos;
+        private bool _lastSpikeGc;
+        // [v12.18.6-DEV] 관제 seqlock(작성자 단일 · 홀수 = 게시 중) — 관리 필드라 Dispose 뒤에도 판독 안전
+        private int _snapSeq, _snapLastGc, _snapTailN, _snapTailGc;
+        private long _snapSpikes, _snapGcSpikes, _snapMax, _snapLast, _snapFloor, _snapVersion;
 
         public MicrosecondJitterSentinel(long thresholdNanos = DefaultThresholdNanos, int ringCapacity = DefaultRingCapacity, int tailCapacity = DefaultTailCapacity)
         {
@@ -111,6 +119,7 @@ namespace StockManager.Telemetry
                 _ring[slot] = rec;
                 _spikes++;
                 if (rec.Cause == JitterCause.Gc) _gcSpikes++;
+                _lastSpikeNanos = nanos; _lastSpikeGc = rec.Cause == JitterCause.Gc;
             }
             if (tail)
             {
@@ -119,6 +128,45 @@ namespace StockManager.Telemetry
                 while (at > 0 && _tail[at - 1].Nanos < nanos) { _tail[at] = _tail[at - 1]; at--; }
                 _tail[at] = rec;
             }
+            PublishSnapshot();
+        }
+
+        // 작성자 전용(드문 경로 · Reset). 꼬리 GC 태그 수 = K 회 순회(K 기본 16 · 콜드).
+        private void PublishSnapshot()
+        {
+            int tailGc = 0;
+            for (int i = 0; i < _tailCount; i++) if (_tail[i].Cause == JitterCause.Gc) tailGc++;
+            Interlocked.Increment(ref _snapSeq);                                    // 홀수(전체 펜스)
+            Volatile.Write(ref _snapSpikes, _spikes);
+            Volatile.Write(ref _snapGcSpikes, _gcSpikes);
+            Volatile.Write(ref _snapMax, _maxNanos);
+            Volatile.Write(ref _snapLast, _lastSpikeNanos);
+            Volatile.Write(ref _snapLastGc, _lastSpikeGc ? 1 : 0);
+            Volatile.Write(ref _snapTailN, _tailCount);
+            Volatile.Write(ref _snapFloor, _tailCount == 0 ? 0 : _tail[_tailCount - 1].Nanos);
+            Volatile.Write(ref _snapTailGc, tailGc);
+            Volatile.Write(ref _snapVersion, _snapVersion + 1);
+            Interlocked.Increment(ref _snapSeq);                                    // 짝수(전체 펜스)
+        }
+
+        /// <summary>
+        /// [v12.18.6-DEV] 관제 사본 판독(임의 스레드 · 잠금/대기/할당 0). 게시 중 경합이 4회 연속이면 false(값 무효 — 호출자는 직전 값 유지).
+        /// </summary>
+        public bool TryReadSnapshot(out JitterSnapshot snapshot)
+        {
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                int s1 = Volatile.Read(ref _snapSeq);
+                if ((s1 & 1) != 0) continue;
+                long spikes = Volatile.Read(ref _snapSpikes), gc = Volatile.Read(ref _snapGcSpikes), max = Volatile.Read(ref _snapMax);
+                long last = Volatile.Read(ref _snapLast), floor = Volatile.Read(ref _snapFloor), ver = Volatile.Read(ref _snapVersion);
+                int lastGc = Volatile.Read(ref _snapLastGc), tailN = Volatile.Read(ref _snapTailN), tailGc = Volatile.Read(ref _snapTailGc);
+                if (Volatile.Read(ref _snapSeq) != s1) continue;
+                snapshot = new JitterSnapshot(spikes, gc, max, lastGc != 0, last, tailN, floor, tailGc, ver);
+                return true;
+            }
+            snapshot = default;
+            return false;
         }
 
         /// <summary>최근 스파이크를 오래된 → 최신 순으로 복사(콜드). 반환 = 복사 수.</summary>
@@ -146,7 +194,9 @@ namespace StockManager.Telemetry
         {
             _sequence = _spikes = _gcSpikes = _overwritten = _maxNanos = _sumNanos = 0;
             _tailCount = 0;
+            _lastSpikeNanos = 0; _lastSpikeGc = false;
             _histogram.Clear();
+            PublishSnapshot();
         }
 
         public void Dispose()

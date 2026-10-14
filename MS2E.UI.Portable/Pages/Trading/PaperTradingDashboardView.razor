@@ -42,6 +42,17 @@ else
         }
         <div class="pd-lat">
             <span class="pd-lat-grade @SignalLabelMapper.LatencyGradeClass(f.LatencyGrade)">주문 경로 @SignalLabelMapper.LatencyGradeLabel(f.LatencyGrade)</span>
+            <span class="pd-jit @SignalLabelMapper.JitterStateClass(f.JitterState)" title="마이크로초 지터 센티널(임계 500µs · 최악 표본 상위 K)">
+                @SignalLabelMapper.JitterStateLabel(f.JitterState)
+                @if (f.JitterState == DashJitter.Spike || f.JitterState == DashJitter.GcSpike)
+                {
+                    <b>@SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotLast, f.JitterLastSpikeNanos)</b>
+                }
+                @if (f.JitterState != DashJitter.Unbound)
+                {
+                    <em>최대 @SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotMax, f.JitterMaxNanos) · 초과 @(f.JitterSpikes.ToString("N0"))(GC @(f.JitterGcSpikes.ToString("N0"))) · 최악 @(f.JitterWorstCount)개 ≥ @(SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotFloor, f.JitterWorstFloorNanos))(GC @(f.JitterWorstGcCount))</em>
+                }
+            </span>
             @if (!f.LatencyBound)
             {
                 <span class="pd-lat-off">계측 미결선 — 주문 경로 계측기가 이 허브에 주입되지 않아 지연을 표시하지 않습니다.</span>
@@ -290,6 +301,9 @@ else
     .pd-audit { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
     .pd-audit.ok { background: #2e7d32; color: #fff; } .pd-audit.sat { background: #f9a825; color: #111; } .pd-audit.frozen { background: #6a1b9a; color: #fff; }
     .pd-audit em { font-style: normal; opacity: .85; } .pd-audit code { font-size: 11px; opacity: .9; }
+    .pd-jit { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
+    .pd-jit.ok { background: #2e7d32; color: #fff; } .pd-jit.spike { background: #f9a825; color: #111; } .pd-jit.gc { background: #E53935; color: #fff; }
+    .pd-jit em { font-style: normal; font-weight: 400; opacity: .85; }
     .pd-sw { display: inline-block; width: 8px; height: 12px; border-radius: 2px; }
     .pd-gate.enforce { background: #1565c0; color: #fff; } .pd-gate.observe { background: #4e342e; color: #ffcc80; }
     .pd-lat-grade.ok { background: #2e7d32; color: #fff; } .pd-lat-grade.spike { background: #f9a825; color: #111; }

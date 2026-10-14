@@ -61,6 +61,19 @@ namespace MS2E.UI.Portable.Ports.Trading
         public const int CauseNone = 0, CauseChainBroken = 1, CauseFull = 2, CauseUnavailable = 3;
     }
 
+    /// <summary>
+    /// [v12.18.6-DEV] 마이크로초 지터 센티널 배지(0 미결선 · 1 정상 · 2 스파이크 · 3 GC 유발 스파이크).
+    /// 스파이크/GC = 최근 HoldTicks(5초) 안에 임계(기본 500µs) 초과 표본이 새로 들어옴 — 그 뒤엔 누적 수만 남기고 정상 복귀.
+    /// </summary>
+    public static class DashJitter
+    {
+        public const int Unbound = 0, Normal = 1, Spike = 2, GcSpike = 3;
+        public const long HoldTicks = 5 * 10_000_000L;
+
+        public static int Classify(bool bound, bool recentSpike, bool lastSpikeGc)
+            => !bound ? Unbound : !recentSpike ? Normal : lastSpikeGc ? GcSpike : Spike;
+    }
+
     /// <summary>[v12.18.2-DEV] 시그널 게이트 모드(0 미결선 · 1 관측 · 2 강제).</summary>
     public static class DashGateMode
     {
@@ -140,6 +153,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         // [v12.18.3-DEV] 감사 원장 — 상태(DashAuditLedger) · 레코드 수/용량 · 사용률 · 동결 원인 · 머리 해시 상위 8바이트(빅 엔디언).
         public int AuditState = DashAuditLedger.Unbound, AuditCount, AuditCapacity, AuditUsedPercent, AuditFreezeCause;
         public ulong AuditHeadPrefix;
+
+        // [v12.18.6-DEV] 마이크로초 지터 센티널 — 상태(DashJitter) · 임계 초과 누적/GC 누적 · 최대 · 마지막 스파이크 · 최악 K 표본 요약(개수 · K 번째 · GC 태그).
+        public int JitterState = DashJitter.Unbound, JitterWorstCount, JitterWorstGcCount;
+        public long JitterSpikes, JitterGcSpikes, JitterMaxNanos, JitterLastSpikeNanos, JitterWorstFloorNanos;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();
