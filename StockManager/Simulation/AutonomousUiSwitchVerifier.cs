@@ -399,6 +399,13 @@ namespace StockManager.Simulation
         long Faults { get; }
         /// <summary>보고용 요소 설명(콜드).</summary>
         string Describe(int index);
+        /// <summary>
+        /// [v12.18.8-DEV] 요소가 변동성 루트(타이머 · 라이브 텔레메트리로 스스로 갱신)에 속하는가. 참 = 토글 대칭 판정 제외
+        /// (두 토글 사이 라이브 프레임이 루트를 바꿔 대칭이 정의되지 않음 — 위양성 파손). 기본 = 거짓(기존 표면 호환).
+        /// </summary>
+        bool IsVolatile(int index) => false;
+        /// <summary>[v12.18.8-DEV] 탐색 이후 재렌더로 사라진 핸들러에 디스패치된 조작 누계(변동성 루트 · 결함 아님 · 보고용).</summary>
+        long StaleTargets => 0;
     }
 
     public sealed record UiFuzzReport(
@@ -480,7 +487,7 @@ namespace StockManager.Simulation
                 while (!guard.TryAdmit()) { waits++; Thread.Yield(); }   // 퍼저 = 사용자 — 스로틀 창을 기다린다(스톰 측정은 RunStorm)
 
                 var kind = surface.KindOf(idx);
-                if (kind == UiControlKind.Checkbox && rng.Next(4) == 0)
+                if (kind == UiControlKind.Checkbox && rng.Next(4) == 0 && !surface.IsVolatile(idx))
                 {
                     // [방향 A] 토글 대칭: 2회 반전 → 해당 루트 지문 원상 복귀해야 함
                     ulong before = surface.RootFingerprint(idx);
@@ -614,6 +621,10 @@ namespace StockManager.Simulation
                 return RenderRootComponentAsync(id);
             }).GetAwaiter().GetResult();
         }
+
+        public bool IsVolatile(int index) => _roots[_controls[index].Root].Volatile;
+        private long _stale;
+        public long StaleTargets => Interlocked.Read(ref _stale);
 
         protected override void HandleException(Exception exception)
         {

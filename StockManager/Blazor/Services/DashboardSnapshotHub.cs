@@ -643,6 +643,12 @@ namespace StockManager.Blazor.Services
 
         public int LeaseCount(int slot) => (uint)slot < 3u ? Volatile.Read(ref _leases[slot]) : 0;
 
+        /// <summary>[v12.18.8-DEV] 등록된 FrameReady 구독자 수(누수 점검 · 콜드 판독).</summary>
+        public int FrameReadySubscribers
+        {
+            get { var cur = Volatile.Read(ref _subs); int n = 0; for (int i = 0; i < cur.Length; i++) if (cur[i] is not null) n++; return n; }
+        }
+
         public event Action<long>? FrameReady
         {
             add

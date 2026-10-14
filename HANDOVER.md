@@ -1809,3 +1809,40 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `B7B5092CACAD1FACD44FED198BB0A2AD2C82A22727B8E5B89F28022EFC8A5D26` · sourceCommit d8c2194 · 피어 기록 없음.
 - v12.18.6-GM 산출물 13건(zip 9F1C12DF… · masterSeal 1DDCE28A…) → release/superseded-v12.18.6-GM/. worktree 제거.
 - 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · CLI --verify-live-armed --require-pump-jitter --require-cancel-arming exit 0 · 전체 스위트 3,813/3,813.
+
+## 66. v12.18.8-DEV — 활성 텔레메트리 하 자율 UI 스위치 퍼징 (2026-10-14)
+
+### 66.1 전제 검증
+- bUnit 퍼저(AutonomousUiSwitchFuzzer + BunitClickSurface) · 헤드리스 렌더러 표면 · 10k CLI 퍼징 · 스톰 격리는 v12.17.4-GM 부터 존재(AutonomousUiVerificationTests).
+- 공백: 퍼즈 리그(UiFuzzRig) 허브에 펌프 지터 · 세션 관리자 미결선 → 대시보드 두 패널이 '미결선'으로만 렌더 = 라이브 갱신 경합 미검증.
+
+### 66.2 시험(StockManager.Tests/Blazor/UiSwitchFuzzingConcurrencyTests · 4)
+- 리그 허브에 AttachPumpJitter(50ms 타이머 실측) + 세션 관리자 2(키움 · KIS) — 전용 스레드가 무작위 전이(연결 · 단절 · 허가 · 실패 · 확정 · 불일치 · 이중키 재설정)
+  를 수억 회 구동하는 동안 10,255 상호작용(워밍업 1,000 + 50 × 180 청크) · 50회마다 게시본 일관성 판독(세션 2 · 순서 · 상태 범위 · 상한 · 계수 · 마스크 0).
+- bUnit(DOM): UI 예외 0 · 불법 무장 0 · 적대 400(수용 0) · 대칭 255(파손 0) · 찢김 0 · 전이 예외 0 · 5대 상태 도달 · 펌프 고장 0 · 189/s ·
+  컨텍스트 폐기 후 허브 FrameReady 구독자 0(누수 0).
+- 헤드리스(호스트와 같은 Renderer 파생): 위와 같음 + 2,523/s · ★힙(전체 GC 후) 16,666 → 16,683 → 16,708KB(9k 상호작용 +42KB · 평탄) = 누수 판정.
+- 라벨 캐시: 세션 8 · 지터 4 라벨/클래스 = 같은 참조(정적 · 히트 100%) · µs 텍스트 같은 버킷 = 같은 참조 · 조회 10만 회 0B · 두 패널 결선 펌프 유휴/전이 0B.
+- 래칫 ≤40 · RCL 이 호스트 어셈블리 미참조.
+
+### 66.3 발견 · 교정(전부 하네스 — 제품 결함 0)
+- ① bUnit 힙 상호작용당 ~24KB 보유(46 → 170 → 292MB) — A/B 실측: 텔레메트리 끈 bUnit 도 동일 · 헤드리스는 평탄 ⇒ bUnit/AngleSharp 하네스 보유. 누수 판정은 헤드리스로 · bUnit 수치는 보고만.
+- ② 노후 핸들러(UnknownEventHandlerIdException): 탐색(DOM 사본) ↔ 클릭 사이 비동기 재렌더 → BunitClickSurface 가 같은 루트 · 종류 · 태그 · 순번 요소 재탐색 후 1회 재시도
+  (StaleTargets 계수 · 재시도 실패 = 결함).
+- ③ 토글 대칭 위양성: 변동성 루트(대시보드)는 라이브 프레임이 두 토글 사이 루트를 바꿈 → IUiClickSurface.IsVolatile(기본 false) · 퍼저가 변동성 루트 대칭 판정 제외.
+- ④ 토글 대칭 위양성(설정 '서버 사용' @bind): bUnit 표면이 반전값을 DOM 사본 checked 로 정하는데 CPU 포화 시 직전 반전 렌더가 사본에 닿기 전 재판독 → 같은 값 2회 송신.
+  진단 = 루트 마크업 추적(checked → 미checked). 교정 = 자기 조작 렌더 반영 대기(WaitForState ≤250ms · 거부 = SettleTimeouts). 헤드리스는 렌더 트리 판독이라 0.
+- ⑤ 시험 자체 결함(전이 스레드): 미완료 WaitForAttemptAsync 방치 → 대기자 1개 계약 위반 예외 400만 — 보관 · 완료 시 1회 소비로 교정.
+- 허브: FrameReadySubscribers(콜드 판독) 추가 — 누수 점검용.
+- ★정직: 렌더(diff · 마크업 · DOM 파싱)는 프레임워크 할당 — 0B 보증 = 라벨 조회 · 허브 펌프 · 세션 사본. bUnit 속도 189/s(요구 100/s 충족) · 헤드리스 2.5k/s.
+
+### 66.4 전체 스위트 안정화(커밋 전 · 2026-10-14)
+- 증상: 전체 스위트 시험 호스트 무음 종료(UnhandledException · 1026 · 2004 전무) 3회 — 지점 상이(2,471 / 2,165 / 3,153 · --blame = 기존 MonitorLifecycleRaceTests).
+  대조군(v12.18.7-GM 문서 커밋 2dfd468 · 변경 0) 전체 스위트 2회 중 1회도 무음 종료(WarmRestartEngineTests) ⇒ 이 마일스톤 이전부터의 부하 민감 현상
+  (동시 타 세션 python 2개 ~15GB · 물리 여유 ~4GB). 근본 원인 미확정 — 재현 시 [[testhost-crash-triage-eventlog]] 절차.
+- 신규 bUnit 퍼징이 가장 무거운 시험이라 점유 축소: ① bUnit 컨텍스트 ~2,000 상호작용마다 재탑재(보유 해제 — 힙 136MB 평탄 · 재탑재마다 구독 0 재판정)
+  ② 전이 스레드 256 단계마다 Sleep(1)(코어 독점 해소 · 전이 수백만 유지).
+- 뷰 구독 해지 = 렌더러 폐기가 진행 중 라이브 렌더를 마친 뒤 ≤ ~17ms 지연(누수 아님) — 판정은 2초 안 0 수렴(SubscribersAfterDispose).
+- 전체 스위트 부하에서 드러난 하네스 대칭 위양성 2건 교정: checkbox 렌더 반영 대기 250ms → 2s(정상 시 초과 0) · ★노후 표적 재시도 경로에도 반영 대기
+  (누락 시 재시도 토글 직후 사본 판독 → 같은 값 2회) · 재시도 재식별에 부모 텍스트 일치 요구(구조 변경 시 오표적 조작 0 — 불일치 = 소멸 취급).
+- 결과: 오중 빌드 Release -warnaserror 0W/0E · 전체 스위트 3,817/3,817 연속 2회(무크래시) · bUnit 10,255 상호작용 UI 예외 0 · 대칭 파손 0 · 반영 대기 초과 0.
