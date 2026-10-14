@@ -406,6 +406,11 @@ namespace StockManager.Simulation
         bool IsVolatile(int index) => false;
         /// <summary>[v12.18.8-DEV] 탐색 이후 재렌더로 사라진 핸들러에 디스패치된 조작 누계(변동성 루트 · 결함 아님 · 보고용).</summary>
         long StaleTargets => 0;
+        /// <summary>
+        /// [v12.18.9-DEV] 비동기 후속 렌더(이전 조작의 await 연속)가 가라앉을 때까지 대기 — 토글 대칭은 '안정 상태'끼리 비교해야 한다.
+        /// 기본 = 무동작(동기 렌더 표면). 반환 = 안정 도달(거짓 = 시간 초과 · 판정은 그대로 진행).
+        /// </summary>
+        bool Quiesce(int index) => true;
     }
 
     public sealed record UiFuzzReport(
@@ -413,7 +418,8 @@ namespace StockManager.Simulation
         long UiFaults, long ProbeChecks, long ArmingViolations, string? FirstViolation,
         long HostileWrites, long HostileAdmitted, long HostileRejected, int DistinctStates, long StateSaturated,
         long SymmetryChecks, long SymmetryBreaks, bool LiveArmedFinal, long InterlockMaskFinal, int InterlockBits,
-        long ForensicRaised, long ForensicCleared, long ForensicFaults)
+        long ForensicRaised, long ForensicCleared, long ForensicFaults,
+        long SymmetryContaminated = 0)   // [v12.18.9-DEV] 쌍 도중 노후 표적 재시도로 판정 제외한 대칭 쌍(파손 아님 · 보고용)
     {
         public bool Passed => UiFaults == 0 && ArmingViolations == 0 && !LiveArmedFinal && SymmetryBreaks == 0
                               && HostileAdmitted == 0 && InterlockBits == UiArmingInvariantProbe.InterlockBitCount;
@@ -469,7 +475,7 @@ namespace StockManager.Simulation
             ArgumentNullException.ThrowIfNull(guard);
             matrix ??= new UiStateMatrix(4096);
             var rng = new Random(seed);
-            long executed = 0, waits = 0, clicks = 0, checks = 0, navs = 0, hostile = 0, hostileAdmitted = 0, symChecks = 0, symBreaks = 0;
+            long executed = 0, waits = 0, clicks = 0, checks = 0, navs = 0, hostile = 0, hostileAdmitted = 0, symChecks = 0, symBreaks = 0, symContaminated = 0;
             long faults0 = surface.Faults;
             long rejected0 = UiSettingWriteGuard.Rejected;
             int discovered = surface.Refresh();
@@ -490,13 +496,17 @@ namespace StockManager.Simulation
                 if (kind == UiControlKind.Checkbox && rng.Next(4) == 0 && !surface.IsVolatile(idx))
                 {
                     // [방향 A] 토글 대칭: 2회 반전 → 해당 루트 지문 원상 복귀해야 함
+                    surface.Quiesce(idx);
+                    long stale0 = surface.StaleTargets;                                    // [v12.18.9-DEV] 쌍 도중 노후 표적 재시도 = 오염 표본
                     ulong before = surface.RootFingerprint(idx);
                     surface.Activate(idx);
                     surface.Refresh();
                     surface.Activate(idx);
                     surface.Refresh();
                     symChecks++;
-                    if (surface.RootFingerprint(idx) != before) symBreaks++;
+                    surface.Quiesce(idx);
+                    if (surface.StaleTargets != stale0) { symChecks--; symContaminated++; }   // 사본 노후로 재식별한 쌍 = 깨끗한 2회 반전 아님 → 판정 제외(계수)
+                    else if (surface.RootFingerprint(idx) != before) symBreaks++;
                     checks += 2; executed += 2;
                 }
                 else
@@ -526,7 +536,7 @@ namespace StockManager.Simulation
                 surface.Faults - faults0, probe.Checks, probe.Violations, probe.FirstViolation,
                 hostile, hostileAdmitted, UiSettingWriteGuard.Rejected - rejected0, matrix.Distinct, matrix.Saturated,
                 symChecks, symBreaks, probe.LiveArmed, probe.Mask.Mask, probe.BitCount,
-                probe.Recorder.RaisedEvents, probe.Recorder.ClearedEvents, probe.Recorder.Faults);
+                probe.Recorder.RaisedEvents, probe.Recorder.ClearedEvents, probe.Recorder.Faults, symContaminated);
         }
 
         /// <summary>

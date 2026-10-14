@@ -140,7 +140,7 @@ namespace StockManager.Tests
         public void ThreeWayContention_OrderPath_DashboardReader_TightenFuzzer_NoTornNoDeadlock_ZeroAlloc_Bit27AtFreeze()
         {
             const int Capacity = 256;
-            using var soak = new LongSoakProfileHarness(fullChain: true, ledgerCapacity: Capacity);
+            var soak = new LongSoakProfileHarness(fullChain: true, ledgerCapacity: Capacity);
             var ledger = soak.Ledger!;
             var store = new MemStore { Value = "5000" };
             string[] values = ValueTable();
@@ -156,7 +156,7 @@ namespace StockManager.Tests
             Assert.Equal(0L, soak.Sim.Interlocks.Mask);
             soak.Settle();
 
-            using var stop = new CancellationTokenSource();
+            var stop = new CancellationTokenSource();
             long torn = 0, regress = 0, frameTorn = 0, polls = 0, frames = 0, verified = 0, sawSaturating = 0, sawFrozen = 0;
             long orderAlloc = -1, readerAlloc = -1, fuzzAlloc = -1, noticeAlloc = 0, noticeAttempts = 0, attempts = 0, frozenRejects = 0, storeWritesAtFreeze = -1;
             long bitAtFreeze = -1, freezeObservedAtAttempt = -1;
@@ -273,45 +273,56 @@ namespace StockManager.Tests
                 catch (Exception ex) { fault ??= ex; }
             }) { IsBackground = true, Name = "soak-fuzzer" };
 
-            order.Start(); reader.Start(); fuzzer.Start();
-            bool fuzzDone = fuzzer.Join(TimeSpan.FromSeconds(30));                                  // 동결 + 50회 → 종료
-            Thread.Sleep(200);                                                                      // 동결 후 송출 0 관측 창
-            stop.Cancel();
-            bool orderDone = order.Join(TimeSpan.FromSeconds(10)), readerDone = reader.Join(TimeSpan.FromSeconds(10));
-            wall.Stop();
-            int dg0 = GC.CollectionCount(0) - gc0, dg1 = GC.CollectionCount(1) - gc1, dg2 = GC.CollectionCount(2) - gc2;
-            double sec = wall.Elapsed.TotalSeconds;
-            _out.WriteLine($"[3중 경합] {sec:F2}s · 제안 {soak.Proposals:N0}({soak.Proposals / sec:N0}/s) · 판독 {polls:N0}({polls / sec:N0}/s · 검증 {verified:N0}) · 프레임 {frames:N0} · 기입 시도 {attempts}({attempts / sec:F0}/s)");
-            _out.WriteLine($"[3중 경합] 찢김 {torn} · 역행 {regress} · 프레임 찢김 {frameTorn} · 포화 관측 {sawSaturating} · 동결 관측 {sawFrozen} · 동결 시도 #{freezeObservedAtAttempt} · 동결 뒤 거부 {frozenRejects}");
-            _out.WriteLine($"[3중 경합] 할당 주문 {orderAlloc}B · 판독 {readerAlloc}B · 퍼저 정상 {fuzzAlloc}B(+ 90% 고지 1회 {noticeAlloc}B) · GC {dg0}/{dg1}/{dg2} · 집계어 0x{soak.Sim.Interlocks.Mask:X} · 송출 {soak.Sim.Broker.Placed:N0}(동결 시 {placedAtFreeze:N0}) · 거부 {soak.Sim.Worker.InterlockVetoes:N0}");
-            var j = soak.Jitter!;
-            _out.WriteLine($"[3중 경합] 주문 제안 지연 p99 {j.Percentile(990) / 1000.0:F1}µs · 최대 {j.MaxNanos / 1000.0:F1}µs · >500µs {j.Spikes}(GC {j.GcSpikes})");
+            // [v12.18.9-DEV] 드레인 규약: 작업 스레드 Join 시간 초과(부하)로 반환해도 하네스(비관리 지터 센티널 · 시뮬레이터)를 살아 있는 스레드 밑에서
+            //   폐기하지 않는다 — 취소 → JoinAll → 전부 종료 시에만 폐기(생존 = 격리 · 시험은 단언 실패).
+            try
+            {
+                order.Start(); reader.Start(); fuzzer.Start();
+                bool fuzzDone = fuzzer.Join(TimeSpan.FromSeconds(30));                                  // 동결 + 50회 → 종료
+                Thread.Sleep(200);                                                                      // 동결 후 송출 0 관측 창
+                stop.Cancel();
+                bool orderDone = order.Join(TimeSpan.FromSeconds(10)), readerDone = reader.Join(TimeSpan.FromSeconds(10));
+                wall.Stop();
+                int dg0 = GC.CollectionCount(0) - gc0, dg1 = GC.CollectionCount(1) - gc1, dg2 = GC.CollectionCount(2) - gc2;
+                double sec = wall.Elapsed.TotalSeconds;
+                _out.WriteLine($"[3중 경합] {sec:F2}s · 제안 {soak.Proposals:N0}({soak.Proposals / sec:N0}/s) · 판독 {polls:N0}({polls / sec:N0}/s · 검증 {verified:N0}) · 프레임 {frames:N0} · 기입 시도 {attempts}({attempts / sec:F0}/s)");
+                _out.WriteLine($"[3중 경합] 찢김 {torn} · 역행 {regress} · 프레임 찢김 {frameTorn} · 포화 관측 {sawSaturating} · 동결 관측 {sawFrozen} · 동결 시도 #{freezeObservedAtAttempt} · 동결 뒤 거부 {frozenRejects}");
+                _out.WriteLine($"[3중 경합] 할당 주문 {orderAlloc}B · 판독 {readerAlloc}B · 퍼저 정상 {fuzzAlloc}B(+ 90% 고지 1회 {noticeAlloc}B) · GC {dg0}/{dg1}/{dg2} · 집계어 0x{soak.Sim.Interlocks.Mask:X} · 송출 {soak.Sim.Broker.Placed:N0}(동결 시 {placedAtFreeze:N0}) · 거부 {soak.Sim.Worker.InterlockVetoes:N0}");
+                var j = soak.Jitter!;
+                _out.WriteLine($"[3중 경합] 주문 제안 지연 p99 {j.Percentile(990) / 1000.0:F1}µs · 최대 {j.MaxNanos / 1000.0:F1}µs · >500µs {j.Spikes}(GC {j.GcSpikes})");
 
-            Assert.Null(fault);
-            Assert.True(fuzzDone && orderDone && readerDone, $"교착/정지 — 퍼저 {fuzzDone} · 주문 {orderDone} · 판독 {readerDone}");
-            Assert.Equal((0L, 0L, 0L), (torn, regress, frameTorn));                                   // ★찢김 · 역행 0
-            Assert.True(verified > 0 && frames > 0);
-            Assert.Equal(0L, orderAlloc);                                                           // ★세 스레드 관리 힙 0B
-            Assert.Equal(0L, readerAlloc);
-            Assert.Equal(0L, fuzzAlloc);                                                            // 퍼저 정상 회차 0B
-            Assert.Equal(1L, noticeAttempts);                                                       // 고지 할당은 정확히 1회차(포화 전이)
-            Assert.Equal((0, 0, 0), (dg0, dg1, dg2));                                               // ★경합 창 GC 0
-            Assert.Equal(Bit27, bitAtFreeze);                                                       // ★동결 관측 순간 비트 27 이미 세워짐
-            Assert.True(sawSaturating > 0, "90% 포화 상태를 판독자가 관측");
-            Assert.True(sawFrozen > 0);
-            Assert.Equal(1L, ledger.SaturationWarnings);
-            Assert.Equal(50L, frozenRejects + 1);                                                   // 동결 첫 관측 뒤 49회 = 전부 AuditFrozen
-            Assert.Equal(storeWritesAtFreeze, store.Writes);                                        // ★동결 뒤 기입 0
-            Assert.Equal((1L, 0L), (soak.Anomaly.AuditLedgerFulls, soak.Anomaly.AuditChainBreaks));
-            Assert.Equal(Bit27, soak.Sim.Interlocks.Mask);                                           // ★비트 27 외 인터락 훼손 0
-            var snap = ledger.Snapshot();
-            Assert.Equal((Capacity, AuditFreezeCause.Full), (snap.Count, snap.FreezeCause));
+                Assert.Null(fault);
+                Assert.True(fuzzDone && orderDone && readerDone, $"교착/정지 — 퍼저 {fuzzDone} · 주문 {orderDone} · 판독 {readerDone}");
+                Assert.Equal((0L, 0L, 0L), (torn, regress, frameTorn));                                   // ★찢김 · 역행 0
+                Assert.True(verified > 0 && frames > 0);
+                Assert.Equal(0L, orderAlloc);                                                           // ★세 스레드 관리 힙 0B
+                Assert.Equal(0L, readerAlloc);
+                Assert.Equal(0L, fuzzAlloc);                                                            // 퍼저 정상 회차 0B
+                Assert.Equal(1L, noticeAttempts);                                                       // 고지 할당은 정확히 1회차(포화 전이)
+                Assert.Equal((0, 0, 0), (dg0, dg1, dg2));                                               // ★경합 창 GC 0
+                Assert.Equal(Bit27, bitAtFreeze);                                                       // ★동결 관측 순간 비트 27 이미 세워짐
+                Assert.True(sawSaturating > 0, "90% 포화 상태를 판독자가 관측");
+                Assert.True(sawFrozen > 0);
+                Assert.Equal(1L, ledger.SaturationWarnings);
+                Assert.Equal(50L, frozenRejects + 1);                                                   // 동결 첫 관측 뒤 49회 = 전부 AuditFrozen
+                Assert.Equal(storeWritesAtFreeze, store.Writes);                                        // ★동결 뒤 기입 0
+                Assert.Equal((1L, 0L), (soak.Anomaly.AuditLedgerFulls, soak.Anomaly.AuditChainBreaks));
+                Assert.Equal(Bit27, soak.Sim.Interlocks.Mask);                                           // ★비트 27 외 인터락 훼손 0
+                var snap = ledger.Snapshot();
+                Assert.Equal((Capacity, AuditFreezeCause.Full), (snap.Count, snap.FreezeCause));
 
-            // 동결 뒤 송출 0 — 소유 스레드(이제 이 스레드)에서 결정론 확인
-            long placed = soak.Sim.Broker.Placed, vetoes = soak.Sim.Worker.InterlockVetoes;
-            soak.RunOrderBurst(10_000);
-            Assert.Equal(placed, soak.Sim.Broker.Placed);
-            Assert.True(soak.Sim.Worker.InterlockVetoes > vetoes);
+                // 동결 뒤 송출 0 — 소유 스레드(이제 이 스레드)에서 결정론 확인
+                long placed = soak.Sim.Broker.Placed, vetoes = soak.Sim.Worker.InterlockVetoes;
+                soak.RunOrderBurst(10_000);
+                Assert.Equal(placed, soak.Sim.Broker.Placed);
+                Assert.True(soak.Sim.Worker.InterlockVetoes > vetoes);
+            }
+            finally
+            {
+                stop.Cancel();
+                bool drained = TeardownDrain.JoinAll(TimeSpan.FromSeconds(30), order, reader, fuzzer);
+                TeardownDrain.DisposeOrQuarantine(drained, stop, soak);
+            }
         }
 
         // ════════════ §3 [방향 A] 지터 센티널 ════════════

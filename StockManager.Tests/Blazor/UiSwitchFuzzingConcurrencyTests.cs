@@ -191,7 +191,7 @@ namespace StockManager.Tests.Blazor
             IUiClickSurface surface = headless ? rig.CreateHeadlessSurface() : BunitClickSurface.CreateStandard(rig);
             string tag = headless ? "headless" : "bUnit";
             int subsMounted = rig.Hub.FrameReadySubscribers, remounts = 0;
-            long staleTotal = 0, settleTotal = 0;
+            long staleTotal = 0, settleTotal = 0, quiesceTotal = 0;
             Assert.True(subsMounted >= 1, "대시보드 뷰 구독 0");
             churn.Start();
 
@@ -221,7 +221,7 @@ namespace StockManager.Tests.Blazor
                     {
                         // bUnit 컨텍스트 재탑재(~2,000 상호작용마다): bUnit/AngleSharp 보유(상호작용당 ~24KB)를 풀어 전체 스위트 시험 호스트 점유를 묶는다.
                         // 매 폐기 = 뷰 Dispose → 허브 구독 해지 재확인(누수 0 반복 판정).
-                        staleTotal += surface.StaleTargets; settleTotal += (surface as BunitClickSurface)?.SettleTimeouts ?? 0;
+                        staleTotal += surface.StaleTargets; settleTotal += (surface as BunitClickSurface)?.SettleTimeouts ?? 0; quiesceTotal += (surface as BunitClickSurface)?.QuiesceTimeouts ?? 0;
                         (surface as IDisposable)?.Dispose();
                         Assert.Equal(0, SubscribersAfterDispose(rig.Hub, "remount " + remounts));
                         remounts++;
@@ -237,13 +237,13 @@ namespace StockManager.Tests.Blazor
             long executed = reports.Sum(r => r.Executed);
             churn.Dispose();
             long faults = reports.Sum(r => r.UiFaults), arming = reports.Sum(r => r.ArmingViolations), admitted = reports.Sum(r => r.HostileAdmitted);
-            long hostile = reports.Sum(r => r.HostileWrites), sym = reports.Sum(r => r.SymmetryBreaks), symChecks = reports.Sum(r => r.SymmetryChecks);
+            long hostile = reports.Sum(r => r.HostileWrites), sym = reports.Sum(r => r.SymmetryBreaks), symChecks = reports.Sum(r => r.SymmetryChecks), symDirty = reports.Sum(r => r.SymmetryContaminated);
             int dg0 = GC.CollectionCount(0) - g0, dg1 = GC.CollectionCount(1) - g1, dg2 = GC.CollectionCount(2) - g2;
             var sb = new StringBuilder();
             sb.Append($"[§1 {tag}] 상호작용 {executed:N0} ({executed / fuzzSec:N0}/s · {fuzzSec:F1}s) · UI 예외 {faults} · 불법 무장 {arming} · 적대 {hostile}(수용 {admitted}) · ");
-            sb.Append($"대칭 {symChecks}(파손 {sym}) · 게시본 판독 {checks}(찢김 {torn}) · 세션 전이 {churn.Steps:N0}(예외 {churn.Faults}) · ");
-            staleTotal += surface.StaleTargets; settleTotal += (surface as BunitClickSurface)?.SettleTimeouts ?? 0;
-            sb.Append($"재탑재 {remounts} · 노후 표적 {staleTotal} · 체크 반영 대기 초과 {settleTotal} · 상태 분포 [{string.Join(",", churn.StatesSeen)}] · 지터 표본 {jitter.Samples} · 펌프 {rig.Hub.Pumps}(고장 {rig.Hub.PumpFaults}) · GC {dg0}/{dg1}/{dg2}");
+            sb.Append($"대칭 {symChecks}(파손 {sym} · 오염 제외 {symDirty}) · 게시본 판독 {checks}(찢김 {torn}) · 세션 전이 {churn.Steps:N0}(예외 {churn.Faults}) · ");
+            staleTotal += surface.StaleTargets; settleTotal += (surface as BunitClickSurface)?.SettleTimeouts ?? 0; quiesceTotal += (surface as BunitClickSurface)?.QuiesceTimeouts ?? 0;
+            sb.Append($"재탑재 {remounts} · 노후 표적 {staleTotal} · 체크 반영 대기 초과 {settleTotal} · 안정 대기 초과 {quiesceTotal} · 상태 분포 [{string.Join(",", churn.StatesSeen)}] · 지터 표본 {jitter.Samples} · 펌프 {rig.Hub.Pumps}(고장 {rig.Hub.PumpFaults}) · GC {dg0}/{dg1}/{dg2}");
             _out.WriteLine(sb.ToString());
             _out.WriteLine($"[§2 {tag}] 힙(전체 GC 후) 기준 {heap0 / 1024:N0}KB → 1절반 {heaps[0] / 1024:N0}KB → 2절반 {heaps[1] / 1024:N0}KB");
 

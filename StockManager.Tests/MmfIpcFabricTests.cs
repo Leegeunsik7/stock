@@ -177,63 +177,89 @@ namespace StockManager.Tests
         {
             var st = new SpscStats();
             MmfIpcFabric? w = null, r = null;
-            using var start = new Barrier(3);
-            using var end = new Barrier(3);
+            // [v12.18.9-DEV] 드레인 규약(TeardownDrain): 합류 시간 초과 · 단언 실패로 빠져나가도 Barrier/MMF 를 '살아 있는 스레드 밑에서'
+            //   폐기하지 않는다 — 취소 토큰으로 작업 스레드를 깨워 종료 확인 후 폐기(생존 = 격리 · 시험은 실패).
+            var start = new Barrier(3);
+            var end = new Barrier(3);
+            var cts = new CancellationTokenSource();
+            var ct = cts.Token;
+            bool roundOpen = false;
             var wt = new Thread(() =>
             {
-                var buf = new byte[16];
-                for (int k = 0; k < rounds; k++)
+                try
                 {
-                    if (!start.SignalAndWait(60_000)) return;
-                    var fw = Volatile.Read(ref w)!;
-                    for (long i = 0; i < perRound; i++)
+                    var buf = new byte[16];
+                    for (int k = 0; k < rounds; k++)
                     {
-                        BitConverter.TryWriteBytes(buf.AsSpan(0, 8), i);
-                        BitConverter.TryWriteBytes(buf.AsSpan(8, 8), ~i);
-                        while (!fw.TryPublish(buf)) { if (fw.IsCorrupted) goto done; Thread.SpinWait(4); }
-                        writerHook?.Invoke(i);
+                        if (!start.SignalAndWait(60_000, ct)) return;
+                        var fw = Volatile.Read(ref w)!;
+                        for (long i = 0; i < perRound; i++)
+                        {
+                            BitConverter.TryWriteBytes(buf.AsSpan(0, 8), i);
+                            BitConverter.TryWriteBytes(buf.AsSpan(8, 8), ~i);
+                            while (!fw.TryPublish(buf)) { if (fw.IsCorrupted || ct.IsCancellationRequested) goto done; Thread.SpinWait(4); }
+                            writerHook?.Invoke(i);
+                        }
+                    done:
+                        if (!end.SignalAndWait(60_000, ct)) return;
                     }
-                done:
-                    if (!end.SignalAndWait(60_000)) return;
                 }
+                catch (OperationCanceledException) { }
             }) { IsBackground = true, Name = "mmf-writer" };
             var rt = new Thread(() =>
             {
-                var dst = new byte[32];
+                try
+                {
+                    var dst = new byte[32];
+                    for (int k = 0; k < rounds; k++)
+                    {
+                        if (!start.SignalAndWait(60_000, ct)) return;
+                        var fr = Volatile.Read(ref r)!;
+                        long got = 0;
+                        while (got < perRound && !ct.IsCancellationRequested)
+                        {
+                            if (fr.TryConsume(dst, out int len))
+                            {
+                                long a = BitConverter.ToInt64(dst, 0), b = BitConverter.ToInt64(dst, 8);
+                                if (len != 16 || a != got || b != ~got) Interlocked.Increment(ref st.Torn);
+                                got++;
+                                readerHook?.Invoke(got);
+                            }
+                            else if (fr.IsCorrupted) break;
+                        }
+                        Interlocked.Add(ref st.Got, got);
+                        if (!end.SignalAndWait(60_000, ct)) return;
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }) { IsBackground = true, Name = "mmf-reader" };
+            bool joined = false;
+            try
+            {
+                wt.Start(); rt.Start();
                 for (int k = 0; k < rounds; k++)
                 {
-                    if (!start.SignalAndWait(60_000)) return;
-                    var fr = Volatile.Read(ref r)!;
-                    long got = 0;
-                    while (got < perRound)
-                    {
-                        if (fr.TryConsume(dst, out int len))
-                        {
-                            long a = BitConverter.ToInt64(dst, 0), b = BitConverter.ToInt64(dst, 8);
-                            if (len != 16 || a != got || b != ~got) Interlocked.Increment(ref st.Torn);
-                            got++;
-                            readerHook?.Invoke(got);
-                        }
-                        else if (fr.IsCorrupted) break;
-                    }
-                    Interlocked.Add(ref st.Got, got);
-                    if (!end.SignalAndWait(60_000)) return;
+                    string name = UniqueName("RND");
+                    Volatile.Write(ref w, new MmfIpcFabric(name, MmfFabricRole.Writer, capacity, 16, heartbeatTimeoutMs: heartbeatMs));
+                    Volatile.Write(ref r, new MmfIpcFabric(name, MmfFabricRole.Reader, capacity, 16, heartbeatTimeoutMs: heartbeatMs));
+                    roundOpen = true;
+                    Assert.True(start.SignalAndWait(60_000), $"라운드 {k} 출발 합류 타임아웃");
+                    Assert.True(end.SignalAndWait(120_000), $"라운드 {k} 종료 합류 타임아웃");
+                    if (w!.IsCorrupted) st.WriterCorrupt++;
+                    if (r!.IsCorrupted) st.ReaderCorrupt++;
+                    w.Dispose(); r.Dispose();
+                    roundOpen = false;
+                    st.Rounds++;
                 }
-            }) { IsBackground = true, Name = "mmf-reader" };
-            wt.Start(); rt.Start();
-            for (int k = 0; k < rounds; k++)
-            {
-                string name = UniqueName("RND");
-                Volatile.Write(ref w, new MmfIpcFabric(name, MmfFabricRole.Writer, capacity, 16, heartbeatTimeoutMs: heartbeatMs));
-                Volatile.Write(ref r, new MmfIpcFabric(name, MmfFabricRole.Reader, capacity, 16, heartbeatTimeoutMs: heartbeatMs));
-                Assert.True(start.SignalAndWait(60_000), $"라운드 {k} 출발 합류 타임아웃");
-                Assert.True(end.SignalAndWait(120_000), $"라운드 {k} 종료 합류 타임아웃");
-                if (w!.IsCorrupted) st.WriterCorrupt++;
-                if (r!.IsCorrupted) st.ReaderCorrupt++;
-                w.Dispose(); r.Dispose();
-                st.Rounds++;
+                joined = TeardownDrain.JoinAll(TimeSpan.FromSeconds(60), wt, rt);
             }
-            Assert.True(wt.Join(30_000)); Assert.True(rt.Join(30_000));
+            finally
+            {
+                cts.Cancel();
+                bool drained = TeardownDrain.JoinAll(TimeSpan.FromSeconds(30), wt, rt);
+                TeardownDrain.DisposeOrQuarantine(drained, start, end, cts, roundOpen ? w : null, roundOpen ? r : null);
+            }
+            Assert.True(joined, "작업 스레드 60초 미종료");
             return st;
         }
 
@@ -377,13 +403,13 @@ namespace StockManager.Tests
         private static StepLockStats RunStepLock(long perRound, int capacity, long stallEvery, long stallTicks, bool holdWriterAtStall = false, int burners = 0)
         {
             var st = new StepLockStats();
-            using var co = new StepLockCoordinator();
+            var co = new StepLockCoordinator();
             string name = UniqueName("STEP");
-            using var w = new MmfIpcFabric(name, MmfFabricRole.Writer, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
-            using var r = new MmfIpcFabric(name, MmfFabricRole.Reader, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
-            using var go = new CountdownEvent(2);                                     // 두 스레드 준비 래치
-            using var start = new ManualResetEventSlim(false);
-            int stopBurn = 0;
+            var w = new MmfIpcFabric(name, MmfFabricRole.Writer, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
+            var r = new MmfIpcFabric(name, MmfFabricRole.Reader, capacity, 16, null, co.Now, TimeSpan.TicksPerSecond, 20);
+            var go = new CountdownEvent(2);                                     // 두 스레드 준비 래치
+            var start = new ManualResetEventSlim(false);
+            int stopBurn = 0, abort = 0;                                           // [v12.18.9-DEV] abort = 리더 드레인(라이터 사망 시 무한 양보 방지)
             var burn = new Thread[burners];
             for (int b = 0; b < burners; b++)
             {
@@ -413,7 +439,7 @@ namespace StockManager.Tests
                 var dst = new byte[32];
                 go.Signal(); start.Wait();
                 long got = 0;
-                while (got < perRound)
+                while (got < perRound && Volatile.Read(ref abort) == 0)
                 {
                     if (r.TryConsume(dst, out int len))
                     {
@@ -439,20 +465,31 @@ namespace StockManager.Tests
                 st.Got = got;
                 co.Stop();                                                             // 라이터 종료(가득 찬 링 재시도 탈출 · 게이트 해제)
             }) { IsBackground = true, Name = "mmf-step-reader" };
-            wt.Start(); rt.Start();
-            Assert.True(go.Wait(30_000), "스레드 준비 래치 타임아웃");
-            start.Set();
-            bool rj = rt.Join(60_000);
-            co.Stop();
-            bool wj = wt.Join(60_000);
-            Volatile.Write(ref stopBurn, 1);
-            foreach (var t in burn) t.Join(10_000);
-            st.Joined = rj && wj;
-            st.ReaderCorrupt = r.IsCorrupted ? 1 : 0;
-            st.WriterCorrupt = w.IsCorrupted ? 1 : 0;
-            st.Beats = w.BackpressureBeats;
-            st.Reason = "리더[" + r.LastReason + "] 라이터[" + w.LastReason + "] got=" + st.Got + " stalls=" + st.Stalls;
-            st.WaitTimeouts = co.WaitTimeouts;
+            // [v12.18.9-DEV] 드레인 규약: 준비 래치 단언 실패 · Join 시간 초과로 빠져나가도 이벤트 · MMF(비관리 뷰)를 살아 있는 스레드 밑에서 폐기하지 않는다.
+            bool rj = false, wj = false, drained = false;
+            try
+            {
+                wt.Start(); rt.Start();
+                Assert.True(go.Wait(30_000), "스레드 준비 래치 타임아웃");
+                start.Set();
+                rj = rt.Join(60_000);
+                co.Stop();
+                wj = wt.Join(60_000);
+                st.Joined = rj && wj;
+                st.ReaderCorrupt = r.IsCorrupted ? 1 : 0;
+                st.WriterCorrupt = w.IsCorrupted ? 1 : 0;
+                st.Beats = w.BackpressureBeats;
+                st.Reason = "리더[" + r.LastReason + "] 라이터[" + w.LastReason + "] got=" + st.Got + " stalls=" + st.Stalls;
+                st.WaitTimeouts = co.WaitTimeouts;
+            }
+            finally
+            {
+                Volatile.Write(ref abort, 1); co.Stop(); start.Set();                     // 미출발 스레드도 깨워 즉시 종료
+                Volatile.Write(ref stopBurn, 1);
+                var all = new Thread[burn.Length + 2]; all[0] = wt; all[1] = rt; Array.Copy(burn, 0, all, 2, burn.Length);
+                drained = TeardownDrain.JoinAll(TimeSpan.FromSeconds(30), all);
+                TeardownDrain.DisposeOrQuarantine(drained, w, r, go, start, co);
+            }
             return st;
         }
 

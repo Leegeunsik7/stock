@@ -127,6 +127,27 @@ namespace StockManager.Tests.Simulation
         private long _settleTimeouts;
         public long SettleTimeouts => _settleTimeouts;
 
+        // [v12.18.9-DEV] 루트 마크업이 연속 2회(25ms 간격) 같아질 때까지 대기(≤2s) — 극부하(27/s · --diag)에서 이전 조작의 비동기 후속 렌더가
+        //  대칭 창(토글 2회) 안에 착지해 위양성 파손 3건(실측 · 반영 대기 초과 0). 시간 초과 = QuiesceTimeouts 계수 후 판정 진행.
+        private long _quiesceTimeouts;
+        public long QuiesceTimeouts => _quiesceTimeouts;
+
+        public bool Quiesce(int index)
+        {
+            var cut = _roots[_controls[index].Root].Cut;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            string last = cut.Markup;
+            while (sw.ElapsedMilliseconds < 2_000)
+            {
+                System.Threading.Thread.Sleep(25);
+                string now = cut.Markup;
+                if (string.Equals(now, last, StringComparison.Ordinal)) return true;
+                last = now;
+            }
+            _quiesceTimeouts++;
+            return false;
+        }
+
         private void Settle(int root, int ordinal, bool target)
         {
             try { _roots[root].Cut.WaitForState(() => CheckedAt(root, ordinal) == target, TimeSpan.FromSeconds(2)); }

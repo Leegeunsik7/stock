@@ -131,19 +131,41 @@ namespace StockManager.Tests
             var ring = new OrderDispatchRing(1024);
             long exceptions = 0;
             const int Rounds = 100_000;
-            using var barrier = new Barrier(2);
+            // [v12.18.9-DEV] ★크래시 교정(실측): 부하에서 100k 라운드가 Join(30s)를 넘기면 결과 무시 후 반환 → `using` Barrier 폐기 →
+            //   SignalAndWait 중인 두 스레드 ObjectDisposedException(원시 스레드) → 시험 호스트 종료. 취소 토큰 + 드레인 후 폐기(TeardownDrain).
+            var barrier = new Barrier(2);
+            var cts = new CancellationTokenSource();
+            Exception? fault = null;
             void Hammer()
             {
-                for (int i = 0; i < Rounds; i++)
+                try
                 {
-                    barrier.SignalAndWait();   // 두 스레드 동시 진입 강제 → 충돌 확률 극대화
-                    try { ring.Publish(1, 1, OrderSide.Buy, 1, QPrice.Of(1m), QQty.Of(1m), i); }
-                    catch (InvalidOperationException) { Interlocked.Increment(ref exceptions); }
+                    for (int i = 0; i < Rounds; i++)
+                    {
+                        barrier.SignalAndWait(cts.Token);   // 두 스레드 동시 진입 강제 → 충돌 확률 극대화(취소 = 드레인)
+                        try { ring.Publish(1, 1, OrderSide.Buy, 1, QPrice.Of(1m), QQty.Of(1m), i); }
+                        catch (InvalidOperationException) { Interlocked.Increment(ref exceptions); }
+                    }
                 }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { Interlocked.CompareExchange(ref fault, ex, null); cts.Cancel(); }   // 짝 스레드 무한 대기 방지
             }
             var t1 = new Thread(Hammer) { IsBackground = true };
             var t2 = new Thread(Hammer) { IsBackground = true };
-            t1.Start(); t2.Start(); t1.Join(30000); t2.Join(30000);
+            bool joined = false;
+            try
+            {
+                t1.Start(); t2.Start();
+                joined = TeardownDrain.JoinAll(TimeSpan.FromSeconds(120), t1, t2);
+            }
+            finally
+            {
+                cts.Cancel();
+                bool drained = TeardownDrain.JoinAll(TimeSpan.FromSeconds(30), t1, t2);
+                TeardownDrain.DisposeOrQuarantine(drained, barrier, cts);
+            }
+            Assert.Null(fault);
+            Assert.True(joined, "해머 스레드 120초 미완료(부하) — 취소 드레인 후 실패 처리(크래시 아님)");
             Assert.Equal(exceptions, ring.WriterCollisions);   // 정확 계상(1:1)
             Assert.True(ring.WriterCollisions > 0, $"Barrier 동시 진입으로 충돌 비공허 입증 — collisions={ring.WriterCollisions}");
             Assert.True(ring.Published >= 0, "정당 발행도 다수 성공");
