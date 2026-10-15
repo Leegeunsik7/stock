@@ -198,6 +198,18 @@ namespace MS2E.UI.Portable.Helpers
         public static string SessionStateLabel(int state) => (uint)state < (uint)SessionStates.Length ? SessionStates[state] : Unknown;
         public static string SessionStateClass(int state) => (uint)state < (uint)SessionStateClasses.Length ? SessionStateClasses[state] : "off";
 
+        // ── [v12.18.10-DEV] 브로커 생존성 사전 진단(DashPreFlight 0..3 · 레인 판정 0..5) — 녹 통과/정상 · 황 진단 중 · 적 실패 래치 · 회 미결선 ──
+        private static readonly string[] PreFlightStates = { "사전 진단 미결선", "사전 진단 중", "사전 진단 통과", "사전 진단 실패 · 비트 14/25 래치" };
+        private static readonly string[] PreFlightStateClasses = { "off", "wait", "ok", "bad" };
+        private static readonly string[] PreFlightLanes = { "미결선", "정상", "시한 초과(3초)", "토큰/링크 무효", "예외", "판정 중" };
+        private static readonly string[] PreFlightLaneClasses = { "off", "ok", "bad", "bad", "bad", "wait" };
+        public static int PreFlightStateCount => PreFlightStates.Length;
+        public static int PreFlightLaneCount => PreFlightLanes.Length;
+        public static string PreFlightStateLabel(int state) => (uint)state < (uint)PreFlightStates.Length ? PreFlightStates[state] : Unknown;
+        public static string PreFlightStateClass(int state) => (uint)state < (uint)PreFlightStateClasses.Length ? PreFlightStateClasses[state] : "off";
+        public static string PreFlightLaneLabel(int verdict) => (uint)verdict < (uint)PreFlightLanes.Length ? PreFlightLanes[verdict] : Unknown;
+        public static string PreFlightLaneClass(int verdict) => (uint)verdict < (uint)PreFlightLaneClasses.Length ? PreFlightLaneClasses[verdict] : "off";
+
         // ── [v12.18.2-DEV] 시그널 게이트 모드(DashGateMode 0 미결선 · 1 관측 · 2 강제) ──
         private static readonly string[] GateModes = { "게이트 미결선", "게이트 관측(미차단)", "게이트 강제" };
         private static readonly string[] GateModeClasses = { "off", "observe", "enforce" };

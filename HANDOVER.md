@@ -1876,3 +1876,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `071BC4493F856E9BC042154E2E5ED843C553884873DCD4517C6B086006F7E83A` · sourceCommit b9d5558 · 피어 기록 없음.
 - v12.18.8-GM 산출물 13건(zip 9C683FC2… · masterSeal 355A687D…) → release/superseded-v12.18.8-GM/. worktree 제거.
 - 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · CLI --verify-live-armed --require-pump-jitter --require-cancel-arming exit 0 · GoldenMaster Freeze/Packaging 48/48.
+
+
+## 69. v12.18.10-DEV — Live Session Pre-Flight Sentinel(브로커 생존성 사전 진단 · 인터락 선제 래치) (2026-10-15)
+
+### 69.1 전제 교정
+- 지시서 경로 `StockManager/Services/GenesisPreFlightUpdater.cs` 는 부재 — 실제 `StockManager/Blazor/GenesisPreFlightUpdater.cs` 를 확장.
+- 비트 14(AccountDivergence) · 25(KiwoomBridgeLink)는 이미 각 인터락이 단독 결속(`Bind` 재결속 거부) → 새 소스로 재결속하지 않고 소유 인터락의 sticky 경로로만 래치.
+
+### 69.2 구성
+- `BrokerLivenessPreFlight`(신규 · Blazor/): 레인(0 키움 · 1 KIS) 병렬 비파괴 프로브 · 레인별 시한 3초(WaitAsync — 취소 무시 프로브도 절단) ·
+  판정(NotConfigured · Healthy · Timeout · Invalid · Fault · Pending). 비정상 판정 = 그 레인 continuation 안에서 즉시 래치(다른 레인 대기 0):
+  키움 → `KiwoomBridgeLinkInterlock.LatchPreFlight()`(비트 25 · 링크 재수립으로 해제 불가) + 비트 14 · KIS → 비트 14(`AccountDivergenceInterlock.Trip(-1, −판정)`).
+  상태 Pending → Passed/Failed(sticky · 재진단 거부) · `TryRearm` 물리 이중키 → Pending(재진단 필요).
+- `GenesisPreFlightUpdater`: `ProbeBrokerLiveness()` · 임대 갱신 술어 `RenewAllowed` = 인증 ∧ 무장 ∧ (진단 미결선 ∨ Passed) — 진단 통과 전 임대 갱신 0.
+- 호스트: 키움 프로브 = `bridge.IsProductionProxy ∧ !IsHeartbeatTimedOut` 판독(송신 0) · KIS 프로브 = `QueryBalanceJson`(토큰 발급 + TTTC8434R 잔고 GET · 원장 변형 0).
+  미결선 레인(Kiwoom.ConnectEnabled=false · KIS 자격증명 없음) = 비차단. 기동 시 콜드 비동기 1회.
+- 진단 후 핑퐁 계측: 1초 타이머가 키움 IPC RTT 를 `RecordPingPong`(Interlocked 만 · δ=0) — 시한 초과는 누계만(차단은 기존 세션 인터락 소유 · 이중 래치 금지). KIS RTT 원천 없음 = 0(정직).
+- /aidash 브로커 세션 패널: '사전 진단' 행(DashPreFlight 상태 · 레인 판정 · 소요 ms · 핑퐁 최대 µs) — 허브 `AttachPreFlight` 판독 전용 무할당 투영.
+
+### 69.3 검증
+- `StockManager.Tests/Services/PreFlightSentinelTests.cs` 11건: 무응답 시한 래치(25 · 14) · 실패 레인 선래치(타 레인 판정 전) · 래치 sticky/이중키 ·
+  토큰 무효(14 만) · 예외/취소/미판정 응답 fail-closed · 정상/미결선 Passed · 임대 술어 · 재진단 거부 · 핑퐁/판독 δ=0(Release · MinAllocated 3창) · 송출 경로 부재 소스 수검 · 투영 코드 일치.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,828/3,828 · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): '0ms 격발' = 판정 continuation 내 동기 래치(시한 3초 경과 자체는 대기). 실 키움 COM/KIS 계좌 실측은 이 호스트에서 불가(시뮬레이션 프로브로 증명).

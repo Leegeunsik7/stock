@@ -218,6 +218,16 @@ else
                         </tr>
                     }
                     @if (f.SessionCount == 0) { <tr><td colspan="3" class="pd-empty">세션 복구 관리자 미결선(브로커 연결 꺼짐)</td></tr> }
+                    <tr>
+                        <td>사전 진단</td>
+                        <td><span class="pd-ses @SignalLabelMapper.PreFlightStateClass(f.PreFlightState)">@SignalLabelMapper.PreFlightStateLabel(f.PreFlightState)</span></td>
+                        <td>@if (f.PreFlightState != DashPreFlight.Unbound)
+                            {
+                                <em class="pd-ses-n">키움 <span class="pd-ses @SignalLabelMapper.PreFlightLaneClass(f.PreFlightKiwoom)">@SignalLabelMapper.PreFlightLaneLabel(f.PreFlightKiwoom)</span>
+                                    · KIS <span class="pd-ses @SignalLabelMapper.PreFlightLaneClass(f.PreFlightKis)">@SignalLabelMapper.PreFlightLaneLabel(f.PreFlightKis)</span>
+                                    · @(f.PreFlightElapsedMicros / 1000)ms · 핑퐁 최대 @(f.PreFlightPingMaxMicros)µs</em>
+                            }</td>
+                    </tr>
                 </table>
                 <h3>체결 통보 피드 <small>(최근 @(f.FillCount)건)</small></h3>
                 <table class="pd-tbl">

@@ -166,6 +166,8 @@ namespace StockManager.Blazor.Services
         // ── [v12.18.7-DEV] 브로커 세션 복구 관리자(선택 결선 · 인덱스 = 브로커) ──
         private readonly SessionRecoveryManager?[] _sessions = new SessionRecoveryManager?[Brokers];
         private readonly SessionRecoverySnapshot[] _sesSnap = new SessionRecoverySnapshot[Brokers];
+        // ── [v12.18.10-DEV] 브로커 생존성 사전 진단(선택 결선 · 펌프가 Interlocked 판독만 · 할당 0) ──
+        private BrokerLivenessPreFlight? _preFlight;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -253,6 +255,26 @@ namespace StockManager.Blazor.Services
             AttachJitter(sentinel);
         }
 
+        // [v12.18.10-DEV] 사전 진단 투영(δ=0 — 원시 정수만 · 진단 중 = 레인 '판정 중' 그대로 렌더).
+        private void ProjectPreFlight(PaperDashboardFrame f)
+        {
+            var pf = Volatile.Read(ref _preFlight);
+            f.PreFlightState = DashPreFlight.Classify(pf is not null, pf is null ? 0 : (int)pf.State);
+            if (pf is null)
+            {
+                f.PreFlightKiwoom = f.PreFlightKis = DashPreFlight.LaneUnbound;
+                f.PreFlightElapsedMicros = f.PreFlightLatches = f.PreFlightPingKiwoomMicros = f.PreFlightPingKisMicros = f.PreFlightPingMaxMicros = 0;
+                return;
+            }
+            f.PreFlightKiwoom = (int)pf.Verdict(BrokerLivenessPreFlight.LaneKiwoom);
+            f.PreFlightKis = (int)pf.Verdict(BrokerLivenessPreFlight.LaneKis);
+            f.PreFlightElapsedMicros = pf.ElapsedMicros;
+            f.PreFlightLatches = pf.Latches;
+            f.PreFlightPingKiwoomMicros = pf.PingLastMicros(BrokerLivenessPreFlight.LaneKiwoom);
+            f.PreFlightPingKisMicros = pf.PingLastMicros(BrokerLivenessPreFlight.LaneKis);
+            f.PreFlightPingMaxMicros = Math.Max(pf.PingMaxMicros(BrokerLivenessPreFlight.LaneKiwoom), pf.PingMaxMicros(BrokerLivenessPreFlight.LaneKis));
+        }
+
         /// <summary>[v12.18.7-DEV] 브로커 세션 복구 관리자 관제 결선(인덱스 = manager.Broker · 펌프가 Snapshot() 락 1회 판독 · 할당 0).</summary>
         public void AttachSessionRecovery(SessionRecoveryManager manager)
         {
@@ -260,6 +282,10 @@ namespace StockManager.Blazor.Services
             if ((uint)manager.Broker >= (uint)Brokers) throw new ArgumentOutOfRangeException(nameof(manager), "브로커 인덱스 > " + (Brokers - 1));
             Volatile.Write(ref _sessions[manager.Broker], manager);
         }
+
+        /// <summary>[v12.18.10-DEV] 브로커 생존성 사전 진단 관제 결선(판독 전용 — 진단/래치 경로 무간섭 · 펌프 무할당 투영).</summary>
+        public void AttachPreFlight(BrokerLivenessPreFlight preFlight)
+            => Volatile.Write(ref _preFlight, preFlight ?? throw new ArgumentNullException(nameof(preFlight)));
 
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
@@ -434,6 +460,7 @@ namespace StockManager.Blazor.Services
                 };
             }
             f.SessionCount = sc;
+            ProjectPreFlight(f);
             var op = _orderPath;
             f.LatencyBound = op is not null;
             for (int k = 0; k < DashLatencyGrade.StageCount; k++) f.LatencyStages[k] = _latStages[k];

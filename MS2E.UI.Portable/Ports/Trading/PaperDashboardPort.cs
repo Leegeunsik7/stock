@@ -83,6 +83,19 @@ namespace MS2E.UI.Portable.Ports.Trading
              : state switch { 1 => Connected, 2 => Backoff, 3 => Reconciling, 0 => everConnected ? Reconnecting : Waiting, _ => Unbound };
     }
 
+    /// <summary>
+    /// [v12.18.10-DEV] 브로커 생존성 사전 진단 — 상태(0 미결선 · 1 진단 중 · 2 통과 · 3 실패 래치) · 레인 판정(호스트 BrokerProbeVerdict 와 같은 값:
+    /// 0 미결선 · 1 정상 · 2 시한 초과 · 3 무효 · 4 예외 · 5 판정 중). 실패 래치 = 비트 14/25 sticky(물리 이중키 재무장).
+    /// </summary>
+    public static class DashPreFlight
+    {
+        public const int Unbound = 0, Probing = 1, Passed = 2, Failed = 3;
+        public const int LaneUnbound = 0, LaneHealthy = 1, LaneTimeout = 2, LaneInvalid = 3, LaneFault = 4, LanePending = 5;
+
+        /// <param name="state">PreFlightLivenessState 원값(0 Pending · 1 Passed · 2 Failed).</param>
+        public static int Classify(bool bound, int state) => !bound ? Unbound : state switch { 1 => Passed, 2 => Failed, _ => Probing };
+    }
+
     public static class DashJitter
     {
         public const int Unbound = 0, Normal = 1, Spike = 2, GcSpike = 3;
@@ -179,6 +192,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         // [v12.18.7-DEV] 브로커 세션 복구 상태(결선된 관리자만 · 브로커 인덱스 순).
         public readonly DashBrokerSession[] Sessions = new DashBrokerSession[MaxBrokers];
         public int SessionCount;
+
+        // [v12.18.10-DEV] 브로커 생존성 사전 진단 — 상태(DashPreFlight) · 레인 판정(키움 · KIS) · 소요 µs · 래치 누계 · 진단 후 핑퐁 최근/최대 µs(키움 · KIS).
+        public int PreFlightState = DashPreFlight.Unbound, PreFlightKiwoom, PreFlightKis;
+        public long PreFlightElapsedMicros, PreFlightLatches, PreFlightPingKiwoomMicros, PreFlightPingKisMicros, PreFlightPingMaxMicros;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();

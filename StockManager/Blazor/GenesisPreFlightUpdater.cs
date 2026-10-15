@@ -14,6 +14,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace StockManager.Blazor
 {
@@ -34,6 +35,7 @@ namespace StockManager.Blazor
         private readonly string?                   _diskProbePath;
         private readonly int                       _intervalMs;
         private readonly long                      _rttMaxMicros;
+        private readonly BrokerLivenessPreFlight?  _liveness;
 
         private Thread? _thread;
         private readonly ManualResetEventSlim _stop = new(false);
@@ -48,8 +50,10 @@ namespace StockManager.Blazor
                                        PortfolioRiskVaREngine? varEngine = null, IoBackpressureFirewall? ioFirewall = null,
                                        Func<long>? marginHeadroomRaw = null, Func<bool>? isArmed = null,
                                        string? diskProbePath = null, Func<long>? nowTicks = null,
-                                       int intervalMs = 250, long rttMaxMicros = 5000)
+                                       int intervalMs = 250, long rttMaxMicros = 5000,
+                                       BrokerLivenessPreFlight? liveness = null)
         {
+            _liveness = liveness;
             _certifier = certifier ?? throw new ArgumentNullException(nameof(certifier));
             _lease     = lease     ?? throw new ArgumentNullException(nameof(lease));
             _latency = latency; _throttle = throttle; _cpuGrid = cpuGrid; _thermal = thermal;
@@ -119,9 +123,24 @@ namespace StockManager.Blazor
             _certifier.Certify(inputs);
 
             // ★인증 통과 ∧ 무장 상태에서만 임대 갱신 — 미인증/미무장이면 갱신 안 함 → 임대 자연 만료(자동 하향).
+            //   [v12.18.10] 브로커 생존성 사전 진단이 결선됐으면 Passed 전(Pending/Failed)에도 갱신 0 — 발주 엔진 가동 전 차단.
             bool armed = false; try { armed = _isArmed?.Invoke() ?? false; } catch { armed = false; }
-            if (_certifier.IsCertified && armed) _lease.Renew();
+            if (RenewAllowed(_certifier.IsCertified, armed, _liveness)) _lease.Renew();
         }
+
+        /// <summary>임대 갱신 술어 — 인증 ∧ 무장 ∧ (사전 진단 미결선 ∨ Passed). Pending/Failed = 갱신 0.</summary>
+        public static bool RenewAllowed(bool certified, bool armed, BrokerLivenessPreFlight? liveness)
+            => certified && armed && (liveness?.Cleared ?? true);
+
+        /// <summary>
+        /// [v12.18.10] 브로커 생존성 사전 진단(비파괴 · 레인별 3초 시한). 실패 레인은 판정 즉시 비트 14/25 래치.
+        /// 미결선(liveness null) = Passed 보고(진단 대상 없음).
+        /// </summary>
+        public Task<BrokerLivenessReport> ProbeBrokerLiveness(CancellationToken ct = default)
+            => _liveness is { } l ? l.ProbeAsync(ct)
+                                  : Task.FromResult(new BrokerLivenessReport(BrokerProbeVerdict.NotConfigured, BrokerProbeVerdict.NotConfigured, PreFlightLivenessState.Passed, 0));
+
+        public BrokerLivenessPreFlight? Liveness => _liveness;
 
         // 디스크 잔여(MB) — 콜드 DriveInfo 를 ≈5s 마다만 실측·캐시(파일시스템 호출을 성기게).
         private long SampleDiskCached()

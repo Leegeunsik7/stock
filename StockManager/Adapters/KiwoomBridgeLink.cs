@@ -34,8 +34,30 @@ namespace StockManager.Adapters
         }
 
         public bool Required => _required;
-        public bool ArmingBlocked => Volatile.Read(ref _blocked) == 1;
+        public bool ArmingBlocked => Volatile.Read(ref _blocked) == 1 || Volatile.Read(ref _preFlightLatched) == 1;
         public long Transitions => Interlocked.Read(ref _transitions);
+        /// <summary>[v12.18.10 사전 진단] 기동 생존성 진단 실패 sticky 래치(링크 재수립으로는 풀리지 않음 — 물리 이중키 재무장).</summary>
+        public bool PreFlightLatched => Volatile.Read(ref _preFlightLatched) == 1;
+
+        private int _preFlightLatched;
+
+        /// <summary>[v12.18.10 사전 진단] 키움 레인 무응답/무효 → 비트 25 즉시 래치(멱등 · δ=0).</summary>
+        public void LatchPreFlight()
+        {
+            if (Interlocked.CompareExchange(ref _preFlightLatched, 1, 0) == 0)
+            {
+                Interlocked.Increment(ref _transitions);
+                Volatile.Read(ref _link)?.Resync();
+            }
+        }
+
+        /// <summary>물리 이중키 확인 후 사전 진단 래치 해제(링크 상태 판정은 그대로 유지).</summary>
+        public bool TryClearPreFlightLatch(bool valveWired, bool liveArmingWired)
+        {
+            if (!(valveWired && liveArmingWired)) return false;
+            if (Interlocked.Exchange(ref _preFlightLatched, 0) == 1) Volatile.Read(ref _link)?.Resync();
+            return true;
+        }
 
         public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
         {

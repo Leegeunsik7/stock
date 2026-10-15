@@ -1544,12 +1544,38 @@ namespace StockManager.Blazor
             services.AddSingleton(latencyPublisher);
             // v7.4.0 — Pre-Flight 재인증 콜드 구동기: 서브시스템에서 입력 수집 → Certify → 인증∧무장 시 임대 갱신(BelowNormal·fail-safe).
             //   ★디스크(DriveInfo)는 이 콜드 스레드에서 ≈5s 캐시 샘플링 — 200ms 텔레메트리 샘플러 핫패스와 분리. liveArmed:false.
+            // [v12.18.10] 브로커 생존성 사전 진단(비파괴 · 레인별 3초) — 키움 = 실 COM 프록시 링크 ∧ 하트비트 생존 판독(송신 0) ·
+            //   KIS = 토큰 발급 + 잔고 조회 GET(TTTC8434R · 원장 변형 0). 무응답/무효 = 판정 즉시 비트 25(키움) · 14 sticky 래치.
+            //   진단 Passed 전에는 임대 갱신 0(발주 엔진 가동 전 차단). 미결선 레인(연결 비활성 · 자격증명 없음) = 비차단.
+            KisLiveBroker? kisLive = kisConfigured ? new KisLiveBroker(db) : null;   // 생성 자체는 네트워크 0
+            var livenessPreFlight = new BrokerLivenessPreFlight(
+                kiwoomConnect ? async ct =>
+                {
+                    while (true)
+                    {
+                        if (bridge.IsProductionProxy && !bridge.IsHeartbeatTimedOut(DateTime.UtcNow.Ticks)) return BrokerProbeVerdict.Healthy;
+                        await Task.Delay(50, ct).ConfigureAwait(false);
+                    }
+                } : null,
+                kisLive is null ? null : ct => Task.Run(() => kisLive.QueryBalanceJson() is { Length: > 0 } ? BrokerProbeVerdict.Healthy : BrokerProbeVerdict.Invalid, ct),
+                accountDivergence, kiwoomLink,
+                onLatch: (lane, v) => { try { Log.Warn($"[PreFlight] 브로커 생존성 사전 진단 실패 lane={lane} verdict={v} — 비트 14/25 래치 · 무장 임대 갱신 0"); } catch { } });
+            services.AddSingleton(livenessPreFlight);
             var preFlightUpdater = new GenesisPreFlightUpdater(preFlight, armingLease,
                 latency: latencyChannel, throttle: orderThrottle, cpuGrid: cpuGrid, thermal: thermalGuard,
                 varEngine: varEngine, ioFirewall: ioFirewallRef,
                 marginHeadroomRaw: () => riskShield.MarginBudgetRaw - riskShield.MarginReservedRaw,
-                isArmed: () => { try { return armingGate.IsArmed(); } catch { return false; } });
+                isArmed: () => { try { return armingGate.IsArmed(); } catch { return false; } },
+                liveness: livenessPreFlight);
             preFlightUpdater.Start();
+            _ = preFlightUpdater.ProbeBrokerLiveness();   // 콜드 비동기 — 실패는 레인 continuation 이 즉시 래치(호스트 기동 비차단)
+            //   진단 통과 후 핑퐁 계측(1초 · δ=0) — 키움 = 브리지 Ping/Pong RTT 판독(송신 경로 무접촉). KIS 레인 RTT 원천 없음 = 미계측(정직 0).
+            var livenessPingTimer = new System.Threading.Timer(_ =>
+            {
+                try { if (livenessPreFlight.Cleared && bridge.IsProxyAlive) livenessPreFlight.RecordPingPong(BrokerLivenessPreFlight.LaneKiwoom, bridge.CurrentIpcRttTicks); }
+                catch { }
+            }, null, 1_000, 1_000);
+            FormClosed += (_, _) => ShutdownTrace.Step("livenessPing", () => livenessPingTimer.Dispose());
             services.AddSingleton(preFlightUpdater);
             FormClosed += (_, _) => ShutdownTrace.Step("preFlightUpdater", () => preFlightUpdater.Dispose());
             // v4.70.0 — 발주 밸브 결속: Drain 루프(50ms) → IBroker.Place() 배선.
@@ -1570,7 +1596,6 @@ namespace StockManager.Blazor
             //   5분 선행 갱신). 키움과 같은 백업 인터락(물리 이중키 미충족 시 실 송출 0)으로 감싼다. 비트(EgressBypass)는 키움 센티널이 보유 —
             //   KIS 센티널은 같은 동결 콜백으로 Disarm.
             IBroker? kisEgress = null;
-            KisLiveBroker? kisLive = kisConfigured ? new KisLiveBroker(db) : null;
             if (kisLive is not null)
                 kisEgress = new StockManager.Adapters.LiveArmedEgressSentinel(kisLive,
                     () => cfg.GetBool("Dispatch.ValveWired", false) && cfg.GetBool("Dispatch.LiveArmingWired", false),
@@ -1705,6 +1730,7 @@ namespace StockManager.Blazor
             // [v12.18.7-DEV] /aidash 브로커 세션 배지(관리자 Snapshot 락 1회 · 판독 전용 — 격리/재접속 경로 무간섭)
             if (kiwoomRecovery is not null) dashHub.AttachSessionRecovery(kiwoomRecovery);
             if (kisRecovery is not null) dashHub.AttachSessionRecovery(kisRecovery);
+            dashHub.AttachPreFlight(livenessPreFlight);   // [v12.18.10-DEV] 사전 진단 결과 → 브로커 세션 패널(판독 전용)
             services.AddSingleton(recoveryMonitor);
             // [KIS 미체결 대사 · 추천 A] TTTC8001R 실배선 — 전용 1초 타이머(HTTP 블로킹)가 당일 미체결 페이지를 대사기 KIS venue 로 공급.
             //   KIS 한도 0 = 최초 확정 전 · 미확정(재접속 RequestReconcile) · 유령 · 불일치. 확정 = 복구 관리자 즉시 해제 통지.
