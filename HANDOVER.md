@@ -1900,3 +1900,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   토큰 무효(14 만) · 예외/취소/미판정 응답 fail-closed · 정상/미결선 Passed · 임대 술어 · 재진단 거부 · 핑퐁/판독 δ=0(Release · MinAllocated 3창) · 송출 경로 부재 소스 수검 · 투영 코드 일치.
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,828/3,828 · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): '0ms 격발' = 판정 continuation 내 동기 래치(시한 3초 경과 자체는 대기). 실 키움 COM/KIS 계좌 실측은 이 호스트에서 불가(시뮬레이션 프로브로 증명).
+
+## 70. v12.18.10-GM — Pre-Flight Sentinel 단독 출하(-NoPeer) (2026-10-15)
+
+### 70.1 버전 · 태그
+- 12.18.9 → 12.18.10(csproj · Freeze/Packaging 핀 · 스크립트 머리말). 태그 v12.18.10-GM = 9341871(6579dd4 사전 진단 센티넬 마일스톤 위). 신규 게이트 없음 — ⑫ · ⑬ 유지.
+- QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 미구성(푸시 없음).
+
+### 70.2 출하 실행(형제 worktree StockManager-gm-12.18.10-np · 태그 9341871 · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [1]/[2] 오중 빌드 -warnaserror 0W/0E · [3] 3,828/3,828(4m · 무크래시) · [5] 래칫 ≤40 · [6] liveArmed 기본값 수검 ·
+  [7] 아티팩트 38 · 봉인 일치 · [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) ·
+  펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) · [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) · handshake Ok @9341871885.
+- 산출물(release/): release-v12.18.10-GM.zip SHA-256 `52D30390D069D09B5AB6967E639FCC7338ED288BBA4E89F13E9DB93BD3A087B2` ·
+  masterSeal `BDA2178B89C0F6BF8A420C90BB176E7761FC0C5D0044C7E2C7BFFCF070130958` · sourceCommit 9341871 · 피어 기록 없음.
+- v12.18.9-GM 산출물 13건(zip 6F43023E… · masterSeal 071BC449…) → release/superseded-v12.18.9-GM/. worktree 제거.
+- 메인 체크아웃 재수검: sln + WebOnly Release -warnaserror 0W/0E · 전체 스위트 3,828/3,828 · CLI --verify-live-armed(출하 zip) exit 0 · GoldenMaster Freeze/Packaging 48/48.
