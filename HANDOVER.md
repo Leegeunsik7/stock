@@ -1861,3 +1861,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `355A687D6521F138CAE4A005FDC2DB2FF510A9B2EA80C54023A73D1EEFB02ECD` · sourceCommit 1024240 · 피어 기록 없음.
 - v12.18.7-GM 산출물 13건(zip 5120E8FE… · masterSeal B7B5092C…) → release/superseded-v12.18.7-GM/. worktree 제거.
 - 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · CLI --verify-live-armed --require-pump-jitter --require-cancel-arming exit 0 · GoldenMaster Freeze/Packaging 48/48.
+
+## 68. v12.18.9-GM — Teardown 강화 단독 출하(-NoPeer) (2026-10-15)
+
+### 68.1 버전 · 태그
+- 12.18.8 → 12.18.9(csproj · Freeze/Packaging 핀 · 스크립트 머리말). 태그 v12.18.9-GM = b9d5558(6bb9fd6 TeardownDrain · UI 퍼징 Quiesce 마일스톤 위). 신규 게이트 없음 — ⑫ · ⑬ 유지.
+- QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 미구성(푸시 없음).
+
+### 68.2 출하 실행(형제 worktree StockManager-gm-12.18.9-np · 태그 b9d5558 · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [1]/[2] 오중 빌드 -warnaserror 0W/0E · [3] 3,817/3,817(3m30s · 무크래시) · [5] 래칫 ≤40 · [6] liveArmed 기본값 수검 ·
+  [7] 아티팩트 38 · 봉인 일치 · [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) ·
+  원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) · [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · seqlock · IPC) · handshake Ok @b9d5558a30.
+- 산출물(release/): release-v12.18.9-GM.zip SHA-256 `6F43023E722A5D9E8CBA523EC21C6293C4F6E86EE3A4BE6179078CD7B03C9EDC` ·
+  masterSeal `071BC4493F856E9BC042154E2E5ED843C553884873DCD4517C6B086006F7E83A` · sourceCommit b9d5558 · 피어 기록 없음.
+- v12.18.8-GM 산출물 13건(zip 9C683FC2… · masterSeal 355A687D…) → release/superseded-v12.18.8-GM/. worktree 제거.
+- 메인 체크아웃 재수검: sln Release -warnaserror 0W/0E · CLI --verify-live-armed --require-pump-jitter --require-cancel-arming exit 0 · GoldenMaster Freeze/Packaging 48/48.

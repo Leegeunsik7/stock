@@ -1,15 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.9-DEV — 시험 호스트 침묵 크래시 Teardown 강화 · UI 퍼징 Quiesce 안정화
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,817/3,817(11m43s · 호스트 중단 0) · 래칫 ≤40
-- **Updated At**: 2026-10-14
+- **Active Milestone**: v12.18.9-GM — Teardown 강화 · UI 퍼징 Quiesce 단독 출하(-NoPeer) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,817/3,817 · 래칫 ≤40 · liveArmed 위반 0
+- **Updated At**: 2026-10-15
 
 ## Completed Deliverables
-- 근본 원인: 시간 제한 Join 초과/단언 실패 후 `using` 이 Barrier · MMF · 비관리 하네스를 생존 스레드 밑에서 폐기 → 원시 스레드 ODE/AV → 시험 호스트 종료
-- TeardownDrain(정지 신호 → JoinAll 예산 → 전부 종료 시 Dispose · 생존 시 Quarantine + 시험 실패) 도입
-- 적용: S29GammaRingTelemetryTests(Barrier 취소 토큰) · MmfIpcFabricTests · LongSoakIntegrationTests
-- UI 퍼징: IUiClickSurface.Quiesce(비동기 후속 렌더 안정 대기) · 쌍 도중 노후 표적 재식별 대칭 표본 = 오염 제외(SymmetryContaminated 계수) → 위양성 파손 제거
-- 원격 푸시 미수행: 저장소에 원격(origin) 미구성
+- 버전 12.18.9 승격 · 태그 v12.18.9-GM = b9d5558 (6bb9fd6 TeardownDrain · Quiesce 위)
+- release-package.ps1 -NoPeer [0/10]~[10/10] 통과(태그 기준 클린 worktree · QuantumVault 미접근)
+- release-v12.18.9-GM.zip SHA-256 6F43023E… · masterSeal 071BC449… · 아티팩트 38
+- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 · 인터락 30(0x800000001FFFFFFF) · 강화 키 6 통과
+- v12.18.8-GM 산출물 13건 → release/superseded-v12.18.8-GM/ · HANDOVER §68
 
 ## Next Milestone
-- 원격 저장소 구성 후 v12.18.8-GM 태그/master 푸시(운영자 승인) · 실 호스트 /aidash 육안 확인
+- 원격 저장소 구성 후 v12.18.9-GM 태그/master 푸시(운영자 승인) · 실 호스트 /aidash 육안 확인
