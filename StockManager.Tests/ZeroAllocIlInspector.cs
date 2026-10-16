@@ -93,6 +93,31 @@ namespace StockManager.Tests
             return sites;
         }
 
+        /// <summary>[v12.18.11-DEV] 직접 본문이 참조하는 멤버/형식 토큰(call · newobj · ld/stfld · 형식 피연산자) — 경로 부재 증명용(미해결 토큰 생략).</summary>
+        public static IReadOnlyList<MemberInfo> ReferencedMembers(MethodBase method)
+        {
+            var refs = new List<MemberInfo>();
+            byte[]? il = method.GetMethodBody()?.GetILAsByteArray();
+            if (il is null) return refs;
+            Module module = method.Module;
+            Type[]? typeArgs = method.DeclaringType is { IsGenericType: true } dt ? dt.GetGenericArguments() : null;
+            Type[]? methodArgs = method.IsGenericMethod ? method.GetGenericArguments() : null;
+            int i = 0;
+            while (i < il.Length)
+            {
+                OpCode op = il[i] == 0xFE ? TwoByte[il[++i]] : OneByte[il[i]];
+                i++;
+                int operandStart = i;
+                i += OperandSize(op, il, operandStart);
+                if (op.OperandType is OperandType.InlineMethod or OperandType.InlineField or OperandType.InlineType or OperandType.InlineTok)
+                {
+                    try { if (module.ResolveMember(Token(il, operandStart), typeArgs, methodArgs) is { } m) refs.Add(m); }
+                    catch (ArgumentException) { }
+                }
+            }
+            return refs;
+        }
+
         private static bool IsKnownAllocating(MethodBase m, out string why)
         {
             Type? t = m.DeclaringType;

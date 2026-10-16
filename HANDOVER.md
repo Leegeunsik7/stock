@@ -1915,3 +1915,35 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `BDA2178B89C0F6BF8A420C90BB176E7761FC0C5D0044C7E2C7BFFCF070130958` · sourceCommit 9341871 · 피어 기록 없음.
 - v12.18.9-GM 산출물 13건(zip 6F43023E… · masterSeal 071BC449…) → release/superseded-v12.18.9-GM/. worktree 제거.
 - 메인 체크아웃 재수검: sln + WebOnly Release -warnaserror 0W/0E · 전체 스위트 3,828/3,828 · CLI --verify-live-armed(출하 zip) exit 0 · GoldenMaster Freeze/Packaging 48/48.
+
+## 71. v12.18.11-DEV — Real-time AI vs Human Arena Mode · Dual-Book Simulator (2026-10-16)
+
+### 71.1 전제 교정
+- 지시서 `MS2E.UI.Portable/Shared/NavMenu.razor` 는 부재 — 실제 `MS2E.UI.Portable/Components/NavMenu.razor`('AI & 저널' 그룹)에 항목 추가.
+- 래칫 실측 coupled = 40 = 상한 → 호스트 셸 `StockManager/Blazor/Pages/Arena.razor` 는 [Inject] 0(라우팅 셸 전용 · 래칫 불변).
+- 호스트 조립부는 `StockManager.Simulation`(리허설 사슬 = 가상 브로커 · 무장 술어 강제 true) 문자열 0 · IL 참조 0 이 불변(격리 ⑥ + 소스 가드).
+  아레나는 호스트 런타임 기능이므로 파일은 지시대로 `StockManager/Simulation/Arena/` 에 두되 네임스페이스는 `StockManager.Engines.Arena` —
+  리허설 사슬과 분리 · 아레나 자체 IL 허용목록 테스트가 `StockManager.Simulation` 형식 참조도 위반으로 강제.
+
+### 71.2 구성
+- `ArenaPort`(RCL Ports/Trading): `ArenaSnapshot`/`ArenaSideStats`(읽기 전용 구조체 · 양측 자산 · 현금 · 실현/평가 · 수수료 · 세금 · 슬리피지 · 고점 · MDD(원·bp) ·
+  승/패 · 체결/거부 · 리더 · 격차) · `IArenaPort`(TryRead · CopyEquity · Start · Stop · SubmitHuman — 무장/브로커/실주문 멤버 부재).
+- `DualBookSimulator`(Simulation/Arena · ns Engines.Arena): 종목별 최신 10호가 사본(128 슬롯) · 시장가 = 호가 1→10 순회 IOC(공유 호가 미차감 — 양측 동일 조건) ·
+  수수료 0.015%(양방향) · 거래세 0.18%(매도) 원 미만 절사(Int128) · 현금 부족 = 전량 거부(축소 0) · 공매도 거부 · 평가 = 보유 × 최우선 매수호가(없으면 원가).
+- `ArenaMatchGovernor`: 대기 → 진행 → 종료 상태 머신(명령 1워드 원자 교체 · 마지막 명령 우선 · 재개시 = 원장 초기화 + 잔여 주문 폐기) ·
+  생산자 링(호가 256 · 주문 128 · drop-oldest 계수 · 재시도 0) · Step = 명령 → 호가 → 주문 → 시가평가/MDD/리더 → 자산곡선(1초 · 600점) → seqlock 게시.
+  AI 규칙: 진입 = 미보유 종목만 자본금 × 10% ÷ 최우선 매도호가 · 청산 = 보유 전량.
+- 허브 `DashboardSnapshotHub.AttachArena()`: 50ms 펌프가 `Step` 구동(대시보드 프레임 서명 무관) · `PublishDecision`(시그널 엔진 싱크)이 진입/청산을 AI 링에 분기.
+- 호스트 결선(BlazorHomeForm): `bridge.OrderBookReceived → arena.OnQuote` · `IArenaPort` 싱글턴. 실 피드 미결선이면 '호가 미수신 — 체결 불가' 정직 렌더(가짜 시세 0).
+- UI: `ArenaBattleView.razor`(좌 AI · 우 휴먼 스코어보드 + 자산곡선 스파크라인 · 상승 적색/하강 청색 · 휴먼 퀵 티켓 시장가 매수/매도 → SubmitHuman) ·
+  `/arena` 셸 · NavMenu '⚔️ AI vs Human'.
+
+### 71.3 검증
+- `StockManager.Tests/Simulation/ArenaMatchGovernorTests.cs` 11건: 수수료/세금 절사 · 동일 가격 진입 → 수수료 차감 후 양측 동일 · 휴먼 청산 실현손익 8,511원 정확값 ·
+  리더/격차 · 호가 순회 슬리피지 · IOC 부분 체결 · 거부 분류(호가 미수신 · 공매도 · 현금 부족 · 미진행 · 값 오류) · 종료 동결/재개시 초기화 · MDD/자산곡선 ·
+  핫패스(호가 · 휴먼/AI 주문 · Step · TryRead · CopyEquity) δ=0(Release · MinAllocated 3창) · seqlock 동시 판독 찢김 0 ·
+  Fail-Closed: IL 참조 허용목록(System · Ports.Trading · Arena · TelemetryRing · OrderBookPayload 외 0) + 허브 경유 전 매치 후 런타임 객체 그래프 도달 형식 검사 · 셸 [Inject] 0 · 결선 소스 수검.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,839/3,839(3m38s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 가상 체결은 시장 충격 · 대기열 순번 · 체결 지연을 모델링하지 않는다(최신 호가 즉시 체결). UI 문자열 생성은 렌더 시점(250ms 버전 폴링)만 — δ=0 대상은 정산/판독 경로.
+  실 키움 L2 피드 실측은 이 호스트에서 불가(합성 호가로 증명).
+  전체 스위트 1차 실행에서 기존 타이밍 테스트 1건씩 간헐 실패(LongSoak 3중 경합 퍼저 32B · PreFlight 시한 continuation) — 단독 5회 반복 통과 · 재실행 3,839/3,839(아레나 무관 · 기존 플래키).

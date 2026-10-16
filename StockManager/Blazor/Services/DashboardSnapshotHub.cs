@@ -168,6 +168,8 @@ namespace StockManager.Blazor.Services
         private readonly SessionRecoverySnapshot[] _sesSnap = new SessionRecoverySnapshot[Brokers];
         // ── [v12.18.10-DEV] 브로커 생존성 사전 진단(선택 결선 · 펌프가 Interlocked 판독만 · 할당 0) ──
         private BrokerLivenessPreFlight? _preFlight;
+        // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
+        private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -221,7 +223,10 @@ namespace StockManager.Blazor.Services
 
         /// <summary>[방향 B] AI 판단 근거 1건(코드 · 수치만 — 문자열 0). kind = DashDecisionKind · reason = 전략 정의 코드(또는 인터락 비트).</summary>
         public void PublishDecision(int kind, long symbol, long scaleBp, long volatilityBp, long value, int reason)
-            => _decisions.Publish(new DashDecision { Ticks = _nowTicks(), Kind = kind, Symbol = symbol, ScaleBp = scaleBp, VolatilityBp = volatilityBp, Value = value, Reason = reason });
+        {
+            _decisions.Publish(new DashDecision { Ticks = _nowTicks(), Kind = kind, Symbol = symbol, ScaleBp = scaleBp, VolatilityBp = volatilityBp, Value = value, Reason = reason });
+            Volatile.Read(ref _arena)?.OnAiDecision(kind, symbol);                 // [v12.18.11-DEV] 아레나 AI 진영(링 적재만 · δ=0)
+        }
 
         /// <summary>[v12.18.1-DEV] 캘리브레이터 · 승인 서킷 브레이커 결선(호스트 조립 1회 — 허브가 시그널 엔진보다 먼저 생성되므로 사후 결선).</summary>
         public void AttachCalibration(StockManager.Engines.VolatilityAdaptiveCalibrator calibrator, StockManager.Engines.SignalChurnCircuitBreaker? churn = null)
@@ -287,6 +292,13 @@ namespace StockManager.Blazor.Services
         public void AttachPreFlight(BrokerLivenessPreFlight preFlight)
             => Volatile.Write(ref _preFlight, preFlight ?? throw new ArgumentNullException(nameof(preFlight)));
 
+        /// <summary>
+        /// [v12.18.11-DEV] AI vs Human 아레나 결선 — 펌프가 회차마다 Step(가상 체결 · 정산 · seqlock 게시 · δ=0)을 구동하고
+        /// 시그널 엔진 결정(진입/청산)을 AI 진영 링에 분기한다. 아레나는 브로커 경로가 없다(가상 원장 전용 · 대시보드 프레임 무간섭).
+        /// </summary>
+        public void AttachArena(StockManager.Engines.Arena.ArenaMatchGovernor arena)
+            => Volatile.Write(ref _arena, arena ?? throw new ArgumentNullException(nameof(arena)));
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -351,6 +363,7 @@ namespace StockManager.Blazor.Services
             dirty |= DrainDecisions();
             dirty |= DrainEvents();
             long nowT = _nowTicks();
+            Volatile.Read(ref _arena)?.Step(nowT);                                  // [v12.18.11-DEV] 아레나 정산(자체 seqlock 게시 · 프레임 서명 무관)
             dirty |= SampleOrderPath(nowT);
             // 시가평가 · 자산 · MDD
             long unreal = 0; int open = 0;

@@ -1650,6 +1650,13 @@ namespace StockManager.Blazor
             // [v12.18.6-DEV · 펌프 지터] 호스트 실 지터 소스 = 대시보드 펌프 실행 소요(매매 핫패스 밖) → /aidash 지터 배지. 폐기 = 허브 봉인 뒤.
             var pumpJitter = new StockManager.Telemetry.MicrosecondJitterSentinel();
             dashHub.AttachPumpJitter(pumpJitter);
+            // [v12.18.11-DEV] AI vs Human 아레나 — 듀얼 가상 원장(브로커 경로 0 · Fail-Closed). L2 = 브리지 10호가 · AI = 시그널 엔진 결정(허브 분기) ·
+            // 정산 = 허브 50ms 펌프. 휴먼 퀵 티켓은 IArenaPort.SubmitHuman → 휴먼 큐(가상 체결 전용).
+            var arena = new StockManager.Engines.Arena.ArenaMatchGovernor();
+            bridge.OrderBookReceived += b => arena.OnQuote(in b);
+            dashHub.AttachArena(arena);
+            services.AddSingleton(arena);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPort>(arena);
             dashHub.Start(cfg.GetInt("Dashboard.PeriodMs", 50, 20, 1000));
             FormClosed += (_, _) => ShutdownTrace.Step("dashHub", () => { dashHub.Dispose(); pumpJitter.Dispose(); });
             // [교차 피드] KIS 10호가(H0STASP0) 구독 종목 — `Kis.BookSymbols`(쉼표 · 비어 있음 = 교차 확인 꺼짐). 정량 엔진은 뒤에서 생성되므로 지연 참조.

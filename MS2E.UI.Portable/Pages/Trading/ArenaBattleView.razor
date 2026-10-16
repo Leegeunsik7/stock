@@ -1,0 +1,167 @@
+@* [v12.18.11-DEV] ⚔️ AI vs Human 실시간 대결 — 순수 RCL(엔진 참조 0 · @page 는 호스트 shim Arena.razor 가 소유).
+   IArenaPort 만 소비: 스냅샷 = seqlock 사본(TryRead · 잠금/할당 0) · 자산곡선 = CopyEquity(고정 버퍼) · 휴먼 퀵 티켓 = SubmitHuman(휴먼 큐 → 가상 체결 전용).
+   ★Fail-Closed: 이 화면에서 브로커 · 무장 · 실주문 경로에 닿을 수단이 없다(포트 계약에 부재). 손익 = 수수료 0.015% · 거래세 0.18% · 호가 슬리피지 반영 가상 원장.
+   렌더 = 250ms 버전 폴링(변경 시에만 InvokeAsync) — 문자열 생성은 렌더 시점에만(정산 펌프 δ=0 불변식과 분리 · 정직). *@
+@implements IDisposable
+@inject IArenaPort Arena
+
+<div class="top">
+    <div class="hello">
+        <h1>⚔️ AI vs Human 실시간 대결 <span class="tag">ARENA · DUAL-BOOK SIMULATOR</span></h1>
+        <p>AI 와 휴먼이 같은 자본금 · 같은 실시간 호가로 가상 매매를 겨룹니다. 모든 체결은 가상 원장에서만 일어나며 증권사로 주문이 나가지 않습니다.</p>
+    </div>
+</div>
+
+@if (!Arena.Pumped)
+{
+    <div class="ar-note">⚠ 정산 펌프 미결선 — 대시보드 허브가 아레나를 구동하지 않아 체결 · 정산이 멈춰 있습니다.</div>
+}
+@{
+    bool has = Arena.TryRead(out var s);
+}
+<div class="ar-ctl">
+    <span class="ar-state s@(s.State)">@ArenaState.Label(s.State)</span>
+    <label>자본금(원) <input type="number" min="1000000" step="1000000" @bind="_capital" disabled="@(s.State == ArenaState.Running)" /></label>
+    @if (s.State == ArenaState.Running)
+    {
+        <button class="ar-btn stop" @onclick="StopMatch">■ 매치 종료</button>
+    }
+    else
+    {
+        <button class="ar-btn go" @onclick="StartMatch">▶ 매치 개시</button>
+    }
+    <span class="ar-sub">호가 수신 @(s.QuotesSeen.ToString("N0"))건 · 종목 @(s.QuoteSymbols)개 · AI 시그널 @(s.AiSignals.ToString("N0"))건@(s.OrdersLost > 0 ? " · 주문 유실 " + s.OrdersLost.ToString("N0") : "")</span>
+    @if (_msg is { Length: > 0 })
+    {
+        <span class="ar-msg">@_msg</span>
+    }
+</div>
+
+@if (!has)
+{
+    <div class="ar-note">스냅샷 대기 중 — 아직 정산 회차가 없습니다.</div>
+}
+else
+{
+    <div class="ar-lead">
+        <b>@ArenaLeader.Label(s.Leader)</b>
+        @if (s.Leader != ArenaLeader.Draw)
+        {
+            <span>격차 @(s.LeadWon.ToString("N0"))원</span>
+        }
+        @if (s.State != ArenaState.Idle && s.QuoteSymbols == 0)
+        {
+            <span class="ar-sub">· 호가 미수신 — 체결 불가(가짜 시세 생성 0)</span>
+        }
+    </div>
+    <div class="ar-grid">
+        @Board(ArenaSide.Ai, "🤖 AI", s.Ai, s.CapitalWon)
+        @Board(ArenaSide.Human, "🧑 휴먼", s.Human, s.CapitalWon)
+    </div>
+
+    <div class="ar-card ar-ticket">
+        <h3>⚡ 휴먼 퀵 오더 <small>시장가 · 휴먼 가상 원장 전용</small></h3>
+        <div class="ar-row">
+            <label>종목코드 <input @bind="_symbol" maxlength="6" placeholder="005930" /></label>
+            <label>수량(주) <input type="number" min="1" @bind="_qty" /></label>
+            <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(1)">시장가 매수</button>
+            <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(-1)">시장가 매도</button>
+        </div>
+        <p class="ar-sub">체결 = 최신 10호가 잔량 순회(부족분 미체결) · 현금 부족 시 전량 거부 · 공매도 불가. 휴먼 마지막 거부: @ArenaReject.Label(s.Human.LastReject)</p>
+    </div>
+}
+
+@code {
+    private const int SparkW = 300, SparkH = 48;
+    private readonly long[][] _curve = { new long[600], new long[600] };
+    private readonly char[][] _sparkBuf = { new char[600 * 12], new char[600 * 12] };
+    private readonly string[] _sparkPoints = { "", "" };
+    private readonly long[] _sparkVersion = { -1, -1 };
+    private long _capital = 10_000_000, _qty = 1;
+    private string _symbol = "";
+    private string? _msg;
+    private long _seen;
+    private System.Threading.Timer? _timer;
+
+    private RenderFragment Board(int side, string title, ArenaSideStats st, long capital) => __builder =>
+    {
+        long pnl = st.PnlWon(capital);
+        long retBp = capital > 0 ? pnl * 10_000 / capital : 0;
+        <div class="ar-card">
+            <h3>@title <small>@(st.OpenPositions)종목 보유</small></h3>
+            <div class="ar-pnl @Tone(pnl)">@(pnl >= 0 ? "+" : "")@(pnl.ToString("N0"))원 <small>(@(retBp >= 0 ? "+" : "")@((retBp / 100.0).ToString("0.00"))%)</small></div>
+            <svg viewBox="0 0 @(SparkW) @(SparkH)" preserveAspectRatio="none" class="ar-spark" aria-label="자산곡선">
+                <polyline fill="none" stroke="@(pnl >= 0 ? "#E53935" : "#1E88E5")" stroke-width="1.6" points="@SparkPoints(side)" />
+            </svg>
+            <table class="ar-tbl">
+                <tr><td>평가자산</td><td>@(st.EquityWon.ToString("N0"))원</td><td>현금</td><td>@(st.CashWon.ToString("N0"))원</td></tr>
+                <tr><td>실현손익</td><td class="@Tone(st.RealizedWon)">@(st.RealizedWon.ToString("N0"))원</td><td>평가손익</td><td class="@Tone(st.UnrealizedWon)">@(st.UnrealizedWon.ToString("N0"))원</td></tr>
+                <tr><td>MDD</td><td>@(st.MddWon.ToString("N0"))원 (@((st.MddBp / 100.0).ToString("0.00"))%)</td><td>승률</td><td>@((st.WinRate * 100).ToString("0.0"))% (@(st.Wins)승 @(st.Losses)패)</td></tr>
+                <tr><td>수수료</td><td>@(st.FeesWon.ToString("N0"))원</td><td>거래세</td><td>@(st.TaxWon.ToString("N0"))원</td></tr>
+                <tr><td>슬리피지</td><td>@(st.SlippageWon.ToString("N0"))원</td><td>체결/거부</td><td>@(st.Fills.ToString("N0")) / @(st.Rejects.ToString("N0"))</td></tr>
+            </table>
+        </div>
+    };
+
+    private static string Tone(long v) => v > 0 ? "ar-up" : v < 0 ? "ar-down" : "";
+
+    private string SparkPoints(int side)
+    {
+        long ver = Arena.Version;
+        if (ver == _sparkVersion[side]) return _sparkPoints[side];
+        int n = Arena.CopyEquity(side, _curve[side]);
+        int len = SparklineWriter.Write(_curve[side].AsSpan(0, n), _sparkBuf[side], SparkW, SparkH);
+        _sparkPoints[side] = len > 0 ? new string(_sparkBuf[side], 0, len) : "";
+        _sparkVersion[side] = ver;
+        return _sparkPoints[side];
+    }
+
+    private void StartMatch()
+        => _msg = Arena.Start(_capital) ? null : "자본금 범위 밖(100만 ~ 100억 원)";
+
+    private void StopMatch()
+    {
+        Arena.Stop();
+        _msg = null;
+    }
+
+    private void Submit(int dir)
+    {
+        if (!long.TryParse(_symbol, out long sym) || sym <= 0) { _msg = "종목코드를 숫자 6자리로 입력하세요"; return; }
+        int r = Arena.SubmitHuman(sym, dir, _qty);
+        _msg = r == ArenaReject.None ? (dir > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결" : "접수 거부: " + ArenaReject.Label(r);
+    }
+
+    protected override void OnInitialized()
+        => _timer = new System.Threading.Timer(_ =>
+        {
+            long v = Arena.Version;
+            if (v == _seen) return;
+            _seen = v;
+            try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { }
+        }, null, 250, 250);
+
+    public void Dispose() => _timer?.Dispose();
+}
+
+<style>
+    .ar-note { padding: 10px 14px; color: var(--sub); }
+    .ar-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
+    .ar-ctl input, .ar-row input { width: 130px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    .ar-state { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
+    .ar-state.s1 { background: #2e7d32; color: #fff; } .ar-state.s2 { background: #6a1b9a; color: #fff; }
+    .ar-btn { border: 0; border-radius: 6px; padding: 5px 12px; font-weight: 600; cursor: pointer; color: #fff; background: #3a3f4b; }
+    .ar-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .ar-btn.go { background: #2e7d32; } .ar-btn.stop { background: #616161; }
+    .ar-btn.buy { background: #E53935; } .ar-btn.sell { background: #1E88E5; }
+    .ar-sub { color: var(--sub); font-size: 11.5px; } .ar-msg { color: #f9a825; font-size: 12px; }
+    .ar-lead { font-size: 15px; margin: 4px 0 10px; display: flex; gap: 8px; align-items: baseline; }
+    .ar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; }
+    .ar-card { background: var(--card, #161a22); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+    .ar-card h3 { font-size: 13.5px; margin: 0 0 8px; } .ar-card small { color: var(--sub); font-weight: 400; }
+    .ar-pnl { font-size: 22px; font-weight: 700; } .ar-pnl small { font-size: 12px; }
+    .ar-up { color: #E53935; } .ar-down { color: #1E88E5; }
+    .ar-spark { width: 100%; height: 48px; margin: 6px 0; }
+    .ar-tbl { width: 100%; font-size: 11.5px; border-collapse: collapse; } .ar-tbl td { padding: 2px 4px; border-bottom: 1px solid #222837; }
+    .ar-ticket { margin-top: 10px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+</style>
