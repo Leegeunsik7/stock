@@ -35,7 +35,8 @@ namespace StockManager.Tests.Engines.Arena
 
         public ArenaTickReplayEngineTests(ITestOutputHelper o) => _out = o;
 
-        private ArenaTickReplayEngine Manual(ArenaTickSource tape) => new(() => tape, () => _now, Freq, ownThread: false);
+        // [v12.18.13-DEV] 이 파일은 체결 지연 0(v12.18.12 재생 의미 보존) — 지연 · 대기열 · 테이프 파일은 MicrostructureExecutionTests.
+        private ArenaTickReplayEngine Manual(ArenaTickSource tape) => new(() => tape, () => _now, Freq, ownThread: false, latencyMinTicks: 0, latencyMaxTicks: 0);
         private static SyntheticTickSource Tape(int count, long intervalTicks = 1_000_000) => SyntheticTickSource.Create(count, intervalTicks: intervalTicks);
 
         private static ArenaSnapshot Snap(ArenaTickReplayEngine e)
@@ -340,7 +341,7 @@ namespace StockManager.Tests.Engines.Arena
             if (VettedEngineTypes.Contains(Outermost(t))) return true;
             string ns = Outermost(t).Namespace ?? "";
             return ns == "System" || ns.StartsWith("System.Threading", StringComparison.Ordinal) || ns.StartsWith("System.Runtime", StringComparison.Ordinal)
-                || ns == "System.Diagnostics" || ns == "Microsoft.Win32.SafeHandles"
+                || ns == "System.Diagnostics" || ns == "Microsoft.Win32.SafeHandles" || ns == "System.IO" || ns == "System.IO.MemoryMappedFiles" || ns == "System.Buffers.Binary" || ns == "System.Collections.Generic"
                 || ns == "MS2E.UI.Portable.Ports.Trading" || ns == "StockManager.Engines.Arena";
         }
 
@@ -348,7 +349,8 @@ namespace StockManager.Tests.Engines.Arena
         public void CompileTime_Replay_Il_References_Only_Allowlisted_Types()
         {
             const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            var roots = new[] { typeof(ArenaTickReplayEngine), typeof(ArenaTickSource), typeof(SyntheticTickSource), typeof(RecordedTickSource), typeof(ArenaMatchGovernor), typeof(DualBookSimulator) };
+            var roots = new[] { typeof(ArenaTickReplayEngine), typeof(ArenaTickSource), typeof(SyntheticTickSource), typeof(RecordedTickSource), typeof(ArenaMatchGovernor), typeof(DualBookSimulator),
+                                typeof(ArenaTapeReader), typeof(ArenaTapeWriter), typeof(ArenaTapeRecorder), typeof(ArenaTapeStore), typeof(CumulativeVolumeTracker) };
             var violations = new List<string>();
             var seen = new HashSet<Type>();
             var queue = new Queue<Type>(roots.Concat(roots.SelectMany(t => t.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))));
@@ -431,13 +433,17 @@ namespace StockManager.Tests.Engines.Arena
             using var ctx = new Bunit.TestContext();
             ctx.Services.AddSingleton<IArenaPort>(live);
             ctx.Services.AddSingleton<IArenaReplayPort>(e);
+            string tapeDir = Path.Combine(Path.GetTempPath(), "ms2e_arena_ui_" + Guid.NewGuid().ToString("N"));
+            using var recorder = new ArenaTapeRecorder(tapeDir, 1_000);
+            ctx.Services.AddSingleton<IArenaTapePort>(recorder);
             var cut = ctx.RenderComponent<MS2E.UI.Portable.Pages.Trading.ArenaBattleView>();
             Assert.Contains("매치 개시", cut.Markup);                                       // 기본 = 정규장 라이브
+            Assert.Contains("틱 녹화 시작", cut.Markup);
             cut.FindAll("button.ar-tab")[1].Click();
             Assert.Contains("ar-progress", cut.Markup);
             cut.FindAll("button.ar-speed").Single(b => b.TextContent == "100x").Click();
             Assert.Equal(100, e.Status.Speed);
-            cut.FindAll("button.ar-btn.go").Single().Click();                                  // ▶ 시작
+            cut.FindAll("button.ar-btn.go").Single(b => b.TextContent.Contains("시작")).Click();                                  // ▶ 시작
             e.Pump(_now);
             _now += Sec; e.Pump(_now);
             cut.Render();
@@ -450,6 +456,8 @@ namespace StockManager.Tests.Engines.Arena
             Assert.Equal(ArenaReplayState.Paused, e.Status.State);
             Assert.Contains("재개", cut.Markup);
             Assert.Equal(ArenaState.Idle, live.State);                                         // 라이브 원장 무간섭
+            Assert.False(recorder.Recording);
+            try { Directory.Delete(tapeDir, recursive: true); } catch (DirectoryNotFoundException) { }
         }
     }
 }

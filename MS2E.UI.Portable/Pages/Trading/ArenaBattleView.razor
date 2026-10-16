@@ -3,10 +3,13 @@
    ★Fail-Closed: 이 화면에서 브로커 · 무장 · 실주문 경로에 닿을 수단이 없다(포트 계약에 부재). 손익 = 수수료 0.015% · 거래세 0.18% · 호가 슬리피지 반영 가상 원장.
    렌더 = 250ms 버전 폴링(변경 시에만 InvokeAsync) — 문자열 생성은 렌더 시점에만(정산 펌프 δ=0 불변식과 분리 · 정직).
    [v12.18.12-DEV] 모드 전환: 정규장 라이브(IArenaPort) ↔ 고속 틱 리플레이(IArenaReplayPort — 별도 원장 · 같은 스코어보드/퀵 티켓 재사용) ·
-   리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 · 진행률). 배속과 무관하게 UI 는 250ms 폴링만(재생 스레드 50ms 게시 · 프레임 디커플링). *@
+   리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 · 진행률). 배속과 무관하게 UI 는 250ms 폴링만(재생 스레드 50ms 게시 · 프레임 디커플링).
+   [v12.18.13-DEV] 라이브 = 틱 녹화 ON/OFF(IArenaTapePort · .tape) · 리플레이 = 원천 선택(합성 · 녹화 .tape) · 퀵 티켓 지정가/미체결 취소 ·
+   스코어보드 = 지연 대기 · 작동 주문 · 내 앞 잔량(대기열 순번) · 예약 현금. 디렉터리 목록은 버튼 클릭 시에만 조회(렌더 경로 I/O 0). *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
+@inject IArenaTapePort Tapes
 
 <div class="top">
     <div class="hello">
@@ -56,7 +59,38 @@
             {
                 <span> · 재생 시각 @(new DateTime(rs.SimTicks, DateTimeKind.Utc).AddHours(9).ToString("HH:mm:ss")) KST</span>
             }
-            · 처리 @(rs.TicksPerSecond.ToString("N0")) 틱/초 · 합성 테이프(훈련용 · 실 시장 통계 아님)</p>
+            · 처리 @(rs.TicksPerSecond.ToString("N0")) 틱/초 · 원천 @Replay.SourceLabel@(Replay.SourceLabel == "합성 테이프" ? "(훈련용 · 실 시장 통계 아님)" : "")</p>
+        <div class="ar-row">
+            <label>테이프
+                <select @bind="_tapePath" disabled="@(rs.State is ArenaReplayState.Playing)">
+                    <option value="">합성 테이프(1M 틱)</option>
+                    @foreach (var t in _tapes)
+                    {
+                        <option value="@t.Path" disabled="@(t.Records <= 0)">@t.Name · @(t.Records < 0 ? "손상" : t.Records.ToString("N0") + "건")</option>
+                    }
+                </select>
+            </label>
+            <button class="ar-btn" @onclick="RefreshTapes">↻ 목록</button>
+            <button class="ar-btn go" disabled="@(rs.State is ArenaReplayState.Playing)" @onclick="LoadTape">⏏ 불러오기</button>
+        </div>
+    </div>
+}
+else
+{
+    <div class="ar-card ar-replay">
+        <div class="ar-row">
+            @if (Tapes.Recording)
+            {
+                <span class="ar-rec on">⏺ 녹화 중</span>
+                <button class="ar-btn stop" @onclick="StopRecording">⏹ 녹화 중지</button>
+            }
+            else
+            {
+                <span class="ar-rec">녹화 꺼짐</span>
+                <button class="ar-btn go" @onclick="StartRecording">⏺ 틱 녹화 시작</button>
+            }
+            <span class="ar-sub">@(Tapes.RecordedCount.ToString("N0"))건@(Tapes.RecordDropped > 0 ? " · 용량 초과 유실 " + Tapes.RecordDropped.ToString("N0") : "")@(Tapes.RecordingFile is { } rf ? " · " + System.IO.Path.GetFileName(rf) : "") · 정규장 호가 · 체결을 .tape 로 기록(주문 경로 없음)</span>
+        </div>
     </div>
 }
 <div class="ar-ctl">
@@ -105,12 +139,19 @@ else
     <div class="ar-card ar-ticket">
         <h3>⚡ 휴먼 퀵 오더 <small>시장가 · 휴먼 가상 원장 전용</small></h3>
         <div class="ar-row">
-            <label>종목코드 <input @bind="_symbol" maxlength="6" placeholder="@(_replay ? "005930 · 000660 · 035420" : "005930")" /></label>
+            <label>종목코드 <input @bind="_symbol" maxlength="6" placeholder="@(_replay && Replay.SourceLabel == "합성 테이프" ? "005930 · 000660 · 035420" : "005930")" /></label>
             <label>수량(주) <input type="number" min="1" @bind="_qty" /></label>
             <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(1)">시장가 매수</button>
             <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(-1)">시장가 매도</button>
         </div>
-        <p class="ar-sub">체결 = 최신 10호가 잔량 순회(부족분 미체결) · 현금 부족 시 전량 거부 · 공매도 불가.@(_replay ? " 리플레이: 재생 중 = 다음 틱 즉시 체결 · 일시정지 중 = 대기 후 재개 첫 틱 체결." : "") 휴먼 마지막 거부: @ArenaReject.Label(s.Human.LastReject)</p>
+        <div class="ar-row">
+            <label>지정가(원) <input type="number" min="1" @bind="_limitPx" /></label>
+            <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => SubmitLimit(1)">지정가 매수</button>
+            <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => SubmitLimit(-1)">지정가 매도</button>
+            <button class="ar-btn" disabled="@(s.State != ArenaState.Running)" @onclick="CancelAll">미체결 전량 취소</button>
+        </div>
+        <p class="ar-sub">체결 지연 30 ~ 50ms 후 판단 · 시장가 = 10호가 잔량 순회(초과분은 다음 호가로 이월 분할 체결) · 지정가 = 같은 가격 잔량 뒤 대기(체결 거래량이 앞 잔량을 소진해야 체결) ·
+            현금 부족 시 전량 거부 · 공매도 불가.@(_replay ? " 리플레이: 일시정지 중 주문 = 대기 → 재개 후 지연 경과 시 체결." : "") 휴먼 마지막 거부: @ArenaReject.Label(s.Human.LastReject)</p>
     </div>
 }
 
@@ -142,6 +183,36 @@ else
     private void ReplayPlay()
         => _msg = Replay.Play(_capital) ? null : "자본금 범위 밖(100만 ~ 100억 원)";
 
+    private long _limitPx;
+    private string _tapePath = "";
+    private IReadOnlyList<ArenaTapeInfo> _tapes = Array.Empty<ArenaTapeInfo>();
+
+    private void RefreshTapes() => _tapes = Tapes.ListTapes();
+
+    private void LoadTape()
+        => _msg = Replay.LoadTape(_tapePath.Length == 0 ? null : _tapePath) ? null : "테이프 열기 실패(손상 · 형식 불일치)";
+
+    private void StartRecording() => _msg = Tapes.StartRecording() ? null : "녹화 시작 실패(디렉터리 · 디스크 확인)";
+
+    private void StopRecording()
+    {
+        Tapes.StopRecording();
+        _msg = "녹화 저장 " + Tapes.RecordedCount.ToString("N0") + "건";
+    }
+
+    private void SubmitLimit(int dir)
+    {
+        if (!long.TryParse(_symbol, out long sym) || sym <= 0) { _msg = "종목코드를 숫자 6자리로 입력하세요"; return; }
+        int r = Arena.SubmitHumanLimit(sym, dir, _qty, _limitPx);
+        _msg = r == ArenaReject.None ? (dir > 0 ? "지정가 매수" : "지정가 매도") + " 접수 → 지연 후 대기열 배치" : "접수 거부: " + ArenaReject.Label(r);
+    }
+
+    private void CancelAll()
+    {
+        int r = Arena.CancelHuman();
+        _msg = r == ArenaReject.None ? "전량 취소 접수 → 지연 후 반영(그 사이 체결 가능)" : "취소 거부: " + ArenaReject.Label(r);
+    }
+
     private RenderFragment Board(int side, string title, ArenaSideStats st, long capital) => __builder =>
     {
         long pnl = st.PnlWon(capital);
@@ -158,6 +229,8 @@ else
                 <tr><td>MDD</td><td>@(st.MddWon.ToString("N0"))원 (@((st.MddBp / 100.0).ToString("0.00"))%)</td><td>승률</td><td>@((st.WinRate * 100).ToString("0.0"))% (@(st.Wins)승 @(st.Losses)패)</td></tr>
                 <tr><td>수수료</td><td>@(st.FeesWon.ToString("N0"))원</td><td>거래세</td><td>@(st.TaxWon.ToString("N0"))원</td></tr>
                 <tr><td>슬리피지</td><td>@(st.SlippageWon.ToString("N0"))원</td><td>체결/거부</td><td>@(st.Fills.ToString("N0")) / @(st.Rejects.ToString("N0"))</td></tr>
+                <tr><td>지연/작동</td><td>@(st.PendingOrders) / @(st.WorkingOrders)건</td><td>내 앞 잔량</td><td>@(st.QueueAheadQty < 0 ? "-" : st.QueueAheadQty.ToString("N0") + "주")</td></tr>
+                <tr><td>예약 현금</td><td>@(st.ReservedCashWon.ToString("N0"))원</td><td>취소</td><td>@(st.Cancels.ToString("N0"))</td></tr>
             </table>
         </div>
     };
@@ -230,5 +303,7 @@ else
     .ar-speeds { display: inline-flex; gap: 4px; } .ar-speed { border: 1px solid #2a3040; background: #0f1219; color: inherit; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 11.5px; }
     .ar-speed.on { background: #4dd0e1; color: #111; font-weight: 700; }
     .ar-progress { height: 6px; background: #2a3040; border-radius: 3px; margin: 8px 0 4px; overflow: hidden; } .ar-progress i { display: block; height: 100%; background: #4dd0e1; }
+    .ar-rec { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; } .ar-rec.on { background: #E53935; color: #fff; }
+    .ar-replay select { background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; max-width: 360px; }
     .ar-ticket { margin-top: 10px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 </style>

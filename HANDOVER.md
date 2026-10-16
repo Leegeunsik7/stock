@@ -1978,3 +1978,39 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,856/3,856(4m20s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 녹화 테이프 영속화(파일 저장/로드)는 범위 밖 — 현재 원천은 합성 테이프 · 메모리 배열. 가상 체결은 시장 충격/대기열을 모델링하지 않는다.
   Windows 대기 해상도(약 15.6ms)로 1x 근방에서는 틱이 소규모 묶음으로 처리된다(앵커 기준이라 누적 지연 0).
+
+## 73. v12.18.13-DEV — Microstructure Queue Execution · Binary Tape Engine (2026-10-16)
+
+### 73.1 전제 교정
+- '10호가 뎁스 + 실체결 틱을 13B 압축 구조체로' — 10호가(가격 20 + 잔량 20)는 13B 에 무손실로 담을 수 없다. 13B 는 합성 테이프의 매개변수 압축(SyntheticTickSource).
+  실호가 녹화는 무손실 고정 176B 레코드(int32 가격/잔량 · 헤더 64B · 1M ≈ 176MB)로 구현 — 고정 길이라 리플레이 임의 위치 O(1).
+- 키움 실시간 체결 Volume = 누적 거래량(FID 13 · 정량 엔진도 cumulativeVolume 으로 사용) · 체결 방향 필드 없음 → 체결 거래량 = 종목별 누적 차분(CumulativeVolumeTracker) ·
+  방향 = 시뮬레이터가 최신 호가로 추정(≥ 매도 1호가 매수 주도 · ≤ 매수 1호가 매도 주도 · 스프레드 안 = 미상).
+- 브리지 호가/체결 이벤트는 단일 DispatchLoop 스레드에서 발생(녹화기 실질 단일 생산자) — 기록기는 다중 생산자 슬롯 claim 으로도 안전.
+
+### 73.2 구성
+- `DualBookSimulator` 미시구조 모델: 접수 → 지연 버퍼(30 ~ 50ms · 진영별 결정론 xorshift · 매치 Reset 시 시드 복원) → 판단 시점 호가로 체결(접수 시점 아님) ·
+  시장가 = 10호가 순회(진영별 소비 오버레이 = 같은 스냅샷 재소비 0 · 새 호가 = 오버레이 초기화) · 잔량 초과 = 작동 상태 이월 → 다음 호가 갱신마다 재순회 분할 체결 ·
+  슬리피지 = 활성화 시 최우선 대비 누적(충격) · 매수 조각별 현금 검사(부족 = 가능분 체결 후 잔량 취소 CashExhausted) ·
+  지정가 = 시장성 부분 즉시 → 잔량은 같은 가격 표시 잔량 + 내 앞선 주문 뒤 대기 · 앞 잔량 소진 = 그 가격 체결 거래량(방향 일치) · 표시 잔량 축소 min · 최우선보다 좋아짐 0 ·
+  관통 체결 = 잔량 전부 · 반대 호가 도달 = 시장성 체결 · 예약(지정가 매수 현금 · 매도 수량) = 이중 집행 0 · 전량 취소도 지연 경유 · 주문 풀 64(초과 OrdersFull).
+- `ArenaMatchGovernor`: 지연 파라미터 · 지정가/취소 포트(SubmitHumanLimit · CancelHuman) · 라이브 체결 링(누적 → 차분) · AI 진입/청산 = 미체결(지연 중 포함) 있으면 생략 ·
+  리플레이 `ApplyTrade` · `Advance(호가 유무 · 시장 시각 = 테이프 시각)` · 스냅샷 지연/작동 주문 · 내 앞 잔량 · 취소 · 예약 현금.
+- `ArenaTapeStore.cs`: `ArenaTapeWriter`(파일 용량 확장 + MMF 포인터 1회 · Append = Interlocked claim + 포인터 기록 δ=0 · kind 마지막 기록 · 1,024 단위 헤더 count ·
+  Seal = 차단 → 진행 중 완료 대기 → 확정 → 절단) · `ArenaTapeReader : ArenaTickSource`(헤더 검증 fail-closed · 판독 δ=0 · 미봉인 테이프도 count 까지) ·
+  `ArenaTapeRecorder : IArenaTapePort`(ON/OFF · OFF 중에도 누적 기준선 유지) · `ArenaTapeStore.List`(헤더만 · 녹화 중 제외).
+- 틱 원천 계약: 인덱스 = 호가 · 체결 중 하나/둘(체결 → 호가) · 합성 테이프 체결 = 인덱스 해시 결정론 파생(저장 0B). 리플레이 `LoadTape`(호출 스레드 열기/검증 → 재생 스레드 교체 · 이전 판독기 폐기).
+- 호스트: 라이브 아레나 체결 결선(bridge.TickReceived → OnTrade) · 녹화기(%LOCALAPPDATA%\MS2E.StockSuite\tapes · 브리지 호가/체결 · 종료 시 봉인) · IArenaTapePort.
+- UI: 라이브 = 틱 녹화 ON/OFF · 레코드 수/파일 · 리플레이 = 테이프 선택(합성 · .tape)/목록 갱신/불러오기 · 원천 라벨 · 퀵 티켓 지정가 매수/매도 · 미체결 전량 취소 ·
+  스코어보드 지연/작동 · 내 앞 잔량 · 예약 현금 · 취소. 디렉터리 조회는 버튼 클릭 시만. 호스트 셸 변경 0(래칫 불변).
+
+### 73.3 검증
+- `StockManager.Tests/Engines/Arena/MicrostructureExecutionTests.cs` 17건: 대기열 보류/소진/관통/예약 정확값 · 표시 잔량 min · 최우선 개선 0 · 방향 추정 · 내 앞선 주문 누적 ·
+  시장성 지정가 · 지연 전 판단 0 · 지연 경과 시점 호가 체결(틱 레이스) · 30 ~ 50ms 분포/결정론 · 취소 지연 vs 관통 경합 · 리플레이 테이프 시각 지연 ·
+  잔량 이월 분할 + 오버레이 + 진영 독립 · 조각 현금 부족 잔량 취소 · 예약 이중 집행 0 · AI 중복 접수 0 · 라이브 누적 차분/기준선 · 테이프 무손실 왕복/헤더 fail-closed/덮어쓰기 금지 ·
+  미봉인 count 판독 · 봉인 중 동시 기록 유실 0 · 녹화기 ON/OFF/목록 · 리플레이 .tape 로드 → 녹화 체결로 지정가 체결 ·
+  δ=0 + GC 0: 대기열/체결 핫패스 · 1M 레코드 기록(0.31s · 약 324만/s) · 판독(0.15s · 약 665만/s) · 1M 테이프 리플레이(최대 배속).
+- 기존 테스트: v12.18.11/12 파일은 체결 지연 0 구성으로 원 의미 보존 · IOC 테스트 = 같은 스냅샷 충격/이월 의미로 갱신 · IL 허용목록에 System.IO/MemoryMappedFiles/Collections.Generic 추가.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,874/3,874(4m05s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 대기열 모델은 표준 근사(취소 위치 미상 = min 상한 · 10호가 밖 앞 잔량 = 10번째 잔량 추정) — 실 거래소 큐 재현 아님. 라이브 체결 방향은 호가 추정.
+  리플레이 AI 에는 체결 틱(VWAP)을 공급하지 않는다. 테이프 1M = 176MB 디스크. 실 키움 피드 녹화 실측은 이 호스트에서 불가(합성/기록기 단위로 증명).

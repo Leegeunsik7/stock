@@ -1654,6 +1654,14 @@ namespace StockManager.Blazor
             // 정산 = 허브 50ms 펌프. 휴먼 퀵 티켓은 IArenaPort.SubmitHuman → 휴먼 큐(가상 체결 전용).
             var arena = new StockManager.Engines.Arena.ArenaMatchGovernor();
             bridge.OrderBookReceived += b => arena.OnQuote(in b);
+            bridge.TickReceived += t => arena.OnTrade(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);   // [v12.18.13-DEV] 누적 거래량 → 지정가 대기열 소진
+            // [v12.18.13-DEV] 정규장 틱 녹화(.tape · MMF · ON/OFF = /arena) — 같은 브리지 디스패치 스레드에서 기록(OFF = Volatile 1회). 종료 시 봉인.
+            var arenaTape = new StockManager.Engines.Arena.ArenaTapeRecorder(StockManager.Engines.Arena.ArenaTapeStore.DefaultDirectory);
+            bridge.OrderBookReceived += b => arenaTape.OnBook(in b);
+            bridge.TickReceived += t => arenaTape.OnTick(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);
+            services.AddSingleton(arenaTape);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaTapePort>(arenaTape);
+            FormClosed += (_, _) => ShutdownTrace.Step("arenaTape", arenaTape.Dispose);
             dashHub.AttachArena(arena);
             services.AddSingleton(arena);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPort>(arena);

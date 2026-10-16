@@ -33,11 +33,13 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>주문 결과 코드(접수 거부 · 체결 거부 공용 · 0 = 없음).</summary>
     public static class ArenaReject
     {
-        public const int None = 0, NotRunning = 1, Invalid = 2, NoQuote = 3, NoLiquidity = 4, InsufficientCash = 5, InsufficientPosition = 6, BookFull = 7;
+        public const int None = 0, NotRunning = 1, Invalid = 2, NoQuote = 3, NoLiquidity = 4, InsufficientCash = 5, InsufficientPosition = 6, BookFull = 7,
+                         OrdersFull = 8, CashExhausted = 9;
         public static string Label(int r) => r switch
         {
             None => "-", NotRunning => "매치 미진행", Invalid => "주문 값 오류", NoQuote => "호가 미수신", NoLiquidity => "호가 잔량 없음",
-            InsufficientCash => "가상 현금 부족", InsufficientPosition => "보유 수량 부족", BookFull => "보유 종목 한도", _ => "?",
+            InsufficientCash => "가상 현금 부족", InsufficientPosition => "보유 수량 부족", BookFull => "보유 종목 한도",
+            OrdersFull => "미체결 주문 한도", CashExhausted => "잔여 수량 현금 부족 — 잔량 취소", _ => "?",
         };
     }
 
@@ -47,13 +49,18 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly long EquityWon, CashWon, RealizedWon, UnrealizedWon, FeesWon, TaxWon, SlippageWon, PeakWon, MddWon;
         public readonly long Fills, Rejects;
         public readonly int Wins, Losses, OpenPositions, LastReject, MddBp;
+        /// <summary>[v12.18.13-DEV] 지연 대기(접수 → 체결 판단 전) · 작동 중(지정가 대기열 · 시장가 잔량) 주문 수 · 가장 오래된 지정가의 내 앞 잔량 · 취소 누적 · 예약 현금.</summary>
+        public readonly int PendingOrders, WorkingOrders;
+        public readonly long QueueAheadQty, Cancels, ReservedCashWon;
 
         public ArenaSideStats(long equityWon, long cashWon, long realizedWon, long unrealizedWon, long feesWon, long taxWon, long slippageWon,
-                              long peakWon, long mddWon, int mddBp, long fills, long rejects, int wins, int losses, int openPositions, int lastReject)
+                              long peakWon, long mddWon, int mddBp, long fills, long rejects, int wins, int losses, int openPositions, int lastReject,
+                              int pendingOrders = 0, int workingOrders = 0, long queueAheadQty = -1, long cancels = 0, long reservedCashWon = 0)
         {
             EquityWon = equityWon; CashWon = cashWon; RealizedWon = realizedWon; UnrealizedWon = unrealizedWon;
             FeesWon = feesWon; TaxWon = taxWon; SlippageWon = slippageWon; PeakWon = peakWon; MddWon = mddWon; MddBp = mddBp;
             Fills = fills; Rejects = rejects; Wins = wins; Losses = losses; OpenPositions = openPositions; LastReject = lastReject;
+            PendingOrders = pendingOrders; WorkingOrders = workingOrders; QueueAheadQty = queueAheadQty; Cancels = cancels; ReservedCashWon = reservedCashWon;
         }
 
         public double WinRate => Wins + Losses == 0 ? 0 : (double)Wins / (Wins + Losses);
@@ -96,5 +103,9 @@ namespace MS2E.UI.Portable.Ports.Trading
         void Stop();
         /// <summary>휴먼 시장가 주문 → 시뮬레이터 휴먼 큐(가상 체결 전용). side +1 매수 · −1 매도. 반환 = ArenaReject(접수 단계).</summary>
         int SubmitHuman(long symbol, int side, long qty);
+        /// <summary>[v12.18.13-DEV] 휴먼 지정가 주문(체결 지연 후 시장성 부분 즉시 체결 · 잔량은 호가 대기열 뒤에 배치 → 체결 틱 거래량이 앞 잔량을 소진해야 체결).</summary>
+        int SubmitHumanLimit(long symbol, int side, long qty, long priceWon);
+        /// <summary>[v12.18.13-DEV] 휴먼 미체결 전량 취소(취소도 체결 지연을 거친다 — 그 사이 체결 가능).</summary>
+        int CancelHuman();
     }
 }

@@ -54,5 +54,9 @@ namespace MS2E.UI.Portable.Ports.Trading
         void Reset();
         /// <summary>배속 변경(재생 중이면 현재 위치에서 재기준). 허용 밖 값 = false.</summary>
         bool SetSpeed(int speed);
+        /// <summary>[v12.18.13-DEV] 현재 재생 원천 라벨(합성 테이프 · .tape 파일명).</summary>
+        string SourceLabel { get; }
+        /// <summary>[v12.18.13-DEV] 재생 원천 교체(null = 합성 테이프 · 경로 = 녹화 .tape). 열기/검증 실패 = false(원천 유지). 교체 후 처음 · 대기.</summary>
+        bool LoadTape(string? path);
     }
 }

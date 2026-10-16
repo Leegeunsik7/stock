@@ -11,6 +11,8 @@
 //  ④ 게시 디커플링: 틱 정산은 게시하지 않는다 — 스냅샷은 50ms(허브 펌프 OnHubPump 요청 또는 자체 50ms 경과)마다 1회. 배속과 무관한 UI 프레임율.
 //  ★Fail-Closed: 브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트). 리플레이 주문은 가상 원장 밖으로 나갈 경로가 없다.
 //  콜드 경로(할당 허용): 첫 명령 시 테이프 생성 · 재생 스레드 기동 · 처음부터 재생(AI 인스턴스 재생성).
+//  [v12.18.13-DEV] 인덱스마다 체결(있으면) → 원장 ApplyTrade(지정가 대기열 소진) → 호가(있으면) → AI OnBook → 원장 Advance(시장 시각 = 테이프 시각 —
+//   체결 지연 30 ~ 50ms 판정 기준). LoadTape = .tape(MMF) 판독기 교체(호출 스레드에서 열기/검증 → 재생 스레드가 교체 · 이전 판독기 폐기 · 처음 · 대기).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -24,7 +26,8 @@ namespace StockManager.Engines.Arena
     public sealed class ArenaTickReplayEngine : IArenaReplayPort, IDisposable
     {
         public const int MaxBatch = 8_192, PublishMs = 50, EquityPoints = 600;
-        private const long CmdPause = -1, CmdReset = -2;
+        private const long CmdPause = -1, CmdReset = -2, CmdLoad = -3;
+        public const string SyntheticLabel = "합성 테이프";
 
         private readonly Func<ArenaTickSource> _tapeFactory;
         private readonly bool _ownThread;
@@ -43,6 +46,11 @@ namespace StockManager.Engines.Arena
         private long _capital = ArenaMatchGovernor.DefaultCapitalWon;
         private long _anchorSim, _anchorWall, _simTicks, _lastPublish, _windowTicks, _windowStart;
         private OrderBookPayload _book;
+        private ArenaTrade _trade;
+        private ArenaTickSource? _synthetic;
+        private ArenaTickSource? _pendingTape;
+        private string _sourceLabel = SyntheticLabel;
+        private string? _pendingLabel;
 
         // ── 게시 상태(Volatile) ──
         private int _state, _speed = 1, _requestedSpeed = 1, _threadStarted, _disposed, _hubRequest;
@@ -53,13 +61,16 @@ namespace StockManager.Engines.Arena
         /// <param name="timestamp">벽시계 타임스탬프(기본 Stopwatch.GetTimestamp · 테스트 주입).</param>
         /// <param name="frequency">타임스탬프 주파수(기본 Stopwatch.Frequency).</param>
         /// <param name="ownThread">true = 첫 명령 시 전용 재생 스레드 기동 · false = 호출자가 Pump 를 직접 구동(단일 작성자 · 테스트).</param>
-        public ArenaTickReplayEngine(Func<ArenaTickSource> tapeFactory, Func<long>? timestamp = null, long frequency = 0, bool ownThread = true)
+        /// <param name="latencyMinTicks">[v12.18.13-DEV] 체결 지연 하한(시장 시각 · 기본 30ms).</param>
+        /// <param name="latencyMaxTicks">체결 지연 상한(기본 50ms).</param>
+        public ArenaTickReplayEngine(Func<ArenaTickSource> tapeFactory, Func<long>? timestamp = null, long frequency = 0, bool ownThread = true,
+                                     long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks)
         {
             _ownThread = ownThread;
             _tapeFactory = tapeFactory ?? throw new ArgumentNullException(nameof(tapeFactory));
             _clock = timestamp ?? Stopwatch.GetTimestamp;
             _freq = frequency > 0 ? frequency : Stopwatch.Frequency;
-            _gov = new ArenaMatchGovernor(WallTicks);
+            _gov = new ArenaMatchGovernor(WallTicks, latencyMinTicks: latencyMinTicks, latencyMaxTicks: latencyMaxTicks);
             _aiSink = new AiSink(_gov);
         }
 
@@ -67,6 +78,27 @@ namespace StockManager.Engines.Arena
         public IArenaPort Arena => _gov;
         public long Processed => Interlocked.Read(ref _processed);
         public int State => Volatile.Read(ref _state);
+        public string SourceLabel => Volatile.Read(ref _sourceLabel);
+
+        public bool LoadTape(string? path)
+        {
+            if (Volatile.Read(ref _disposed) != 0) return false;
+            ArenaTickSource? src = null;
+            string label = SyntheticLabel;
+            if (path is not null)
+            {
+                try { src = ArenaTapeReader.Open(path); label = System.IO.Path.GetFileName(path); }
+                catch (Exception ex) when (ex is System.IO.IOException or System.IO.InvalidDataException or UnauthorizedAccessException or ArgumentException)
+                {
+                    Trace.WriteLine("[ArenaReplay] 테이프 열기 실패: " + ex.Message);
+                    return false;
+                }
+            }
+            if (Interlocked.Exchange(ref _pendingTape, src) is IDisposable stale) stale.Dispose();   // 반영 전 연속 교체 = 앞선 대기분 폐기
+            Volatile.Write(ref _pendingLabel, label);
+            Command(CmdLoad);
+            return true;
+        }
 
         public ArenaReplayStatus Status => new(Volatile.Read(ref _state), Volatile.Read(ref _speed), Volatile.Read(ref _pubCursor), Volatile.Read(ref _pubTotal),
                                                Volatile.Read(ref _pubSim), Volatile.Read(ref _pubTps), Volatile.Read(ref _pubVersion));
@@ -132,10 +164,11 @@ namespace StockManager.Engines.Arena
                 {
                     long ts = tape.TimestampOf(_cursor);
                     if (ts > target) break;
-                    tape.Read(_cursor, out _book);
+                    bool hasBook = tape.Read(_cursor, out _book);
                     _simTicks = ts;
-                    _ai!.OnBook(in _book);                                          // AI 결정 → 원장 AI 링(같은 틱 Advance 에서 체결)
-                    _gov.Advance(in _book, wall);
+                    if (tape.TryReadTrade(_cursor, out _trade)) _gov.ApplyTrade(in _trade);   // 체결 → 지정가 대기열(호가보다 먼저)
+                    if (hasBook) _ai!.OnBook(in _book);                             // AI 결정 → 원장 AI 링(같은 틱 Advance 에서 접수 · 지연 후 체결)
+                    _gov.Advance(in _book, hasBook, ts, wall);
                     _cursor++; processed++;
                 }
                 _windowTicks += processed;
@@ -164,6 +197,7 @@ namespace StockManager.Engines.Arena
             for (; _cmdCursor < head; _cmdCursor++)
             {
                 if (_cmds.TryRead(_cmdCursor, out long c) != 1) continue;
+                if (c == CmdLoad) { SwapTape(now); Publish(now, force: true); continue; }
                 EnsureTape();
                 long wall = WallTicksAt(now);
                 if (c > 0)
@@ -180,8 +214,22 @@ namespace StockManager.Engines.Arena
         private void EnsureTape()
         {
             if (_tape is not null) return;
-            _tape = _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음");
+            _tape = _synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음");
             Volatile.Write(ref _pubTotal, _tape.Count);
+        }
+
+        // 재생 원천 교체(재생 스레드 · 콜드): 대기 원천(null = 합성) 반영 → 이전 파일 판독기 폐기 → 처음 · 대기
+        private void SwapTape(long now)
+        {
+            var next = Interlocked.Exchange(ref _pendingTape, null);
+            string label = Volatile.Read(ref _pendingLabel) ?? SyntheticLabel;
+            var old = _tape;
+            _tape = next ?? (_synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음"));
+            if (old is IDisposable d && !ReferenceEquals(old, _tape) && !ReferenceEquals(old, _synthetic)) d.Dispose();
+            Volatile.Write(ref _sourceLabel, label);
+            Volatile.Write(ref _pubTotal, _tape.Count);
+            Rewind(running: false, WallTicksAt(now));
+            SetState(ArenaReplayState.Idle);
         }
 
         // 처음(틱 0)으로 — AI 인스턴스 재생성(콜드) · 원장 초기화
@@ -259,6 +307,8 @@ namespace StockManager.Engines.Arena
             _wake.Set();
             if (_thread is { } t && !t.Join(2_000)) Trace.WriteLine("[ArenaReplay] 재생 스레드 종료 시한 초과");
             _wake.Dispose();
+            if (Interlocked.Exchange(ref _pendingTape, null) is IDisposable p) p.Dispose();
+            if (_tape is IDisposable cur && !ReferenceEquals(_tape, _synthetic)) cur.Dispose();
         }
 
         /// <summary>AI 결정 싱크 — 진입/청산만 리플레이 원장 AI 링으로(δ=0).</summary>

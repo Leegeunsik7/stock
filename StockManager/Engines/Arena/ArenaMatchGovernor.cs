@@ -18,25 +18,60 @@ using StockManager.Blazor.Services;
 
 namespace StockManager.Engines.Arena
 {
-    /// <summary>아레나 주문 링 항목. Kind 0 = 휴먼 시장가 · 1 = AI 진입 · 2 = AI 청산.</summary>
-    public struct ArenaOrder { public long Symbol, Qty; public int Dir, Kind; }
+    /// <summary>아레나 주문 링 항목. Kind 0 = 휴먼 시장가 · 1 = AI 진입 · 2 = AI 청산 · 3 = 휴먼 지정가 · 4 = 휴먼 전량 취소.</summary>
+    public struct ArenaOrder { public long Symbol, Qty, LimitPx; public int Dir, Kind; }
+
+    /// <summary>
+    /// [v12.18.13-DEV] 누적 거래량 → 체결 틱 거래량(키움 실시간 FID 13 = 누적). 종목별 직전 누적(개방 주소 고정 표 · 단일 작성자 · δ=0).
+    /// 첫 관측 = 기준선만(거래량 0) · 감소(장 재시작/정정) = 기준선 재설정.
+    /// </summary>
+    public sealed class CumulativeVolumeTracker
+    {
+        public const int Slots = 512;
+        private readonly long[] _sym = new long[Slots], _cum = new long[Slots];
+        private long _full;
+        public long TableFull => _full;
+
+        public long Delta(long symbol, long cumulative)
+        {
+            if (symbol <= 0 || cumulative < 0) return 0;
+            int h = (int)((ulong)symbol * 0x9E3779B97F4A7C15UL >> 55);
+            for (int k = 0; k < Slots; k++)
+            {
+                int i = (h + k) & (Slots - 1);
+                if (_sym[i] == symbol)
+                {
+                    long d = cumulative - _cum[i];
+                    _cum[i] = cumulative;
+                    return d > 0 ? d : 0;
+                }
+                if (_sym[i] == 0) { _sym[i] = symbol; _cum[i] = cumulative; return 0; }
+            }
+            _full++;
+            return 0;
+        }
+
+        public void Clear() { Array.Clear(_sym); Array.Clear(_cum); }
+    }
 
     public sealed class ArenaMatchGovernor : IArenaPort
     {
         public const long MinCapitalWon = 1_000_000, MaxCapitalWon = 10_000_000_000, DefaultCapitalWon = 10_000_000;
         public const int MaxEquity = 600, ReadSpins = 64;
-        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2;
+        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2, KindHumanLimit = 3, KindHumanCancel = 4;
         private const long CmdNone = 0, CmdStop = -1;
         private const long PumpStaleTicks = 2 * 10_000_000L;
 
-        private readonly DualBookSimulator _sim = new();
+        private readonly DualBookSimulator _sim;
         private readonly Func<long> _nowTicks;
         private readonly int _aiLotBp;
         private int _equityEvery;
 
         private readonly TelemetryRing<OrderBookPayload> _quotes = new(256);
         private readonly TelemetryRing<ArenaOrder> _orders = new(128);
-        private long _quoteCursor, _orderCursor, _quotesLost, _ordersLost, _quotesSeen, _aiSignals;
+        private readonly TelemetryRing<ArenaTrade> _trades = new(1024);
+        private readonly CumulativeVolumeTracker _volume = new();
+        private long _quoteCursor, _orderCursor, _tradeCursor, _quotesLost, _ordersLost, _tradesLost, _quotesSeen, _tradesSeen, _aiSignals;
         private long _cmd;
         private int _state;
         private long _capital, _startedTicks, _lastStep, _steps;
@@ -51,14 +86,19 @@ namespace StockManager.Engines.Arena
         /// <param name="nowTicks">시계(UTC ticks · 테스트 주입).</param>
         /// <param name="equitySampleEverySteps">자산곡선 표본 간격(Step 회수 · 기본 20 = 50ms 펌프 기준 1초).</param>
         /// <param name="aiLotBp">AI 진입 1회 예산(자본금 대비 bp · 기본 1000 = 10%).</param>
-        public ArenaMatchGovernor(Func<long>? nowTicks = null, int equitySampleEverySteps = 20, int aiLotBp = 1_000)
+        /// <param name="latencyMinTicks">[v12.18.13-DEV] 체결 지연 하한(UTC ticks · 기본 30ms).</param>
+        /// <param name="latencyMaxTicks">체결 지연 상한(기본 50ms).</param>
+        public ArenaMatchGovernor(Func<long>? nowTicks = null, int equitySampleEverySteps = 20, int aiLotBp = 1_000,
+                                  long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks)
         {
+            _sim = new DualBookSimulator(latencyMinTicks, latencyMaxTicks);
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
             _equityEvery = Math.Max(1, equitySampleEverySteps);
             _aiLotBp = Math.Clamp(aiLotBp, 1, 10_000);
         }
 
         public DualBookSimulator Simulator => _sim;
+        public long TradesSeen => Interlocked.Read(ref _tradesSeen);
         public int State => Volatile.Read(ref _state);
         public long Steps => Interlocked.Read(ref _steps);
 
@@ -83,6 +123,28 @@ namespace StockManager.Engines.Arena
             return ArenaReject.None;
         }
 
+        public int SubmitHumanLimit(long symbol, int side, long qty, long priceWon)
+        {
+            if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (symbol <= 0 || side is not (1 or -1) || qty <= 0 || qty > DualBookSimulator.MaxOrderQty || priceWon <= 0 || priceWon > DualBookSimulator.MaxPriceWon) return ArenaReject.Invalid;
+            _orders.Publish(new ArenaOrder { Symbol = symbol, Qty = qty, Dir = side, LimitPx = priceWon, Kind = KindHumanLimit });
+            return ArenaReject.None;
+        }
+
+        public int CancelHuman()
+        {
+            if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            _orders.Publish(new ArenaOrder { Kind = KindHumanCancel });
+            return ArenaReject.None;
+        }
+
+        /// <summary>[v12.18.13-DEV] 실시간 체결 틱(브리지 수신 스레드 · 누적 거래량 그대로) — 펌프가 종목별 차분으로 체결 거래량 산출(δ=0).</summary>
+        public void OnTrade(long symbol, long priceWon, long cumulativeVolume)
+        {
+            if (symbol <= 0 || priceWon <= 0 || cumulativeVolume < 0) return;
+            _trades.Publish(new ArenaTrade { Symbol = symbol, PriceWon = priceWon, Qty = cumulativeVolume });
+        }
+
         public bool Start(long capitalWon)
         {
             if (capitalWon < MinCapitalWon || capitalWon > MaxCapitalWon) return false;
@@ -103,7 +165,9 @@ namespace StockManager.Engines.Arena
             else if (cmd > 0) Begin(cmd, nowTicks);
 
             DrainQuotes();
-            DrainOrders();
+            DrainTrades();
+            DrainOrders(nowTicks);
+            _sim.Process(nowTicks);
 
             if (_state == ArenaState.Running)
             {
@@ -120,19 +184,31 @@ namespace StockManager.Engines.Arena
         /// 틱 1건 정산: 명령 → 호가 직접 반영(링 경유 0 — 최대 배속에서도 유실 0) → 주문 링 소비(AI · 휴먼) → 시가평가 → 자산곡선 표본(Step 수 기준).
         /// 스냅샷 게시는 하지 않는다 — 재생 속도와 무관하게 PublishNow 를 50ms 주기로 따로 호출(UI 프레임 디커플링).
         /// </summary>
-        public void Advance(in OrderBookPayload quote, long nowTicks)
+        public void Advance(in OrderBookPayload quote, long nowTicks) => Advance(in quote, hasQuote: true, quote.TimestampTicks > 0 ? quote.TimestampTicks : nowTicks, nowTicks);
+
+        /// <summary>
+        /// [v12.18.13-DEV] 틱 1건 정산(시장 시각 = 테이프 시각 — 체결 지연 판정 기준). hasQuote = false 면 체결 틱 전용 레코드(호가 갱신 없이 지연 경과 판정만).
+        /// </summary>
+        public void Advance(in OrderBookPayload quote, bool hasQuote, long marketTicks, long nowTicks)
         {
             _steps++;
             long cmd = Interlocked.Exchange(ref _cmd, CmdNone);
             if (cmd == CmdStop && _state == ArenaState.Running) Volatile.Write(ref _state, ArenaState.Finished);
             else if (cmd > 0) Begin(cmd, nowTicks);
-            _quotesSeen++;
-            _sim.OnQuote(in quote);
-            DrainOrders();
+            DrainOrders(marketTicks);
+            if (hasQuote) { _quotesSeen++; _sim.OnQuote(in quote); }
+            _sim.Process(marketTicks);
             if (_state != ArenaState.Running) return;
             _eqAi = _sim.MarkToMarket(ArenaSide.Ai, out _unrealAi);
             _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
             if (_steps % _equityEvery == 0) SampleEquity();
+        }
+
+        /// <summary>[v12.18.13-DEV] 체결 틱 직접 반영(리플레이 · 체결 거래량 그대로 · 단일 작성자) — 작동 지정가 대기열 소진/체결.</summary>
+        public void ApplyTrade(in ArenaTrade trade)
+        {
+            _tradesSeen++;
+            if (_state == ArenaState.Running) _sim.OnTrade(in trade);
         }
 
         /// <summary>현재 정산 상태 스냅샷 게시(seqlock · δ=0) + 펌프 생존 표지.</summary>
@@ -181,6 +257,7 @@ namespace StockManager.Engines.Arena
             _capital = capital; _startedTicks = nowTicks;
             _eqAi = _eqHuman = capital; _unrealAi = _unrealHuman = 0;
             _aiSignals = 0;
+            _tradesSeen = 0;
             _orderCursor = _orders.Head;                                            // 이전 매치 잔여 주문 폐기(재시도 · 이월 0)
             Volatile.Write(ref _seq, _seq + 1);
             Interlocked.MemoryBarrier();
@@ -203,7 +280,23 @@ namespace StockManager.Engines.Arena
             }
         }
 
-        private void DrainOrders()
+        private void DrainTrades()
+        {
+            long head = _trades.Head;
+            if (head - _tradeCursor > _trades.Capacity) { _tradesLost += head - _trades.Capacity - _tradeCursor; _tradeCursor = head - _trades.Capacity; }
+            for (; _tradeCursor < head; _tradeCursor++)
+            {
+                int r = _trades.TryRead(_tradeCursor, out var t);
+                if (r == 0) break;
+                if (r < 0) { _tradesLost++; continue; }
+                t.Qty = _volume.Delta(t.Symbol, t.Qty);                            // 누적 → 체결 거래량(방향 미상 → 시뮬레이터가 호가로 추정)
+                if (t.Qty <= 0) continue;
+                _tradesSeen++;
+                if (_state == ArenaState.Running) _sim.OnTrade(in t);
+            }
+        }
+
+        private void DrainOrders(long nowTicks)
         {
             long head = _orders.Head;
             if (head - _orderCursor > _orders.Capacity) { _ordersLost += head - _orders.Capacity - _orderCursor; _orderCursor = head - _orders.Capacity; }
@@ -213,28 +306,37 @@ namespace StockManager.Engines.Arena
                 if (r == 0) break;
                 if (r < 0) { _ordersLost++; continue; }
                 if (_state != ArenaState.Running) continue;                         // 종료 후 도착 = 폐기(가상 원장 동결)
-                Execute(in o);
+                Execute(in o, nowTicks);
             }
         }
 
-        private void Execute(in ArenaOrder o)
+        // 접수 = 시뮬레이터 지연 버퍼 적재(체결 판단은 지연 경과 후 Process)
+        private void Execute(in ArenaOrder o, long nowTicks)
         {
+            var aiBook = _sim.Book(ArenaSide.Ai);
             switch (o.Kind)
             {
                 case KindHuman:
-                    _sim.ExecuteMarket(ArenaSide.Human, o.Symbol, o.Dir, o.Qty);
+                    _sim.Submit(ArenaSide.Human, o.Symbol, o.Dir, o.Qty, ArenaOrderKind.Market, 0, nowTicks);
+                    break;
+                case KindHumanLimit:
+                    _sim.Submit(ArenaSide.Human, o.Symbol, o.Dir, o.Qty, ArenaOrderKind.Limit, o.LimitPx, nowTicks);
+                    break;
+                case KindHumanCancel:
+                    _sim.Submit(ArenaSide.Human, 0, 0, 0, ArenaOrderKind.CancelAll, 0, nowTicks);
                     break;
                 case KindAiEntry:
                     _aiSignals++;
-                    if (_sim.Book(ArenaSide.Ai).Position(o.Symbol) != 0) break;    // 미보유 종목만 진입(물타기 0)
+                    if (aiBook.Position(o.Symbol) != 0 || aiBook.HasOpenOrder(o.Symbol)) break;   // 미보유 · 미체결 없는 종목만 진입(물타기 · 지연 중 중복 0)
                     long ask = _sim.BestAsk(o.Symbol);
                     long budget = (long)((Int128)_capital * _aiLotBp / 10_000);
-                    _sim.ExecuteMarket(ArenaSide.Ai, o.Symbol, 1, ask > 0 ? Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty) : 1);
+                    _sim.Submit(ArenaSide.Ai, o.Symbol, 1, ask > 0 ? Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty) : 1, ArenaOrderKind.Market, 0, nowTicks);
                     break;
                 case KindAiExit:
                     _aiSignals++;
-                    long held = _sim.Book(ArenaSide.Ai).Position(o.Symbol);
-                    if (held > 0) _sim.ExecuteMarket(ArenaSide.Ai, o.Symbol, -1, held);
+                    if (aiBook.HasOpenOrder(o.Symbol)) break;
+                    long held = aiBook.Sellable(o.Symbol);
+                    if (held > 0) _sim.Submit(ArenaSide.Ai, o.Symbol, -1, held, ArenaOrderKind.Market, 0, nowTicks);
                     break;
             }
         }
@@ -263,7 +365,8 @@ namespace StockManager.Engines.Arena
             var b = _sim.Book(side);
             int mddBp = b.PeakWon > 0 ? (int)Math.Min(10_000, (long)((Int128)b.MddWon * 10_000 / b.PeakWon)) : 0;
             return new ArenaSideStats(equity, b.CashWon, b.RealizedWon, unrealized, b.FeesWon, b.TaxWon, b.SlippageWon, b.PeakWon, b.MddWon, mddBp,
-                                      b.Fills, b.Rejects, b.Wins, b.Losses, b.PosCount, b.LastReject);
+                                      b.Fills, b.Rejects, b.Wins, b.Losses, b.PosCount, b.LastReject,
+                                      b.PendingCount, b.WorkingCount, b.OldestQueueAhead, b.Cancels, b.ReservedCashWon);
         }
 
         // ════════════ ③ 소비자(seqlock 사본 · 잠금/할당 0) ════════════

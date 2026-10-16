@@ -4,6 +4,7 @@
 //   §2 거부 · 상태 머신: 호가 미수신 · 보유 초과 매도 · 현금 부족 · 미진행 접수 · 종료 후 동결 · 재개시 초기화 · MDD
 //   §3 δ=0: 호가 적재 · 휴먼/AI 주문 · 정산 Step · 스냅샷/자산곡선 판독 힙 0B(Release · MinAllocated 3창)
 //   §4 Fail-Closed: 아레나 형식 IL 참조 허용목록(브로커/주문 전송 형식 0) + 런타임 객체 그래프 도달 형식 검사 + 허브 결정 분기 · 호스트 셸 래칫
+//   [v12.18.13-DEV] 이 파일은 체결 지연 0 구성(즉시 판단)으로 v12.18.11 원장 의미를 보존 — 지연 · 대기열 · 이월은 MicrostructureExecutionTests.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -29,7 +30,7 @@ namespace StockManager.Tests.Simulation
 
         private ArenaMatchGovernor NewRunning(long capital = 10_000_000, int aiLotBp = 700)
         {
-            var g = new ArenaMatchGovernor(Now, equitySampleEverySteps: 1, aiLotBp: aiLotBp);
+            var g = new ArenaMatchGovernor(Now, equitySampleEverySteps: 1, aiLotBp: aiLotBp, latencyMinTicks: 0, latencyMaxTicks: 0);
             Assert.True(g.Start(capital));
             Step(g);
             Assert.Equal(ArenaState.Running, g.State);
@@ -123,9 +124,13 @@ namespace StockManager.Tests.Simulation
             var h = Read(g).Human;
             Assert.Equal(15, g.Simulator.Book(ArenaSide.Human).Position(Sym));
             Assert.Equal(5 * 10, h.SlippageWon);                                // 5주 × (10,010 − 10,000)
-            g.SubmitHuman(Sym, 1, 500);                                         // 10호가 × 10주 = 100주만 체결(IOC)
+            g.SubmitHuman(Sym, 1, 500);                                         // [v12.18.13] 같은 스냅샷 = 앞 주문이 소진한 15주 제외 85주만(충격) · 잔량 415 이월
             Step(g);
-            Assert.Equal(115, g.Simulator.Book(ArenaSide.Human).Position(Sym));
+            Assert.Equal(100, g.Simulator.Book(ArenaSide.Human).Position(Sym));
+            Assert.Equal(1, Read(g).Human.WorkingOrders);
+            g.OnQuote(Book(Sym, 10_000, 10, 9_990, 10, tick: 10));             // 새 스냅샷 = 잔량 재순회(분할 체결)
+            Step(g);
+            Assert.Equal(200, g.Simulator.Book(ArenaSide.Human).Position(Sym));
         }
 
         // ═══ §2 거부 · 상태 머신 ═══
@@ -133,7 +138,7 @@ namespace StockManager.Tests.Simulation
         [Fact]
         public void Rejects_Are_Classified_And_Counted()
         {
-            var g = new ArenaMatchGovernor(Now, 1);
+            var g = new ArenaMatchGovernor(Now, 1, latencyMinTicks: 0, latencyMaxTicks: 0);
             Assert.Equal(ArenaReject.NotRunning, g.SubmitHuman(Sym, 1, 1));
             Assert.False(g.Start(999_999));
             Assert.False(g.Start(10_000_000_001));
@@ -352,7 +357,7 @@ namespace StockManager.Tests.Simulation
         public void Runtime_Object_Graph_Reaches_No_Broker_After_Full_Match_Through_Hub()
         {
             var hub = new DashboardSnapshotHub(nowTicks: Now);
-            var g = new ArenaMatchGovernor(Now, 1, aiLotBp: 700);
+            var g = new ArenaMatchGovernor(Now, 1, aiLotBp: 700, latencyMinTicks: 0, latencyMaxTicks: 0);
             hub.AttachArena(g);
             Assert.True(g.Start(10_000_000));
             Step(g);
