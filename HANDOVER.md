@@ -2046,3 +2046,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,901/3,901(5m41s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 콘솔 영역은 Space 스크롤 방지를 위해 keydown 기본 동작을 막는다(영역 밖 클릭으로 포커스 해제). bUnit 은 상호작용마다 렌더 기록을 보유하므로
   메모리 누수 판정은 디스패치/정산 루프 δ=0 · GC 0 실측으로 한다. 실 WebView2 키 입력/래더 육안 확인은 이 세션에서 미수행.
+
+## 75. v12.18.14-GM — AI vs Human Arena 단독 출하(-NoPeer) (2026-10-16)
+
+### 75.1 전제 교정 · 버전 · 태그
+- 지시서 '가장 최근 출하본 v12.18.9-GM' — v12.18.9-GM 산출물은 이미 superseded-v12.18.9-GM/(§70). 실제 최근 출하본 = v12.18.10-GM → superseded-v12.18.10-GM/ 로 이관.
+- 12.18.10 → 12.18.14(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말) = 189ad3c.
+- 1차 패키징 [3/10] 전체 스위트 1건 실패 → 중단(fail-closed · 산출물 미사출): ArenaProConsoleTests 헤드리스 스트레스의 bUnit UnknownEventHandlerIdException
+  (뷰 250ms 폴링 재렌더가 FindAll ↔ Click 사이에 끼어 오래된 핸들러 ID — 하네스 경합 · 제품 결함 아님). 조회+발화를 cut.InvokeAsync 안에서 원자화(async 테스트 · xUnit1031) =
+  356f90f · 단독 10/10. 태그 v12.18.14-GM 재지정(-f · 원격 미구성 · 푸시 이력 없음) = 356f90f.
+- QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 75.2 출하 실행(형제 worktree StockManager-gm-12.18.14-np · 태그 356f90f · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E · [3] 3,901/3,901(3m41s) · [4] infra-scan ·
+  [5] 래칫 ≤40 · [6] liveArmed 기본값 수검(물리 이중키 조회 16 · 마스터 플래그 1 = false) · [7] 아티팩트 38 SHA-256 · genesis v2 manifest.sig · 봉인 일치 ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 감사 원장 ⑪ · 펌프 지터 ⑫ 1 ·
+  유령 취소 무장 ⑬ 1 · 위반 0 — --require-pump-jitter · --require-cancel-arming) · [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · 감사 원장 · seqlock · IPC 패브릭) ·
+  handshake Ok @356f90fc04.
+- 산출물(release/): release-v12.18.14-GM.zip SHA-256 `85E39CE8F86B889335745B2A460232691D68434D36FFAD602850995D14A8127F` ·
+  masterSeal `53951F6A83D936BD13D17CBBF0A095C2EFEEBB5B28BD643A370E70B8D5CD2F6A` · sourceCommit 356f90f · 피어 기록 없음.
+- v12.18.10-GM 산출물 13건(zip 52D30390… · masterSeal BDA2178B…) → release/superseded-v12.18.10-GM/. worktree 제거.
+- 메인 체크아웃 재수검: WebOnly + sln Release -warnaserror 0W/0E · CLI --verify-live-armed(출하 zip · ⑫ ⑬ 강제) exit 0 · --verify-zip(master-seal) exit 0 · 전체 스위트 3,901/3,901.
