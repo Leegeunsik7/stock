@@ -1947,3 +1947,34 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 가상 체결은 시장 충격 · 대기열 순번 · 체결 지연을 모델링하지 않는다(최신 호가 즉시 체결). UI 문자열 생성은 렌더 시점(250ms 버전 폴링)만 — δ=0 대상은 정산/판독 경로.
   실 키움 L2 피드 실측은 이 호스트에서 불가(합성 호가로 증명).
   전체 스위트 1차 실행에서 기존 타이밍 테스트 1건씩 간헐 실패(LongSoak 3중 경합 퍼저 32B · PreFlight 시한 continuation) — 단독 5회 반복 통과 · 재실행 3,839/3,839(아레나 무관 · 기존 플래키).
+
+## 72. v12.18.12-DEV — Arena High-Speed Tick Replay · Playback Controller (2026-10-16)
+
+### 72.1 전제 교정
+- 지시 경로 `StockManager/Engines/Arena/` 는 부재 — 신설. v12.18.11 의 `ArenaMatchGovernor` · `DualBookSimulator` 도 `StockManager/Simulation/Arena/` → `StockManager/Engines/Arena/` 로
+  git mv(네임스페이스 `StockManager.Engines.Arena` 와 폴더 일치 · 내용 변경 = 리플레이 구동 API 추가뿐). §71 의 경로 기술은 당시 기록으로 유지.
+- '50ms 마다 DashboardSnapshotHub 로 ArenaSnapshot 공급' — 허브 펌프가 리플레이 원장에 직접 쓰면 이중 작성자(seqlock 찢김). 허브는 `AttachArenaReplay` 로
+  게시 요청 플래그만 세우고 게시는 원장 단일 작성자인 재생 스레드가 수행(요청 또는 자체 50ms 경과).
+- 리플레이 AI = 실시간 AI 와 같은 정량 시그널 엔진(`QuantSignalProvider`) 전용 인스턴스(시계 = 재생 시뮬레이션 시각). 전략 이상 인터락은 무장 집계어 미결속.
+
+### 72.2 구성
+- `ArenaTickSource`: `RecordedTickSource`(녹화 OrderBookPayload 배열 · 시각 역행 거부) · `SyntheticTickSource`(시드 결정론 · 틱당 13B 압축 → 판독 시 10호가 전개 ·
+  KRX 호가 단위 · 1M 틱 ≈ 13MB · 간격 23.4ms = 1M 틱이 정규장 6.5시간 · 종목 3개 · 압력 국면 = 잔량 불균형 + 가격 표류). 합성 데이터는 훈련용(실 시장 통계 아님).
+- `ArenaTickReplayEngine`(IArenaReplayPort): 명령 링(시작/재개 · 일시정지 · 리셋 — 순서 보존) · 배속 1/5/10/50/100/최대 · Stopwatch 앵커 스케줄
+  (목표 sim = anchorSim + Δwall × 배속 — 대기 오차 비누적 · 회차당 최대 8,192틱 · 배속 변경 = 그 회차까지 기존 배속 처리 후 재기준) ·
+  틱마다 AI OnBook → 원장 `Advance`(호가 직접 반영 · 주문 링 소비 · 시가평가 · 자산곡선 표본) · 스냅샷 게시는 50ms(또는 허브 요청)마다 1회 ·
+  일시정지 = 틱 처리 중단(원장 정확 동결) · 일시정지 중 휴먼 주문 = 대기 → 재개 첫 틱 체결 · 재개 = 재기준(정지 시간 미보상) · 완료 = 원장 Finish 동결 ·
+  재생 오류 = 일시정지(재시도 루프 0) · 첫 명령 시 테이프 생성 + 전용 스레드 기동(콜드) · Dispose = 스레드 조인.
+- `ArenaMatchGovernor` 추가 API: `Advance` · `PublishNow` · `Rearm`(초기화 + 진행/대기 · 표본 간격) · `Finish` — 리플레이 인스턴스 전용(허브 Step 혼용 금지).
+- 호스트: 리플레이 원장 · 합성 1M 테이프(지연 생성) · `AttachArenaReplay` · `IArenaReplayPort` 싱글턴 · 종료 시 Dispose.
+- UI: `ArenaBattleView` 상단 [📡 정규장 라이브 | ⏩ 고속 틱 리플레이] 탭 · 리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 6종 · 진행률 바 ·
+  틱 현재/전체 · 재생 시각 KST · 처리율) · 스코어보드/퀵 티켓 = 현재 모드 원장. UI 는 250ms 버전 폴링만(배속 무관). 호스트 셸 변경 0(래칫 불변).
+
+### 72.3 검증
+- `StockManager.Tests/Engines/Arena/ArenaTickReplayEngineTests.cs` 19건: 배속 5종 정확 틱 수 · 배속 변경 재기준/최대 배치/완료 · 일시정지 동결 · 대기 주문 재개 체결
+  (그 틱 호가 순회 + 시뮬레이터 수수료 정확값) · 정지 시간 미보상 · 리셋/결정론(2회 재생 AI 결과 동일) · 완료 후 새 자본금 재시작 · 녹화 테이프 체결 수수료/세금/슬리피지 정확값 ·
+  100x · 최대 배속 δ=0(틱 주입 · AI · 체결 · 정산 · 게시 · 판독 · 휴먼 주문 · Release MinAllocated 3창) · 실 재생 스레드 1M 틱 최대 배속(0.35s · 약 285만 틱/s ·
+  누적 할당 259KB = 콜드 · Gen0 0) · 최대 배속 게시 50ms 주기(1초 20회) · 허브 요청 즉시 게시 · IL 허용목록 · 런타임 객체 그래프 · 호스트 결선 · bUnit 헤드리스 컨트롤 결속.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,856/3,856(4m20s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 녹화 테이프 영속화(파일 저장/로드)는 범위 밖 — 현재 원천은 합성 테이프 · 메모리 배열. 가상 체결은 시장 충격/대기열을 모델링하지 않는다.
+  Windows 대기 해상도(약 15.6ms)로 1x 근방에서는 틱이 소규모 묶음으로 처리된다(앵커 기준이라 누적 지연 0).

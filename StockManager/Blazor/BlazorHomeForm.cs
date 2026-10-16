@@ -1657,6 +1657,13 @@ namespace StockManager.Blazor
             dashHub.AttachArena(arena);
             services.AddSingleton(arena);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPort>(arena);
+            // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
+            // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
+            var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));
+            dashHub.AttachArenaReplay(arenaReplay);
+            services.AddSingleton(arenaReplay);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaReplayPort>(arenaReplay);
+            FormClosed += (_, _) => ShutdownTrace.Step("arenaReplay", arenaReplay.Dispose);
             dashHub.Start(cfg.GetInt("Dashboard.PeriodMs", 50, 20, 1000));
             FormClosed += (_, _) => ShutdownTrace.Step("dashHub", () => { dashHub.Dispose(); pumpJitter.Dispose(); });
             // [교차 피드] KIS 10호가(H0STASP0) 구독 종목 — `Kis.BookSymbols`(쉼표 · 비어 있음 = 교차 확인 꺼짐). 정량 엔진은 뒤에서 생성되므로 지연 참조.

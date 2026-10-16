@@ -31,7 +31,8 @@ namespace StockManager.Engines.Arena
 
         private readonly DualBookSimulator _sim = new();
         private readonly Func<long> _nowTicks;
-        private readonly int _equityEvery, _aiLotBp;
+        private readonly int _aiLotBp;
+        private int _equityEvery;
 
         private readonly TelemetryRing<OrderBookPayload> _quotes = new(256);
         private readonly TelemetryRing<ArenaOrder> _orders = new(128);
@@ -111,6 +112,67 @@ namespace StockManager.Engines.Arena
             }
             Publish(nowTicks, sample: _state == ArenaState.Running && _steps % _equityEvery == 0);
             Volatile.Write(ref _lastStep, nowTicks);
+        }
+
+        // ── [v12.18.12-DEV] 리플레이 구동(ArenaTickReplayEngine 전용 · 재생 스레드 = 단일 작성자 · 허브 Step 과 같은 인스턴스에 혼용 금지) ──
+
+        /// <summary>
+        /// 틱 1건 정산: 명령 → 호가 직접 반영(링 경유 0 — 최대 배속에서도 유실 0) → 주문 링 소비(AI · 휴먼) → 시가평가 → 자산곡선 표본(Step 수 기준).
+        /// 스냅샷 게시는 하지 않는다 — 재생 속도와 무관하게 PublishNow 를 50ms 주기로 따로 호출(UI 프레임 디커플링).
+        /// </summary>
+        public void Advance(in OrderBookPayload quote, long nowTicks)
+        {
+            _steps++;
+            long cmd = Interlocked.Exchange(ref _cmd, CmdNone);
+            if (cmd == CmdStop && _state == ArenaState.Running) Volatile.Write(ref _state, ArenaState.Finished);
+            else if (cmd > 0) Begin(cmd, nowTicks);
+            _quotesSeen++;
+            _sim.OnQuote(in quote);
+            DrainOrders();
+            if (_state != ArenaState.Running) return;
+            _eqAi = _sim.MarkToMarket(ArenaSide.Ai, out _unrealAi);
+            _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
+            if (_steps % _equityEvery == 0) SampleEquity();
+        }
+
+        /// <summary>현재 정산 상태 스냅샷 게시(seqlock · δ=0) + 펌프 생존 표지.</summary>
+        public void PublishNow(long nowTicks)
+        {
+            Publish(nowTicks, sample: false);
+            Volatile.Write(ref _lastStep, nowTicks);
+        }
+
+        /// <summary>원장 초기화(양측 동일 자본금 · 잔여 주문 폐기) 후 진행(running) 또는 대기 상태로 즉시 게시. 자산곡선 표본 간격 재설정.</summary>
+        public void Rearm(long capitalWon, bool running, int equitySampleEverySteps, long nowTicks)
+        {
+            Interlocked.Exchange(ref _cmd, CmdNone);
+            _equityEvery = Math.Max(1, equitySampleEverySteps);
+            Begin(Math.Clamp(capitalWon, MinCapitalWon, MaxCapitalWon), nowTicks);
+            _quotesSeen = 0;
+            if (!running) Volatile.Write(ref _state, ArenaState.Idle);
+            PublishNow(nowTicks);
+        }
+
+        /// <summary>매치 종료(진행 중일 때만) + 최종 표본 · 게시 — 이후 원장 동결.</summary>
+        public void Finish(long nowTicks)
+        {
+            if (_state == ArenaState.Running)
+            {
+                SampleEquity();
+                Volatile.Write(ref _state, ArenaState.Finished);
+            }
+            PublishNow(nowTicks);
+        }
+
+        private void SampleEquity()
+        {
+            long s = _seq;
+            Volatile.Write(ref _seq, s + 1);
+            Interlocked.MemoryBarrier();
+            int k = (int)(_curveN % MaxEquity);
+            _curveAi[k] = _eqAi; _curveHuman[k] = _eqHuman;
+            _curveN++;
+            Volatile.Write(ref _seq, s + 2);
         }
 
         private void Begin(long capital, long nowTicks)

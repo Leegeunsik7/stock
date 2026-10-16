@@ -170,6 +170,7 @@ namespace StockManager.Blazor.Services
         private BrokerLivenessPreFlight? _preFlight;
         // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
         private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
+        private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -299,6 +300,13 @@ namespace StockManager.Blazor.Services
         public void AttachArena(StockManager.Engines.Arena.ArenaMatchGovernor arena)
             => Volatile.Write(ref _arena, arena ?? throw new ArgumentNullException(nameof(arena)));
 
+        /// <summary>
+        /// [v12.18.12-DEV] 아레나 틱 리플레이 결선 — 펌프는 50ms 마다 게시 요청 플래그만 세운다(원장 작성자 = 재생 스레드 단일 · 이중 작성 0).
+        /// 재생 스레드가 다음 회차에 seqlock 스냅샷을 게시 → 배속과 무관하게 UI 공급 주기 = 허브 펌프 주기.
+        /// </summary>
+        public void AttachArenaReplay(StockManager.Engines.Arena.ArenaTickReplayEngine replay)
+            => Volatile.Write(ref _arenaReplay, replay ?? throw new ArgumentNullException(nameof(replay)));
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -364,6 +372,7 @@ namespace StockManager.Blazor.Services
             dirty |= DrainEvents();
             long nowT = _nowTicks();
             Volatile.Read(ref _arena)?.Step(nowT);                                  // [v12.18.11-DEV] 아레나 정산(자체 seqlock 게시 · 프레임 서명 무관)
+            Volatile.Read(ref _arenaReplay)?.OnHubPump();                           // [v12.18.12-DEV] 리플레이 게시 요청(플래그 1워드 · δ=0)
             dirty |= SampleOrderPath(nowT);
             // 시가평가 · 자산 · MDD
             long unreal = 0; int open = 0;

@@ -420,7 +420,7 @@ namespace StockManager.Tests.Simulation
             string nav = File.ReadAllText(DiContractScanner.FindRepoFile("MS2E.UI.Portable", "Components", "NavMenu.razor"));
             Assert.Contains("new Item(\"⚔️\", \"AI vs Human\", \"/arena\", NavLinkMatch.All)", nav);
             string view = File.ReadAllText(DiContractScanner.FindRepoFile("MS2E.UI.Portable", "Pages", "Trading", "ArenaBattleView.razor"));
-            Assert.Contains("@inject IArenaPort Arena", view);
+            Assert.Contains("@inject IArenaPort LiveArena", view);
             Assert.DoesNotContain(view.Split('\n'), l =>l.TrimStart().StartsWith("@page", StringComparison.Ordinal));
             // 포트 계약 = 명령 4종(개시 · 종료 · 휴먼 주문 · 판독) — 무장/브로커/실주문 멤버 부재
             var members = typeof(IArenaPort).GetMembers().Select(m => m.Name).ToArray();
