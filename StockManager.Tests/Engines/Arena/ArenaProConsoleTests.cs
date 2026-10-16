@@ -423,7 +423,7 @@ namespace StockManager.Tests.Engines.Arena
         // ═══ §7 스트레스 ═══
 
         [Fact]
-        public void Headless_Hotkey_Mash_And_Ladder_Clicks_With_Concurrent_Settlement_Have_No_Fault_Or_Lock()
+        public async System.Threading.Tasks.Task Headless_Hotkey_Mash_And_Ladder_Clicks_With_Concurrent_Settlement_Have_No_Fault_Or_Lock()
         {
             var g = Running(1_000_000_000);
             g.OnQuote(Book(70_000, 5_000, 69_900, 5_000));
@@ -463,10 +463,19 @@ namespace StockManager.Tests.Engines.Arena
             int keys = 0, clicks = 0;
             for (int i = 0; i < 300; i++)
             {
-                cut.Find(".ar-console").KeyDown(new KeyboardEventArgs { Code = codes[i % codes.Length], Key = "x", Repeat = i % 7 == 0 });
+                // [v12.18.14-GM 하네스 교정] 조회 → 발화를 렌더러 디스패처 안에서 원자적으로 — 뷰의 250ms 폴링 타이머 재렌더가 그 사이에 끼면
+                // bUnit 이 오래된 핸들러 ID 로 UnknownEventHandlerIdException(하네스 경합 · 제품 결함 아님 — 출하 [3/10] 에서 1회 관측).
+                int k = i;
+                await cut.InvokeAsync(() => cut.Find(".ar-console").KeyDown(new KeyboardEventArgs { Code = codes[k % codes.Length], Key = "x", Repeat = k % 7 == 0 }));
                 keys++;
-                var cells = cut.FindAll("td.px");                                // 렌더마다 재조회(오래된 핸들러 ID 회피)
-                if (cells.Count > 0) { cells[i % cells.Count].Click(); clicks++; }
+                bool clicked = await cut.InvokeAsync(() =>
+                {
+                    var cells = cut.FindAll("td.px");
+                    if (cells.Count == 0) return false;
+                    cells[k % cells.Count].Click();
+                    return true;
+                });
+                if (clicked) clicks++;
             }
             sw.Stop();
             stop.Cancel();
