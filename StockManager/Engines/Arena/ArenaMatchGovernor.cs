@@ -58,7 +58,7 @@ namespace StockManager.Engines.Arena
     {
         public const long MinCapitalWon = 1_000_000, MaxCapitalWon = 10_000_000_000, DefaultCapitalWon = 10_000_000;
         public const int MaxEquity = 600, ReadSpins = 64;
-        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2, KindHumanLimit = 3, KindHumanCancel = 4;
+        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2, KindHumanLimit = 3, KindHumanCancel = 4, KindHumanFlatten = 5;
         private const long CmdNone = 0, CmdStop = -1;
         private const long PumpStaleTicks = 2 * 10_000_000L;
 
@@ -82,6 +82,10 @@ namespace StockManager.Engines.Arena
         private ArenaSnapshot _snap;
         private readonly long[] _curveAi = new long[MaxEquity], _curveHuman = new long[MaxEquity];
         private long _curveN;
+        // [v12.18.14-DEV] DOM 래더 포커스(UI 가 Volatile 기록) · 래더/복기 사본(같은 seqlock 창에서 게시)
+        private long _focus;
+        private ArenaDepth _depth;
+        private ArenaDebrief _debriefAi, _debriefHuman;
 
         /// <param name="nowTicks">시계(UTC ticks · 테스트 주입).</param>
         /// <param name="equitySampleEverySteps">자산곡선 표본 간격(Step 회수 · 기본 20 = 50ms 펌프 기준 1초).</param>
@@ -131,6 +135,15 @@ namespace StockManager.Engines.Arena
             return ArenaReject.None;
         }
 
+        public int FlattenHuman()
+        {
+            if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            _orders.Publish(new ArenaOrder { Kind = KindHumanFlatten });
+            return ArenaReject.None;
+        }
+
+        public void SetFocus(long symbol) => Volatile.Write(ref _focus, symbol > 0 ? symbol : 0);
+
         public int CancelHuman()
         {
             if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
@@ -165,6 +178,7 @@ namespace StockManager.Engines.Arena
             else if (cmd > 0) Begin(cmd, nowTicks);
 
             DrainQuotes();
+            _sim.SetClock(nowTicks);
             DrainTrades();
             DrainOrders(nowTicks);
             _sim.Process(nowTicks);
@@ -205,9 +219,10 @@ namespace StockManager.Engines.Arena
         }
 
         /// <summary>[v12.18.13-DEV] 체결 틱 직접 반영(리플레이 · 체결 거래량 그대로 · 단일 작성자) — 작동 지정가 대기열 소진/체결.</summary>
-        public void ApplyTrade(in ArenaTrade trade)
+        public void ApplyTrade(in ArenaTrade trade, long marketTicks = 0)
         {
             _tradesSeen++;
+            if (marketTicks > 0) _sim.SetClock(marketTicks);
             if (_state == ArenaState.Running) _sim.OnTrade(in trade);
         }
 
@@ -325,6 +340,9 @@ namespace StockManager.Engines.Arena
                 case KindHumanCancel:
                     _sim.Submit(ArenaSide.Human, 0, 0, 0, ArenaOrderKind.CancelAll, 0, nowTicks);
                     break;
+                case KindHumanFlatten:
+                    _sim.Submit(ArenaSide.Human, 0, 0, 0, ArenaOrderKind.Flatten, 0, nowTicks);
+                    break;
                 case KindAiEntry:
                     _aiSignals++;
                     if (aiBook.Position(o.Symbol) != 0 || aiBook.HasOpenOrder(o.Symbol)) break;   // 미보유 · 미체결 없는 종목만 진입(물타기 · 지연 중 중복 0)
@@ -357,6 +375,10 @@ namespace StockManager.Engines.Arena
             }
             _snap = new ArenaSnapshot((s + 2) >> 1, _state, _capital, _startedTicks, nowTicks, _quotesSeen, _quotesLost, _sim.QuoteSymbols,
                                       _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu);
+            long focus = Volatile.Read(ref _focus);
+            if (focus > 0) _sim.FillDepth(focus, ref _depth); else _depth = default;
+            _debriefAi = _sim.Book(ArenaSide.Ai).Analytics.Snapshot(_sim.Book(ArenaSide.Ai).SlippageWon);
+            _debriefHuman = _sim.Book(ArenaSide.Human).Analytics.Snapshot(_sim.Book(ArenaSide.Human).SlippageWon);
             Volatile.Write(ref _seq, s + 2);                                         // 안정(짝수)
         }
 
@@ -389,6 +411,34 @@ namespace StockManager.Engines.Arena
                 if (Volatile.Read(ref _seq) == s1) return s1 != 0;
             }
             snapshot = default;
+            return false;
+        }
+
+        public bool TryReadDepth(out ArenaDepth depth)
+        {
+            for (int spin = 0; spin < ReadSpins; spin++)
+            {
+                long s1 = Volatile.Read(ref _seq);
+                if ((s1 & 1) != 0) { Thread.SpinWait(8); continue; }
+                depth = _depth;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _seq) == s1) return s1 != 0 && depth.Symbol > 0;
+            }
+            depth = default;
+            return false;
+        }
+
+        public bool TryReadDebrief(int side, out ArenaDebrief debrief)
+        {
+            for (int spin = 0; spin < ReadSpins; spin++)
+            {
+                long s1 = Volatile.Read(ref _seq);
+                if ((s1 & 1) != 0) { Thread.SpinWait(8); continue; }
+                debrief = side == ArenaSide.Human ? _debriefHuman : _debriefAi;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _seq) == s1) return s1 != 0;
+            }
+            debrief = default;
             return false;
         }
 

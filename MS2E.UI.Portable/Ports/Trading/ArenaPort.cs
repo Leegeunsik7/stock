@@ -107,5 +107,13 @@ namespace MS2E.UI.Portable.Ports.Trading
         int SubmitHumanLimit(long symbol, int side, long qty, long priceWon);
         /// <summary>[v12.18.13-DEV] 휴먼 미체결 전량 취소(취소도 체결 지연을 거친다 — 그 사이 체결 가능).</summary>
         int CancelHuman();
+        /// <summary>[v12.18.14-DEV] 휴먼 비상 전량 청산 — 지연 1회 후 미체결(지연 대기 포함) 전량 취소 + 보유 전 종목 시장가 매도(잔량 이월).</summary>
+        int FlattenHuman();
+        /// <summary>[v12.18.14-DEV] DOM 래더 포커스 종목(다음 게시부터 투영 · 0 = 해제).</summary>
+        void SetFocus(long symbol);
+        /// <summary>[v12.18.14-DEV] 포커스 종목 래더 사본(seqlock · 할당 0 · 없으면 false).</summary>
+        bool TryReadDepth(out ArenaDepth depth);
+        /// <summary>[v12.18.14-DEV] 진영 사후 복기 사본(seqlock · 할당 0).</summary>
+        bool TryReadDebrief(int side, out ArenaDebrief debrief);
     }
 }

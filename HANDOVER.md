@@ -2014,3 +2014,35 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,874/3,874(4m05s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 대기열 모델은 표준 근사(취소 위치 미상 = min 상한 · 10호가 밖 앞 잔량 = 10번째 잔량 추정) — 실 거래소 큐 재현 아님. 라이브 체결 방향은 호가 추정.
   리플레이 AI 에는 체결 틱(VWAP)을 공급하지 않는다. 테이프 1M = 176MB 디스크. 실 키움 피드 녹화 실측은 이 호스트에서 불가(합성/기록기 단위로 증명).
+
+## 74. v12.18.14-DEV — Arena Pro Console Hotkeys · DOM Ladder · Post-Match Analytics (2026-10-16)
+
+### 74.1 전제 교정
+- 핫키 = Blazor `@onkeydown`(포커스 가능 콘솔 영역 tabindex · JS interop 0). δ=0 범위 = 키 분류 → 휴먼 큐 디스패치 → 정산/래더/복기 게시(우리 코드).
+  Blazor 이벤트 인자 생성 · 렌더 diff · 메시지 문자열은 프레임워크/렌더 시점 할당(정직 — 측정 대상 아님).
+- 한글 IME 활성 시 KeyboardEvent.key 가 'ㅠ/ㄴ/ㅊ' → 매핑은 code(KeyB/KeyS/KeyC/DigitN/Space) 우선 · key 폴백.
+- 'B/S = 최우선 호가 즉시 매수/매도' = 최우선 반대 호가 지정가(시장성 — 1호가 내 즉시 체결 · 초과분은 그 가격 대기 · 지연 30 ~ 50ms 경유). 시장가 휴먼 경로는 퀵 티켓에 유지.
+
+### 74.2 구성
+- `ArenaHotkeys`(RCL Helpers): 1~4 = 비중 10/25/50/100% · B/S · Space = 비상 전량 청산 · C = 미체결 전량 취소 · 자동 반복(repeat) = 발주/청산/취소 무시(비중만 허용 —
+  키 누름 유지로 큐 범람 0) · 수량 = ⌊자본금 × 비중 ÷ 가격⌋(매도 = 매도 가능 상한) · 래더 클릭 = 매수호가 열 지정가 매수 · 매도호가 열 지정가 매도.
+- 포트: `ArenaDepth`(InlineArray 10단 · 호가 + 가격별 내 대기 수량/맨 앞 앞 잔량 + 보유/매도 가능/원가 + 래더 밖 내 수량) · `ArenaDebrief` · `ArenaTilt` ·
+  IArenaPort `FlattenHuman` · `SetFocus` · `TryReadDepth` · `TryReadDebrief`(거버너 50ms 게시 seqlock 창에서 함께 투영).
+- `DualBookSimulator`: `ArenaOrderKind.Flatten`(지연 1회 → 미체결 전량(지연 대기 포함) 취소 + 보유 전 종목 시장가 매도 동시 활성 · 잔량 이월 · 포지션 역순 순회) ·
+  `FillDepth` · 시장 시각(`SetClock`) · 체결/시가평가/접수 분석 훅.
+- `ArenaTradeAnalytics`(신규): 왕복 거래 단위 MAE(≤0)/MFE(≥0)(편차 = 보유 × 최우선 매수 − 원가 + trip 내 실현 · 청산 실현 포함) · 보유 시간(시장 시각) ·
+  trip 슬리피지/전체 슬리피지 드래그 · 포착률(Σ실현 ÷ ΣMFE) · 연패/최대 연패 · 틸트(연패 ≥ 2 상태에서 평온 기준선 EWMA 대비 간격 &lt; ½ = 빈도 · 금액 &gt; 2배 = 규모 ·
+  기준선 표본 ≥ 3 · 연패 1회 = 기준선 동결 · 취소/청산 = 보호 행동이라 제외) — 고정 배열 · 정수 연산 · 원장 Reset 과 함께 초기화.
+- UI: 프로 콘솔(포커스 영역 · 현재 비중 표시) · DOM 래더(매도 10 → 매수 10 · 잔량 바 · 가격 셀 클릭 · 내 주문 '수량 · 앞 잔량' 뱃지 · 보유/매도 가능/래더 밖) ·
+  종목코드 변경 시 라이브/리플레이 포커스 동기화(@bind:after) · 경기 종료(종료 · 테이프 완주) 시 복기 카드(AI/휴먼). 호스트 결선 · 셸 변경 0(래칫 불변).
+
+### 74.3 검증
+- `StockManager.Tests/Engines/Arena/ArenaProConsoleTests.cs` 27건: 키 매핑 14(IME · 폴백 · 반복 무시) · 수량 공식 · B/S/C 큐 디스패치 정확값 · 래더 클릭 지정가/뱃지/래더 밖/포커스 ·
+  Space 비상 청산(지연 경유 · 지연 대기 포함 취소 3 · 예약 0 · 포지션 0) · MAE −10,105 / MFE 14,895 / 실현 8,511 / 보유 5s / 포착률 정확값 · 부분 매도 누적 · 슬리피지 드래그 ·
+  복기 게시/종료 후 유지/재개시 초기화 · 틸트 빈도/규모/복합/연패 1 동결/승리 해제/기준선 부족/취소·청산 제외 ·
+  δ=0 + GC 0(핫키 분류 + 디스패치 + 래더 클릭 + 정산/래더/복기 게시 루프 · 체결/시가평가 분석 루프) · ArenaHotkeys IL = System + Portable · 포트 호출 3종만 ·
+  bUnit 헤드리스 키 300 + 래더 클릭 300 + 동시 정산 스레드(1.8s · 예외/교착 0 · 현금 ≥ 예약 ≥ 0).
+- 결함 수정(테스트가 발견): 비상 청산의 포지션 정순 순회 + 전량 체결 교체 제거 → 마지막 포지션 누락 → 역순 순회.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,901/3,901(5m41s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 콘솔 영역은 Space 스크롤 방지를 위해 keydown 기본 동작을 막는다(영역 밖 클릭으로 포커스 해제). bUnit 은 상호작용마다 렌더 기록을 보유하므로
+  메모리 누수 판정은 디스패치/정산 루프 δ=0 · GC 0 실측으로 한다. 실 WebView2 키 입력/래더 육안 확인은 이 세션에서 미수행.

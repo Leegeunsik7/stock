@@ -166,7 +166,7 @@ namespace StockManager.Engines.Arena
                     if (ts > target) break;
                     bool hasBook = tape.Read(_cursor, out _book);
                     _simTicks = ts;
-                    if (tape.TryReadTrade(_cursor, out _trade)) _gov.ApplyTrade(in _trade);   // 체결 → 지정가 대기열(호가보다 먼저)
+                    if (tape.TryReadTrade(_cursor, out _trade)) _gov.ApplyTrade(in _trade, ts);   // 체결 → 지정가 대기열(호가보다 먼저)
                     if (hasBook) _ai!.OnBook(in _book);                             // AI 결정 → 원장 AI 링(같은 틱 Advance 에서 접수 · 지연 후 체결)
                     _gov.Advance(in _book, hasBook, ts, wall);
                     _cursor++; processed++;

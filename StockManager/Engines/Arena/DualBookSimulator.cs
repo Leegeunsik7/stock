@@ -15,6 +15,8 @@
 //      체결 = 앞 잔량을 넘는 거래량만큼 · 내 가격을 관통한 체결(매수 대기 아래 가격 체결) = 잔량 전부 · 반대 호가가 내 가격까지 내려오면 시장성 체결.
 //   ⑤ 예약: 지정가 매수 = 수량 × 지정가 + 수수료 현금 예약 · 매도(시장가 · 지정가) = 수량 예약 — 이중 집행(초과 매수 · 중복 매도) 0.
 //   ⑥ 수수료 0.015%(양방향) · 거래세 0.18%(매도) 원 미만 절사(Int128). 공매도 금지 · 현금 부족 = 활성화 시점 전량 거부(축소 0 — 시장가 추정 = 수량 × 최우선).
+//   [v12.18.14-DEV] 비상 청산(Flatten) = 지연 1회 후 미체결 전량(지연 대기 포함) 취소 + 보유 전 종목 시장가 매도 동시 활성 · 진영별 사후 분석
+//   (ArenaTradeAnalytics — 체결 · 시가평가 · 접수 훅) · DOM 래더 투영(FillDepth — 10호가 + 가격별 내 대기 지정가/앞 잔량).
 //   ★브로커/주문 전송 타입 참조 0(테스트가 IL 로 확증). 스레드 계약: 모든 변경은 거버너 정산 스레드(단일 작성자)에서만.
 // ============================================================================
 using System;
@@ -26,10 +28,11 @@ namespace StockManager.Engines.Arena
     /// <summary>체결 틱 1건(원 · 주). Side +1 매수 주도 · −1 매도 주도 · 0 미상(시뮬레이터가 최신 호가로 추정).</summary>
     public struct ArenaTrade { public long Symbol, PriceWon, Qty; public int Side; }
 
-    /// <summary>주문 종류(0 시장가 · 1 지정가 · 2 전량 취소).</summary>
+    /// <summary>주문 종류(0 시장가 · 1 지정가 · 2 전량 취소 · 3 비상 전량 청산).</summary>
     public static class ArenaOrderKind
     {
-        public const int Market = 0, Limit = 1, CancelAll = 2;
+        public const int Market = 0, Limit = 1, CancelAll = 2, Flatten = 3;
+        public static bool IsControl(int kind) => kind is CancelAll or Flatten;
     }
 
     /// <summary>작동/지연 대기 주문 1건(고정 풀 슬롯).</summary>
@@ -60,6 +63,8 @@ namespace StockManager.Engines.Arena
             Rng = _seed;
         }
 
+        /// <summary>[v12.18.14-DEV] 사후 복기 분석(원장과 같은 단일 작성자).</summary>
+        public ArenaTradeAnalytics Analytics { get; } = new();
         public long CashWon { get; internal set; }
         public long ReservedCashWon { get; internal set; }
         public long RealizedWon { get; internal set; }
@@ -85,6 +90,7 @@ namespace StockManager.Engines.Arena
             Array.Clear(Orders); OrderCount = 0;
             Array.Clear(ImpactAsk); Array.Clear(ImpactBid);
             Rng = _seed;
+            Analytics.Reset();
             CashWon = capitalWon; PeakWon = capitalWon; ReservedCashWon = 0;
             RealizedWon = FeesWon = TaxWon = SlippageWon = MddWon = Fills = Rejects = Cancels = 0;
             Wins = Losses = LastReject = 0;
@@ -122,7 +128,7 @@ namespace StockManager.Engines.Arena
         /// <summary>그 종목의 미완료 주문(지연 대기 포함) 존재 여부.</summary>
         public bool HasOpenOrder(long symbol)
         {
-            for (int i = 0; i < OrderCount; i++) if (!Orders[i].Done && Orders[i].Symbol == symbol && Orders[i].Kind != ArenaOrderKind.CancelAll) return true;
+            for (int i = 0; i < OrderCount; i++) if (!Orders[i].Done && Orders[i].Symbol == symbol && !ArenaOrderKind.IsControl(Orders[i].Kind)) return true;
             return false;
         }
 
@@ -154,7 +160,7 @@ namespace StockManager.Engines.Arena
         private readonly long[] _qSym = new long[QuoteSlots], _qVer = new long[QuoteSlots];
         private readonly OrderBookPayload[] _q = new OrderBookPayload[QuoteSlots];
         private int _quoteCount;
-        private long _quoteTableFull;
+        private long _quoteTableFull, _now;
         private readonly ArenaBook[] _books;
 
         public long LatencyMinTicks { get; }
@@ -169,6 +175,10 @@ namespace StockManager.Engines.Arena
 
         public ArenaBook Book(int side) => _books[side == ArenaSide.Human ? ArenaSide.Human : ArenaSide.Ai];
         public int QuoteSymbols => _quoteCount;
+
+        /// <summary>[v12.18.14-DEV] 시장 시각(체결 틱 처리 전 거버너가 설정 · Process 가 갱신) — 사후 분석 보유 시간 기준.</summary>
+        public void SetClock(long nowTicks) => _now = nowTicks;
+        public long Clock => _now;
         public long QuoteTableFull => _quoteTableFull;
 
         /// <summary>양측 동일 자본금으로 원장 초기화(호가 표는 유지 — 장중 개시 즉시 체결 가능 · 지연 난수 시드 복원 = 매치 결정론).</summary>
@@ -220,7 +230,7 @@ namespace StockManager.Engines.Arena
             var book = Book(side);
             int r = kind switch
             {
-                ArenaOrderKind.CancelAll => ArenaReject.None,
+                ArenaOrderKind.CancelAll or ArenaOrderKind.Flatten => ArenaReject.None,
                 ArenaOrderKind.Market => symbol <= 0 || qty <= 0 || qty > MaxOrderQty || dir is not (1 or -1) ? ArenaReject.Invalid : ArenaReject.None,
                 ArenaOrderKind.Limit => symbol <= 0 || qty <= 0 || qty > MaxOrderQty || dir is not (1 or -1) || limitPx <= 0 || limitPx > MaxPriceWon ? ArenaReject.Invalid : ArenaReject.None,
                 _ => ArenaReject.Invalid,
@@ -232,6 +242,11 @@ namespace StockManager.Engines.Arena
             o = default;
             o.Symbol = symbol; o.Dir = dir; o.Qty = qty; o.Kind = kind; o.LimitPx = kind == ArenaOrderKind.Limit ? limitPx : 0;
             o.DueTicks = nowTicks + NextLatency(book);
+            if (!ArenaOrderKind.IsControl(kind))
+            {
+                long refPx = kind == ArenaOrderKind.Limit ? limitPx : dir > 0 ? BestAsk(symbol) : BestBid(symbol);
+                book.Analytics.OnSubmit(nowTicks, refPx > 0 ? qty * refPx : 0);     // 틸트 기준선/경보(취소 · 청산 = 보호 행동 → 제외)
+            }
             return ArenaReject.None;
         }
 
@@ -250,6 +265,7 @@ namespace StockManager.Engines.Arena
         /// <summary>지연이 끝난 주문 활성화(접수 순서) → 새 호가가 들어온 종목의 작동 주문 재평가(시장가 잔량 재순회 · 지정가 시장성/대기열). δ=0.</summary>
         public void Process(long nowTicks)
         {
+            _now = nowTicks;
             for (int s = 0; s < _books.Length; s++)
             {
                 var book = _books[s];
@@ -286,6 +302,7 @@ namespace StockManager.Engines.Arena
                 o.Done = true;
                 return;
             }
+            if (o.Kind == ArenaOrderKind.Flatten) { Flatten(book, index); return; }
             int slot = QuoteIndex(o.Symbol);
             if (slot < 0) { Reject(book, ref o, ArenaReject.NoQuote); return; }
             ref readonly var q = ref _q[slot];
@@ -312,6 +329,37 @@ namespace StockManager.Engines.Arena
             o.QuoteVer = _qVer[slot];
             Walk(book, ref o, slot);
             if (!o.Done && o.Kind == ArenaOrderKind.Limit) o.QueueAhead = InitialQueueAhead(book, index, slot);
+        }
+
+        // 비상 청산: 다른 미체결 전부(지연 대기 포함) 취소 → 보유 종목마다 시장가 매도 슬롯(취소로 빈 슬롯 재사용 · 포지션 ≤ 32 < 슬롯 64) 즉시 활성 · 순회
+        private void Flatten(ArenaBook book, int index)
+        {
+            for (int k = 0; k < book.OrderCount; k++)
+            {
+                if (k == index) continue;
+                ref var x = ref book.Orders[k];
+                if (x.Done || ArenaOrderKind.IsControl(x.Kind)) continue;
+                if (x.Active) Cancel(book, ref x);
+                else { x.Done = true; book.Cancels++; }
+            }
+            book.Orders[index].Done = true;
+            int free = 0;
+            for (int p = book.PosCount - 1; p >= 0; p--)                         // 역순 — 전량 체결 시 포지션 교체 제거(마지막 → p)가 미처리 항목을 건너뛰지 않게
+            {
+                long sym = book.PosSym[p], qty = book.PosQty[p] - book.PosReserved[p];
+                if (qty <= 0) continue;
+                while (free < book.OrderCount && (free == index || !book.Orders[free].Done)) free++;
+                if (free >= book.OrderCount) { if (book.OrderCount >= ArenaBook.MaxOrders) break; free = book.OrderCount++; }
+                ref var o = ref book.Orders[free];
+                o = default;
+                o.Symbol = sym; o.Dir = -1; o.Qty = qty; o.Kind = ArenaOrderKind.Market; o.DueTicks = _now;
+                o.ReservedQty = qty; book.PosReserved[p] += qty;
+                int slot = QuoteIndex(sym);
+                o.RefPx = slot < 0 ? 0 : _q[slot].BidPrice[0];
+                o.Active = true;
+                if (slot >= 0) { o.QuoteVer = _qVer[slot]; Walk(book, ref o, slot); }      // 호가 없으면 다음 호가 갱신 때 재순회
+                free++;
+            }
         }
 
         private static void Reject(ArenaBook book, ref ArenaWorkingOrder o, int code)
@@ -367,7 +415,7 @@ namespace StockManager.Engines.Arena
                 notional += take * px;
                 if (cashOut) break;
             }
-            if (filled > 0) Fill(book, ref o, filled, notional, aggressive: true);
+            if (filled > 0) Fill(book, ref o, filled, notional, aggressive: true, _now);
             if (cashOut && !o.Done)
             {
                 Release(book, ref o);
@@ -378,9 +426,10 @@ namespace StockManager.Engines.Arena
         }
 
         // 체결 1건 반영(현금 · 포지션 · 수수료 · 세금 · 실현손익 · 예약 해제)
-        private static void Fill(ArenaBook book, ref ArenaWorkingOrder o, long qty, long notional, bool aggressive)
+        private static void Fill(ArenaBook book, ref ArenaWorkingOrder o, long qty, long notional, bool aggressive, long now)
         {
             long fee = Fee(notional);
+            long slipBefore = book.SlippageWon, posBefore = book.Position(o.Symbol), realizedNow = 0;
             if (o.Dir > 0)
             {
                 long cost = notional + fee;
@@ -406,6 +455,7 @@ namespace StockManager.Engines.Arena
                 book.CashWon += notional - fee - tax;
                 book.TaxWon += tax;
                 book.RealizedWon += realized;
+                realizedNow = realized;
                 if (realized > 0) book.Wins++; else book.Losses++;
                 book.PosReserved[pi] -= qty;
                 o.ReservedQty -= qty;
@@ -415,6 +465,7 @@ namespace StockManager.Engines.Arena
             }
             book.FeesWon += fee;
             book.Fills++;
+            book.Analytics.OnFill(o.Symbol, o.Dir, posBefore, book.Position(o.Symbol), realizedNow, now, slipBefore, book.SlippageWon);
             o.Qty -= qty;
             o.Filled += qty;
             if (o.Qty == 0) { Release(book, ref o); o.Done = true; }
@@ -505,7 +556,7 @@ namespace StockManager.Engines.Arena
                     }
                     if (fill <= 0) continue;
                     if (o.Dir < 0) fill = Math.Min(fill, book.Position(o.Symbol));
-                    if (fill > 0) Fill(book, ref o, fill, fill * o.LimitPx, aggressive: false);
+                    if (fill > 0) Fill(book, ref o, fill, fill * o.LimitPx, aggressive: false, _now);
                 }
                 Compact(book);
             }
@@ -525,6 +576,46 @@ namespace StockManager.Engines.Arena
             book.OrderCount = w;
         }
 
+        /// <summary>
+        /// [v12.18.14-DEV] DOM 래더 투영(δ=0): 그 종목 10호가 + 휴먼 원장의 작동 지정가를 가격별로 합산(수량 · 맨 앞 내 주문의 앞 잔량) + 보유/매도 가능/원가.
+        /// 매수 지정가 = 매수호가 열 · 매도 지정가 = 매도호가 열 · 래더 밖 가격 = MyOffLadderQty.
+        /// </summary>
+        public void FillDepth(long symbol, ref ArenaDepth d)
+        {
+            d = default;
+            d.Symbol = symbol;
+            for (int l = 0; l < ArenaDepth.Levels; l++) { d.MyAskAhead[l] = -1; d.MyBidAhead[l] = -1; }
+            var h = Book(ArenaSide.Human);
+            int pi = h.IndexOf(symbol);
+            if (pi >= 0) { d.PositionQty = h.PosQty[pi]; d.Sellable = h.PosQty[pi] - h.PosReserved[pi]; d.PositionCostWon = h.PosCost[pi]; }
+            int slot = QuoteIndex(symbol);
+            if (slot >= 0)
+            {
+                ref readonly var q = ref _q[slot];
+                d.HasBook = true; d.BookVersion = _qVer[slot];
+                for (int l = 0; l < ArenaDepth.Levels; l++)
+                {
+                    d.AskPx[l] = q.AskPrice[l]; d.AskQty[l] = q.AskQty[l];
+                    d.BidPx[l] = q.BidPrice[l]; d.BidQty[l] = q.BidQty[l];
+                }
+            }
+            for (int k = 0; k < h.OrderCount; k++)
+            {
+                ref readonly var o = ref h.Orders[k];
+                if (o.Done || !o.Active || o.Kind != ArenaOrderKind.Limit || o.Symbol != symbol) continue;
+                bool placed = false;
+                for (int l = 0; l < ArenaDepth.Levels && slot >= 0; l++)
+                {
+                    if ((o.Dir > 0 ? d.BidPx[l] : d.AskPx[l]) != o.LimitPx) continue;
+                    if (o.Dir > 0) { d.MyBidQty[l] += o.Qty; if (d.MyBidAhead[l] < 0) d.MyBidAhead[l] = o.QueueAhead; }
+                    else { d.MyAskQty[l] += o.Qty; if (d.MyAskAhead[l] < 0) d.MyAskAhead[l] = o.QueueAhead; }
+                    placed = true;
+                    break;
+                }
+                if (!placed) d.MyOffLadderQty += o.Qty;
+            }
+        }
+
         /// <summary>시가평가(보유 × 최우선 매수호가 · 없으면 원가) → 자산 · 미실현 · 고점 · MDD 갱신. 반환 = 자산(원).</summary>
         public long MarkToMarket(int side, out long unrealizedWon)
         {
@@ -535,6 +626,7 @@ namespace StockManager.Engines.Arena
                 long bid = BestBid(book.PosSym[i]);
                 value += bid > 0 ? book.PosQty[i] * bid : book.PosCost[i];
                 cost += book.PosCost[i];
+                if (bid > 0) book.Analytics.Mark(book.PosSym[i], book.PosQty[i] * bid - book.PosCost[i]);   // MAE/MFE 편차
             }
             unrealizedWon = value - cost;
             long equity = book.CashWon + value;

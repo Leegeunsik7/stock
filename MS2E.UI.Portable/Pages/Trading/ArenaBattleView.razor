@@ -5,7 +5,10 @@
    [v12.18.12-DEV] 모드 전환: 정규장 라이브(IArenaPort) ↔ 고속 틱 리플레이(IArenaReplayPort — 별도 원장 · 같은 스코어보드/퀵 티켓 재사용) ·
    리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 · 진행률). 배속과 무관하게 UI 는 250ms 폴링만(재생 스레드 50ms 게시 · 프레임 디커플링).
    [v12.18.13-DEV] 라이브 = 틱 녹화 ON/OFF(IArenaTapePort · .tape) · 리플레이 = 원천 선택(합성 · 녹화 .tape) · 퀵 티켓 지정가/미체결 취소 ·
-   스코어보드 = 지연 대기 · 작동 주문 · 내 앞 잔량(대기열 순번) · 예약 현금. 디렉터리 목록은 버튼 클릭 시에만 조회(렌더 경로 I/O 0). *@
+   스코어보드 = 지연 대기 · 작동 주문 · 내 앞 잔량(대기열 순번) · 예약 현금. 디렉터리 목록은 버튼 클릭 시에만 조회(렌더 경로 I/O 0).
+   [v12.18.14-DEV] 프로 콘솔: 포커스 가능 영역(tabindex) @onkeydown — JS interop 0 · ArenaHotkeys(code 기준 · IME 무관 · 자동 반복 발주 무시) →
+   IArenaPort 휴먼 큐. DOM 래더 = 포커스 종목 10호가 잔량 바 + 가격 셀 클릭 지정가 + 내 주문/앞 잔량 뱃지(TryReadDepth seqlock 사본) ·
+   경기 종료 시 복기 카드(MAE · MFE · 보유 시간 · 슬리피지 드래그 · 틸트). *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
@@ -139,7 +142,7 @@ else
     <div class="ar-card ar-ticket">
         <h3>⚡ 휴먼 퀵 오더 <small>시장가 · 휴먼 가상 원장 전용</small></h3>
         <div class="ar-row">
-            <label>종목코드 <input @bind="_symbol" maxlength="6" placeholder="@(_replay && Replay.SourceLabel == "합성 테이프" ? "005930 · 000660 · 035420" : "005930")" /></label>
+            <label>종목코드 <input @bind="_symbol" @bind:after="SyncFocus" maxlength="6" placeholder="@(_replay && Replay.SourceLabel == "합성 테이프" ? "005930 · 000660 · 035420" : "005930")" /></label>
             <label>수량(주) <input type="number" min="1" @bind="_qty" /></label>
             <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(1)">시장가 매수</button>
             <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(-1)">시장가 매도</button>
@@ -153,6 +156,56 @@ else
         <p class="ar-sub">체결 지연 30 ~ 50ms 후 판단 · 시장가 = 10호가 잔량 순회(초과분은 다음 호가로 이월 분할 체결) · 지정가 = 같은 가격 잔량 뒤 대기(체결 거래량이 앞 잔량을 소진해야 체결) ·
             현금 부족 시 전량 거부 · 공매도 불가.@(_replay ? " 리플레이: 일시정지 중 주문 = 대기 → 재개 후 지연 경과 시 체결." : "") 휴먼 마지막 거부: @ArenaReject.Label(s.Human.LastReject)</p>
     </div>
+
+    <div class="ar-card ar-console" tabindex="0" @onkeydown="OnKey" @onkeydown:preventDefault="true">
+        <h3>🎛 프로 콘솔 <small>여기를 클릭한 뒤 키 입력 · 1~4 비중 · B 매수 · S 매도 · Space 비상 전량 청산 · C 미체결 전량 취소 · 현재 비중 <b>@ArenaHotkeys.WeightLabel(_weightBp)</b></small></h3>
+        @if (Arena.TryReadDepth(out var d) && d.HasBook)
+        {
+            long maxQ = 1;
+            for (int l = 0; l < ArenaDepth.Levels; l++) { maxQ = Math.Max(maxQ, Math.Max(d.AskQty[l], d.BidQty[l])); }
+            <table class="ar-ladder">
+                <tr><th>내 매도</th><th>매도 잔량</th><th>가격</th><th>매수 잔량</th><th>내 매수</th></tr>
+                @for (int i = ArenaDepth.Levels - 1; i >= 0; i--)
+                {
+                    int lv = i;
+                    if (d.AskPx[lv] <= 0) continue;
+                    <tr class="ask">
+                        <td>@MyBadge(d.MyAskQty[lv], d.MyAskAhead[lv])</td>
+                        <td class="q"><i style="width:@Pct(d.AskQty[lv], maxQ)%"></i><span>@(d.AskQty[lv].ToString("N0"))</span></td>
+                        <td class="px" title="클릭 = 이 가격 지정가 매도" @onclick="() => Ladder(true, lv)">@(d.AskPx[lv].ToString("N0"))</td>
+                        <td></td><td></td>
+                    </tr>
+                }
+                @for (int i = 0; i < ArenaDepth.Levels; i++)
+                {
+                    int lv = i;
+                    if (d.BidPx[lv] <= 0) continue;
+                    <tr class="bid">
+                        <td></td><td></td>
+                        <td class="px" title="클릭 = 이 가격 지정가 매수" @onclick="() => Ladder(false, lv)">@(d.BidPx[lv].ToString("N0"))</td>
+                        <td class="q"><i style="width:@Pct(d.BidQty[lv], maxQ)%"></i><span>@(d.BidQty[lv].ToString("N0"))</span></td>
+                        <td>@MyBadge(d.MyBidQty[lv], d.MyBidAhead[lv])</td>
+                    </tr>
+                }
+            </table>
+            <p class="ar-sub">@(d.Symbol.ToString("D6")) · 보유 @(d.PositionQty.ToString("N0"))주 · 매도 가능 @(d.Sellable.ToString("N0"))주@(d.MyOffLadderQty > 0 ? " · 래더 밖 내 지정가 " + d.MyOffLadderQty.ToString("N0") + "주" : "")</p>
+        }
+        else
+        {
+            <div class="ar-note">래더 대기 — 종목코드 @(_symbol) 의 호가가 아직 없습니다.</div>
+        }
+    </div>
+
+    @if (s.State == ArenaState.Finished)
+    {
+        <div class="ar-card ar-debrief">
+            <h3>📋 경기 복기 <small>왕복 거래(진입 → 전량 청산) 단위 · MAE = 최대 역행 · MFE = 최대 순행 · 원</small></h3>
+            <div class="ar-grid">
+                @Debrief(ArenaSide.Ai, "🤖 AI")
+                @Debrief(ArenaSide.Human, "🧑 휴먼")
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -162,7 +215,8 @@ else
     private readonly string[] _sparkPoints = { "", "" };
     private readonly long[] _sparkVersion = { -1, -1 };
     private long _capital = 10_000_000, _qty = 1;
-    private string _symbol = "";
+    private string _symbol = "005930";
+    private int _weightBp = ArenaHotkeys.DefaultWeightBp;
     private string? _msg;
     private long _seen, _seenReplay;
     private bool _replay;
@@ -182,6 +236,68 @@ else
 
     private void ReplayPlay()
         => _msg = Replay.Play(_capital) ? null : "자본금 범위 밖(100만 ~ 100억 원)";
+
+    // ── [v12.18.14-DEV] 프로 콘솔 ──
+    private void SyncFocus()
+    {
+        long sym = long.TryParse(_symbol, out long v) && v > 0 ? v : 0;
+        LiveArena.SetFocus(sym);
+        Replay.Arena.SetFocus(sym);
+    }
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        int action = ArenaHotkeys.Classify(e.Code, e.Key, e.Repeat, out int w);
+        if (action == ArenaHotkeys.None) return;
+        if (action == ArenaHotkeys.Weight) { _weightBp = w; return; }
+        Arena.TryRead(out var snap);
+        Arena.TryReadDepth(out var d);
+        int r = ArenaHotkeys.Execute(Arena, action, in d, _weightBp, snap.CapitalWon, out long q);
+        _msg = r != ArenaReject.None ? "핫키 거부: " + ArenaReject.Label(r)
+             : action switch
+             {
+                 ArenaHotkeys.Buy => "B 매수 " + q.ToString("N0") + "주 @" + d.BestAsk.ToString("N0"),
+                 ArenaHotkeys.Sell => "S 매도 " + q.ToString("N0") + "주 @" + d.BestBid.ToString("N0"),
+                 ArenaHotkeys.Flatten => "⚠ 비상 전량 청산 접수",
+                 _ => "전량 취소 접수",
+             };
+    }
+
+    private void Ladder(bool isAsk, int level)
+    {
+        Arena.TryRead(out var snap);
+        if (!Arena.TryReadDepth(out var d)) { _msg = "래더 호가 없음"; return; }
+        int r = ArenaHotkeys.ClickLadder(Arena, in d, isAsk, level, _weightBp, snap.CapitalWon, out long q);
+        _msg = r == ArenaReject.None ? (isAsk ? "래더 매도 " : "래더 매수 ") + q.ToString("N0") + "주 @" + (isAsk ? d.AskPx[level] : d.BidPx[level]).ToString("N0")
+                                     : "래더 거부: " + ArenaReject.Label(r);
+    }
+
+    private static string Pct(long q, long max) => (q * 100.0 / max).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static RenderFragment MyBadge(long qty, long ahead) => __builder =>
+    {
+        if (qty > 0)
+        {
+            <span class="ar-my" title="내 대기 지정가 · 앞 잔량">@(qty.ToString("N0"))주 · 앞 @(ahead.ToString("N0"))</span>
+        }
+    };
+
+    private RenderFragment Debrief(int side, string title) => __builder =>
+    {
+        if (!Arena.TryReadDebrief(side, out var b)) return;
+        <div>
+            <h4>@title <small>@(b.Trips)회 · @(b.Wins)승 @(b.Losses)패@(b.OpenTrips > 0 ? " · 미청산 " + b.OpenTrips : "")</small></h4>
+            <table class="ar-tbl">
+                <tr><td>MAE 최악/평균</td><td class="ar-down">@(b.MaeWorstWon.ToString("N0")) / @(b.MaeAvgWon.ToString("N0"))</td><td>MFE 최고/평균</td><td class="ar-up">@(b.MfeBestWon.ToString("N0")) / @(b.MfeAvgWon.ToString("N0"))</td></tr>
+                <tr><td>보유 평균/최장</td><td>@HoldText(b.AvgHoldMs) / @HoldText(b.MaxHoldMs)</td><td>MFE 포착률</td><td>@((b.CaptureBp / 100.0).ToString("0.0"))%</td></tr>
+                <tr><td>실현 합계</td><td class="@Tone(b.RealizedWon)">@(b.RealizedWon.ToString("N0"))</td><td>최대 연패</td><td>@(b.MaxLossStreak)</td></tr>
+                <tr><td>슬리피지 드래그</td><td>@(b.SlippageDragWon.ToString("N0"))</td><td>왕복 내 슬리피지</td><td>@(b.TripSlippageWon.ToString("N0"))</td></tr>
+                <tr><td>틸트 경보</td><td class="@(b.TiltAlerts > 0 ? "ar-msg" : "")">@(b.TiltAlerts)건</td><td>마지막 사유</td><td>@ArenaTilt.Label(b.LastTiltReason)</td></tr>
+            </table>
+        </div>
+    };
+
+    private static string HoldText(long ms) => ms >= 60_000 ? (ms / 60_000) + "분 " + (ms / 1_000 % 60) + "초" : (ms / 1_000.0).ToString("0.0") + "초";
 
     private long _limitPx;
     private string _tapePath = "";
@@ -266,13 +382,16 @@ else
     }
 
     protected override void OnInitialized()
-        => _timer = new System.Threading.Timer(_ =>
+    {
+        SyncFocus();
+        _timer = new System.Threading.Timer(_ =>
         {
             long v = Arena.Version, rv = _replay ? Replay.Status.Version : 0;
             if (v == _seen && rv == _seenReplay) return;
             _seen = v; _seenReplay = rv;
             try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { }
         }, null, 250, 250);
+    }
 
     public void Dispose() => _timer?.Dispose();
 }
@@ -305,5 +424,15 @@ else
     .ar-progress { height: 6px; background: #2a3040; border-radius: 3px; margin: 8px 0 4px; overflow: hidden; } .ar-progress i { display: block; height: 100%; background: #4dd0e1; }
     .ar-rec { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; } .ar-rec.on { background: #E53935; color: #fff; }
     .ar-replay select { background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; max-width: 360px; }
-    .ar-ticket { margin-top: 10px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+    .ar-ticket { margin-top: 10px; }
+    .ar-console { margin-top: 10px; outline: none; } .ar-console:focus { box-shadow: 0 0 0 2px #4dd0e1; }
+    .ar-ladder { width: 100%; max-width: 560px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .ar-ladder th { color: var(--sub); font-weight: 400; font-size: 11px; } .ar-ladder td { padding: 1px 4px; border-bottom: 1px solid #1d2230; text-align: center; }
+    .ar-ladder td.px { cursor: pointer; font-weight: 700; width: 90px; } .ar-ladder td.px:hover { background: #2a3040; }
+    .ar-ladder tr.ask td.px { color: #1E88E5; } .ar-ladder tr.bid td.px { color: #E53935; }
+    .ar-ladder td.q { position: relative; width: 120px; } .ar-ladder td.q i { position: absolute; top: 2px; bottom: 2px; opacity: .25; }
+    .ar-ladder tr.ask td.q i { right: 0; background: #1E88E5; } .ar-ladder tr.bid td.q i { left: 0; background: #E53935; }
+    .ar-ladder td.q span { position: relative; }
+    .ar-my { background: #f9a825; color: #111; border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 700; }
+    .ar-debrief { margin-top: 10px; border: 1px solid #4dd0e1; } .ar-debrief h4 { font-size: 12.5px; margin: 0 0 6px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 </style>
