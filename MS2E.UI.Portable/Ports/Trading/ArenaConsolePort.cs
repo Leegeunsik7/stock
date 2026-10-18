@@ -23,6 +23,8 @@ namespace MS2E.UI.Portable.Ports.Trading
         public ArenaLevels10 AskPx, AskQty, BidPx, BidQty, MyAskQty, MyAskAhead, MyBidQty, MyBidAhead;
         /// <summary>래더 밖 가격의 내 대기 지정가 수량(매수 · 매도 합).</summary>
         public long MyOffLadderQty;
+        /// <summary>[v12.18.18-DEV] 내 빙산 지정가의 은닉 잔량 합(노출 수량은 MyAskQty/MyBidQty) · 포식자가 1호가 표시 잔량에 얹은 허수(가상 · 체결 불가 · AskQty/BidQty[0] 에 이미 합산).</summary>
+        public long MyHiddenQty, PhantomAskQty, PhantomBidQty;
 
         public readonly long BestAsk => HasBook ? AskPx[0] : 0;
         public readonly long BestBid => HasBook ? BidPx[0] : 0;

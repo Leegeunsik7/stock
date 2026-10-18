@@ -13,6 +13,13 @@
 //   대상 종목 1개(포커스 우선 · 없으면 첫 수신 종목 · 무포지션일 때만 재지정)의 호가/체결 → 전략 · ArenaVwapTracker → 틱마다 Evaluate →
 //   원장 재확인(무포지션 · 미완료 주문 0) 후 AI 시장가 접수. 교체(SetPersona) = 다음 회차 반영 · 진행 중이면 AI 비상 전량 청산 후 새 전략이 빈 원장에서 시작.
 //   시그널 엔진 외 페르소나 활성 중 OnAiDecision 은 무시(두 두뇌 동시 발주 0). HUD(VWAP · 이격률 · σ · 잔량 불균형 · 목표/손절 · 사유)는 같은 seqlock 창 게시.
+//  [v12.18.18-DEV] 초현실 아레나:
+//   · 휴먼 빙산 지정가(SubmitHumanIceberg → 시뮬레이터 Peak 노출 · 리필 시 대기열 맨 뒤) · 시뮬레이터 유동성 진공 페널티(양 진영 공통).
+//   · 포식자 페르소나(4): 매 회차 휴먼 사후 분석(연패 · 틸트 · 미청산 MAE)을 역추적 주입 → 공격성 · 진입 임계 · 목표 틱 조절 · 은밀(공격성 &lt; 50%) = TWAP 분할 진입.
+//     휴먼 연패 ≥ 2 = 게시 시 휴먼 DOM 래더(포커스 = 대상 종목) 1호가 표시 잔량에만 허수 가산(가상 · 체결/대기열 계산 무관 · HUD 공개).
+//   · 하드 리스크 한도(riskLimitBp · 기본 300 = −3%): 시가평가 후 휴먼 자산 ≤ 자본금 × (1 − 한도) → 같은 정산 회차 안에서 동결 래치 + 시뮬레이터 MarginCall
+//     (지연 대기 · 제어 주문 소거 + 미체결 취소 + 보유 전량 시장가 매도 지연 0) — 이후 이 라운드의 휴먼 발주(시장가 · 지정가 · 빙산 · 취소 · 청산 · 핫키 · 래더)는
+//     생산자 단계(Volatile 래치) · 정산 단계(동결 원장 Submit 거부) 이중으로 RiskLocked. 해제 = 다음 매치 개시(Begin)뿐.
 // ============================================================================
 using System;
 using System.Threading;
@@ -23,8 +30,8 @@ using StockManager.Engines.Arena.Strategy;
 
 namespace StockManager.Engines.Arena
 {
-    /// <summary>아레나 주문 링 항목. Kind 0 = 휴먼 시장가 · 1 = AI 진입 · 2 = AI 청산 · 3 = 휴먼 지정가 · 4 = 휴먼 전량 취소.</summary>
-    public struct ArenaOrder { public long Symbol, Qty, LimitPx; public int Dir, Kind; }
+    /// <summary>아레나 주문 링 항목. Kind 0 = 휴먼 시장가 · 1 = AI 진입 · 2 = AI 청산 · 3 = 휴먼 지정가 · 4 = 휴먼 전량 취소 · 5 = 휴먼 비상 청산 · 6 = 휴먼 빙산(Peak).</summary>
+    public struct ArenaOrder { public long Symbol, Qty, LimitPx, Peak; public int Dir, Kind; }
 
     /// <summary>
     /// [v12.18.13-DEV] 누적 거래량 → 체결 틱 거래량(키움 실시간 FID 13 = 누적). 종목별 직전 누적(개방 주소 고정 표 · 단일 작성자 · δ=0).
@@ -63,7 +70,10 @@ namespace StockManager.Engines.Arena
     {
         public const long MinCapitalWon = 1_000_000, MaxCapitalWon = 10_000_000_000, DefaultCapitalWon = 10_000_000;
         public const int MaxEquity = 600, ReadSpins = 64;
-        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2, KindHumanLimit = 3, KindHumanCancel = 4, KindHumanFlatten = 5;
+        public const int KindHuman = 0, KindAiEntry = 1, KindAiExit = 2, KindHumanLimit = 3, KindHumanCancel = 4, KindHumanFlatten = 5, KindHumanIceberg = 6;
+        /// <summary>[v12.18.18-DEV] 기본 일일 손실 한도(bp · 300 = −3%) · 포식자 은밀 진입 TWAP(4 슬라이스 · 100ms 간격).</summary>
+        public const int DefaultRiskLimitBp = 300, PredatorTwapSlices = 4;
+        public const long PredatorTwapIntervalTicks = 1_000_000;
         private const long CmdNone = 0, CmdStop = -1;
         private const long PumpStaleTicks = 2 * 10_000_000L;
 
@@ -94,21 +104,30 @@ namespace StockManager.Engines.Arena
         private ArenaDepth _depth;
         private ArenaDebrief _debriefAi, _debriefHuman;
         // [v12.18.15-DEV] AI 페르소나(정산 스레드 단일 작성자 · _persona 만 생산자 스레드가 Volatile 판독)
-        private readonly IArenaStrategy?[] _strategies = { null, new ScalperStrategy(), new TrendStrategy(), new MeanReversionStrategy() };
+        private readonly PredatorStrategy _predator = new();
+        private readonly IArenaStrategy?[] _strategies;
         private readonly ArenaVwapTracker _vwap = new();
         private int _persona, _personaCmd = -1, _switches, _imbalanceBp = 5_000;
         private long _target, _spread, _decisions;
         private StrategySignal _signal;
+        // [v12.18.18-DEV] 하드 리스크(정산 스레드 단일 작성자 · _humanLocked 만 생산자 스레드가 Volatile 판독)
+        private readonly int _riskLimitBp;
+        private int _humanLocked;
+        private long _riskTripTicks, _riskTripEquity;
 
         /// <param name="nowTicks">시계(UTC ticks · 테스트 주입).</param>
         /// <param name="equitySampleEverySteps">자산곡선 표본 간격(Step 회수 · 기본 20 = 50ms 펌프 기준 1초).</param>
         /// <param name="aiLotBp">AI 진입 1회 예산(자본금 대비 bp · 기본 1000 = 10%).</param>
         /// <param name="latencyMinTicks">[v12.18.13-DEV] 체결 지연 하한(UTC ticks · 기본 30ms).</param>
         /// <param name="latencyMaxTicks">체결 지연 상한(기본 50ms).</param>
+        /// <param name="riskLimitBp">[v12.18.18-DEV] 휴먼 일일 손실 한도(자본금 대비 bp · 기본 300 = −3% · 0 = 비활성 · 상한 10000).</param>
         public ArenaMatchGovernor(Func<long>? nowTicks = null, int equitySampleEverySteps = 20, int aiLotBp = 1_000,
-                                  long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks)
+                                  long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks,
+                                  int riskLimitBp = DefaultRiskLimitBp)
         {
             _sim = new DualBookSimulator(latencyMinTicks, latencyMaxTicks);
+            _strategies = new IArenaStrategy?[] { null, new ScalperStrategy(), new TrendStrategy(), new MeanReversionStrategy(), _predator };
+            _riskLimitBp = Math.Clamp(riskLimitBp, 0, 10_000);
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
             _equityEvery = Math.Max(1, equitySampleEverySteps);
             _aiLotBp = Math.Clamp(aiLotBp, 1, 10_000);
@@ -123,6 +142,10 @@ namespace StockManager.Engines.Arena
         public ArenaVwapTracker Vwap => _vwap;
         public long TargetSymbol => _target;
         public StrategySignal LastSignal => _signal;
+        public PredatorStrategy Predator => _predator;
+        /// <summary>[v12.18.18-DEV] 휴먼 리스크 동결 래치(이번 라운드).</summary>
+        public bool HumanRiskLocked => Volatile.Read(ref _humanLocked) != 0;
+        public int RiskLimitBp => _riskLimitBp;
 
         // ════════════ ① 생산자(δ=0 · wait-free) ════════════
 
@@ -140,6 +163,7 @@ namespace StockManager.Engines.Arena
         public int SubmitHuman(long symbol, int side, long qty)
         {
             if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (Volatile.Read(ref _humanLocked) != 0) return ArenaReject.RiskLocked;
             if (symbol <= 0 || side is not (1 or -1) || qty <= 0 || qty > DualBookSimulator.MaxOrderQty) return ArenaReject.Invalid;
             _orders.Publish(new ArenaOrder { Symbol = symbol, Qty = qty, Dir = side, Kind = KindHuman });
             return ArenaReject.None;
@@ -148,14 +172,26 @@ namespace StockManager.Engines.Arena
         public int SubmitHumanLimit(long symbol, int side, long qty, long priceWon)
         {
             if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (Volatile.Read(ref _humanLocked) != 0) return ArenaReject.RiskLocked;
             if (symbol <= 0 || side is not (1 or -1) || qty <= 0 || qty > DualBookSimulator.MaxOrderQty || priceWon <= 0 || priceWon > DualBookSimulator.MaxPriceWon) return ArenaReject.Invalid;
             _orders.Publish(new ArenaOrder { Symbol = symbol, Qty = qty, Dir = side, LimitPx = priceWon, Kind = KindHumanLimit });
+            return ArenaReject.None;
+        }
+
+        public int SubmitHumanIceberg(long symbol, int side, long qty, long priceWon, long peakQty)
+        {
+            if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (Volatile.Read(ref _humanLocked) != 0) return ArenaReject.RiskLocked;
+            if (symbol <= 0 || side is not (1 or -1) || qty <= 0 || qty > DualBookSimulator.MaxOrderQty || priceWon <= 0 || priceWon > DualBookSimulator.MaxPriceWon || peakQty <= 0)
+                return ArenaReject.Invalid;
+            _orders.Publish(new ArenaOrder { Symbol = symbol, Qty = qty, Dir = side, LimitPx = priceWon, Peak = peakQty, Kind = KindHumanIceberg });
             return ArenaReject.None;
         }
 
         public int FlattenHuman()
         {
             if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (Volatile.Read(ref _humanLocked) != 0) return ArenaReject.RiskLocked;
             _orders.Publish(new ArenaOrder { Kind = KindHumanFlatten });
             return ArenaReject.None;
         }
@@ -165,6 +201,7 @@ namespace StockManager.Engines.Arena
         public int CancelHuman()
         {
             if (Volatile.Read(ref _state) != ArenaState.Running) return ArenaReject.NotRunning;
+            if (Volatile.Read(ref _humanLocked) != 0) return ArenaReject.RiskLocked;
             _orders.Publish(new ArenaOrder { Kind = KindHumanCancel });
             return ArenaReject.None;
         }
@@ -224,6 +261,7 @@ namespace StockManager.Engines.Arena
             {
                 _eqAi = _sim.MarkToMarket(ArenaSide.Ai, out _unrealAi);
                 _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
+                CheckRisk(nowTicks);
             }
             Publish(nowTicks, sample: _state == ArenaState.Running && _steps % _equityEvery == 0);
             Volatile.Write(ref _lastStep, nowTicks);
@@ -254,6 +292,7 @@ namespace StockManager.Engines.Arena
             if (_state != ArenaState.Running) return;
             _eqAi = _sim.MarkToMarket(ArenaSide.Ai, out _unrealAi);
             _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
+            CheckRisk(marketTicks);
             if (_steps % _equityEvery == 0) SampleEquity();
         }
 
@@ -313,6 +352,8 @@ namespace StockManager.Engines.Arena
             _eqAi = _eqHuman = capital; _unrealAi = _unrealHuman = 0;
             _aiSignals = 0;
             _tradesSeen = 0;
+            _riskTripTicks = _riskTripEquity = 0;
+            Volatile.Write(ref _humanLocked, 0);                                     // 라운드 경계 = 동결 해제(원장도 Reset 으로 해제)
             ResetPersonaState();
             _orderCursor = _orders.Head;                                            // 이전 매치 잔여 주문 폐기(재시도 · 이월 0)
             Volatile.Write(ref _seq, _seq + 1);
@@ -397,6 +438,9 @@ namespace StockManager.Engines.Arena
                 case KindHumanFlatten:
                     _sim.Submit(ArenaSide.Human, 0, 0, 0, ArenaOrderKind.Flatten, 0, nowTicks);
                     break;
+                case KindHumanIceberg:
+                    _sim.Submit(ArenaSide.Human, o.Symbol, o.Dir, o.Qty, ArenaOrderKind.Limit, o.LimitPx, nowTicks, peakQty: o.Peak);
+                    break;
                 case KindAiEntry:
                     if (_persona != ArenaPersona.Signal) break;                         // 교체 전 적재된 시그널 엔진 결정 = 폐기
                     _aiSignals++;
@@ -420,7 +464,6 @@ namespace StockManager.Engines.Arena
             var ai = Stats(ArenaSide.Ai, _eqAi, _unrealAi);
             var hu = Stats(ArenaSide.Human, _eqHuman, _unrealHuman);
             int leader = _state == ArenaState.Idle || _eqAi == _eqHuman ? ArenaLeader.Draw : _eqAi > _eqHuman ? ArenaLeader.Ai : ArenaLeader.Human;
-            var hud = Hud();
             long s = _seq;
             Volatile.Write(ref _seq, s + 1);                                         // 작성 중(홀수)
             Interlocked.MemoryBarrier();
@@ -430,13 +473,39 @@ namespace StockManager.Engines.Arena
                 _curveAi[k] = _eqAi; _curveHuman[k] = _eqHuman;
                 _curveN++;
             }
-            _snap = new ArenaSnapshot((s + 2) >> 1, _state, _capital, _startedTicks, nowTicks, _quotesSeen, _quotesLost, _sim.QuoteSymbols,
-                                      _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu, in hud);
             long focus = Volatile.Read(ref _focus);
-            if (focus > 0) _sim.FillDepth(focus, ref _depth); else _depth = default;
+            if (focus > 0) { _sim.FillDepth(focus, ref _depth); InjectPhantom(focus); } else _depth = default;
+            var hud = Hud();                                                         // 래더 허수 투영 뒤(같은 창의 HUD 공개 수량 = 래더 가산량)
+            _snap = new ArenaSnapshot((s + 2) >> 1, _state, _capital, _startedTicks, nowTicks, _quotesSeen, _quotesLost, _sim.QuoteSymbols,
+                                      _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu, in hud,
+                                      _humanLocked != 0, _riskLimitBp, _riskTripTicks, _riskTripEquity);
             _debriefAi = _sim.Book(ArenaSide.Ai).Analytics.Snapshot(_sim.Book(ArenaSide.Ai).SlippageWon);
             _debriefHuman = _sim.Book(ArenaSide.Human).Analytics.Snapshot(_sim.Book(ArenaSide.Human).SlippageWon);
             Volatile.Write(ref _seq, s + 2);                                         // 안정(짝수)
+        }
+
+        // ════════════ [v12.18.18-DEV] 하드 리스크 · 포식자 허수(정산 스레드 · δ=0) ════════════
+
+        // 시가평가 직후: 휴먼 자산 ≤ 자본금 × (1 − 한도) → 래치 + 마진콜(같은 회차 · 원자) → 청산 반영 자산 재평가
+        private void CheckRisk(long nowTicks)
+        {
+            if (_riskLimitBp <= 0 || _humanLocked != 0) return;
+            long floor = _capital - (long)((Int128)_capital * _riskLimitBp / 10_000);
+            if (_eqHuman > floor) return;
+            Volatile.Write(ref _humanLocked, 1);                                    // 생산자 차단 먼저(이후 적재 0) → 원장 동결 · 강제 청산
+            _riskTripTicks = nowTicks; _riskTripEquity = _eqHuman;
+            _sim.MarginCall(ArenaSide.Human);
+            _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
+        }
+
+        // 포식자 활성 · 휴먼 연패 국면 · 포커스 = 대상 종목일 때만: 휴먼 래더 1호가 표시 잔량에 허수 가산(사본 전용 — 시뮬레이터 호가 불변)
+        private void InjectPhantom(long focus)
+        {
+            if (_persona != ArenaPersona.Predator || _state != ArenaState.Running || focus != _target || !_depth.HasBook || !_predator.PhantomActive) return;
+            long baseQty = (_depth.BidQty[0] + _depth.AskQty[0]) / 2;
+            long pb = _predator.PhantomBidQty(baseQty), pa = _predator.PhantomAskQty(baseQty);
+            if (_depth.BidPx[0] > 0) { _depth.BidQty[0] += pb; _depth.PhantomBidQty = pb; }
+            if (_depth.AskPx[0] > 0) { _depth.AskQty[0] += pa; _depth.PhantomAskQty = pa; }
         }
 
         // ════════════ [v12.18.15-DEV] AI 페르소나(정산 스레드 · δ=0) ════════════
@@ -515,6 +584,11 @@ namespace StockManager.Engines.Arena
             if (_target == 0) return;
             long bid = _sim.BestBid(_target), ask = _sim.BestAsk(_target);
             if (bid <= 0 || ask <= 0) return;
+            if (_persona == ArenaPersona.Predator)                                  // 휴먼 원장 역추적(사후 분석 = 같은 정산 스레드 단일 작성자)
+            {
+                var prey = _sim.Book(ArenaSide.Human).Analytics;
+                _predator.ObservePrey(prey.LossStreak, prey.TiltAlerts, prey.LastTiltTicks, prey.OpenMaeWon, _capital, nowTicks);
+            }
             long qty = pi < 0 ? 0 : aiBook.PosQty[pi], cost = pi < 0 ? 0 : aiBook.PosCost[pi];
             var st = new ArenaMarketState(_target, nowTicks, bid, ask, _vwap.LastPrice, _vwap.VwapWon, _vwap.DeviationBp((bid + ask) / 2), _vwap.SigmaWon,
                                           _vwap.Trades, qty, cost, busy);
@@ -523,8 +597,11 @@ namespace StockManager.Engines.Arena
             if (_signal.Action == ArenaAiAction.Enter && qty == 0)
             {
                 long budget = (long)((Int128)_capital * _aiLotBp / 10_000);
+                long lot = Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty);
                 _aiSignals++; _decisions++;
-                _sim.Submit(ArenaSide.Ai, _target, 1, Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty), ArenaOrderKind.Market, 0, nowTicks);
+                if (_persona == ArenaPersona.Predator && _predator.Stealth && lot >= PredatorTwapSlices)   // 은밀 = TWAP 분할(시장 충격 · 진공 회피)
+                    _sim.Submit(ArenaSide.Ai, _target, 1, lot, ArenaOrderKind.Market, 0, nowTicks, peakQty: lot / PredatorTwapSlices, intervalTicks: PredatorTwapIntervalTicks);
+                else _sim.Submit(ArenaSide.Ai, _target, 1, lot, ArenaOrderKind.Market, 0, nowTicks);
             }
             else if (_signal.Action == ArenaAiAction.Exit)
             {
@@ -539,8 +616,11 @@ namespace StockManager.Engines.Arena
         {
             long bid = _target > 0 ? _sim.BestBid(_target) : 0, ask = _target > 0 ? _sim.BestAsk(_target) : 0;
             long dev = bid > 0 && ask > 0 ? _vwap.DeviationBp((bid + ask) / 2) : 0;
+            bool pred = _persona == ArenaPersona.Predator;
             return new ArenaAiHud(_persona, _signal.Action, _signal.Reason, _switches, _target, _vwap.VwapWon, dev, _vwap.SigmaWon, _vwap.Trades,
-                                  _imbalanceBp, _spread, _signal.TargetPx, _signal.StopPx, _decisions);
+                                  _imbalanceBp, _spread, _signal.TargetPx, _signal.StopPx, _decisions,
+                                  pred ? _predator.AggressionBp : 0, pred ? _predator.PreyLossStreak : 0, pred ? _predator.PreyTiltAlerts : 0, pred ? _predator.PreyMaeWon : 0,
+                                  pred ? _depth.PhantomBidQty : 0, pred ? _depth.PhantomAskQty : 0);
         }
 
         private ArenaSideStats Stats(int side, long equity, long unrealized)
@@ -549,7 +629,8 @@ namespace StockManager.Engines.Arena
             int mddBp = b.PeakWon > 0 ? (int)Math.Min(10_000, (long)((Int128)b.MddWon * 10_000 / b.PeakWon)) : 0;
             return new ArenaSideStats(equity, b.CashWon, b.RealizedWon, unrealized, b.FeesWon, b.TaxWon, b.SlippageWon, b.PeakWon, b.MddWon, mddBp,
                                       b.Fills, b.Rejects, b.Wins, b.Losses, b.PosCount, b.LastReject,
-                                      b.PendingCount, b.WorkingCount, b.OldestQueueAhead, b.Cancels, b.ReservedCashWon);
+                                      b.PendingCount, b.WorkingCount, b.OldestQueueAhead, b.Cancels, b.ReservedCashWon,
+                                      b.VacuumEvents, b.VacuumPenaltyWon, b.IcebergRefills);
         }
 
         // ════════════ ③ 소비자(seqlock 사본 · 잠금/할당 0) ════════════

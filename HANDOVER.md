@@ -2170,3 +2170,36 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `6027D7A89F03A3CC97149EE906C27F5279A20E283993275E70FDCD76702361B1` · sourceCommit 7bf0282 · 피어 기록 없음.
 - v12.18.15-GM 산출물 13건(zip 504DCB3E… · masterSeal E71C6AEE…) → release/superseded-v12.18.15-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file) exit 0 · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) exit 0.
+
+## 81. v12.18.18-DEV — 아레나 초현실 고도화: 기관급 집행(빙산 · TWAP) · 유동성 진공 · 포식자 AI · 하드 리스크 동결 (2026-10-18)
+
+### 81.1 전제 교정
+- §80 은 v12.18.17-DEV(테스트 안정화 — VirtualTimeProvider · UtcNowLeapCacheExpirer · PreFlight/LongSoak 결정론화)용 예약 — 해당 변경은 작업 트리에 미커밋 상태로
+  남아 있어(타 세션 소유) 이 커밋에 포함하지 않았다. 아래 전체 스위트 수치는 그 미커밋 변경이 작업 트리에 있는 상태에서 측정.
+- '허수 잔량 주입' = 휴먼 DOM 래더 사본(ArenaDepth) 1호가 표시에만 가산 — 시뮬레이터 호가 · 체결 · 대기열 계산에 존재하지 않는다(체결 불가 · HUD 에 수량 공개).
+- 리스크 동결 해제 = 다음 매치 개시(Begin)뿐 — '라운드' 경계. 같은 라운드 안의 우회 경로는 없음(81.3).
+
+### 81.2 구성
+- `DualBookSimulator`: ArenaWorkingOrder Peak/Visible/IntervalTicks/NextReleaseTicks/Refills. 빙산 지정가 = 노출분만 대기열 · 수동 체결 소진 시 min(Peak, 잔량) 리필 →
+  `Requeue`(앞 잔량 = 최신 표시 잔량 + 같은 가격 내 다른 내 주문 노출분 전부 = 최하위) · 시장성/관통 = 은닉분 포함 전량 · 예약 = 전량. TWAP 시장가 = Interval 마다
+  슬라이스 방출(호가 갱신 없이도 재순회). 유동성 진공 = 시장가가 같은 스냅샷 단 잔량 70% 이상 소진 → 진영 · 종목 · 방향별 단계 k(창 500ms · 재발동 k+1 · 상한 6) →
+  후속 시장가 체결가 ± (2^k − 1) 호가 단위(슬리피지 · VacuumPenaltyWon 반영). `MarginCall` = 동결 래치 + 지연 대기 제어 주문 소거 + 비상 청산(지연 0 · 잔량 이월) ·
+  동결 원장 Submit = RiskLocked.
+- `Strategy/PredatorStrategy`(페르소나 4 · 🦈): ObservePrey(휴먼 연패 · 틸트 경보(30초 기억) · 미청산 MAE) → 공격성 2500 + 연패 × 2000(상한 3) + 틸트 2000 + MAE 1%당 500(상한 1500) ·
+  진입 임계 58% → 45% 선형 하향 · 목표 1 + 공격성/2500 틱 · 은밀(< 50%) = 거버너가 TWAP 4분할(100ms) 진입 · 휴먼 2연패 ≥ = 허수(매수측 기준 × 공격성 × 3 · 매도측 ⅓).
+- `ArenaMatchGovernor`: riskLimitBp(기본 300 = −3% · 0 비활성) · 시가평가 직후 CheckRisk → Volatile 래치 → MarginCall → 재평가(같은 회차). 휴먼 생산자 6종
+  (시장가 · 지정가 · 빙산 · 취소 · 청산) 래치 판독 RiskLocked · 링 잔류분은 정산 단계 원장 동결이 거부(이중). 게시 = 래더 허수 투영 후 HUD(같은 창).
+- 포트: IArenaPort.SubmitHumanIceberg · ArenaReject.RiskLocked · ArenaSnapshot HumanRiskLocked/RiskLimitBp/RiskTripTicks/RiskTripEquityWon · ArenaSideStats 진공/리필 ·
+  ArenaPersona.Predator(Count 5) · ArenaAiReason PreyStalk/PreyAmbush · ArenaAiHud 공격성/역추적/허수 · ArenaDepth MyHiddenQty/Phantom*. ArenaTradeAnalytics.OpenMaeWon.
+- UI(ArenaBattleView): 🧊 Iceberg 체크 + 노출 수량(콘솔 키 영역 밖 — 숫자 입력이 비중 핫키로 먹히지 않게) → 래더 클릭 · 지정가 티켓 · 동결 = 전면 붉은 틴트 +
+  "계좌 동결 (Risk Limit Exceeded)" 오버레이 · 티켓/래더/핫키 비활성 · 포식자 HUD · 스코어보드 진공/리필.
+
+### 81.3 검증
+- `StockManager.Tests/Engines/Arena/HyperRealismTests.cs` 16건: 빙산 리필 최하위 재배치(뒤 주문 선체결) · 시장성/관통 은닉분 전량 · 포트 검증 · 진공 69% 미발동/70% 발동 ·
+  진영/방향 독립 · 창 해소 · 지수 단계 0→1→3→…→63 상한 · TWAP 방출 · 포식자 공격성 산식 · 허수 = 래더 사본/HUD 전용(실 1호가 초과분은 2호가 체결) · 은밀 TWAP 진입 ·
+  −3% 같은 회차 전량 청산 + 우회 전수 거부(퀵 · 지정가 · 빙산 · 취소 · 청산 · 핫키 B/Space/C · 래더 10단 · 엔진 직접 Submit) · 지연 중 취소가 강제 청산을 지우지 못함 ·
+  잔량 이월 청산 · 다음 라운드 해제 · 생산자 경합(54만 호출 · 동결 후 체결 0 · 정산 단계 거부 128) · δ=0 + GC 0(진공 · 리필 · 허수 · TWAP 2만 틱 / 마진콜 경로) ·
+  IL 허용목록 · 헤드리스 동결 오버레이/버튼 비활성 · 빙산 체크박스 → 원장 Peak.
+- 기존 핀 교정: 진공 반영 미시구조 2건(이월 슬리피지 · 현금 한도 수량) · 대칭/처리량 불변식 2건(torn snapshot · 핫키 δ=0)은 riskLimitBp: 0 명시.
+- 오중 빌드(WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim · Default sln) Release -warnaserror 0W/0E · 전체 스위트 3,953/3,953(4m35s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 진공 창/임계/지수는 모델 상수(실측 보정 아님) · 빙산 리필 직후 남은 체결량은 뒤 주문 몫으로 보수 처리 · 실 WebView2 육안 확인 미실시.

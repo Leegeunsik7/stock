@@ -46,9 +46,9 @@ namespace StockManager.Tests.Engines.Arena
             return b;
         }
 
-        private ArenaMatchGovernor Running(long capital = 10_000_000, long latency = 0)
+        private ArenaMatchGovernor Running(long capital = 10_000_000, long latency = 0, int riskLimitBp = ArenaMatchGovernor.DefaultRiskLimitBp)
         {
-            var g = new ArenaMatchGovernor(() => _now, 1, latencyMinTicks: latency, latencyMaxTicks: latency);
+            var g = new ArenaMatchGovernor(() => _now, 1, latencyMinTicks: latency, latencyMaxTicks: latency, riskLimitBp: riskLimitBp);
             Assert.True(g.Start(capital));
             Step(g);
             g.SetFocus(Sym);
@@ -329,7 +329,7 @@ namespace StockManager.Tests.Engines.Arena
         [Fact]
         public void Hotkey_Dispatch_And_Console_Publish_Loop_Is_Zero_Alloc_With_No_Gc()
         {
-            var g = Running(10_000_000_000);
+            var g = Running(10_000_000_000, riskLimitBp: 0);                      // [v12.18.18-DEV] 1,000회+ 왕복 처리량 측정 — −3% 동결은 HyperRealismTests 가 검증
             var quote = Book(70_000, 1_000_000, 69_900, 1_000_000);
             g.OnQuote(in quote);
             Step(g);

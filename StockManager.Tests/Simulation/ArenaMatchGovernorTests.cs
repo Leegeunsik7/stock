@@ -28,9 +28,9 @@ namespace StockManager.Tests.Simulation
         private long _now = 638_000_000_000_000_000;
         private long Now() => _now;
 
-        private ArenaMatchGovernor NewRunning(long capital = 10_000_000, int aiLotBp = 700)
+        private ArenaMatchGovernor NewRunning(long capital = 10_000_000, int aiLotBp = 700, int riskLimitBp = ArenaMatchGovernor.DefaultRiskLimitBp)
         {
-            var g = new ArenaMatchGovernor(Now, equitySampleEverySteps: 1, aiLotBp: aiLotBp, latencyMinTicks: 0, latencyMaxTicks: 0);
+            var g = new ArenaMatchGovernor(Now, equitySampleEverySteps: 1, aiLotBp: aiLotBp, latencyMinTicks: 0, latencyMaxTicks: 0, riskLimitBp: riskLimitBp);
             Assert.True(g.Start(capital));
             Step(g);
             Assert.Equal(ArenaState.Running, g.State);
@@ -262,7 +262,7 @@ namespace StockManager.Tests.Simulation
         [Fact]
         public void Concurrent_Readers_Never_Observe_Torn_Snapshot()
         {
-            var g = NewRunning();
+            var g = NewRunning(riskLimitBp: 0);                                  // [v12.18.18-DEV] 휴먼 전용 −3% 동결 = 대칭 불변식 밖(동결 경로는 HyperRealismTests)
             g.OnQuote(Book(Sym, 70_000, 1_000_000, 69_900, 1_000_000));
             using var stop = new CancellationTokenSource();
             int torn = 0, reads = 0;

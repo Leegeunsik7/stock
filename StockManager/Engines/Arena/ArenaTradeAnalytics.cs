@@ -33,6 +33,8 @@ namespace StockManager.Engines.Arena
         public int TiltAlerts => _tiltAlerts;
         public int LossStreak => _lossStreak;
         public long LastTiltTicks => _lastTiltTicks;
+        /// <summary>[v12.18.18-DEV] 진행 중 trip 의 최악 MAE(원 ≤ 0 · 포식자 역추적 입력 · δ=0).</summary>
+        public long OpenMaeWon { get { long m = 0; for (int i = 0; i < _n; i++) m = Math.Min(m, _mae[i]); return m; } }
 
         public void Reset()
         {

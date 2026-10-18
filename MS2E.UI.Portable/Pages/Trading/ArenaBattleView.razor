@@ -11,7 +11,10 @@
    경기 종료 시 복기 카드(MAE · MFE · 보유 시간 · 슬리피지 드래그 · 틸트).
    [v12.18.15-DEV] AI 페르소나 탭(시그널 엔진 · 스캘퍼 ⚡ · 추세추종 📈 · 평균회귀 🔄 → IArenaPort.SetPersona · 현재 모드 원장) +
    설명 가능 AI HUD(ArenaSnapshot.AiHud — VWAP · 이격률 게이지 · σ · 10호가 잔량 불균형 게이지 · 목표/손절가 · 마지막 판단과 사유).
-   [v12.18.16-DEV] 상단 KIS 시세 지연 뱃지(IKisFeedLatencyPort — 전문 초 해상도 기준 지연 구간 · 비트 28 래치 상태 · 판독 전용). *@
+   [v12.18.16-DEV] 상단 KIS 시세 지연 뱃지(IKisFeedLatencyPort — 전문 초 해상도 기준 지연 구간 · 비트 28 래치 상태 · 판독 전용).
+   [v12.18.18-DEV] 빙산 주문 바(🧊 체크 + 노출 수량 → 래더 클릭 · 지정가 티켓 = SubmitHumanIceberg · 콘솔 키 입력 영역 밖 = 숫자 입력이 비중 핫키로 먹히지 않게) ·
+   하드 리스크 동결(ArenaSnapshot.HumanRiskLocked) = 화면 전체 붉은 틴트 + "계좌 동결" 오버레이 · 휴먼 발주 버튼/래더/핫키 전면 비활성(포트도 RiskLocked 거부 — 이중) ·
+   포식자 🦈 HUD(공격성 · 휴먼 연패/틸트/MAE 역추적 · 래더에 얹은 허수 잔량 공개) · 스코어보드 유동성 진공 발동/페널티 · 빙산 리필. *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
@@ -127,6 +130,16 @@ else
 }
 else
 {
+    bool canTrade = s.State == ArenaState.Running && !s.HumanRiskLocked;
+    if (s.HumanRiskLocked)
+    {
+        <div class="ar-freeze" aria-hidden="true"></div>
+        <div class="ar-card ar-frozen" role="alert">
+            <b>🔒 계좌 동결 (Risk Limit Exceeded)</b>
+            <span>휴먼 평가자산이 일일 손실 한도 −@((s.RiskLimitBp / 100.0).ToString("0.##"))% 에 도달해 보유 전량을 시장가로 강제 청산했습니다(발동 시 자산 @(s.RiskTripEquityWon.ToString("N0"))원).
+                이번 라운드의 모든 휴먼 발주(퀵 티켓 · 래더 · 핫키 · 빙산 · 취소)가 동결됩니다. 다음 매치 개시 시 해제.</span>
+        </div>
+    }
     <div class="ar-lead">
         <b>@ArenaLeader.Label(s.Leader)</b>
         @if (s.Leader != ArenaLeader.Draw)
@@ -149,20 +162,26 @@ else
         <div class="ar-row">
             <label>종목코드 <input @bind="_symbol" @bind:after="SyncFocus" maxlength="6" placeholder="@(_replay && Replay.SourceLabel == "합성 테이프" ? "005930 · 000660 · 035420" : "005930")" /></label>
             <label>수량(주) <input type="number" min="1" @bind="_qty" /></label>
-            <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(1)">시장가 매수</button>
-            <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => Submit(-1)">시장가 매도</button>
+            <button class="ar-btn buy" disabled="@(!canTrade)" @onclick="() => Submit(1)">시장가 매수</button>
+            <button class="ar-btn sell" disabled="@(!canTrade)" @onclick="() => Submit(-1)">시장가 매도</button>
         </div>
         <div class="ar-row">
             <label>지정가(원) <input type="number" min="1" @bind="_limitPx" /></label>
-            <button class="ar-btn buy" disabled="@(s.State != ArenaState.Running)" @onclick="() => SubmitLimit(1)">지정가 매수</button>
-            <button class="ar-btn sell" disabled="@(s.State != ArenaState.Running)" @onclick="() => SubmitLimit(-1)">지정가 매도</button>
-            <button class="ar-btn" disabled="@(s.State != ArenaState.Running)" @onclick="CancelAll">미체결 전량 취소</button>
+            <button class="ar-btn buy" disabled="@(!canTrade)" @onclick="() => SubmitLimit(1)">@(_iceberg ? "🧊 빙산 매수" : "지정가 매수")</button>
+            <button class="ar-btn sell" disabled="@(!canTrade)" @onclick="() => SubmitLimit(-1)">@(_iceberg ? "🧊 빙산 매도" : "지정가 매도")</button>
+            <button class="ar-btn" disabled="@(!canTrade)" @onclick="CancelAll">미체결 전량 취소</button>
         </div>
         <p class="ar-sub">체결 지연 30 ~ 50ms 후 판단 · 시장가 = 10호가 잔량 순회(초과분은 다음 호가로 이월 분할 체결) · 지정가 = 같은 가격 잔량 뒤 대기(체결 거래량이 앞 잔량을 소진해야 체결) ·
             현금 부족 시 전량 거부 · 공매도 불가.@(_replay ? " 리플레이: 일시정지 중 주문 = 대기 → 재개 후 지연 경과 시 체결." : "") 휴먼 마지막 거부: @ArenaReject.Label(s.Human.LastReject)</p>
     </div>
 
-    <div class="ar-card ar-console" tabindex="0" @onkeydown="OnKey" @onkeydown:preventDefault="true">
+    <div class="ar-card ar-iceberg">
+        <label><input type="checkbox" class="ar-ice-on" @bind="_iceberg" disabled="@(!canTrade)" /> 🧊 Iceberg</label>
+        <label>노출 수량(주) <input type="number" class="ar-ice-peak" min="1" @bind="_peakQty" disabled="@(!canTrade || !_iceberg)" /></label>
+        <span class="ar-sub">켜면 래더 가격 클릭 · 지정가 티켓이 빙산 주문 — 대기열에는 노출 수량만 걸리고, 소진되면 은닉 잔량에서 리필되어 그 가격 맨 뒤로 재배치됩니다(B/S 핫키 = 즉시 체결 지정가 · 빙산 미적용).</span>
+    </div>
+
+    <div class="ar-card ar-console @(s.HumanRiskLocked ? "locked" : "")" tabindex="0" @onkeydown="OnKey" @onkeydown:preventDefault="true">
         <h3>🎛 프로 콘솔 <small>여기를 클릭한 뒤 키 입력 · 1~4 비중 · B 매수 · S 매도 · Space 비상 전량 청산 · C 미체결 전량 취소 · 현재 비중 <b>@ArenaHotkeys.WeightLabel(_weightBp)</b></small></h3>
         @if (Arena.TryReadDepth(out var d) && d.HasBook)
         {
@@ -193,7 +212,7 @@ else
                     </tr>
                 }
             </table>
-            <p class="ar-sub">@(d.Symbol.ToString("D6")) · 보유 @(d.PositionQty.ToString("N0"))주 · 매도 가능 @(d.Sellable.ToString("N0"))주@(d.MyOffLadderQty > 0 ? " · 래더 밖 내 지정가 " + d.MyOffLadderQty.ToString("N0") + "주" : "")</p>
+            <p class="ar-sub">@(d.Symbol.ToString("D6")) · 보유 @(d.PositionQty.ToString("N0"))주 · 매도 가능 @(d.Sellable.ToString("N0"))주@(d.MyOffLadderQty > 0 ? " · 래더 밖 내 지정가 " + d.MyOffLadderQty.ToString("N0") + "주" : "")@(d.MyHiddenQty > 0 ? " · 🧊 은닉 잔량 " + d.MyHiddenQty.ToString("N0") + "주" : "")</p>
         }
         else
         {
@@ -256,6 +275,7 @@ else
         if (action == ArenaHotkeys.None) return;
         if (action == ArenaHotkeys.Weight) { _weightBp = w; return; }
         Arena.TryRead(out var snap);
+        if (snap.HumanRiskLocked) { _msg = "핫키 거부: " + ArenaReject.Label(ArenaReject.RiskLocked); return; }
         Arena.TryReadDepth(out var d);
         int r = ArenaHotkeys.Execute(Arena, action, in d, _weightBp, snap.CapitalWon, out long q);
         _msg = r != ArenaReject.None ? "핫키 거부: " + ArenaReject.Label(r)
@@ -271,10 +291,24 @@ else
     private void Ladder(bool isAsk, int level)
     {
         Arena.TryRead(out var snap);
+        if (snap.HumanRiskLocked) { _msg = "래더 거부: " + ArenaReject.Label(ArenaReject.RiskLocked); return; }
         if (!Arena.TryReadDepth(out var d)) { _msg = "래더 호가 없음"; return; }
-        int r = ArenaHotkeys.ClickLadder(Arena, in d, isAsk, level, _weightBp, snap.CapitalWon, out long q);
-        _msg = r == ArenaReject.None ? (isAsk ? "래더 매도 " : "래더 매수 ") + q.ToString("N0") + "주 @" + (isAsk ? d.AskPx[level] : d.BidPx[level]).ToString("N0")
+        int r = _iceberg ? LadderIceberg(in d, isAsk, level, snap.CapitalWon, out long q) : ArenaHotkeys.ClickLadder(Arena, in d, isAsk, level, _weightBp, snap.CapitalWon, out q);
+        _msg = r == ArenaReject.None ? (_iceberg ? "🧊 " : "") + (isAsk ? "래더 매도 " : "래더 매수 ") + q.ToString("N0") + "주 @" + (isAsk ? d.AskPx[level] : d.BidPx[level]).ToString("N0")
                                      : "래더 거부: " + ArenaReject.Label(r);
+    }
+
+    // [v12.18.18-DEV] 래더 빙산: 수량 규칙은 ClickLadder 와 동일(⌊자본금 × 비중 ÷ 가격⌋ · 매도 = 매도 가능 상한) · 노출 = _peakQty
+    private int LadderIceberg(in ArenaDepth d, bool isAsk, int level, long capitalWon, out long qty)
+    {
+        qty = 0;
+        if (!d.HasBook || (uint)level >= ArenaDepth.Levels) return ArenaReject.NoQuote;
+        long px = isAsk ? d.AskPx[level] : d.BidPx[level];
+        if (px <= 0) return ArenaReject.NoQuote;
+        qty = ArenaHotkeys.QtyFor(capitalWon, _weightBp, px);
+        if (isAsk) qty = Math.Min(qty, d.Sellable);
+        if (qty <= 0) return isAsk ? ArenaReject.InsufficientPosition : ArenaReject.Invalid;
+        return Arena.SubmitHumanIceberg(d.Symbol, isAsk ? -1 : 1, qty, px, _peakQty);
     }
 
     private static string Pct(long q, long max) => (q * 100.0 / max).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
@@ -304,7 +338,8 @@ else
 
     private static string HoldText(long ms) => ms >= 60_000 ? (ms / 60_000) + "분 " + (ms / 1_000 % 60) + "초" : (ms / 1_000.0).ToString("0.0") + "초";
 
-    private long _limitPx;
+    private long _limitPx, _peakQty = 10;
+    private bool _iceberg;
     private string _tapePath = "";
     private IReadOnlyList<ArenaTapeInfo> _tapes = Array.Empty<ArenaTapeInfo>();
 
@@ -324,8 +359,8 @@ else
     private void SubmitLimit(int dir)
     {
         if (!long.TryParse(_symbol, out long sym) || sym <= 0) { _msg = "종목코드를 숫자 6자리로 입력하세요"; return; }
-        int r = Arena.SubmitHumanLimit(sym, dir, _qty, _limitPx);
-        _msg = r == ArenaReject.None ? (dir > 0 ? "지정가 매수" : "지정가 매도") + " 접수 → 지연 후 대기열 배치" : "접수 거부: " + ArenaReject.Label(r);
+        int r = _iceberg ? Arena.SubmitHumanIceberg(sym, dir, _qty, _limitPx, _peakQty) : Arena.SubmitHumanLimit(sym, dir, _qty, _limitPx);
+        _msg = r == ArenaReject.None ? (_iceberg ? "🧊 빙산 " : "") + (dir > 0 ? "지정가 매수" : "지정가 매도") + " 접수 → 지연 후 대기열 배치" : "접수 거부: " + ArenaReject.Label(r);
     }
 
     private void CancelAll()
@@ -352,6 +387,7 @@ else
                 <tr><td>슬리피지</td><td>@(st.SlippageWon.ToString("N0"))원</td><td>체결/거부</td><td>@(st.Fills.ToString("N0")) / @(st.Rejects.ToString("N0"))</td></tr>
                 <tr><td>지연/작동</td><td>@(st.PendingOrders) / @(st.WorkingOrders)건</td><td>내 앞 잔량</td><td>@(st.QueueAheadQty < 0 ? "-" : st.QueueAheadQty.ToString("N0") + "주")</td></tr>
                 <tr><td>예약 현금</td><td>@(st.ReservedCashWon.ToString("N0"))원</td><td>취소</td><td>@(st.Cancels.ToString("N0"))</td></tr>
+                <tr><td>유동성 진공</td><td class="@(st.VacuumEvents > 0 ? "ar-msg" : "")">@(st.VacuumEvents.ToString("N0"))회 · 페널티 @(st.VacuumPenaltyWon.ToString("N0"))원</td><td>빙산 리필</td><td>@(st.IcebergRefills.ToString("N0"))회</td></tr>
             </table>
         </div>
     };
@@ -410,6 +446,18 @@ else
                         <tr><td>목표가</td><td class="ar-up">@(h.TargetPx > 0 ? h.TargetPx.ToString("N0") + "원" : "-")</td><td>손절/스탑</td><td class="ar-down">@(h.StopPx > 0 ? h.StopPx.ToString("N0") + "원" : "-")</td></tr>
                         <tr><td>스프레드</td><td>@(h.SpreadWon.ToString("N0"))원</td><td>페르소나 발주</td><td>@(h.Decisions.ToString("N0"))건(가상 원장 전용)</td></tr>
                     </table>
+                    @if (h.Persona == ArenaPersona.Predator)
+                    {
+                        <div class="ar-gauge ar-predator" title="공격성 = 기본 25% + 휴먼 연패 × 20% + 최근 틸트 20% + MAE 가중(상한 15%) · 50% 미만 = TWAP 은밀 분할 진입">
+                            <span class="ar-sub">🦈 공격성</span>
+                            <div class="bar aggr"><em style="left:50%"></em><i style="left:@((h.AggressionBp / 100.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%"></i></div>
+                            <b class="@(h.AggressionBp >= 5_000 ? "ar-up" : "")">@((h.AggressionBp / 100.0).ToString("0"))%</b>
+                        </div>
+                        <table class="ar-tbl">
+                            <tr><td>휴먼 연패(역추적)</td><td class="@(h.PreyLossStreak >= 2 ? "ar-msg" : "")">@(h.PreyLossStreak)연패 · 틸트 @(h.PreyTiltAlerts)건</td><td>휴먼 미청산 MAE</td><td class="ar-down">@(h.PreyMaeWon.ToString("N0"))원</td></tr>
+                            <tr><td>래더 허수 잔량(가상)</td><td colspan="3">@(h.PhantomBidQty > 0 || h.PhantomAskQty > 0 ? "매수 1호가 +" + h.PhantomBidQty.ToString("N0") + " · 매도 1호가 +" + h.PhantomAskQty.ToString("N0") + "주 — 체결 불가 · 추격 매수 유도" : "주입 없음(휴먼 2연패 이상에서 발동)")</td></tr>
+                        </table>
+                    }
                 </div>
             }
         </div>
@@ -505,5 +553,11 @@ else
     .ar-gauge .bar.dev { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); } .ar-gauge .bar.imb { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); }
     .ar-gauge .bar i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; background: #fff; border-radius: 2px; }
     .ar-gauge .bar em { position: absolute; top: 0; bottom: 0; width: 1px; background: #f9a825; }
+    .ar-iceberg { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; } .ar-iceberg input.ar-ice-peak { width: 90px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    .ar-console.locked { opacity: .5; pointer-events: none; }
+    .ar-freeze { position: fixed; inset: 0; background: rgba(229, 57, 53, .14); box-shadow: inset 0 0 120px rgba(229, 57, 53, .55); pointer-events: none; z-index: 50; }
+    .ar-frozen { border: 2px solid #E53935; background: rgba(229, 57, 53, .12); display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; font-size: 12.5px; position: relative; z-index: 51; }
+    .ar-frozen b { color: #E53935; font-size: 16px; }
+    .ar-gauge .bar.aggr { background: linear-gradient(90deg, #2a3040 0%, #f9a825 50%, #E53935 100%); }
     .ar-debrief { margin-top: 10px; border: 1px solid #4dd0e1; } .ar-debrief h4 { font-size: 12.5px; margin: 0 0 6px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 </style>

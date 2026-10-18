@@ -269,7 +269,10 @@ namespace StockManager.Tests.Engines.Arena
             sim.OnQuote(Book(70_500, 10, 70_400, 10));
             sim.Process(T0 + 2 * Ms);                                            // 접수 순서대로 분할 체결
             Assert.Equal(155, h.Position(Sym));
-            Assert.Equal(45_000 + 35_000 + 5_000, h.SlippageWon);                // 활성화 시 최우선(70,000) 대비 누적 = 충격
+            // 활성화 시 최우선(70,000) 대비 누적 = 충격 + [v12.18.18-DEV] 유동성 진공: 첫 순회 10단 전부 소진 → 1단계(+1틱 = 100원) 로 이월 50주 순회 →
+            // 그 순회가 다시 5단 100% 소진 = 2단계 → 같은 회차 다음 주문 5주는 (2² − 1) = 3틱
+            Assert.Equal(45_000 + 35_000 + 5_000 + 50 * 100 + 5 * 300, h.SlippageWon);
+            Assert.Equal(50 * 100 + 5 * 300, h.VacuumPenaltyWon);
             Assert.Equal(3, h.Fills);
             Assert.Equal(0, h.WorkingCount);
         }
@@ -286,8 +289,9 @@ namespace StockManager.Tests.Engines.Arena
             Assert.Equal(1_000_000 - 725_108, h.CashWon);
             sim.OnQuote(Book(30_000, 5, 29_000, 5, tick: 1_000));
             sim.Process(T0 + Ms);
-            Assert.Equal(59, h.Position(Sym));                                   // 30,000 × 5 + 31,000 × 4(남은 현금 한도)
-            Assert.Equal(851, h.CashWon);
+            // [v12.18.18-DEV] 첫 순회 10단 전부 소진 = 진공 1단계(+1틱 1,000원) → 31,000 × 5 + 32,000 × 3(남은 현금 한도)
+            Assert.Equal(58, h.Position(Sym));
+            Assert.Equal(1_000_000 - 725_108 - (155_000 + 96_000 + DualBookSimulator.Fee(251_000)), h.CashWon);
             Assert.Equal(ArenaReject.CashExhausted, h.LastReject);
             Assert.Equal(1, h.Cancels);
             Assert.Equal(0, h.WorkingCount);

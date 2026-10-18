@@ -34,12 +34,12 @@ namespace MS2E.UI.Portable.Ports.Trading
     public static class ArenaReject
     {
         public const int None = 0, NotRunning = 1, Invalid = 2, NoQuote = 3, NoLiquidity = 4, InsufficientCash = 5, InsufficientPosition = 6, BookFull = 7,
-                         OrdersFull = 8, CashExhausted = 9;
+                         OrdersFull = 8, CashExhausted = 9, RiskLocked = 10;
         public static string Label(int r) => r switch
         {
             None => "-", NotRunning => "매치 미진행", Invalid => "주문 값 오류", NoQuote => "호가 미수신", NoLiquidity => "호가 잔량 없음",
             InsufficientCash => "가상 현금 부족", InsufficientPosition => "보유 수량 부족", BookFull => "보유 종목 한도",
-            OrdersFull => "미체결 주문 한도", CashExhausted => "잔여 수량 현금 부족 — 잔량 취소", _ => "?",
+            OrdersFull => "미체결 주문 한도", CashExhausted => "잔여 수량 현금 부족 — 잔량 취소", RiskLocked => "계좌 동결 — 일일 손실 한도 초과", _ => "?",
         };
     }
 
@@ -52,11 +52,15 @@ namespace MS2E.UI.Portable.Ports.Trading
         /// <summary>[v12.18.13-DEV] 지연 대기(접수 → 체결 판단 전) · 작동 중(지정가 대기열 · 시장가 잔량) 주문 수 · 가장 오래된 지정가의 내 앞 잔량 · 취소 누적 · 예약 현금.</summary>
         public readonly int PendingOrders, WorkingOrders;
         public readonly long QueueAheadQty, Cancels, ReservedCashWon;
+        /// <summary>[v12.18.18-DEV] 유동성 진공 발동 누적 · 진공 페널티 누적(원 · 슬리피지에 포함) · 빙산 리필 누적.</summary>
+        public readonly long VacuumEvents, VacuumPenaltyWon, IcebergRefills;
 
         public ArenaSideStats(long equityWon, long cashWon, long realizedWon, long unrealizedWon, long feesWon, long taxWon, long slippageWon,
                               long peakWon, long mddWon, int mddBp, long fills, long rejects, int wins, int losses, int openPositions, int lastReject,
-                              int pendingOrders = 0, int workingOrders = 0, long queueAheadQty = -1, long cancels = 0, long reservedCashWon = 0)
+                              int pendingOrders = 0, int workingOrders = 0, long queueAheadQty = -1, long cancels = 0, long reservedCashWon = 0,
+                              long vacuumEvents = 0, long vacuumPenaltyWon = 0, long icebergRefills = 0)
         {
+            VacuumEvents = vacuumEvents; VacuumPenaltyWon = vacuumPenaltyWon; IcebergRefills = icebergRefills;
             EquityWon = equityWon; CashWon = cashWon; RealizedWon = realizedWon; UnrealizedWon = unrealizedWon;
             FeesWon = feesWon; TaxWon = taxWon; SlippageWon = slippageWon; PeakWon = peakWon; MddWon = mddWon; MddBp = mddBp;
             Fills = fills; Rejects = rejects; Wins = wins; Losses = losses; OpenPositions = openPositions; LastReject = lastReject;
@@ -77,11 +81,16 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly ArenaSideStats Ai, Human;
         /// <summary>[v12.18.15-DEV] AI 페르소나 의사결정 HUD(같은 seqlock 창에서 게시).</summary>
         public readonly ArenaAiHud AiHud;
+        /// <summary>[v12.18.18-DEV] 휴먼 하드 리스크 동결(일일 손실 한도 도달 → 시장가 강제 청산 + 이번 라운드 발주 전면 차단) · 한도(bp) · 발동 시각 · 발동 시 자산.</summary>
+        public readonly bool HumanRiskLocked;
+        public readonly int RiskLimitBp;
+        public readonly long RiskTripTicks, RiskTripEquityWon;
 
         public ArenaSnapshot(long version, int state, long capitalWon, long startedTicks, long updatedTicks, long quotesSeen, long quotesLost,
                              int quoteSymbols, long ordersLost, long aiSignals, int leader, long leadWon, in ArenaSideStats ai, in ArenaSideStats human,
-                             in ArenaAiHud aiHud = default)
+                             in ArenaAiHud aiHud = default, bool humanRiskLocked = false, int riskLimitBp = 0, long riskTripTicks = 0, long riskTripEquityWon = 0)
         {
+            HumanRiskLocked = humanRiskLocked; RiskLimitBp = riskLimitBp; RiskTripTicks = riskTripTicks; RiskTripEquityWon = riskTripEquityWon;
             Version = version; State = state; CapitalWon = capitalWon; StartedTicks = startedTicks; UpdatedTicks = updatedTicks;
             QuotesSeen = quotesSeen; QuotesLost = quotesLost; QuoteSymbols = quoteSymbols; OrdersLost = ordersLost; AiSignals = aiSignals;
             Leader = leader; LeadWon = leadWon; Ai = ai; Human = human; AiHud = aiHud;
@@ -108,7 +117,12 @@ namespace MS2E.UI.Portable.Ports.Trading
         int SubmitHuman(long symbol, int side, long qty);
         /// <summary>[v12.18.13-DEV] 휴먼 지정가 주문(체결 지연 후 시장성 부분 즉시 체결 · 잔량은 호가 대기열 뒤에 배치 → 체결 틱 거래량이 앞 잔량을 소진해야 체결).</summary>
         int SubmitHumanLimit(long symbol, int side, long qty, long priceWon);
-        /// <summary>[v12.18.13-DEV] 휴먼 미체결 전량 취소(취소도 체결 지연을 거친다 — 그 사이 체결 가능).</summary>
+        /// <summary>
+        /// [v12.18.18-DEV] 휴먼 빙산(Iceberg) 지정가 — 대기열에는 노출 수량(peakQty)만 걸리고, 노출분이 체결로 소진되면 은닉 잔량에서 리필되어
+        /// 그 가격 대기열 맨 뒤로 재배치된다(시장성 부분은 전량 즉시 순회). peakQty ≥ qty = 일반 지정가와 동일.
+        /// </summary>
+        int SubmitHumanIceberg(long symbol, int side, long qty, long priceWon, long peakQty);
+        /// <summary>[v12.18.13-DEV] 휴먼 미체결 전량 취소(취소도 체결 지연을 거친다 — 그 사이 체결 가능). [v12.18.18-DEV] 리스크 동결 중 = RiskLocked(강제 청산 매도 보호).</summary>
         int CancelHuman();
         /// <summary>[v12.18.14-DEV] 휴먼 비상 전량 청산 — 지연 1회 후 미체결(지연 대기 포함) 전량 취소 + 보유 전 종목 시장가 매도(잔량 이월).</summary>
         int FlattenHuman();
