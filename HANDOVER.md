@@ -2151,3 +2151,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 기존 핀 교정: CrossBrokerSignalTests(onBook 블록 람다) · 아레나 bUnit 3건(IKisFeedLatencyPort 등록).
 - 오중 빌드(WebOnly · sln = Default/PrimesBench/KiwoomProxy x86/KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,937/3,937(3m46s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 실 KIS 수신 캡처 없음(공개 예제 컬럼 기준 합성 프레임) · 초 해상도 미포착 구간 · 호스트에 해제(재무장) UI/호출부는 없음(기존 비트 28 과 동일 — 재기동 해제).
+
+## 79. v12.18.16-GM — KIS WebSocket 판독 · 시각 편차 인터락 단독 출하(-NoPeer) (2026-10-18)
+
+### 79.1 버전 · 태그
+- v12.18.16-DEV(§78) = 5344cd5(선별 커밋 · 타 세션 파일 3종 제외).
+- 12.18.15 → 12.18.16(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말) = 7bf0282 · sln -warnaserror 0W/0E · GoldenMaster 83/83.
+- 태그 v12.18.16-GM(annotated) = 7bf0282. QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 79.2 출하 실행(형제 worktree StockManager-gm-12.18.16-np · 태그 7bf0282 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 3,937/3,937(3m29s) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 수검 · [7] 아티팩트 38 SHA-256 · genesis v2 manifest.sig · 봉인 일치 ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 감사 원장 ⑪ · 펌프 지터 ⑫ 1 ·
+  유령 취소 무장 ⑬ 1 · 위반 0) · [10] interlocks Ok(30 · 0x800000001FFFFFFF · 비트 28 포함) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 ⑥) ·
+  handshake Ok @7bf028231c.
+- 산출물(release/): release-v12.18.16-GM.zip SHA-256 `451640EA32F9444A7233FA659EFE522DF1030FDF6AB00B467563CAF93CD76898` ·
+  masterSeal `6027D7A89F03A3CC97149EE906C27F5279A20E283993275E70FDCD76702361B1` · sourceCommit 7bf0282 · 피어 기록 없음.
+- v12.18.15-GM 산출물 13건(zip 504DCB3E… · masterSeal E71C6AEE…) → release/superseded-v12.18.15-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file) exit 0 · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) exit 0.
