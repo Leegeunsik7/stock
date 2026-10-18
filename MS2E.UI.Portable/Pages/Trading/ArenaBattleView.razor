@@ -10,15 +10,17 @@
    IArenaPort 휴먼 큐. DOM 래더 = 포커스 종목 10호가 잔량 바 + 가격 셀 클릭 지정가 + 내 주문/앞 잔량 뱃지(TryReadDepth seqlock 사본) ·
    경기 종료 시 복기 카드(MAE · MFE · 보유 시간 · 슬리피지 드래그 · 틸트).
    [v12.18.15-DEV] AI 페르소나 탭(시그널 엔진 · 스캘퍼 ⚡ · 추세추종 📈 · 평균회귀 🔄 → IArenaPort.SetPersona · 현재 모드 원장) +
-   설명 가능 AI HUD(ArenaSnapshot.AiHud — VWAP · 이격률 게이지 · σ · 10호가 잔량 불균형 게이지 · 목표/손절가 · 마지막 판단과 사유). *@
+   설명 가능 AI HUD(ArenaSnapshot.AiHud — VWAP · 이격률 게이지 · σ · 10호가 잔량 불균형 게이지 · 목표/손절가 · 마지막 판단과 사유).
+   [v12.18.16-DEV] 상단 KIS 시세 지연 뱃지(IKisFeedLatencyPort — 전문 초 해상도 기준 지연 구간 · 비트 28 래치 상태 · 판독 전용). *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
 @inject IArenaTapePort Tapes
+@inject IKisFeedLatencyPort KisFeed
 
 <div class="top">
     <div class="hello">
-        <h1>⚔️ AI vs Human 실시간 대결 <span class="tag">ARENA · DUAL-BOOK SIMULATOR</span></h1>
+        <h1>⚔️ AI vs Human 실시간 대결 <span class="tag">ARENA · DUAL-BOOK SIMULATOR</span> @KisBadge()</h1>
         <p>AI 와 휴먼이 같은 자본금 · 같은 실시간 호가로 가상 매매를 겨룹니다. 모든 체결은 가상 원장에서만 일어나며 증권사로 주문이 나가지 않습니다.</p>
     </div>
 </div>
@@ -356,6 +358,15 @@ else
 
     private static string Tone(long v) => v > 0 ? "ar-up" : v < 0 ? "ar-down" : "";
 
+    // ── [v12.18.16-DEV] KIS 시세 지연 뱃지 ──
+    private RenderFragment KisBadge() => __builder =>
+    {
+        var k = KisFeed.Status;
+        <span class="ar-kis @DashKisFeed.Css(k.State)" title="KIS 전문 시각(초 해상도) 대비 지연 구간 · 위반 @(k.Violations.ToString("N0"))건@(k.Trips > 0 ? " · 사유 " + KisSkewReason.Label(k.LastTripReason) : "")">
+            @DashKisFeed.Label(k.State)@(k.State is DashKisFeed.Ok or DashKisFeed.Latched ? " · " + k.RangeText : "")
+        </span>
+    };
+
     // ── [v12.18.15-DEV] AI 페르소나 · 설명 가능 HUD ──
     private void SelectPersona(int persona)
         => _msg = Arena.SetPersona(persona) ? ArenaPersona.Label(persona) + " 선택 → 다음 정산 회차 반영(진행 중이면 AI 포지션 전량 청산 후 교체)" : "페르소나 값 오류";
@@ -485,6 +496,8 @@ else
     .ar-ladder tr.ask td.q i { right: 0; background: #1E88E5; } .ar-ladder tr.bid td.q i { left: 0; background: #E53935; }
     .ar-ladder td.q span { position: relative; }
     .ar-my { background: #f9a825; color: #111; border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 700; }
+    .ar-kis { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: #3a3f4b; color: #ccc; vertical-align: middle; }
+    .ar-kis.ok { background: #2e7d32; color: #fff; } .ar-kis.bad { background: #E53935; color: #fff; } .ar-kis.wait { background: #616161; color: #fff; }
     .ar-persona { margin-bottom: 10px; } .ar-persona .ar-mode { margin: 0 0 6px; }
     .ar-hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 14px; align-items: center; font-size: 12px; }
     .ar-act { padding: 1px 8px; border-radius: 6px; background: #3a3f4b; margin: 0 4px; } .ar-act.a1 { background: #E53935; color: #fff; } .ar-act.a2 { background: #1E88E5; color: #fff; }

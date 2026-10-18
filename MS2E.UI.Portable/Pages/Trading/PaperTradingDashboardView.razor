@@ -53,6 +53,14 @@ else
                     <em>최대 @SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotMax, f.JitterMaxNanos) · 초과 @(f.JitterSpikes.ToString("N0"))(GC @(f.JitterGcSpikes.ToString("N0"))) · 최악 @(f.JitterWorstCount)개 ≥ @(SignalLabelMapper.JitterMicrosText(SignalLabelMapper.JitterSlotFloor, f.JitterWorstFloorNanos))(GC @(f.JitterWorstGcCount))</em>
                 }
             </span>
+            <span class="pd-kis @DashKisFeed.Css(f.KisFeedState)" title="KIS 전문 시각(초 해상도) 대비 지연 구간 — 하한 > 50ms · 시각 역전 · 시계 편차 = 비트 28 래치">
+                @DashKisFeed.Label(f.KisFeedState)
+                @if (f.KisFeedState is DashKisFeed.Ok or DashKisFeed.Latched)
+                {
+                    <b>@((f.KisLagLowerMs < 0 ? 0 : f.KisLagLowerMs).ToString("N0")) ~ @(f.KisLagUpperMs.ToString("N0"))ms</b>
+                    <em>최대 하한 @(f.KisLagMaxMs.ToString("N0"))ms · 위반 @(f.KisFeedViolations.ToString("N0"))@(f.KisFeedTrips > 0 ? " · 사유 " + KisSkewReason.Label(f.KisFeedTripReason) : "")</em>
+                }
+            </span>
             @if (!f.LatencyBound)
             {
                 <span class="pd-lat-off">계측 미결선 — 주문 경로 계측기가 이 허브에 주입되지 않아 지연을 표시하지 않습니다.</span>
@@ -328,6 +336,9 @@ else
     .pd-jit { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
     .pd-jit.ok { background: #2e7d32; color: #fff; } .pd-jit.spike { background: #f9a825; color: #111; } .pd-jit.gc { background: #E53935; color: #fff; }
     .pd-jit em { font-style: normal; font-weight: 400; opacity: .85; }
+    .pd-kis { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; display: inline-flex; gap: 4px; align-items: center; }
+    .pd-kis.ok { background: #2e7d32; color: #fff; } .pd-kis.bad { background: #E53935; color: #fff; } .pd-kis.wait { background: #616161; color: #fff; }
+    .pd-kis em { font-style: normal; font-weight: 400; opacity: .85; }
     .pd-ses { padding: 1px 6px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
     .pd-ses.ok { background: #2e7d32; color: #fff; } .pd-ses.wait { background: #f9a825; color: #111; } .pd-ses.bad { background: #E53935; color: #fff; }
     .pd-ses-n { font-style: normal; opacity: .8; margin-left: 4px; }

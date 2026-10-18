@@ -168,6 +168,8 @@ namespace StockManager.Blazor.Services
         private readonly SessionRecoverySnapshot[] _sesSnap = new SessionRecoverySnapshot[Brokers];
         // ── [v12.18.10-DEV] 브로커 생존성 사전 진단(선택 결선 · 펌프가 Interlocked 판독만 · 할당 0) ──
         private BrokerLivenessPreFlight? _preFlight;
+        private IKisFeedLatencyPort? _kisFeed;                                     // [v12.18.16-DEV] KIS 시세 지연 관제(값 판독 전용)
+        private KisFeedLatencyStatus _kisSnap;
         // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
         private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
         private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
@@ -292,6 +294,10 @@ namespace StockManager.Blazor.Services
         /// <summary>[v12.18.10-DEV] 브로커 생존성 사전 진단 관제 결선(판독 전용 — 진단/래치 경로 무간섭 · 펌프 무할당 투영).</summary>
         public void AttachPreFlight(BrokerLivenessPreFlight preFlight)
             => Volatile.Write(ref _preFlight, preFlight ?? throw new ArgumentNullException(nameof(preFlight)));
+
+        /// <summary>[v12.18.16-DEV] KIS 시세 지연 관제 결선 — 펌프는 값 구조체 사본만 읽는다(래치/재무장 경로 무간섭 · 할당 0).</summary>
+        public void AttachKisFeed(IKisFeedLatencyPort feed)
+            => Volatile.Write(ref _kisFeed, feed ?? throw new ArgumentNullException(nameof(feed)));
 
         /// <summary>
         /// [v12.18.11-DEV] AI vs Human 아레나 결선 — 펌프가 회차마다 Step(가상 체결 · 정산 · seqlock 게시 · δ=0)을 구동하고
@@ -429,6 +435,12 @@ namespace StockManager.Blazor.Services
                 var ss = _sesSnap[b] = sm.Snapshot();                                 // 결선 표지(+1 · 인덱스) = 초기 상태 0 이어도 결선 즉시 재게시
                 sig = sig * 31 + 1 + b * 3 + (int)ss.State * 7 + (ss.Exhausted ? 11 : 0) + (ss.Discrepancy ? 13 : 0) + ss.ConsecutiveFailures * 17 + ss.Losses * 19 + ss.Recoveries * 23;
             }
+            var kf = Volatile.Read(ref _kisFeed);
+            if (kf is not null)
+            {
+                _kisSnap = kf.Status;                                                 // 상태 · 격발 = 즉시 재게시 · 지연 값은 100ms 단위 변화만(재게시 폭주 방지)
+                sig = sig * 31 + 1 + _kisSnap.State * 7 + _kisSnap.Trips * 11 + _kisSnap.LagUpperMs / 100 * 13;
+            }
             // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
             if (sig != _lastSignature || _pendingDirty) dirty = true;
             if (!dirty && _front is not null) return false;
@@ -517,6 +529,10 @@ namespace StockManager.Blazor.Services
             f.JitterSpikes = jv.SpikeCountOver500Us; f.JitterGcSpikes = jv.GcSpikeCount; f.JitterMaxNanos = jv.MaxJitterNanos;
             f.JitterLastSpikeNanos = jv.LastSpikeNanos; f.JitterWorstCount = jv.WorstSampleCount;
             f.JitterWorstFloorNanos = jv.WorstSampleFloorNanos; f.JitterWorstGcCount = jv.WorstSampleGcCount;
+            ref readonly var ks = ref _kisSnap;
+            f.KisFeedState = kf is null ? DashKisFeed.Unbound : ks.State;
+            f.KisLagLowerMs = ks.LagLowerMs; f.KisLagUpperMs = ks.LagUpperMs; f.KisLagMaxMs = ks.MaxLagLowerMs;
+            f.KisFeedViolations = ks.Violations; f.KisFeedTrips = ks.Trips; f.KisFeedTripReason = ks.LastTripReason;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

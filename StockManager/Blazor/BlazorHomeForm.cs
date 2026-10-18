@@ -1663,6 +1663,13 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaTapePort>(arenaTape);
             FormClosed += (_, _) => ShutdownTrace.Step("arenaTape", arenaTape.Dispose);
             dashHub.AttachArena(arena);
+            // [v12.18.16-DEV] KIS 시세 전문 시각 편차 감시 — 비트 28(OrderPathLatency) 2차 입력(비트 재결속 0 · 정의 불변) · 지연 하한 > 50ms/역전/시계 편차 = 래치.
+            //   KIS 미구성 = 관측 0(미수신 뱃지 · 차단 0). /aidash · /arena 뱃지 = 값 판독 전용.
+            var kisSkew = new StockManager.Adapters.Kis.KisTimeSkewGuard();
+            kisSkew.BindLatencyInterlock(orderPathLatency);
+            dashHub.AttachKisFeed(kisSkew);
+            services.AddSingleton(kisSkew);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKisFeedLatencyPort>(kisSkew);
             services.AddSingleton(arena);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPort>(arena);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
@@ -1720,8 +1727,19 @@ namespace StockManager.Blazor
                     send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
                     onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); kisBalance.OnKisFill(f); dashHub.OnFill(f, 1); },   // [방향 B] 포지션 원장
                     validator: kisProtocol, accountCano: kisLive!.AccountCano,                               // [KIS VTS] 도메인 · 계좌 핀
-                    onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis),   // [교차 피드]
+                    onBook: b =>
+                    {
+                        Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis);   // [교차 피드]
+                        arena.OnQuote(in b);                                                                  // [v12.18.16-DEV] 아레나 듀얼 북(MPSC 링)
+                        arenaTape.OnBook(in b);                                                               //   정규장 녹화(.tape 176B · 슬롯 claim)
+                    },
                     blackbox: blackbox,                                                                       // [KIS 호가] 이탈 틱 포렌식
+                    skewGuard: kisSkew,                                                                       // [v12.18.16-DEV] 전문 시각 편차 → 비트 28
+                    onTrade: t =>
+                    {
+                        arena.OnTradeQty(t.SymbolCode, t.Price, t.TradeVolume, t.Side);                        // 건별 체결량 · 주도 방향(누적 교차 0)
+                        arenaTape.OnTrade(t.SymbolCode, t.Price, t.TradeVolume, t.Side);
+                    },
                     onBookQuarantine: q => Volatile.Read(ref quantRef)?.SetFeedQuarantined(StockManager.Engines.QuantSignalProvider.FeedKis, q));
                 kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
                     kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"),

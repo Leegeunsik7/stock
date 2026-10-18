@@ -20,10 +20,11 @@ using System.Text.Json;
 
 namespace MS2E.Infrastructure
 {
-    /// <summary>H0STCNT0 체결가 1레코드(원 · 주).</summary>
+    /// <summary>H0STCNT0 체결가 1레코드(원 · 주). [v12.18.16-DEV] Side = 21 CCLD_DVSN(1 매수 → +1 · 5 매도 → −1 · 3 장전/결측/미상 → 0).</summary>
     public struct KisTick
     {
         public long SymbolCode, TimeHhmmss, Price, TradeVolume, AccVolume;
+        public int Side;
     }
 
     public enum KisNoticeKind : byte { Unknown = 0, Accepted = 1, Filled = 2, Rejected = 3, CancelConfirmed = 4, Amended = 5 }
@@ -202,6 +203,7 @@ namespace MS2E.Infrastructure
                         2 => ParseLong(field, out t.Price) && t.Price > 0,
                         12 => ParseLong(field, out t.TradeVolume) && t.TradeVolume >= 0,
                         13 => ParseLong(field, out t.AccVolume) && t.AccVolume >= 0,
+                        21 => SetSide(field, ref t),                                // 선택 필드 — 미상 = 0(레코드 유지)
                         _ => true,
                     };
                     if (!ok) return n;                                              // 형식 오류 = 이후 전부 폐기(fail-closed)
@@ -211,6 +213,12 @@ namespace MS2E.Infrastructure
                 if (end) return n;                                                  // 본문 소진 — 선언 건수보다 적으면 남은 레코드 없음
             }
             return n;
+        }
+
+        private static bool SetSide(ReadOnlySpan<byte> field, ref KisTick t)
+        {
+            t.Side = field.Length != 1 ? 0 : field[0] == (byte)'1' ? 1 : field[0] == (byte)'5' ? -1 : 0;
+            return true;
         }
 
         // ── ③ 체결통보(H0STCNI0) ──

@@ -2121,3 +2121,33 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `E71C6AEE062CA2EE53215120566E3963ADA0952A1B0F0755C67B2B3EA6612C1C` · sourceCommit 21da2f5 · 피어 기록 없음.
 - v12.18.14-GM 산출물 13건(zip 85E39CE8… · masterSeal 53951F6A…) → release/superseded-v12.18.14-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file master-seal.txt) exit 0 · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) exit 0 · 위반 0.
+
+## 78. v12.18.16-DEV — KIS WebSocket 10호가/체결 판독 · 시각 편차 인터락(비트 28) (2026-10-18)
+
+### 78.1 전제 교정
+- H0STASP0 판독기는 이미 존재(KisOrderBookParser · 구조 검증 9종 · 어댑터/정량 엔진 결선) · H0STCNT0 은 KisProtocol.ParseTicks — 재구현하지 않고
+  `KisWebSocketOrderbookParser` 가 둘을 감싸 전문 시각(호가 1 BSOP_HOUR · 체결 1 STCK_CNTG_HOUR)만 추가 판독. 체결 구분은 21 CCLD_DVSN 을 KisTick.Side 로 추가.
+- KIS 전문 시각 = HHmmss(초 해상도 · 밀리초 필드 없음) → 지연은 [하한, 상한] 구간으로만 측정 가능. 50ms 격발 = '하한 > 50ms'(지연이 확실히 초과) — 오격발 0 ·
+  50 ~ 1,050ms 구간 일부 미포착 가능(정직한 한계). 호스트 NTP 동기가 전제.
+- 비트 28 은 v12.17.6 OrderPathLatencyInterlock(실발주 p99) 소유 · 집계어는 비트당 소스 1개(재결속 = 예외) → 새 비트/재결속 없이
+  OrderPathLatencyInterlock 에 2차 차단 입력(AttachFeedGuard · 1회 · 교체 금지)으로 OR 합성. 인터락 30종 정의 · 마스크 0x800000001FFFFFFF 불변.
+- 지시서의 '50ms 지연 시 거래 루프 차단' = 무장 술어 차단(비트 28 Raise). 시세 피드 자체는 계속 흐른다(가상 원장 · 관측 — 차단 대상 아님).
+
+### 78.2 구성
+- `Adapters/Kis/KisWebSocketOrderbookParser`: Decode(프레임 → Book/Trades/Other/Encrypted/Malformed) · TryDecodeBook(시각 동반) · DecodeTrades · HHmmss 검증.
+- `Adapters/Kis/KisTimeSkewGuard`(IArmingBlockSource · IKisFeedLatencyPort): 스트림(호가/체결)별 Observe → 하한 > 50ms · 스트림 내 역전 · 상한 < −50ms(시계 앞섬) ·
+  시각 형식 이탈 = 래치 + 비트 28 Resync. 자정 경계 보정. 위반은 래치 중에도 전수 계수. 해제 = TryRearm(이중키) ∧ 마지막 위반 후 정상 ≥ 100 전문 ·
+  해제/위반 경합 = 위반 표지 재확인 후 재래치(유실 0). 자체 OrderPathLatency 재무장은 2차 래치를 풀지 않음.
+- `KisOpenApiAdapter`: skewGuard · onTrade(KisTick — 체결량 · 주도 방향) 선택 인자. 호스트: KIS onBook → 정량 엔진 + 아레나 OnQuote + 테이프 OnBook ·
+  onTrade → 아레나 `OnTradeQty`(건별 체결 전용 링 — 브리지 누적 차분 표와 분리 → 교차 유령 거래량 0) + 테이프 `OnTrade`(176B 레코드 · 주도 방향 보존).
+- 관제: PaperDashboardFrame KisFeed* 필드 · 허브 AttachKisFeed → /aidash 지연 뱃지 · /arena 제목 뱃지(IKisFeedLatencyPort 판독 전용 · 재무장 멤버 없음).
+
+### 78.3 검증
+- `StockManager.Tests/Adapters/Kis/KisWebSocketParserTests.cs` 18건: 63필드 호가 10단 정확값 · 46필드 다건 체결(1 매수/5 매도/3 미상 · 21 결측 유지) · 형식 이탈 10종 +
+  무작위 변조 2만 회 예외 0 · HHmmss 경계 7 · δ=0 + GC 0(10만 회 호가 + 체결 2건 판독 + 편차 판정) · 51ms = 즉시 격발/50ms = 무격발 · 집계어 비트 28 Raise ·
+  역전/스트림 독립/시계 앞섬/형식 이탈/자정 경계 · 래치(회복 99 · 이중키 결여 = 해제 불가 · 회복 중 위반 재계수 · 자체 재무장 무효) · 2차 입력 재결선 거부 ·
+  어댑터 결속(지연 전문 격발 + 피드 유지) · 아레나 누적/건별 교차 유령 거래량 0 · 테이프 주도 방향 · IL(송신/주문/브로커 멤버 0 · 인터락 호출 = AttachFeedGuard/Resync만) ·
+  1M 전문 폭주(무작위 지연 · 역전) + 동시 재무장/판독 스레드: 위반 = 독립 기대값 정확 일치 · 예외/교착 0 · 최종 비트 = 래치 상태.
+- 기존 핀 교정: CrossBrokerSignalTests(onBook 블록 람다) · 아레나 bUnit 3건(IKisFeedLatencyPort 등록).
+- 오중 빌드(WebOnly · sln = Default/PrimesBench/KiwoomProxy x86/KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,937/3,937(3m46s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 실 KIS 수신 캡처 없음(공개 예제 컬럼 기준 합성 프레임) · 초 해상도 미포착 구간 · 호스트에 해제(재무장) UI/호출부는 없음(기존 비트 28 과 동일 — 재기동 해제).

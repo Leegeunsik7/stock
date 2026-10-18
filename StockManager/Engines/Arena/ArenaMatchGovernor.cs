@@ -75,6 +75,8 @@ namespace StockManager.Engines.Arena
         private readonly TelemetryRing<OrderBookPayload> _quotes = new(256);
         private readonly TelemetryRing<ArenaOrder> _orders = new(128);
         private readonly TelemetryRing<ArenaTrade> _trades = new(1024);
+        private readonly TelemetryRing<ArenaTrade> _directTrades = new(1024);        // [v12.18.16-DEV] 건별 체결량(KIS)
+        private long _directCursor;
         private readonly CumulativeVolumeTracker _volume = new();
         private long _quoteCursor, _orderCursor, _tradeCursor, _quotesLost, _ordersLost, _tradesLost, _quotesSeen, _tradesSeen, _aiSignals;
         private long _cmd;
@@ -172,6 +174,16 @@ namespace StockManager.Engines.Arena
         {
             if (symbol <= 0 || priceWon <= 0 || cumulativeVolume < 0) return;
             _trades.Publish(new ArenaTrade { Symbol = symbol, PriceWon = priceWon, Qty = cumulativeVolume });
+        }
+
+        /// <summary>
+        /// [v12.18.16-DEV] 건별 체결(KIS H0STCNT0 체결량 · 주도 방향 +1/−1/0) — 누적 차분 표를 거치지 않는 별도 링(δ=0 · 다중 생산자 안전).
+        /// 같은 종목을 브리지(누적)와 함께 받아도 누적값 교차로 인한 유령 거래량이 생기지 않는다.
+        /// </summary>
+        public void OnTradeQty(long symbol, long priceWon, long qty, int side)
+        {
+            if (symbol <= 0 || priceWon <= 0 || qty <= 0) return;
+            _directTrades.Publish(new ArenaTrade { Symbol = symbol, PriceWon = priceWon, Qty = qty, Side = Math.Sign(side) });
         }
 
         public bool Start(long capitalWon)
@@ -336,6 +348,17 @@ namespace StockManager.Engines.Arena
                 if (r < 0) { _tradesLost++; continue; }
                 t.Qty = _volume.Delta(t.Symbol, t.Qty);                            // 누적 → 체결 거래량(방향 미상 → 시뮬레이터가 호가로 추정)
                 if (t.Qty <= 0) continue;
+                _tradesSeen++;
+                if (_state == ArenaState.Running) _sim.OnTrade(in t);
+                FeedTrade(in t);
+            }
+            head = _directTrades.Head;
+            if (head - _directCursor > _directTrades.Capacity) { _tradesLost += head - _directTrades.Capacity - _directCursor; _directCursor = head - _directTrades.Capacity; }
+            for (; _directCursor < head; _directCursor++)
+            {
+                int r = _directTrades.TryRead(_directCursor, out var t);
+                if (r == 0) break;
+                if (r < 0) { _tradesLost++; continue; }
                 _tradesSeen++;
                 if (_state == ArenaState.Running) _sim.OnTrade(in t);
                 FeedTrade(in t);

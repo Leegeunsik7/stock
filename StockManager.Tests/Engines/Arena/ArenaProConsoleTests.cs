@@ -435,6 +435,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton<IArenaPort>(g);
             ctx.Services.AddSingleton<IArenaReplayPort>(replay);
             ctx.Services.AddSingleton<IArenaTapePort>(rec);
+            ctx.Services.AddSingleton<IKisFeedLatencyPort>(new StockManager.Adapters.Kis.KisTimeSkewGuard());   // [v12.18.16-DEV] 상단 KIS 지연 뱃지
 
             using var stop = new CancellationTokenSource();
             Exception? pumpFault = null;

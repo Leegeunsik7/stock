@@ -14,6 +14,9 @@
 //  표본 하한(기본 100): p99 순위가 최대값 1개로 정해지지 않도록(창 < 100 이면 p99 = 단일 JIT/콜드 이상치). 100 이상이면 p99 초과 = 최소 2건 지연.
 //  재무장: TryRearm(물리 이중키 재확인) — 기준선(baseline)을 현재 누적 수로 옮겨 Trip 이전 표본은 다시 판정하지 않는다(재격발 루프 방지).
 //  δ=0: Evaluate · ArmingBlocked 힙 0(버퍼 생성 시 1회). 판정은 드레인 스레드 밖(타이머) — 매매 핫패스 비용 0.
+//  [v12.18.16-DEV] 2차 차단 입력(AttachFeedGuard · 1회): KIS 시세 시각 편차 감시(KisTimeSkewGuard)가 같은 비트 28 을 공유한다 — 집계어는 비트당
+//   소스 1개만 결속(교체 금지)하므로 비트를 새로 결속하지 않고 이 소스의 차단 술어에 OR 로 합친다(인터락 30종 정의 · 마스크 불변).
+//   차단 = 자체 Trip ∨ 2차 입력 차단(판독 예외 = 차단). 각 래치는 독립 — 자체 TryRearm 은 2차 래치를 풀지 않는다(비트는 둘 다 풀려야 내려감).
 // ============================================================================
 using System;
 using System.Threading;
@@ -36,6 +39,7 @@ namespace StockManager.Telemetry
         private int _streak, _tripped;
         private long _evaluations, _judgements, _overBudget, _trips, _lastP99;
         private ArmingInterlockLink? _link;
+        private IArmingBlockSource? _feed;
 
         /// <param name="profiler">실발주 경로 계측기(호스트 링 · 디스패처 · 게이트 · 출구 결선).</param>
         /// <param name="budgetNanos">p99 예산(ns). 호스트 = 50ms + 드레인 주기.</param>
@@ -57,7 +61,31 @@ namespace StockManager.Telemetry
 
         public long BudgetNanos => _budgetNanos;
         public bool Tripped => Volatile.Read(ref _tripped) == 1;
-        public bool ArmingBlocked => Tripped;
+        public bool ArmingBlocked => Tripped || FeedBlocked;
+
+        /// <summary>[v12.18.16-DEV] 2차 입력(KIS 시세 편차) 차단 여부 — 미결선 = false · 판독 예외 = true(fail-closed).</summary>
+        public bool FeedBlocked
+        {
+            get
+            {
+                var f = Volatile.Read(ref _feed);
+                if (f is null) return false;
+                try { return f.ArmingBlocked; }
+                catch { return true; }
+            }
+        }
+
+        /// <summary>[v12.18.16-DEV] 2차 차단 입력 결선(콜드 1회 · 교체 금지). 2차 입력은 상태 전이 직후 Resync() 를 호출한다.</summary>
+        public void AttachFeedGuard(IArmingBlockSource feed)
+        {
+            ArgumentNullException.ThrowIfNull(feed);
+            if (Interlocked.CompareExchange(ref _feed, feed, null) is not null)
+                throw new InvalidOperationException("비트 28 2차 입력 이미 결선됨 — 교체 금지(fail-closed)");
+            Volatile.Read(ref _link)?.Resync();
+        }
+
+        /// <summary>현재 차단 술어를 비트 28 에 반영(δ=0 · 미결속 = 무동작).</summary>
+        public void Resync() => Volatile.Read(ref _link)?.Resync();
         public int Streak => Volatile.Read(ref _streak);
         public long Evaluations => Interlocked.Read(ref _evaluations);
         /// <summary>표본 하한을 충족한 fresh 판정 수.</summary>

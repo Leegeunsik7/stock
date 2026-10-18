@@ -436,6 +436,7 @@ namespace StockManager.Tests.Engines.Arena
             string tapeDir = Path.Combine(Path.GetTempPath(), "ms2e_arena_ui_" + Guid.NewGuid().ToString("N"));
             using var recorder = new ArenaTapeRecorder(tapeDir, 1_000);
             ctx.Services.AddSingleton<IArenaTapePort>(recorder);
+            ctx.Services.AddSingleton<IKisFeedLatencyPort>(new StockManager.Adapters.Kis.KisTimeSkewGuard());   // [v12.18.16-DEV] 상단 KIS 지연 뱃지
             var cut = ctx.RenderComponent<MS2E.UI.Portable.Pages.Trading.ArenaBattleView>();
             Assert.Contains("매치 개시", cut.Markup);                                       // 기본 = 정규장 라이브
             Assert.Contains("틱 녹화 시작", cut.Markup);

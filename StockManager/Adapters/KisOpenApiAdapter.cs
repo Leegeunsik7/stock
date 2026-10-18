@@ -318,6 +318,9 @@ namespace StockManager.Adapters
         private readonly Action<TickPayload>? _onTick;
         private readonly Action<FillPayload>? _onFill;
         private readonly Action<OrderBookPayload>? _onBook;                          // [교차 피드] H0STASP0 10호가
+        // [v12.18.16-DEV] 전문 시각 편차 감시(비트 28 2차 입력) · 체결 레코드(체결량 · 매수/매도 구분) 직결 — 아레나 원장/테이프 피드
+        private readonly Kis.KisTimeSkewGuard? _skew;
+        private readonly Action<KisTick>? _onTrade;
         // [KIS 호가 경계 방어] 형식 이탈 연속 QuarantineAfter 회 = KIS 호가 피드 격리(전달 0 · 엔진 피드 1 격리 통지) · 정상 연속 ReleaseAfter 회 = 복귀.
         //   이탈 틱은 사유 코드로 블랙박스에 무할당 기록. 예상 호가(HOUR_CLS_CODE ≠ '0')는 정상 판독이되 연속매매 아님 → 무시 계수(형식 이탈 아님).
         public const int BookQuarantineAfter = 5, BookReleaseAfter = 20;
@@ -352,9 +355,11 @@ namespace StockManager.Adapters
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
                                  Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
                                  KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null,
-                                 MmfFlightRecorder? blackbox = null, Action<bool>? onBookQuarantine = null)
+                                 MmfFlightRecorder? blackbox = null, Action<bool>? onBookQuarantine = null,
+                                 Kis.KisTimeSkewGuard? skewGuard = null, Action<KisTick>? onTrade = null)
         {
             _onBook = onBook; _blackbox = blackbox; _onBookQuarantine = onBookQuarantine;
+            _skew = skewGuard; _onTrade = onTrade;
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _validator = validator;
             if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
@@ -409,7 +414,9 @@ namespace StockManager.Adapters
             {
                 // [교차 피드] KIS 실시간 10호가(평문 · 1레코드) → 정량 엔진 피드 1
                 if (encrypted || count != 1) return BookBad(KisBookReject.FrameHeader, 0);
-                if (!KisOrderBookParser.TryParse(body, _nowTicks(), out var book, out var rej, out byte hourCls, out _, out _)) return BookBad(rej, book.SymbolCode);
+                if (!Kis.KisWebSocketOrderbookParser.TryDecodeBook(body, _nowTicks(), out var book, out var rej, out byte hourCls, out long bookTime, out _))
+                    return BookBad(rej, book.SymbolCode);
+                _skew?.Observe(Kis.KisTimeSkewGuard.StreamBook, bookTime);           // 형식 이탈 시각(0) = 판정 불가 격발(fail-closed)
                 BookGood();
                 if (hourCls != KisOrderBookParser.ContinuousSession) { Interlocked.Increment(ref _bookNonContinuous); return true; }   // 예상 호가 = 피드 제외
                 if (BookQuarantined) return true;                                  // 격리 중 = 전달 0(복귀 판정만)
@@ -420,14 +427,16 @@ namespace StockManager.Adapters
             if (KisProtocol.IsTickTr(trId))
             {
                 if (encrypted) return Bad();
-                int n = KisProtocol.ParseTicks(body, count, _ticks);
+                int n = Kis.KisWebSocketOrderbookParser.DecodeTrades(body, count, _ticks);
                 if (n == 0) return Bad();
                 long ts = _nowTicks();
                 for (int i = 0; i < n; i++)
                 {
                     ref var t = ref _ticks[i];
+                    _skew?.Observe(Kis.KisTimeSkewGuard.StreamTrade, t.TimeHhmmss);
                     var p = new TickPayload { SymbolCode = t.SymbolCode, Price = t.Price, Volume = t.AccVolume, ChangeRate = 0, TimestampTicks = ts };
                     try { _onTick?.Invoke(p); } catch (Exception) { }
+                    try { _onTrade?.Invoke(t); } catch (Exception) { }
                 }
                 Interlocked.Add(ref _ticksEmitted, n);
                 return true;

@@ -340,6 +340,17 @@ namespace StockManager.Engines.Arena
             w.AppendTrade(new ArenaTrade { Symbol = symbol, PriceWon = priceWon, Qty = qty }, _utcTicks());
         }
 
+        /// <summary>
+        /// [v12.18.16-DEV] 체결 피드(체결 틱 거래량 그대로 · 주도 방향 포함 · δ=0) — KIS H0STCNT0 처럼 건별 체결량을 주는 원천용.
+        /// 누적 차분 표(단일 작성자)를 거치지 않으므로 브리지 수신 스레드와 동시 호출 안전(기록기 슬롯 claim = Interlocked).
+        /// </summary>
+        public void OnTrade(long symbol, long priceWon, long qty, int side)
+        {
+            var w = Volatile.Read(ref _writer);
+            if (w is null || qty <= 0 || priceWon <= 0) return;
+            w.AppendTrade(new ArenaTrade { Symbol = symbol, PriceWon = priceWon, Qty = qty, Side = side }, _utcTicks());
+        }
+
         public bool StartRecording()
         {
             lock (_gate)

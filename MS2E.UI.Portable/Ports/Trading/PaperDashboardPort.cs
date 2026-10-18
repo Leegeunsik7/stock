@@ -197,6 +197,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         public int PreFlightState = DashPreFlight.Unbound, PreFlightKiwoom, PreFlightKis;
         public long PreFlightElapsedMicros, PreFlightLatches, PreFlightPingKiwoomMicros, PreFlightPingKisMicros, PreFlightPingMaxMicros;
 
+        // [v12.18.16-DEV] KIS 시세 지연 관제 — 상태(DashKisFeed) · 지연 하한/상한/최대 하한(ms) · 위반/격발 누계 · 마지막 격발 사유.
+        public int KisFeedState = DashKisFeed.Unbound, KisFeedTripReason;
+        public long KisLagLowerMs, KisLagUpperMs, KisLagMaxMs, KisFeedViolations, KisFeedTrips;
+
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();
 

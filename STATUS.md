@@ -1,15 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.15-GM — AI 전략 페르소나 · 실시간 VWAP 단독 출하(-NoPeer)
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,919/3,919 · 래칫 ≤40
+- **Active Milestone**: v12.18.16-DEV — KIS WebSocket 10호가/체결 판독 · 시각 편차 인터락(비트 28)
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,937/3,937 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-18
 
 ## Completed Deliverables
-- 버전 12.18.15 · 태그 v12.18.15-GM = 21da2f5(v12.18.15-DEV c062117 위)
-- release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0 · 아티팩트 38 봉인 · verify-zip/live-armed(⑪ ⑫ ⑬ 위반 0)/interlocks(30 · 0x800000001FFFFFFF)/tighten(6)/handshake Ok
-- release-v12.18.15-GM.zip SHA-256 504DCB3E… · masterSeal E71C6AEE… · v12.18.14-GM 산출물 superseded 이관
-- HANDOVER §77 출하 기록
+- KisWebSocketOrderbookParser(H0STASP0 · H0STCNT0 프레임 · 전문 시각 · CCLD_DVSN 주도 방향 · δ=0)
+- KisTimeSkewGuard(하한 > 50ms · 역전 · 시계 앞섬 · 형식 이탈 → 비트 28 래치 · 회복 100 + 이중키 해제) — OrderPathLatencyInterlock 2차 입력(정의 불변)
+- KIS 호가/체결 → 아레나 듀얼 북(건별 체결 링) · .tape 녹화 직결 · /aidash · /arena KIS 지연 뱃지
+- KisWebSocketParserTests 18건(δ=0/GC 0 · 51ms 격발 · 1M 폭주 위반 전수 계수 · IL 송신 0) · HANDOVER §78
 
 ## Next Milestone
-- 실 WebView2 /arena 페르소나 탭 · HUD 육안 확인 · 실 키움 L2 테이프로 페르소나 행태 실측
-- 원격 저장소 구성 후 v12.18.15-GM 태그/master 푸시(운영자 승인)
+- 실 KIS VTS 수신 캡처로 필드/시각 대조 · 호스트 NTP 편차 실측
+- v12.18.16 버전 범프 · -NoPeer 단독 출하(운영자 승인)

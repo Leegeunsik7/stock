@@ -261,7 +261,10 @@ namespace StockManager.Tests
             while (d is not null && !File.Exists(Path.Combine(d.FullName, "StockManager.sln"))) d = d.Parent;
             string root = d!.FullName;
             string form = File.ReadAllText(Path.Combine(root, "StockManager", "Blazor", "BlazorHomeForm.cs"));
-            Assert.Contains("onBook: b => Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis)", form);
+            // [v12.18.16-DEV] onBook = 블록 람다(정량 엔진 교차 피드 + 아레나 듀얼 북 + 정규장 녹화) — 정량 피드 결선은 그대로
+            Assert.Contains("Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis);   // [교차 피드]", form);
+            Assert.Contains("arena.OnQuote(in b);", form);
+            Assert.Contains("arenaTape.OnBook(in b);", form);
             Assert.Contains("bookSymbols: kisBookSymbols, recovery: kisRecovery);", form);   // [세션 복구] 재접속마다 같은 호가 구독 재송신
             Assert.Contains("crossConfirm: kisBookSymbols.Length > 0,", form);
             Assert.Contains("Volatile.Write(ref quantRef, quantSignals);", form);
