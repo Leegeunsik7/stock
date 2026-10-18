@@ -2102,3 +2102,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 결함 수정(전체 스위트가 발견): 거버너가 Strategy 네임스페이스를 참조하자 리플레이 IL/객체 그래프 허용목록 2건 실패 → 허용목록 확장 + IL 순회가 Strategy 형식까지 재귀 검사하도록 교정.
 - 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,919/3,919(3m50s) · infra-scan 0 ≤ 117 · 래칫 ≤40(Phase114 스위트 내 통과).
 - 한계(정직): 페르소나 파라미터는 합성 테이프 기준 정성 설계 — 실 시장 수익성 검증 아님. 대상 종목 1개(다종목 동시 운용 아님). 실 WebView2 육안 확인은 이 세션에서 미수행.
+
+## 77. v12.18.15-GM — AI 전략 페르소나 · 실시간 VWAP 단독 출하(-NoPeer) (2026-10-18)
+
+### 77.1 버전 · 태그
+- v12.18.15-DEV(§76) = c062117(선별 커밋 · 타 세션 파일 3종 제외).
+- 12.18.14 → 12.18.15(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말) = 21da2f5 · sln -warnaserror 0W/0E · GoldenMaster 83/83.
+- 태그 v12.18.15-GM(annotated) = 21da2f5. QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 77.2 출하 실행(형제 worktree StockManager-gm-12.18.15-np · 태그 21da2f5 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 3,919/3,919(4m15s) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 수검(물리 이중키 조회 16 · 마스터 플래그 1 = false) ·
+  [7] 아티팩트 38 SHA-256 · genesis v2 manifest.sig · 봉인 일치 · [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) ·
+  강화 키 6(호스트 8) · 감사 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0 — --require-pump-jitter · --require-cancel-arming) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · 감사 원장 ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 ⑥) · handshake Ok @21da2f5bd6.
+- 산출물(release/): release-v12.18.15-GM.zip SHA-256 `504DCB3E1C6208CA92EB4CC4E29A264B6FCE6765389A62583FDBF0315FEDD50E` ·
+  masterSeal `E71C6AEE062CA2EE53215120566E3963ADA0952A1B0F0755C67B2B3EA6612C1C` · sourceCommit 21da2f5 · 피어 기록 없음.
+- v12.18.14-GM 산출물 13건(zip 85E39CE8… · masterSeal 53951F6A…) → release/superseded-v12.18.14-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file master-seal.txt) exit 0 · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) exit 0 · 위반 0.
