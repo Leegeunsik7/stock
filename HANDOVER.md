@@ -2224,3 +2224,32 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.16-GM 산출물 13건(zip 451640EA… · masterSeal 6027D7A8…) → release/superseded-v12.18.16-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) · --verify-interlocks(30) ·
   --verify-tighten(6 · IPC 패브릭) 전부 exit 0.
+
+## 83. v12.18.19-DEV — 멀티 브로커 아비트라지 · 합성 스프레드 레이더 (2026-10-18)
+
+### 83.1 전제 교정
+- 30대 인터락 정의 불변 → 신규 비트 없음. 괴리 래치는 비트 22(OpenOrderDivergence) '2차 입력'(비트 28 KisTimeSkewGuard 선례와 같은 방식 ·
+  `BrokerOpenOrderReconciler.AttachQuoteGuard` · 대사기 ArmingBlocked OR · 교체 금지 · 판독 예외 = 차단). 대사기 자체 판정 · 비상 취소 경로는 건드리지 않음.
+- '가상 아레나 원장에 모의 체결' → 레이더 자체 가상 기록(건수 · 수량 · 가격차 합)으로 한정. 아레나 원장은 휴먼/AI 대결 회계라 섞지 않음.
+- 두 증권사는 같은 KRX 호가창을 중계 → 역전/괴리는 대개 한 피드의 노후 · 모의 차익 = 관측 지표(실현 손익 아님 · UI 명시).
+- KIS 미구성 = '대조 대기 · 미수신' 정직 렌더(가짜 호가 0). 'MMF L2' = 기존 브리지 `OrderBookReceived`(키움 프록시) 재사용.
+
+### 83.2 구성
+- `StockManager/Engines/Arbitrage/SyntheticSpreadRadar.cs`: 종목 슬롯 64(CAS 선점) · 두 피드 작성자 seqlock(CAS 짝→홀) · 판독 잠금 0.
+  단위 cbp(0.01bp) — 합성 = |Mid키움 − MidKIS| / 평균 Mid · 교차 = (높은 매수 − 낮은 매도) / 평균 Mid(양수 = 역전) · 10호가 잔량 비대칭(피드별 · 괴리).
+  대조 조건 = 두 피드 수신 시각 차 ≤ 1초(초과 = 생략 + 괴리 타이머 리셋) · venue 별 전문 시각 역전 = 폐기(최신 보존) · 무효 호가 폐기.
+  래치 = 합성 ≥ 30bp 가 500ms 연속 → sticky → 비트 22 Resync. 해제 = TryRearm(물리 이중키) · epoch 증가로 전 슬롯 타이머 재시작.
+  역전 상승 에지 = 모의 차익 1건(수량 = 두 최우선 잔량 최소 · 상한 100) · 래치 중 = 기록 거부. 상태 우선순위 = 래치 > 괴리 > 역전.
+- 포트 `MS2E.UI.Portable/Ports/Trading/ArbitrageRadarPort.cs`(IArbitrageRadarPort · ArbRadar · ArbitrageRadarStatus) — 판독 + 표시 종목 선택만.
+- 허브: `AttachArbitrage` · 펌프 회차마다 Sample(스파크 128 링) + Status 사본 → 프레임 ArbState/ArbSpreadCbp/ArbCrossCbp/ArbOpportunities/ArbTrips.
+- 호스트(BlazorHomeForm): 브리지 OrderBookReceived → venue 0 · KIS onBook → venue 1 · BindDivergenceInterlock(openOrderRecon) · DI 싱글턴 + 포트.
+- UI: `ArbitrageRadarView.razor`(듀얼 10호가 래더 · 불일치 셀 강조 · 합성 스프레드 게이지 · 교차 · 비대칭 · 모의 차익 카드 · SVG 스파크라인 · 래치 배너 ·
+  종목 고정/자동) · 호스트 shim `/arbitrage`([Inject] 0) · NavMenu "⚡ 아비트라지 레이더".
+
+### 83.3 검증
+- `StockManager.Tests/Engines/Arbitrage/SyntheticSpreadRadarTests.cs` 12건: bp 산출(정상 −14.27 · 괴리 35.62 · 비대칭 50%) · 역전 상승 에지 1회/반대 방향/수량 상한 ·
+  499ms 미격발/500ms 비트 22 Raise · 래치 중 모의 거부 · 한쪽 키 재무장 거부 · 임계 하회 타이머 리셋 · 실 대사기 OR/교체 금지/예외 = 차단(비상 취소 0) ·
+  노후 피드 생략 · 시각 역전 폐기 · 무효 호가 4종 · 테이블 포화 · δ=0 1M 틱(4M 입력 · 대조 3,999,992 · 래치/재무장 · 0B · Gen0 0) · 허브 펌프 200회 0B ·
+  두 작성자 + 판독자 찢김 0 · IL 허용목록(브로커/디스패처/무장 형식 0) · 포트 발주 멤버 0 · 헤드리스(미수신 정직 렌더 · 래치 배너 · 래더 20행 · 발주 버튼 0).
+- 오중 빌드(WebOnly · Default sln = PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,965/3,965(3m44s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 30bp · 500ms · 1초 노후 · 수량 상한은 모델 상수(실측 보정 아님) · 실 키움/KIS 동시 피드 · WebView2 육안 확인 미실시 · 슬롯 64 초과 종목은 계수만.

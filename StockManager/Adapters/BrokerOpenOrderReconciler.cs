@@ -39,7 +39,7 @@ namespace StockManager.Adapters
                                                       int Ghosts, int Unresolved, int CancelsSent, int AdoptMapped,
                                                       int CancelsSuppressed = 0);   // [v12.18.7-DEV] 무장 거짓으로 억제한 비상 취소 대상 행 수
 
-    public sealed class BrokerOpenOrderReconciler : IArmingBlockSource
+    public sealed class BrokerOpenOrderReconciler : IArmingBlockSource, StockManager.Engines.Arbitrage.IQuoteGuardHost
     {
         public const int DefaultCapacity = 1024;
         public const int DefaultMaxCancelsPerPass = 4;          // 키움 주문 TR 초당 5회 미만(패스 간격 ≥ 1초)
@@ -76,6 +76,7 @@ namespace StockManager.Adapters
         private ZeroAllocForensicAuditStream? _forensic;
         private MmfFlightRecorder? _flight;
         private ArmingInterlockLink? _link;
+        private IArmingBlockSource? _quoteGuard;                                 // [v12.18.19-DEV] 비트 22 2차 입력(합성 스프레드 괴리 래치)
 
         public BrokerOpenOrderReconciler(OrderExecutionFeedAdapter exec, IOpenOrderVenue? kiwoomVenue = null, Action? markReconciled = null,
                                          bool requireKiwoom = true, bool requireKis = false, int capacity = DefaultCapacity,
@@ -102,7 +103,31 @@ namespace StockManager.Adapters
         public bool GhostDetected => Volatile.Read(ref _ghost) == 1;
         public bool DivergenceDetected => Volatile.Read(ref _divergence) == 1;
         public bool InitialReconciled => (Volatile.Read(ref _confirmedMask) & _requireMask) == _requireMask;
-        public bool ArmingBlocked => GhostDetected || DivergenceDetected || !InitialReconciled;
+        public bool ArmingBlocked => GhostDetected || DivergenceDetected || !InitialReconciled || QuoteBlocked;
+
+        /// <summary>[v12.18.19-DEV] 2차 입력(멀티 브로커 호가 괴리) 차단 여부 — 미결선 = false · 판독 예외 = true(fail-closed).</summary>
+        public bool QuoteBlocked
+        {
+            get
+            {
+                var g = Volatile.Read(ref _quoteGuard);
+                if (g is null) return false;
+                try { return g.ArmingBlocked; }
+                catch { return true; }
+            }
+        }
+
+        /// <summary>[v12.18.19-DEV] 2차 차단 입력 결선(콜드 1회 · 교체 금지). 2차 입력은 상태 전이 직후 Resync() 를 호출한다.</summary>
+        public void AttachQuoteGuard(IArmingBlockSource guard)
+        {
+            ArgumentNullException.ThrowIfNull(guard);
+            if (Interlocked.CompareExchange(ref _quoteGuard, guard, null) is not null)
+                throw new InvalidOperationException("비트 22 2차 입력 이미 결선됨 — 교체 금지(fail-closed)");
+            Volatile.Read(ref _link)?.Resync();
+        }
+
+        /// <summary>현재 차단 술어를 비트 22 에 반영(δ=0 · 미결속 = 무동작).</summary>
+        public void Resync() => Volatile.Read(ref _link)?.Resync();
         public bool QueryPending { get { lock (_gate) return _pending; } }
         public long Passes => Interlocked.Read(ref _passes);
         public long ConfirmedPasses => Interlocked.Read(ref _confirmed);

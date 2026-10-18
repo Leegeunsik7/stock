@@ -201,6 +201,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         public int KisFeedState = DashKisFeed.Unbound, KisFeedTripReason;
         public long KisLagLowerMs, KisLagUpperMs, KisLagMaxMs, KisFeedViolations, KisFeedTrips;
 
+        // [v12.18.19-DEV] 아비트라지 레이더 — 상태(ArbRadar) · 포커스 합성/교차 스프레드(cbp) · 모의 차익 · 괴리 래치 누계.
+        public int ArbState = ArbRadar.Unbound;
+        public long ArbSpreadCbp, ArbCrossCbp, ArbOpportunities, ArbTrips;
+
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();
 

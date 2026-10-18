@@ -1663,6 +1663,15 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaTapePort>(arenaTape);
             FormClosed += (_, _) => ShutdownTrace.Step("arenaTape", arenaTape.Dispose);
             dashHub.AttachArena(arena);
+            // [v12.18.19-DEV] 멀티 브로커 합성 스프레드 레이더 — 키움 L2(브리지) ↔ KIS H0STASP0 같은 종목 10호가 대조(δ=0 · 다중 작성자 seqlock).
+            //   합성 스프레드 ≥ 30bp 500ms 지속 = 래치 → 비트 22 2차 입력(대사기 AttachQuoteGuard · 비트 재결속 0 · 정의 불변). 모의 차익 = 레이더 가상 기록 전용.
+            //   브로커 · 무장 경로 참조 0(실주문 송출 0). KIS 미구성 = 대조 대기(정직 렌더 · 가짜 호가 0). /arbitrage = 값 판독 전용.
+            var arbRadar = new StockManager.Engines.Arbitrage.SyntheticSpreadRadar();
+            arbRadar.BindDivergenceInterlock(openOrderRecon);
+            bridge.OrderBookReceived += b => arbRadar.OnBook(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom, in b);
+            dashHub.AttachArbitrage(arbRadar);
+            services.AddSingleton(arbRadar);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArbitrageRadarPort>(arbRadar);
             // [v12.18.16-DEV] KIS 시세 전문 시각 편차 감시 — 비트 28(OrderPathLatency) 2차 입력(비트 재결속 0 · 정의 불변) · 지연 하한 > 50ms/역전/시계 편차 = 래치.
             //   KIS 미구성 = 관측 0(미수신 뱃지 · 차단 0). /aidash · /arena 뱃지 = 값 판독 전용.
             var kisSkew = new StockManager.Adapters.Kis.KisTimeSkewGuard();
@@ -1732,6 +1741,7 @@ namespace StockManager.Blazor
                         Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis);   // [교차 피드]
                         arena.OnQuote(in b);                                                                  // [v12.18.16-DEV] 아레나 듀얼 북(MPSC 링)
                         arenaTape.OnBook(in b);                                                               //   정규장 녹화(.tape 176B · 슬롯 claim)
+                        arbRadar.OnBook(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKis, in b);              // [v12.18.19-DEV] 합성 스프레드 대조
                     },
                     blackbox: blackbox,                                                                       // [KIS 호가] 이탈 틱 포렌식
                     skewGuard: kisSkew,                                                                       // [v12.18.16-DEV] 전문 시각 편차 → 비트 28

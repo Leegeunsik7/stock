@@ -1,0 +1,178 @@
+@* [v12.18.19-DEV] ⚡ 아비트라지 레이더 — 순수 RCL(엔진 참조 0 · @page 는 호스트 shim Arbitrage.razor 가 소유).
+   IArbitrageRadarPort 만 소비: 상태 = 값 구조체 사본 · 듀얼 래더 = CopyDepth(고정 버퍼 · seqlock 사본) · 스파크라인 = CopySpark(허브 50ms 표본).
+   ★Fail-Closed: 이 화면에서 브로커 · 무장 · 실주문 경로에 닿을 수단이 없다(포트 계약에 부재). 괴리 래치 해제 = 호스트 물리 이중키뿐.
+   ★정직: 두 증권사는 같은 KRX 호가창을 중계한다 — 역전/괴리는 대개 한 피드의 노후 · '모의 차익'은 가상 기록(실현 손익 아님).
+   한 피드라도 미수신이면 '미수신' 으로 렌더(가짜 호가 0). 렌더 = 250ms 폴링(표본/대조 변경 시에만 InvokeAsync) — 문자열 생성은 렌더 시점에만. *@
+@implements IDisposable
+@inject IArbitrageRadarPort Radar
+
+<div class="top">
+    <div class="hello">
+        <h1>⚡ 아비트라지 레이더</h1>
+        <div class="sub">키움 L2 ↔ KIS 실시간 10호가 대조 · 합성 스프레드 · 교차 역전 · 잔량 비대칭 괴리 (판독 전용 · 실주문 경로 없음)</div>
+    </div>
+</div>
+
+<div class="ab-ctl">
+    <span class="ab-state @ArbRadar.Css(_st.State)">@ArbRadar.Label(_st.State)</span>
+    <span class="ab-sub">종목 @(_st.FocusSymbol > 0 ? _st.FocusSymbol.ToString("D6") : "-") @(_pinned ? "(고정)" : "(자동)")</span>
+    <input class="ab-sym" type="number" min="0" placeholder="종목코드" @bind="_symbolInput" />
+    <button class="ab-btn" @onclick="Pin">고정</button>
+    <button class="ab-btn" @onclick="Auto">자동</button>
+    <span class="ab-sub">괴리 임계 @ArbRadar.Bp(_st.ThresholdCbp) · 500ms 지속 = 래치</span>
+</div>
+
+@if (_st.State == ArbRadar.Latched)
+{
+    <div class="ab-latch">
+        괴리 래치 — 종목 @(_st.LatchSymbol.ToString("D6")) 합성 스프레드 @ArbRadar.Bp(_st.LatchSpreadCbp) 지속 · 비트 22 무장 차단(물리 이중키 재무장 필요)
+    </div>
+}
+
+<div class="ab-grid">
+    <div class="ab-card">
+        <div class="ab-k">합성 스프레드 |Mid키움 − MidKIS|</div>
+        <div class="ab-v @(_st.SpreadCbp >= _st.ThresholdCbp ? "warn" : "")">@ArbRadar.Bp(_st.SpreadCbp)</div>
+        <div class="ab-gauge"><i style="width:@(GaugePct(_st.SpreadCbp, _st.ThresholdCbp))%"></i></div>
+    </div>
+    <div class="ab-card">
+        <div class="ab-k">교차 스프레드(높은 매수 − 낮은 매도)</div>
+        <div class="ab-v @(_st.CrossCbp > 0 ? "opp" : "")">@ArbRadar.Bp(_st.CrossCbp)</div>
+        <div class="ab-sub">음수 = 정상 · 0 = 잠김 · 양수 = 역전</div>
+    </div>
+    <div class="ab-card">
+        <div class="ab-k">10호가 잔량 비대칭</div>
+        <div class="ab-v">키움 @ArbRadar.Bp(_st.ImbalanceKiwoomCbp) · KIS @ArbRadar.Bp(_st.ImbalanceKisCbp)</div>
+        <div class="ab-sub">괴리 @ArbRadar.Bp(_st.ImbalanceDivergenceCbp)</div>
+    </div>
+    <div class="ab-card ab-opp-card @(_st.State == ArbRadar.Inverted ? "on" : "")">
+        <div class="ab-k">차익 기회(모의 · 가상 기록)</div>
+        <div class="ab-v">@(_st.Opportunities.ToString("N0"))건</div>
+        <div class="ab-sub">모의 수량 @(_st.PaperQty.ToString("N0"))주 · 총 가격차 @(_st.PaperGrossWon.ToString("N0"))원 · 래치 중 거부 @(_st.PaperRefusedLatched.ToString("N0"))</div>
+    </div>
+</div>
+
+<div class="ab-spark-wrap">
+    <div class="ab-k">합성 스프레드 추이(50ms 표본 · 최근 @(_sparkN)개)</div>
+    <svg class="ab-spark" viewBox="0 0 @(ArbRadar.SparkLength) 40" preserveAspectRatio="none">
+        <line x1="0" x2="@(ArbRadar.SparkLength)" y1="@(SparkY(_st.ThresholdCbp))" y2="@(SparkY(_st.ThresholdCbp))" class="thr" />
+        <polyline points="@SparkPoints()" />
+    </svg>
+</div>
+
+<table class="ab-ladder">
+    <thead>
+        <tr><th>키움 잔량</th><th>키움 호가</th><th></th><th>KIS 호가</th><th>KIS 잔량</th></tr>
+    </thead>
+    <tbody>
+        @for (int i = 9; i >= 0; i--)
+        {
+            int n = i;
+            <tr class="ask">
+                <td>@Qty(_hasK, _kAq[n])</td><td class="px @(Diff(_kAp[n], _sAp[n]))">@Px(_hasK, _kAp[n])</td>
+                <td class="lv">매도 @(n + 1)</td>
+                <td class="px @(Diff(_sAp[n], _kAp[n]))">@Px(_hasS, _sAp[n])</td><td>@Qty(_hasS, _sAq[n])</td>
+            </tr>
+        }
+        @for (int i = 0; i < 10; i++)
+        {
+            int n = i;
+            <tr class="bid">
+                <td>@Qty(_hasK, _kBq[n])</td><td class="px @(Diff(_kBp[n], _sBp[n]))">@Px(_hasK, _kBp[n])</td>
+                <td class="lv">매수 @(n + 1)</td>
+                <td class="px @(Diff(_sBp[n], _kBp[n]))">@Px(_hasS, _sBp[n])</td><td>@Qty(_hasS, _sBq[n])</td>
+            </tr>
+        }
+    </tbody>
+</table>
+<div class="ab-sub">
+    @(_hasK ? "" : "키움 호가 미수신 · ")@(_hasS ? "" : "KIS 호가 미수신 · ")대조 @(_st.Comparisons.ToString("N0")) · 노후 생략 @(_st.StaleSkips.ToString("N0")) ·
+    시각 역전 폐기 @(_st.TimestampInversions.ToString("N0")) · 무효 호가 @(_st.InvalidBooks.ToString("N0")) · 래치 누계 @(_st.Trips.ToString("N0"))
+</div>
+
+<style>
+    .ab-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
+    .ab-sym { width: 110px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    .ab-btn { border: 0; border-radius: 6px; padding: 5px 12px; font-weight: 600; cursor: pointer; color: #fff; background: #3a3f4b; }
+    .ab-state { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
+    .ab-state.ok { background: #2e7d32; color: #fff; } .ab-state.warn { background: #f9a825; color: #111; }
+    .ab-state.opp { background: #6a1b9a; color: #fff; } .ab-state.bad { background: #b71c1c; color: #fff; } .ab-state.wait { background: #455a64; color: #fff; }
+    .ab-sub { color: var(--sub); font-size: 11.5px; }
+    .ab-latch { background: #3b0d0d; border: 1px solid #b71c1c; color: #ffcdd2; border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-weight: 600; }
+    .ab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 10px; }
+    .ab-card { background: #12161f; border: 1px solid #1d2230; border-radius: 8px; padding: 10px 12px; }
+    .ab-card.on { border-color: #ab47bc; box-shadow: 0 0 0 1px #ab47bc inset; }
+    .ab-k { color: var(--sub); font-size: 11px; margin-bottom: 4px; }
+    .ab-v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; } .ab-v.warn { color: #f9a825; } .ab-v.opp { color: #ce93d8; }
+    .ab-gauge { height: 6px; background: #1d2230; border-radius: 3px; margin-top: 6px; overflow: hidden; } .ab-gauge i { display: block; height: 100%; background: #f9a825; }
+    .ab-spark-wrap { margin-bottom: 10px; } .ab-spark { width: 100%; max-width: 560px; height: 60px; background: #0f1219; border-radius: 6px; }
+    .ab-spark polyline { fill: none; stroke: #ffb300; stroke-width: .8; } .ab-spark line.thr { stroke: #b71c1c; stroke-width: .4; stroke-dasharray: 2 2; }
+    .ab-ladder { width: 100%; max-width: 560px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; margin-bottom: 6px; }
+    .ab-ladder th { color: var(--sub); font-weight: 400; font-size: 11px; } .ab-ladder td { padding: 1px 4px; border-bottom: 1px solid #1d2230; text-align: center; }
+    .ab-ladder td.lv { color: var(--sub); font-size: 11px; } .ab-ladder td.px { font-weight: 700; }
+    .ab-ladder tr.ask td.px { color: #1E88E5; } .ab-ladder tr.bid td.px { color: #E53935; } .ab-ladder td.px.diff { background: #3a2a00; }
+</style>
+
+@code {
+    private readonly long[] _kBp = new long[10], _kBq = new long[10], _kAp = new long[10], _kAq = new long[10];
+    private readonly long[] _sBp = new long[10], _sBq = new long[10], _sAp = new long[10], _sAq = new long[10];
+    private readonly int[] _spark = new int[ArbRadar.SparkLength];
+    private ArbitrageRadarStatus _st;
+    private bool _hasK, _hasS, _pinned;
+    private int _sparkN;
+    private long _symbolInput, _seenSamples = -1, _seenComparisons = -1;
+    private System.Threading.Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _timer = new System.Threading.Timer(_ =>
+        {
+            var s = Radar.Status;
+            if (s.Samples == _seenSamples && s.Comparisons == _seenComparisons) return;
+            _seenSamples = s.Samples; _seenComparisons = s.Comparisons;
+            try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { }
+        }, null, 250, 250);
+    }
+
+    protected override void OnParametersSet() => Refresh();
+    protected override bool ShouldRender() { Refresh(); return true; }
+
+    private void Refresh()
+    {
+        _st = Radar.Status;
+        _hasK = Radar.CopyDepth(ArbRadar.VenueKiwoom, _kBp, _kBq, _kAp, _kAq);
+        _hasS = Radar.CopyDepth(ArbRadar.VenueKis, _sBp, _sBq, _sAp, _sAq);
+        _sparkN = Radar.CopySpark(_spark);
+    }
+
+    private void Pin() { if (_symbolInput > 0) { Radar.SetFocus(_symbolInput); _pinned = true; } }
+    private void Auto() { Radar.SetFocus(0); _pinned = false; }
+
+    private static string Px(bool has, long px) => !has ? "미수신" : px > 0 ? px.ToString("N0") : "-";
+    private static string Qty(bool has, long q) => has ? q.ToString("N0") : "";
+    private string Diff(long mine, long other) => _hasK && _hasS && mine > 0 && other > 0 && mine != other ? "diff" : "";
+    private static int GaugePct(long cbp, long thr) => thr <= 0 ? 0 : (int)Math.Clamp(cbp * 100 / (thr * 2), 0, 100);
+
+    private long SparkMax()
+    {
+        long m = Math.Max(1, _st.ThresholdCbp * 2);
+        for (int i = 0; i < _sparkN; i++) if (_spark[i] > m) m = _spark[i];
+        return m;
+    }
+
+    private string SparkY(long cbp) => (40 - Math.Clamp(cbp, 0, SparkMax()) * 40.0 / SparkMax()).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string SparkPoints()
+    {
+        var sb = new System.Text.StringBuilder();
+        int off = ArbRadar.SparkLength - _sparkN;
+        for (int i = 0; i < _sparkN; i++)
+        {
+            if (_spark[i] < 0) continue;                                       // 대조 전 표본 = 생략
+            sb.Append((off + i).ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(',').Append(SparkY(_spark[i])).Append(' ');
+        }
+        return sb.ToString();
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}
