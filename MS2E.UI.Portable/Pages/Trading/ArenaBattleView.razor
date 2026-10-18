@@ -8,7 +8,9 @@
    스코어보드 = 지연 대기 · 작동 주문 · 내 앞 잔량(대기열 순번) · 예약 현금. 디렉터리 목록은 버튼 클릭 시에만 조회(렌더 경로 I/O 0).
    [v12.18.14-DEV] 프로 콘솔: 포커스 가능 영역(tabindex) @onkeydown — JS interop 0 · ArenaHotkeys(code 기준 · IME 무관 · 자동 반복 발주 무시) →
    IArenaPort 휴먼 큐. DOM 래더 = 포커스 종목 10호가 잔량 바 + 가격 셀 클릭 지정가 + 내 주문/앞 잔량 뱃지(TryReadDepth seqlock 사본) ·
-   경기 종료 시 복기 카드(MAE · MFE · 보유 시간 · 슬리피지 드래그 · 틸트). *@
+   경기 종료 시 복기 카드(MAE · MFE · 보유 시간 · 슬리피지 드래그 · 틸트).
+   [v12.18.15-DEV] AI 페르소나 탭(시그널 엔진 · 스캘퍼 ⚡ · 추세추종 📈 · 평균회귀 🔄 → IArenaPort.SetPersona · 현재 모드 원장) +
+   설명 가능 AI HUD(ArenaSnapshot.AiHud — VWAP · 이격률 게이지 · σ · 10호가 잔량 불균형 게이지 · 목표/손절가 · 마지막 판단과 사유). *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
@@ -134,6 +136,7 @@ else
             <span class="ar-sub">· 호가 미수신 — 체결 불가(가짜 시세 생성 0)</span>
         }
     </div>
+    @PersonaCard(s.AiHud)
     <div class="ar-grid">
         @Board(ArenaSide.Ai, "🤖 AI", s.Ai, s.CapitalWon)
         @Board(ArenaSide.Human, "🧑 휴먼", s.Human, s.CapitalWon)
@@ -353,6 +356,54 @@ else
 
     private static string Tone(long v) => v > 0 ? "ar-up" : v < 0 ? "ar-down" : "";
 
+    // ── [v12.18.15-DEV] AI 페르소나 · 설명 가능 HUD ──
+    private void SelectPersona(int persona)
+        => _msg = Arena.SetPersona(persona) ? ArenaPersona.Label(persona) + " 선택 → 다음 정산 회차 반영(진행 중이면 AI 포지션 전량 청산 후 교체)" : "페르소나 값 오류";
+
+    private static string Gauge(long bp, long span)
+        => (Math.Clamp((bp + span) * 50.0 / span, 0, 100)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string BpText(long bp) => (bp >= 0 ? "+" : "") + (bp / 100.0).ToString("0.00") + "%";
+
+    private RenderFragment PersonaCard(ArenaAiHud h) => __builder =>
+    {
+        <div class="ar-card ar-persona">
+            <div class="ar-mode" role="tablist">
+                @for (int i = ArenaPersona.Signal; i < ArenaPersona.Count; i++)
+                {
+                    int p = i;
+                    <button class="ar-tab @(h.Persona == p ? "on" : "")" role="tab" title="@ArenaPersona.Thesis(p)" @onclick="() => SelectPersona(p)">@ArenaPersona.Label(p)</button>
+                }
+            </div>
+            <p class="ar-sub">🤖 @ArenaPersona.Label(h.Persona) — @ArenaPersona.Thesis(h.Persona)@(h.Switches > 0 ? " · 이번 매치 교체 " + h.Switches + "회" : "")</p>
+            @if (h.Persona != ArenaPersona.Signal)
+            {
+                <div class="ar-hud">
+                    <div>
+                        <span class="ar-sub">대상 @(h.TargetSymbol > 0 ? h.TargetSymbol.ToString("D6") : "-") · 판단</span>
+                        <b class="ar-act a@(h.Action)">@ArenaAiAction.Label(h.Action)</b>
+                        <span>@ArenaAiReason.Label(h.Reason)</span>
+                    </div>
+                    <div class="ar-gauge" title="VWAP 이격률(±3% 눈금 · 중앙 = VWAP · ±1.5% 밴드 표시)">
+                        <span class="ar-sub">VWAP 이격</span>
+                        <div class="bar dev"><em style="left:25%"></em><em style="left:75%"></em><i style="left:@Gauge(h.VwapDevBp, 300)%"></i></div>
+                        <b class="@Tone(h.VwapDevBp)">@(h.VwapWon > 0 ? BpText(h.VwapDevBp) : "-")</b>
+                    </div>
+                    <div class="ar-gauge" title="10호가 매수 총잔량 비율(중앙 = 50% · 65% / 35% 임계 표시)">
+                        <span class="ar-sub">매수 잔량</span>
+                        <div class="bar imb"><em style="left:35%"></em><em style="left:65%"></em><i style="left:@((h.ImbalanceBp / 100.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%"></i></div>
+                        <b class="@Tone(h.ImbalanceBp - 5000)">@((h.ImbalanceBp / 100.0).ToString("0.0"))%</b>
+                    </div>
+                    <table class="ar-tbl">
+                        <tr><td>VWAP</td><td>@(h.VwapWon > 0 ? h.VwapWon.ToString("N0") + "원" : "체결 대기")</td><td>σ(VWAP 기준)</td><td>@(h.SigmaWon.ToString("N0"))원 · @(h.VwapTrades.ToString("N0"))체결</td></tr>
+                        <tr><td>목표가</td><td class="ar-up">@(h.TargetPx > 0 ? h.TargetPx.ToString("N0") + "원" : "-")</td><td>손절/스탑</td><td class="ar-down">@(h.StopPx > 0 ? h.StopPx.ToString("N0") + "원" : "-")</td></tr>
+                        <tr><td>스프레드</td><td>@(h.SpreadWon.ToString("N0"))원</td><td>페르소나 발주</td><td>@(h.Decisions.ToString("N0"))건(가상 원장 전용)</td></tr>
+                    </table>
+                </div>
+            }
+        </div>
+    };
+
     private string SparkPoints(int side)
     {
         long ver = Arena.Version;
@@ -434,5 +485,12 @@ else
     .ar-ladder tr.ask td.q i { right: 0; background: #1E88E5; } .ar-ladder tr.bid td.q i { left: 0; background: #E53935; }
     .ar-ladder td.q span { position: relative; }
     .ar-my { background: #f9a825; color: #111; border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 700; }
+    .ar-persona { margin-bottom: 10px; } .ar-persona .ar-mode { margin: 0 0 6px; }
+    .ar-hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 14px; align-items: center; font-size: 12px; }
+    .ar-act { padding: 1px 8px; border-radius: 6px; background: #3a3f4b; margin: 0 4px; } .ar-act.a1 { background: #E53935; color: #fff; } .ar-act.a2 { background: #1E88E5; color: #fff; }
+    .ar-gauge { display: flex; align-items: center; gap: 6px; } .ar-gauge .bar { position: relative; flex: 1; height: 8px; border-radius: 4px; background: #2a3040; }
+    .ar-gauge .bar.dev { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); } .ar-gauge .bar.imb { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); }
+    .ar-gauge .bar i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; background: #fff; border-radius: 2px; }
+    .ar-gauge .bar em { position: absolute; top: 0; bottom: 0; width: 1px; background: #f9a825; }
     .ar-debrief { margin-top: 10px; border: 1px solid #4dd0e1; } .ar-debrief h4 { font-size: 12.5px; margin: 0 0 6px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 </style>

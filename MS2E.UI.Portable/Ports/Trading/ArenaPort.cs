@@ -75,13 +75,16 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly int State, Leader, QuoteSymbols;
         public readonly long LeadWon;
         public readonly ArenaSideStats Ai, Human;
+        /// <summary>[v12.18.15-DEV] AI 페르소나 의사결정 HUD(같은 seqlock 창에서 게시).</summary>
+        public readonly ArenaAiHud AiHud;
 
         public ArenaSnapshot(long version, int state, long capitalWon, long startedTicks, long updatedTicks, long quotesSeen, long quotesLost,
-                             int quoteSymbols, long ordersLost, long aiSignals, int leader, long leadWon, in ArenaSideStats ai, in ArenaSideStats human)
+                             int quoteSymbols, long ordersLost, long aiSignals, int leader, long leadWon, in ArenaSideStats ai, in ArenaSideStats human,
+                             in ArenaAiHud aiHud = default)
         {
             Version = version; State = state; CapitalWon = capitalWon; StartedTicks = startedTicks; UpdatedTicks = updatedTicks;
             QuotesSeen = quotesSeen; QuotesLost = quotesLost; QuoteSymbols = quoteSymbols; OrdersLost = ordersLost; AiSignals = aiSignals;
-            Leader = leader; LeadWon = leadWon; Ai = ai; Human = human;
+            Leader = leader; LeadWon = leadWon; Ai = ai; Human = human; AiHud = aiHud;
         }
 
         public ArenaSideStats Side(int side) => side == ArenaSide.Human ? Human : Ai;
@@ -115,5 +118,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         bool TryReadDepth(out ArenaDepth depth);
         /// <summary>[v12.18.14-DEV] 진영 사후 복기 사본(seqlock · 할당 0).</summary>
         bool TryReadDebrief(int side, out ArenaDebrief debrief);
+        /// <summary>[v12.18.15-DEV] AI 페르소나 교체(ArenaPersona · 다음 정산 회차 반영 — 진행 중이면 AI 원장 비상 전량 청산 후 교체). 범위 밖 = false.</summary>
+        bool SetPersona(int persona);
     }
 }

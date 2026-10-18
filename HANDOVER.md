@@ -2067,3 +2067,38 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   masterSeal `53951F6A83D936BD13D17CBBF0A095C2EFEEBB5B28BD643A370E70B8D5CD2F6A` · sourceCommit 356f90f · 피어 기록 없음.
 - v12.18.10-GM 산출물 13건(zip 52D30390… · masterSeal BDA2178B…) → release/superseded-v12.18.10-GM/. worktree 제거.
 - 메인 체크아웃 재수검: WebOnly + sln Release -warnaserror 0W/0E · CLI --verify-live-armed(출하 zip · ⑫ ⑬ 강제) exit 0 · --verify-zip(master-seal) exit 0 · 전체 스위트 3,901/3,901.
+
+## 76. v12.18.15-DEV — Arena Multi-AI Strategy Personas · Real-Time VWAP Accumulator (2026-10-18)
+
+### 76.1 전제 교정
+- 지시서의 `OrderBookSnapshot10` · `TradeSide` · `ArenaMarketState` · `StrategySignal` 은 코드에 없던 타입 — 10호가는 기존 `OrderBookPayload`(InlineArray · 336B)를 그대로 쓰고
+  나머지 3종은 `StockManager.Engines.Arena.Strategy` 에 신설.
+- DualBookSimulator 는 공매도 불가 → 3종 모두 매수 진입 · 보유 전량 매도 청산만. 스캘퍼 '≤ 35%' = 즉시 청산 트리거 · 평균회귀 '상단 +1.5%' = 진입 0(HUD '공매도 불가로 관측만').
+- 탭은 4개(기존 '시그널 엔진' 기본 + 스캘퍼 ⚡ · 추세추종 📈 · 평균회귀 🔄) — 기존 QuantSignalProvider 결정 분기 · 허브 결선 · 기존 테스트 계약 보존.
+
+### 76.2 구성
+- `ArenaVwapTracker`: Σ(P×V) · ΣV = Int128(1M × 1억 원 × 100만 주 오버플로 0) · VWAP 반올림 · 체결량 가중 Welford σ · 이격률 bp · 밴드 VWAP ± kσ ·
+  Pause/Resume(입력 무시) · Reset · Capture/Restore(`ArenaVwapState` 체크포인트). 단일 작성자 · 게시는 거버너 seqlock.
+- `IArenaStrategy`(OnQuote · OnTrade · Evaluate · Reset) · `ArenaMarketState`(대상 종목 호가 · VWAP · 이격 · σ · AI 보유/원가 · Busy) · `StrategySignal`(관망/진입/청산 · 사유 · 목표/손절) · `ArenaBookMath`.
+- 스캘퍼: 불균형 ≥ 65% + 스프레드 ≤ 1틱 → 매수 · 목표 +2틱 · 손절 −2틱 · 불균형 ≤ 35% · 보유 3초 → 청산.
+- 추세: EMA(8)/EMA(34) 체결가 · 예열 34체결 · 정배열 + 체결가 > EMA(8) + 폭증(직전 체결 대비 ≥ 200% · 평균 이상 · 매도 주도 제외 · 래치 1회 소비) → 매수 ·
+  R = max(3틱, 0.4%) · 목표 2.5R · 트레일링 스탑 max(진입 − R, 고점 − R) · 역배열 청산.
+- 평균회귀: VWAP 예열 20체결 · 이격 ≤ −1.5% + 매수 3단 ≥ 매도 3단 × 200% → 매수 · 매수 1호가 ≥ VWAP 익절 · 이격 ≤ min(진입, −1.5%) − 0.5% 손절.
+- `ArenaMatchGovernor`: 페르소나 4슬롯(독립 인스턴스) · `SetPersona`(IArenaPort · 명령 1워드) → 다음 회차 반영 · 진행 중이면 AI 비상 전량 청산(Flatten) 후 교체 ·
+  교체 전 적재된 시그널 엔진 결정 폐기 · 페르소나 활성 중 OnAiDecision 무시. 대상 종목 = 포커스 우선 · 첫 관측 · 무포지션일 때만 재지정(VWAP/전략 초기화).
+  틱마다 Evaluate → 원장 재확인(무포지션 · 미완료 주문 0)에서만 AI 시장가(자본금 × 10%) 접수. Step(라이브) · Advance/ApplyTrade(리플레이) 공용.
+- 포트: `ArenaPersonaPort.cs`(ArenaPersona · ArenaAiAction · ArenaAiReason · ArenaAiHud) · `ArenaSnapshot.AiHud`(같은 seqlock 창) · `IArenaPort.SetPersona`.
+- UI: 스코어보드 위 페르소나 카드(탭 4 · 논리 요약 · 교체 횟수) + 설명 가능 HUD(판단 · 사유 · VWAP 이격 게이지 ±3% · ±1.5% 눈금 · 매수 잔량 게이지 35/65% 눈금 ·
+  VWAP · σ · 목표/손절 · 스프레드 · 발주 수). 상승 #E53935 / 하강 #1E88E5. 호스트 결선 · 셸 변경 0(래칫 불변).
+
+### 76.3 검증
+- `StockManager.Tests/Engines/Arena/ArenaStrategyPersonasTests.cs` 18건: VWAP 정확값/σ/이격/밴드 · 일시정지/초기화/체크포인트 비트 동일 · Int128 극한 1M ·
+  스캘퍼 65.00% 경계/스프레드 2틱 차단/대기 · 목표·손절·역전·3초 경계 · 추세 예열/정배열 + 폭증/199% 미달/매도 주도/역배열 · 손익비 2.5 · 트레일링 상향 고정 ·
+  평균회귀 −1.49/−1.50% 경계 · 지지벽 · 상단 관측만 · 회귀 익절 · 추가 이탈 손절 · 거버너 결속(스캘퍼 진입 142주 → 역전 청산 · 시그널 엔진 무시 · HUD 투영 ·
+  평균회귀 실현 이익 · 추세 진입) · 교체 = AI 전량 청산 + 미완료 0 + 평가자산 = 현금 + 교체 전 결정 폐기 · 대기 중 교체/재개시 유지 ·
+  리플레이 200k 틱 3종 독립 발주(체결 궤적 상이) · δ=0 + GC 0(VWAP 1M · 재생 1M 틱 체결 → VWAP → 평가 → 디스패치 + 25만 틱마다 교체) ·
+  전략/VWAP IL 허용목록 · 거버너 도달 객체 그래프 브로커/디스패처/키움 타입 0 · bUnit 헤드리스 탭 200 + 회차당 100틱 주입 정산 스레드(버전 전진 · 예외/교착 0).
+- 기존 IL 허용목록(ArenaMatchGovernorTests · ArenaTickReplayEngineTests)에 `StockManager.Engines.Arena.Strategy` 네임스페이스 추가.
+- 결함 수정(전체 스위트가 발견): 거버너가 Strategy 네임스페이스를 참조하자 리플레이 IL/객체 그래프 허용목록 2건 실패 → 허용목록 확장 + IL 순회가 Strategy 형식까지 재귀 검사하도록 교정.
+- 오중 빌드(Default sln · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,919/3,919(3m50s) · infra-scan 0 ≤ 117 · 래칫 ≤40(Phase114 스위트 내 통과).
+- 한계(정직): 페르소나 파라미터는 합성 테이프 기준 정성 설계 — 실 시장 수익성 검증 아님. 대상 종목 1개(다종목 동시 운용 아님). 실 WebView2 육안 확인은 이 세션에서 미수행.

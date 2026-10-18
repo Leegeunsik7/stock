@@ -318,7 +318,7 @@ namespace StockManager.Tests.Simulation
             if (t.FullName == "<PrivateImplementationDetails>") return true;                 // InlineArray 인덱서 컴파일러 도우미
             string ns = t.Namespace ?? "";
             return ns == "System" || ns.StartsWith("System.Threading", StringComparison.Ordinal) || ns.StartsWith("System.Runtime", StringComparison.Ordinal)
-                || ns == "MS2E.UI.Portable.Ports.Trading" || ns == "StockManager.Engines.Arena"
+                || ns == "MS2E.UI.Portable.Ports.Trading" || ns == "StockManager.Engines.Arena" || ns == "StockManager.Engines.Arena.Strategy"
                 || (t.DeclaringType is { } d && ArenaTypes.Contains(d));                     // 컴파일러 생성 중첩(람다 캐시 등)
         }
 

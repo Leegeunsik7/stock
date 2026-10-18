@@ -342,7 +342,7 @@ namespace StockManager.Tests.Engines.Arena
             string ns = Outermost(t).Namespace ?? "";
             return ns == "System" || ns.StartsWith("System.Threading", StringComparison.Ordinal) || ns.StartsWith("System.Runtime", StringComparison.Ordinal)
                 || ns == "System.Diagnostics" || ns == "Microsoft.Win32.SafeHandles" || ns == "System.IO" || ns == "System.IO.MemoryMappedFiles" || ns == "System.Buffers.Binary" || ns == "System.Collections.Generic"
-                || ns == "MS2E.UI.Portable.Ports.Trading" || ns == "StockManager.Engines.Arena";
+                || ns == "MS2E.UI.Portable.Ports.Trading" || ns == "StockManager.Engines.Arena" || ns == "StockManager.Engines.Arena.Strategy";
         }
 
         [Fact]
@@ -367,7 +367,7 @@ namespace StockManager.Tests.Engines.Arena
                         Type? owner = r as Type ?? r.DeclaringType;
                         if (owner is null) continue;
                         if (!Allowed(owner)) violations.Add($"{t.Name}.{m.Name} → {owner.FullName}::{r.Name}");
-                        else if (Outermost(owner).Namespace == "StockManager.Engines.Arena") queue.Enqueue(owner);
+                        else if (Outermost(owner).Namespace is "StockManager.Engines.Arena" or "StockManager.Engines.Arena.Strategy") queue.Enqueue(owner);
                     }
                 }
             }

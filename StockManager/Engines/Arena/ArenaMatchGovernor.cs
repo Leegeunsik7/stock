@@ -9,12 +9,17 @@
 //  ③ 소비자(UI): TryRead / CopyEquity = seqlock 재시도 사본(잠금 · 대기 · 할당 0). 작성자는 독자를 기다리지 않는다.
 //  AI 주문 규칙(가상): 진입 = 미보유 종목만 자본금 × AiLotBp(기본 10%) ÷ 최우선 매도호가 수량 시장가 매수 · 청산 = 보유 전량 시장가 매도.
 //  ★Fail-Closed: 브로커 · 주문 디스패처 · 무장 키 참조 0 — liveArmed 상태와 무관하게 아레나 주문은 가상 원장 밖으로 나갈 경로가 없다.
+//  [v12.18.15-DEV] AI 페르소나(ActivePersona): 0 = 시그널 엔진 결정 분기(기존) · 1 스캘퍼 · 2 추세추종 · 3 평균회귀(IArenaStrategy · 독립 인스턴스).
+//   대상 종목 1개(포커스 우선 · 없으면 첫 수신 종목 · 무포지션일 때만 재지정)의 호가/체결 → 전략 · ArenaVwapTracker → 틱마다 Evaluate →
+//   원장 재확인(무포지션 · 미완료 주문 0) 후 AI 시장가 접수. 교체(SetPersona) = 다음 회차 반영 · 진행 중이면 AI 비상 전량 청산 후 새 전략이 빈 원장에서 시작.
+//   시그널 엔진 외 페르소나 활성 중 OnAiDecision 은 무시(두 두뇌 동시 발주 0). HUD(VWAP · 이격률 · σ · 잔량 불균형 · 목표/손절 · 사유)는 같은 seqlock 창 게시.
 // ============================================================================
 using System;
 using System.Threading;
 using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Blazor.Services;
+using StockManager.Engines.Arena.Strategy;
 
 namespace StockManager.Engines.Arena
 {
@@ -86,6 +91,12 @@ namespace StockManager.Engines.Arena
         private long _focus;
         private ArenaDepth _depth;
         private ArenaDebrief _debriefAi, _debriefHuman;
+        // [v12.18.15-DEV] AI 페르소나(정산 스레드 단일 작성자 · _persona 만 생산자 스레드가 Volatile 판독)
+        private readonly IArenaStrategy?[] _strategies = { null, new ScalperStrategy(), new TrendStrategy(), new MeanReversionStrategy() };
+        private readonly ArenaVwapTracker _vwap = new();
+        private int _persona, _personaCmd = -1, _switches, _imbalanceBp = 5_000;
+        private long _target, _spread, _decisions;
+        private StrategySignal _signal;
 
         /// <param name="nowTicks">시계(UTC ticks · 테스트 주입).</param>
         /// <param name="equitySampleEverySteps">자산곡선 표본 간격(Step 회수 · 기본 20 = 50ms 펌프 기준 1초).</param>
@@ -105,6 +116,11 @@ namespace StockManager.Engines.Arena
         public long TradesSeen => Interlocked.Read(ref _tradesSeen);
         public int State => Volatile.Read(ref _state);
         public long Steps => Interlocked.Read(ref _steps);
+        public int ActivePersona => Volatile.Read(ref _persona);
+        public IArenaStrategy? Strategy(int persona) => ArenaPersona.IsValid(persona) ? _strategies[persona] : null;
+        public ArenaVwapTracker Vwap => _vwap;
+        public long TargetSymbol => _target;
+        public StrategySignal LastSignal => _signal;
 
         // ════════════ ① 생산자(δ=0 · wait-free) ════════════
 
@@ -114,7 +130,7 @@ namespace StockManager.Engines.Arena
         /// <summary>시그널 엔진 결정 분기(DashDecisionKind 진입 1 · 청산 2 만 · 그 외 무시). 매치 진행 중일 때만 적재.</summary>
         public void OnAiDecision(int kind, long symbol)
         {
-            if (symbol <= 0 || Volatile.Read(ref _state) != ArenaState.Running) return;
+            if (symbol <= 0 || Volatile.Read(ref _state) != ArenaState.Running || Volatile.Read(ref _persona) != ArenaPersona.Signal) return;
             if (kind == DashDecisionKind.Entry) _orders.Publish(new ArenaOrder { Symbol = symbol, Dir = 1, Kind = KindAiEntry });
             else if (kind == DashDecisionKind.Exit) _orders.Publish(new ArenaOrder { Symbol = symbol, Dir = -1, Kind = KindAiExit });
         }
@@ -167,6 +183,13 @@ namespace StockManager.Engines.Arena
 
         public void Stop() => Interlocked.Exchange(ref _cmd, CmdStop);
 
+        public bool SetPersona(int persona)
+        {
+            if (!ArenaPersona.IsValid(persona)) return false;
+            Interlocked.Exchange(ref _personaCmd, persona);
+            return true;
+        }
+
         // ════════════ ② 정산(펌프 단일 스레드 · δ=0) ════════════
 
         /// <summary>정산 1회차(허브 50ms 펌프). 단일 스레드 계약 — 동시 호출 금지(허브 펌프는 단일 진입 CAS 로 직렬화).</summary>
@@ -176,10 +199,12 @@ namespace StockManager.Engines.Arena
             long cmd = Interlocked.Exchange(ref _cmd, CmdNone);
             if (cmd == CmdStop && _state == ArenaState.Running) Volatile.Write(ref _state, ArenaState.Finished);
             else if (cmd > 0) Begin(cmd, nowTicks);
+            ApplyPersona(nowTicks);
 
             DrainQuotes();
             _sim.SetClock(nowTicks);
             DrainTrades();
+            RunPersona(nowTicks);
             DrainOrders(nowTicks);
             _sim.Process(nowTicks);
 
@@ -209,8 +234,10 @@ namespace StockManager.Engines.Arena
             long cmd = Interlocked.Exchange(ref _cmd, CmdNone);
             if (cmd == CmdStop && _state == ArenaState.Running) Volatile.Write(ref _state, ArenaState.Finished);
             else if (cmd > 0) Begin(cmd, nowTicks);
+            ApplyPersona(marketTicks);
             DrainOrders(marketTicks);
-            if (hasQuote) { _quotesSeen++; _sim.OnQuote(in quote); }
+            if (hasQuote) { _quotesSeen++; _sim.OnQuote(in quote); FeedQuote(in quote); }
+            RunPersona(marketTicks);
             _sim.Process(marketTicks);
             if (_state != ArenaState.Running) return;
             _eqAi = _sim.MarkToMarket(ArenaSide.Ai, out _unrealAi);
@@ -224,6 +251,7 @@ namespace StockManager.Engines.Arena
             _tradesSeen++;
             if (marketTicks > 0) _sim.SetClock(marketTicks);
             if (_state == ArenaState.Running) _sim.OnTrade(in trade);
+            FeedTrade(in trade);
         }
 
         /// <summary>현재 정산 상태 스냅샷 게시(seqlock · δ=0) + 펌프 생존 표지.</summary>
@@ -273,6 +301,7 @@ namespace StockManager.Engines.Arena
             _eqAi = _eqHuman = capital; _unrealAi = _unrealHuman = 0;
             _aiSignals = 0;
             _tradesSeen = 0;
+            ResetPersonaState();
             _orderCursor = _orders.Head;                                            // 이전 매치 잔여 주문 폐기(재시도 · 이월 0)
             Volatile.Write(ref _seq, _seq + 1);
             Interlocked.MemoryBarrier();
@@ -292,6 +321,7 @@ namespace StockManager.Engines.Arena
                 if (r < 0) { _quotesLost++; continue; }
                 _quotesSeen++;
                 _sim.OnQuote(in b);
+                FeedQuote(in b);
             }
         }
 
@@ -308,6 +338,7 @@ namespace StockManager.Engines.Arena
                 if (t.Qty <= 0) continue;
                 _tradesSeen++;
                 if (_state == ArenaState.Running) _sim.OnTrade(in t);
+                FeedTrade(in t);
             }
         }
 
@@ -344,6 +375,7 @@ namespace StockManager.Engines.Arena
                     _sim.Submit(ArenaSide.Human, 0, 0, 0, ArenaOrderKind.Flatten, 0, nowTicks);
                     break;
                 case KindAiEntry:
+                    if (_persona != ArenaPersona.Signal) break;                         // 교체 전 적재된 시그널 엔진 결정 = 폐기
                     _aiSignals++;
                     if (aiBook.Position(o.Symbol) != 0 || aiBook.HasOpenOrder(o.Symbol)) break;   // 미보유 · 미체결 없는 종목만 진입(물타기 · 지연 중 중복 0)
                     long ask = _sim.BestAsk(o.Symbol);
@@ -351,6 +383,7 @@ namespace StockManager.Engines.Arena
                     _sim.Submit(ArenaSide.Ai, o.Symbol, 1, ask > 0 ? Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty) : 1, ArenaOrderKind.Market, 0, nowTicks);
                     break;
                 case KindAiExit:
+                    if (_persona != ArenaPersona.Signal) break;
                     _aiSignals++;
                     if (aiBook.HasOpenOrder(o.Symbol)) break;
                     long held = aiBook.Sellable(o.Symbol);
@@ -364,6 +397,7 @@ namespace StockManager.Engines.Arena
             var ai = Stats(ArenaSide.Ai, _eqAi, _unrealAi);
             var hu = Stats(ArenaSide.Human, _eqHuman, _unrealHuman);
             int leader = _state == ArenaState.Idle || _eqAi == _eqHuman ? ArenaLeader.Draw : _eqAi > _eqHuman ? ArenaLeader.Ai : ArenaLeader.Human;
+            var hud = Hud();
             long s = _seq;
             Volatile.Write(ref _seq, s + 1);                                         // 작성 중(홀수)
             Interlocked.MemoryBarrier();
@@ -374,12 +408,116 @@ namespace StockManager.Engines.Arena
                 _curveN++;
             }
             _snap = new ArenaSnapshot((s + 2) >> 1, _state, _capital, _startedTicks, nowTicks, _quotesSeen, _quotesLost, _sim.QuoteSymbols,
-                                      _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu);
+                                      _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu, in hud);
             long focus = Volatile.Read(ref _focus);
             if (focus > 0) _sim.FillDepth(focus, ref _depth); else _depth = default;
             _debriefAi = _sim.Book(ArenaSide.Ai).Analytics.Snapshot(_sim.Book(ArenaSide.Ai).SlippageWon);
             _debriefHuman = _sim.Book(ArenaSide.Human).Analytics.Snapshot(_sim.Book(ArenaSide.Human).SlippageWon);
             Volatile.Write(ref _seq, s + 2);                                         // 안정(짝수)
+        }
+
+        // ════════════ [v12.18.15-DEV] AI 페르소나(정산 스레드 · δ=0) ════════════
+
+        // 교체 반영: 진행 중이면 AI 원장 비상 전량 청산(지연 대기 포함 취소 + 보유 전량 시장가 매도) → 새 전략 초기화 · 판단 기억 소거
+        private void ApplyPersona(long nowTicks)
+        {
+            int p = Interlocked.Exchange(ref _personaCmd, -1);
+            if (p < 0 || p == _persona) return;
+            var aiBook = _sim.Book(ArenaSide.Ai);
+            if (_state == ArenaState.Running && (aiBook.PosCount > 0 || aiBook.PendingCount + aiBook.WorkingCount > 0))
+                _sim.Submit(ArenaSide.Ai, 0, 0, 0, ArenaOrderKind.Flatten, 0, nowTicks);
+            _strategies[p]?.Reset();
+            _signal = default;
+            _switches++;
+            Volatile.Write(ref _persona, p);
+        }
+
+        private void ResetPersonaState()
+        {
+            for (int i = 0; i < _strategies.Length; i++) _strategies[i]?.Reset();
+            _vwap.Reset();
+            _target = 0; _spread = 0; _imbalanceBp = 5_000; _decisions = 0; _switches = 0;
+            _signal = default;
+        }
+
+        // 대상 종목 확정(포커스 우선 · 없으면 첫 관측) — 이미 정해졌으면 유지(재지정은 RunPersona 가 무포지션일 때만)
+        private bool IsTarget(long symbol)
+        {
+            if (_target == 0)
+            {
+                long focus = Volatile.Read(ref _focus);
+                _target = focus > 0 ? focus : symbol;
+            }
+            return symbol == _target;
+        }
+
+        private void FeedQuote(in OrderBookPayload b)
+        {
+            if (b.SymbolCode <= 0 || !IsTarget(b.SymbolCode)) return;
+            long ask = b.AskPrice[0], bid = b.BidPrice[0];
+            if (ask > 0 && bid > 0)
+            {
+                _imbalanceBp = ArenaBookMath.ImbalanceBp(in b);
+                _spread = ask - bid;
+            }
+            _strategies[_persona]?.OnQuote(in b);
+        }
+
+        private void FeedTrade(in ArenaTrade t)
+        {
+            if (t.Symbol <= 0 || t.PriceWon <= 0 || t.Qty <= 0 || !IsTarget(t.Symbol)) return;
+            _vwap.OnTrade(t.PriceWon, t.Qty);
+            _strategies[_persona]?.OnTrade(t.PriceWon, t.Qty, (TradeSide)Math.Sign(t.Side));
+        }
+
+        // 판단 1회 → 원장 재확인 후에만 접수(무포지션 진입 · 보유분 청산 · 미완료 주문 존재 시 0건)
+        private void RunPersona(long nowTicks)
+        {
+            if (_state != ArenaState.Running) return;
+            var strat = _strategies[_persona];
+            if (strat is null) return;
+            var aiBook = _sim.Book(ArenaSide.Ai);
+            int pi = _target > 0 ? aiBook.IndexOf(_target) : -1;
+            bool busy = aiBook.PendingCount + aiBook.WorkingCount > 0;
+            long focus = Volatile.Read(ref _focus);
+            if (focus > 0 && focus != _target && pi < 0 && !busy)
+            {
+                _target = focus;                                                    // 포커스 이동 = 무포지션일 때만 재지정(지표 처음부터)
+                _vwap.Reset();
+                strat.Reset();
+                _imbalanceBp = 5_000; _spread = 0;
+                _signal = default;
+                return;
+            }
+            if (_target == 0) return;
+            long bid = _sim.BestBid(_target), ask = _sim.BestAsk(_target);
+            if (bid <= 0 || ask <= 0) return;
+            long qty = pi < 0 ? 0 : aiBook.PosQty[pi], cost = pi < 0 ? 0 : aiBook.PosCost[pi];
+            var st = new ArenaMarketState(_target, nowTicks, bid, ask, _vwap.LastPrice, _vwap.VwapWon, _vwap.DeviationBp((bid + ask) / 2), _vwap.SigmaWon,
+                                          _vwap.Trades, qty, cost, busy);
+            _signal = strat.Evaluate(in st);
+            if (busy) return;
+            if (_signal.Action == ArenaAiAction.Enter && qty == 0)
+            {
+                long budget = (long)((Int128)_capital * _aiLotBp / 10_000);
+                _aiSignals++; _decisions++;
+                _sim.Submit(ArenaSide.Ai, _target, 1, Math.Clamp(budget / ask, 1, DualBookSimulator.MaxOrderQty), ArenaOrderKind.Market, 0, nowTicks);
+            }
+            else if (_signal.Action == ArenaAiAction.Exit)
+            {
+                long held = aiBook.Sellable(_target);
+                if (held <= 0) return;
+                _aiSignals++; _decisions++;
+                _sim.Submit(ArenaSide.Ai, _target, -1, held, ArenaOrderKind.Market, 0, nowTicks);
+            }
+        }
+
+        private ArenaAiHud Hud()
+        {
+            long bid = _target > 0 ? _sim.BestBid(_target) : 0, ask = _target > 0 ? _sim.BestAsk(_target) : 0;
+            long dev = bid > 0 && ask > 0 ? _vwap.DeviationBp((bid + ask) / 2) : 0;
+            return new ArenaAiHud(_persona, _signal.Action, _signal.Reason, _switches, _target, _vwap.VwapWon, dev, _vwap.SigmaWon, _vwap.Trades,
+                                  _imbalanceBp, _spread, _signal.TargetPx, _signal.StopPx, _decisions);
         }
 
         private ArenaSideStats Stats(int side, long equity, long unrealized)
