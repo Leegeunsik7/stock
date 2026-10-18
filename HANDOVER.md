@@ -2253,3 +2253,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   두 작성자 + 판독자 찢김 0 · IL 허용목록(브로커/디스패처/무장 형식 0) · 포트 발주 멤버 0 · 헤드리스(미수신 정직 렌더 · 래치 배너 · 래더 20행 · 발주 버튼 0).
 - 오중 빌드(WebOnly · Default sln = PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,965/3,965(3m44s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 30bp · 500ms · 1초 노후 · 수량 상한은 모델 상수(실측 보정 아님) · 실 키움/KIS 동시 피드 · WebView2 육안 확인 미실시 · 슬롯 64 초과 종목은 계수만.
+
+## 84. v12.18.19-GM — 멀티 브로커 아비트라지 레이더 단독 출하(-NoPeer) (2026-10-19)
+
+### 84.1 버전 · 태그
+- v12.18.19-DEV(§83) = 03d65a2. 12.18.18 → 12.18.19(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말) = 9e9f44a(4파일 · 11/11 줄) ·
+  핀 테스트(GoldenMasterFreeze 버전 핀 + GoldenMasterReleasePackaging 전체) 37/37(Release).
+- 태그 v12.18.19-GM(annotated · -f) = 9e9f44a. QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+- v12.18.17-DEV 테스트 안정화(VirtualTimeProvider 등)는 여전히 타 세션 미커밋 → 태그 트리에 미포함 — 출하 스위트는 그 변경 없이 측정.
+
+### 84.2 출하 실행(형제 worktree StockManager-gm-12.18.19 · 태그 9e9f44a · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E ·
+  [3] 3,965/3,965(3m35s) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 수검 · [7] 아티팩트 38 SHA-256 · manifest.sig · 봉인 일치 ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 감사 원장 ⑪ · 펌프 지터 ⑫ 1 ·
+  유령 취소 무장 ⑬ 1 · 위반 0) · [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock · IPC 패브릭 무대기/무슬립) · handshake Ok @9e9f44a389.
+- 산출물(release/): release-v12.18.19-GM.zip SHA-256 `D8DB82A946B811BC60E25F3C9ABA590AEF78B0206D7912F4F573336275F021A5` ·
+  masterSeal `933BD01B865CB65682BF03D813740AE1399C562826A32C9EF46F7DFEC765199B` · sourceCommit 9e9f44a · 피어 기록 없음.
+- v12.18.18-GM 산출물 13건(zip 3398DCAA… · masterSeal 44059506…) → release/superseded-v12.18.18-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) · --verify-interlocks(30) ·
+  --verify-tighten(6 · IPC 패브릭) 전부 exit 0.
