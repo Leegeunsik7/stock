@@ -2707,3 +2707,17 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 체크아웃 재수검(같은 커밋 4c1c193 Release 빌드 CLI · 메인 release/ 복사본 대상): 두 zip 복사본 SHA-256 = worktree 원본 = .sha256 기록 · --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0 · 배포본 판독기(StandaloneBundleTests 파이프라인 · 봉인 38 대조) 통과.
 - 한계(정직): WebView2 런타임 미포함(Windows 구성요소) · KIS 리얼 와이어 소크 미실행(§99).
+
+## 103. v12.18.29-DEV — WebView2 Evergreen 런타임 사전 비행 가드 · 안전 부트스트랩 (2026-10-20)
+
+- 문제(실측 근거): BlazorWebView 는 WebView2 런타임 미설치 PC에서 생성자 예외 없이 비동기 초기화만 실패 → 빈 화면. Program.cs 의 기존 try/catch 클래식 폴백은 이 경로를 잡지 못함.
+- 신규 StockManager/Blazor/WebView2RuntimeGuard.cs(호스트 · RCL 미접촉): CoreWebView2Environment.GetAvailableBrowserVersionString() 탐침 → Present / MissingOnline / MissingOffline.
+  - 탐침 실패 전부(미설치 예외 · 로더 DLL 부재 · 미분류 예외 · null/빈 버전) = 미설치(fail-safe) · 네트워크 탐침(GetIsNetworkAvailable) 예외 = 오프라인.
+  - MissingOnline: 안내 다이얼로그 [예] = 공식 Evergreen 부트스트래퍼 링크(fwlink 2124703 · build-installer.ps1/.iss 와 동일)를 기본 브라우저로 열어 다운로드 트리거 · [아니오] = 트리거 0 · 트리거 실패 = 수동 안내로 강등(크래시 0).
+  - MissingOffline: 오프라인 안내(공식 주소 · --classic/--headless 대안 표기)만.
+  - 미설치 전 경로 = Blazor 진행 거부 → Environment.ExitCode = 0 안전 종료.
+- Program.cs 결선: 봉인 수검 CLI 분기 뒤 · DB/시크릿/브로커(KisProvider)/BlazorHomeForm 구성 이전 · --classic/--headless 제외. 런타임 검사 중 브로커·DB·피어 접점 0(liveArmed:false 무관).
+- 미채택(정직): 무인 백그라운드 설치 — 내려받은 exe 를 Authenticode 체인 검증 없이 실행하게 되므로 배제. 설치형(Inno Setup)은 동봉 부트스트래퍼로 이미 /silent /install. 즉시 실행 배포본은 링크 안내.
+- 테스트 StockManager.Tests/Packaging/WebView2RuntimeGuardTests.cs 18건: 탐침 분류(6종 실패 = 미설치) · 상태 전이(Present = UI 0 · 수락/거부/트리거 실패/오프라인) · 미설치 = 진행 0 · 실 탐침 무예외 · Program.cs 결선 순서 · 가드 소스 피어/브로커/원격 실행 접점 0.
+- 검증: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 4,135 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL 변경 0).
+- 한계(정직): 미설치 PC 실기 확인 미실시(개발 호스트는 런타임 설치됨 — 분기는 모의 UI 로 증명). QuantumVault 미접근 · 원격 푸시 없음.

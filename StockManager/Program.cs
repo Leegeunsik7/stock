@@ -46,6 +46,22 @@ namespace StockManager
 
             Log.Info($"===== MS2-E Stock Suite {AppVersion()} 시작 =====");
 
+            // [v12.18.29] WebView2 런타임 사전 비행 가드 — Blazor 경로만(클래식·헤드리스 = WebView 미사용). DB·브로커 구성 '이전'에
+            //   탐침 → 미설치 PC 의 빈 화면 원천 차단 · 공식 부트스트래퍼 안내/오프라인 안내 후 안전 종료(0). 실 발주 경로 미접촉.
+            if (!Has("--classic") && !Has("--headless"))
+            {
+                if (!StockManager.Blazor.WebView2RuntimeGuard.EnsureRuntime(
+                        StockManager.Blazor.WebView2RuntimeGuard.DefaultProbe,
+                        StockManager.Blazor.WebView2RuntimeGuard.DefaultNetworkProbe,
+                        new StockManager.Blazor.WebView2RuntimeGuard.MessageBoxUi(),
+                        out var wv2Outcome))
+                {
+                    Log.Warn($"[WebView2] 런타임 미설치 → {wv2Outcome} · 안전 종료");
+                    Environment.ExitCode = StockManager.Blazor.WebView2RuntimeGuard.SafeExitCode;
+                    return;
+                }
+            }
+
             // QuestPDF 라이센스 (Community MIT) - 최초 한 번만
             try
             {
