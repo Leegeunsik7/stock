@@ -1,9 +1,9 @@
 @* [v12.18.11-DEV] ⚔️ AI vs Human 실시간 대결 — 순수 RCL(엔진 참조 0 · @page 는 호스트 shim Arena.razor 가 소유).
    IArenaPort 만 소비: 스냅샷 = seqlock 사본(TryRead · 잠금/할당 0) · 자산곡선 = CopyEquity(고정 버퍼) · 휴먼 퀵 티켓 = SubmitHuman(휴먼 큐 → 가상 체결 전용).
    ★Fail-Closed: 이 화면에서 브로커 · 무장 · 실주문 경로에 닿을 수단이 없다(포트 계약에 부재). 손익 = 수수료 0.015% · 거래세 0.18% · 호가 슬리피지 반영 가상 원장.
-   렌더 = 250ms 버전 폴링(변경 시에만 InvokeAsync) — 문자열 생성은 렌더 시점에만(정산 펌프 δ=0 불변식과 분리 · 정직).
+   렌더 = 버전 폴링(변경 시에만 InvokeAsync · v12.18.24 이전 250ms → 아래 50ms 레벨 트리거) — 문자열 생성은 렌더 시점에만(정산 펌프 δ=0 불변식과 분리 · 정직).
    [v12.18.12-DEV] 모드 전환: 정규장 라이브(IArenaPort) ↔ 고속 틱 리플레이(IArenaReplayPort — 별도 원장 · 같은 스코어보드/퀵 티켓 재사용) ·
-   리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 · 진행률). 배속과 무관하게 UI 는 250ms 폴링만(재생 스레드 50ms 게시 · 프레임 디커플링).
+   리플레이 컨트롤 바(▶ 시작/재개 · ⏸ 일시정지 · ⏹ 리셋 · 배속 · 진행률). 배속과 무관하게 UI 는 렌더 펌프 폴링만(재생 스레드 50ms 게시 · 프레임 디커플링).
    [v12.18.13-DEV] 라이브 = 틱 녹화 ON/OFF(IArenaTapePort · .tape) · 리플레이 = 원천 선택(합성 · 녹화 .tape) · 퀵 티켓 지정가/미체결 취소 ·
    스코어보드 = 지연 대기 · 작동 주문 · 내 앞 잔량(대기열 순번) · 예약 현금. 디렉터리 목록은 버튼 클릭 시에만 조회(렌더 경로 I/O 0).
    [v12.18.14-DEV] 프로 콘솔: 포커스 가능 영역(tabindex) @onkeydown — JS interop 0 · ArenaHotkeys(code 기준 · IME 무관 · 자동 반복 발주 무시) →
@@ -14,7 +14,10 @@
    [v12.18.16-DEV] 상단 KIS 시세 지연 뱃지(IKisFeedLatencyPort — 전문 초 해상도 기준 지연 구간 · 비트 28 래치 상태 · 판독 전용).
    [v12.18.18-DEV] 빙산 주문 바(🧊 체크 + 노출 수량 → 래더 클릭 · 지정가 티켓 = SubmitHumanIceberg · 콘솔 키 입력 영역 밖 = 숫자 입력이 비중 핫키로 먹히지 않게) ·
    하드 리스크 동결(ArenaSnapshot.HumanRiskLocked) = 화면 전체 붉은 틴트 + "계좌 동결" 오버레이 · 휴먼 발주 버튼/래더/핫키 전면 비활성(포트도 RiskLocked 거부 — 이중) ·
-   포식자 🦈 HUD(공격성 · 휴먼 연패/틸트/MAE 역추적 · 래더에 얹은 허수 잔량 공개) · 스코어보드 유동성 진공 발동/페널티 · 빙산 리필. *@
+   포식자 🦈 HUD(공격성 · 휴먼 연패/틸트/MAE 역추적 · 래더에 얹은 허수 잔량 공개) · 스코어보드 유동성 진공 발동/페널티 · 빙산 리필.
+   [v12.18.24-DEV] 렌더 펌프 = 레벨 트리거 50ms(≤ 20 FPS = 정산 펌프 게시 주기와 같음 · 종전 250ms ≤ 4 FPS): '마지막으로 그려진' 버전과 현재 버전을 비교 →
+   다르고 진행 중 렌더가 없을 때만 InvokeAsync 1건(디스패처 큐 적체 0 · 호가 1,000 TPS 도 정산 게시 20Hz 로 이미 합쳐짐). 그려진 버전은 렌더 본문에서 기록 →
+   렌더 중 들어온 갱신은 다음 폴링이 다시 집어 간다(후행 유실 0 · 엣지 아닌 레벨 판정). 진행 중 플래그는 OnAfterRender 에서 해제. *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
@@ -35,6 +38,8 @@
 @{
     var rs = Replay.Status;
     bool has = Arena.TryRead(out var s);
+    System.Threading.Volatile.Write(ref _drawn, Arena.Version);          // [v12.18.24-DEV] 레벨 트리거 기준(이 렌더가 반영한 버전)
+    System.Threading.Volatile.Write(ref _drawnReplay, _replay ? rs.Version : 0);
 }
 @if (!Arena.Pumped && !(_replay && rs.State == ArenaReplayState.Idle && rs.Version == 0))
 {
@@ -250,9 +255,15 @@ else
     private string _symbol = "005930";
     private int _weightBp = ArenaHotkeys.DefaultWeightBp;
     private string? _msg;
-    private long _seen, _seenReplay;
+    private long _drawn = -1, _drawnReplay = -1;                         // [v12.18.24-DEV] 마지막으로 그려진 버전(렌더 본문 기록 · 타이머 스레드 판독)
+    private int _renderInFlight;                                         // 1 = InvokeAsync 렌더 대기/진행 중(중첩 적재 0)
+    private long _pumpRenders, _pumpSkippedInFlight;
     private bool _replay;
     private System.Threading.Timer? _timer;
+    public const int RenderPumpMs = 50;
+    /// <summary>[v12.18.24-DEV] 진단: 렌더 펌프가 요청한 렌더 수 · 진행 중이라 건너뛴 폴링 수.</summary>
+    public long PumpRenders => System.Threading.Interlocked.Read(ref _pumpRenders);
+    public long PumpSkippedInFlight => System.Threading.Interlocked.Read(ref _pumpSkippedInFlight);
 
     /// <summary>현재 모드의 원장(라이브 = 실시간 아레나 · 리플레이 = 리플레이 전용 원장).</summary>
     private IArenaPort Arena => _replay ? Replay.Arena : LiveArena;
@@ -262,7 +273,7 @@ else
         if (_replay == replay) return;
         _replay = replay;
         _sparkVersion[0] = _sparkVersion[1] = -1;                       // 원장이 바뀌었으므로 스파크라인 캐시 무효
-        _seen = -1;
+        System.Threading.Volatile.Write(ref _drawn, -1);
         _msg = null;
     }
 
@@ -503,14 +514,21 @@ else
     protected override void OnInitialized()
     {
         SyncFocus();
-        _timer = new System.Threading.Timer(_ =>
-        {
-            long v = Arena.Version, rv = _replay ? Replay.Status.Version : 0;
-            if (v == _seen && rv == _seenReplay) return;
-            _seen = v; _seenReplay = rv;
-            try { _ = InvokeAsync(StateHasChanged); } catch (Exception) { }
-        }, null, 250, 250);
+        _timer = new System.Threading.Timer(_ => RenderPump(), null, RenderPumpMs, RenderPumpMs);
     }
+
+    // [v12.18.24-DEV] 레벨 트리거 렌더 펌프(타이머 스레드): 그려진 버전 ≠ 현재 버전 ∧ 진행 중 렌더 없음 → InvokeAsync 1건.
+    private void RenderPump()
+    {
+        long v = Arena.Version, rv = _replay ? Replay.Status.Version : 0;
+        if (v == System.Threading.Volatile.Read(ref _drawn) && rv == System.Threading.Volatile.Read(ref _drawnReplay)) return;
+        if (System.Threading.Interlocked.CompareExchange(ref _renderInFlight, 1, 0) != 0) { System.Threading.Interlocked.Increment(ref _pumpSkippedInFlight); return; }
+        System.Threading.Interlocked.Increment(ref _pumpRenders);
+        try { _ = InvokeAsync(StateHasChanged); }
+        catch (Exception) { System.Threading.Volatile.Write(ref _renderInFlight, 0); }   // 회로 종료 등 — 다음 폴링 재시도
+    }
+
+    protected override void OnAfterRender(bool firstRender) => System.Threading.Volatile.Write(ref _renderInFlight, 0);
 
     public void Dispose() => _timer?.Dispose();
 }

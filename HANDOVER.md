@@ -2472,3 +2472,28 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.22-GM 산출물 13건(zip EEF1C3B9… · masterSeal 97B6B3FD…) → release/superseded-v12.18.22-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(같은 커밋 0c23671 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+
+## 93. v12.18.24-DEV — /arena HMI 렌더 펌프 최적화 · 핫키 입력 지연 헤드리스 검증 (2026-10-19)
+
+### 93.1 전제 점검
+- 스로틀은 이미 있었다: ArenaBattleView = 250ms 버전 폴링(변경 시에만 InvokeAsync · 최대 4 FPS). 호가 1,000 TPS 는 정산 펌프(50ms 게시)에서 이미 20Hz 로 합쳐지고
+  UI 는 버전만 본다 → 'StateHasChanged 폭주' 경로는 없었음. 결함은 (a) 4 FPS = 화면이 최대 250ms 늦음 (b) 진행 중 렌더 중첩 적재 방지 부재 (c) 엣지 판정(_seen 을
+  InvokeAsync 전에 갱신 → 그 렌더가 다른 버전을 그려도 재요청 없음).
+- 입력 지연 '16ms' 는 두 구간으로 분리 계측(정직): ① 키 이벤트 디스패치 → 포트 접수(UI 스레드) ② 접수 → 상태 전이 = 바로 다음 정산 Step 1회.
+  운용 종단 지연 = ① + 정산 펌프 주기(≤ 50ms) + 모의 체결 지연(30~50ms · 현실성 설계 — 줄이지 않음).
+
+### 93.2 변경(ArenaBattleView.razor · 순수 RCL · [Inject] 무증가)
+- 렌더 펌프 = 레벨 트리거 50ms(≤ 20 FPS = 정산 게시 주기): 렌더 본문이 '그려진 버전'(라이브 Version · 리플레이 Status.Version)을 기록 → 타이머가 현재 버전과 비교 →
+  다르고 진행 중 렌더가 없을 때만 InvokeAsync 1건(CAS 진행 중 플래그 · OnAfterRender 에서 해제 · InvokeAsync 예외 = 플래그 원복 후 다음 폴링 재시도).
+  렌더 중 들어온 갱신은 다음 폴링이 다시 집어 감(후행 유실 0) · 변경 없으면 렌더 0. 진단 PumpRenders/PumpSkippedInFlight · RenderPumpMs = 50.
+
+### 93.3 검증 — StockManager.Tests/Blazor/ArenaUIStressTests.cs 4건
+- 고빈도 스트레스: 호가 생산 스레드 1,000 TPS(실측 1,000) + 키 사이 정산 Step 4회 + S/B/S/Space 순환 120키(포트 데코레이터로 접수 시각 계측):
+  ① 키 디스패치 → 포트 접수 p50 0.05ms · p99 0.37~0.80ms(3회) · 핸들러 + 재렌더 완료 p99 ≤ 12.2ms · ② 접수 → 상태 전이(Step 1회) p99 ≤ 2.9ms ·
+  전이 불일치 0(S = 숏 진입/추가 · B = 숏 감소 · Space = FLAT) · 정산 스레드 Step 할당 0B · 주문/호가 유실 0 · 렌더 ≤ 키 + 경과/50ms + 8(20 FPS 상한) · 마지막 버전 결국 렌더.
+- 무변경 400ms = 렌더 0 → 단일 변경 = 펌프 렌더 1~2 · 마운트/해제 50회 → 전체 GC 후 뷰 약참조 생존 0(활성 타이머 = GC 루트 → 해제 누락 검출) ·
+  IArenaPort 표면 브로커/무장/실주문/디스패치 멤버 0 · 뷰 주입 = Ports.Trading 계약만.
+- 하네스 교정 2건(제품 결함 아님): bUnit cut.Find(마크업 → AngleSharp DOM 재파싱 · 수 ms)가 계측 구간에 섞여 p99 43ms 로 보였음 → 조회 후 디스패치 순간부터 계측 ·
+  가격 진동 호가에서 지정가 핫키가 대기열로 남는 정상 동작 → 생산기는 가격 고정 · 잔량만 변화. B 는 비중 수량 커버(숏 143 · 비중 142 → 잔여 1)라 기대값 = 숏 감소.
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,069/4,069 · HMI 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): bUnit 렌더러 ≠ WebView2(실 DOM · JS interop 지연 미측정 · 육안 확인 미실시) · 지시서 목표 4,070+ 건은 1건 미달(의미 없는 테스트로 채우지 않음).
