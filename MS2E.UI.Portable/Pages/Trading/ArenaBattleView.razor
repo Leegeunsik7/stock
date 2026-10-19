@@ -38,6 +38,8 @@
 @{
     var rs = Replay.Status;
     bool has = Arena.TryRead(out var s);
+    if (has) { _lastSnap = s; _hasLastSnap = true; }                          // [v12.18.25-DEV] seqlock 판독 경합(상한 초과) = 직전 정상 사본 유지 — '대기' 자리표시 깜빡임 0
+    else if (_hasLastSnap) { s = _lastSnap; has = true; }
     System.Threading.Volatile.Write(ref _drawn, Arena.Version);          // [v12.18.24-DEV] 레벨 트리거 기준(이 렌더가 반영한 버전)
     System.Threading.Volatile.Write(ref _drawnReplay, _replay ? rs.Version : 0);
 }
@@ -233,6 +235,10 @@ else
         }
     </div>
 
+    @if (s.State == ArenaState.Finished && _forensicClosedAt != s.StartedTicks)
+    {
+        @ForensicModal(s)
+    }
     @if (s.State == ArenaState.Finished)
     {
         <div class="ar-card ar-debrief">
@@ -259,6 +265,8 @@ else
     private int _renderInFlight;                                         // 1 = InvokeAsync 렌더 대기/진행 중(중첩 적재 0)
     private long _pumpRenders, _pumpSkippedInFlight;
     private bool _replay;
+    private ArenaSnapshot _lastSnap;
+    private bool _hasLastSnap;
     private System.Threading.Timer? _timer;
     public const int RenderPumpMs = 50;
     /// <summary>[v12.18.24-DEV] 진단: 렌더 펌프가 요청한 렌더 수 · 진행 중이라 건너뛴 폴링 수.</summary>
@@ -274,6 +282,7 @@ else
         _replay = replay;
         _sparkVersion[0] = _sparkVersion[1] = -1;                       // 원장이 바뀌었으므로 스파크라인 캐시 무효
         System.Threading.Volatile.Write(ref _drawn, -1);
+        _hasLastSnap = false;                                            // 원장 교체 = 직전 사본 무효
         _msg = null;
     }
 
@@ -354,6 +363,46 @@ else
             </table>
         </div>
     };
+
+    // ── [v12.18.25-DEV] 포렌식 성과 분석 모달(경기 종료 · 닫기 = 이 매치 동안 숨김 · 다음 매치 개시 시 다시 표시) ──
+    private long _forensicClosedAt = -1;
+
+    private RenderFragment ForensicModal(ArenaSnapshot s) => __builder =>
+    {
+        bool ha = Arena.TryReadDebrief(ArenaSide.Ai, out var a), hh = Arena.TryReadDebrief(ArenaSide.Human, out var h);
+        if (!ha || !hh) return;
+        long started = s.StartedTicks;
+        <div class="ar-forensic" role="dialog" aria-modal="true" aria-label="포렌식 성과 분석">
+            <div class="ar-forensic-body">
+                <h3>📊 포렌식 성과 분석 <small>Net = 수수료 0.015% · 거래세 0.18% · 슬리피지 반영 후 · Gross = 마찰 전 · MAE/MFE = 틱 단위 가격 추적</small></h3>
+                <table class="ar-tbl">
+                    <tr><th></th><th>🤖 AI</th><th>🧑 휴먼</th></tr>
+                    <tr><td>왕복 거래 · 승률</td><td>@(a.QualityTrips)회 · @(Pct(a.WinRateBp))</td><td>@(h.QualityTrips)회 · @(Pct(h.WinRateBp))</td></tr>
+                    <tr><td>손익비(이익 ÷ 손실)</td><td>@Pf(a.ProfitFactorBp)</td><td>@Pf(h.ProfitFactorBp)</td></tr>
+                    <tr><td>Net 손익</td><td class="@Tone(a.NetPnlWon)">@(a.NetPnlWon.ToString("N0"))</td><td class="@Tone(h.NetPnlWon)">@(h.NetPnlWon.ToString("N0"))</td></tr>
+                    <tr><td>Gross 손익(마찰 전)</td><td class="@Tone(a.GrossPnlWon)">@(a.GrossPnlWon.ToString("N0"))</td><td class="@Tone(h.GrossPnlWon)">@(h.GrossPnlWon.ToString("N0"))</td></tr>
+                    <tr><td>수수료 · 거래세</td><td>@(a.FeesWon.ToString("N0")) · @(a.TaxWon.ToString("N0"))</td><td>@(h.FeesWon.ToString("N0")) · @(h.TaxWon.ToString("N0"))</td></tr>
+                    <tr><td>최대 낙폭(MDD)</td><td class="ar-down">@(a.MddWon.ToString("N0")) (@(Pct(a.MddBp)))</td><td class="ar-down">@(h.MddWon.ToString("N0")) (@(Pct(h.MddBp)))</td></tr>
+                    <tr><td>평균 MAE · MFE</td><td>@(Pct(a.AvgMaeBp)) · @(Pct(a.AvgMfeBp))</td><td>@(Pct(h.AvgMaeBp)) · @(Pct(h.AvgMfeBp))</td></tr>
+                    <tr><td title="실현 가격 이동 ÷ MFE — 순행 폭 중 챙긴 비율">청산 효율</td><td>@(Pct(a.ExitEfficiencyBp))</td><td>@(Pct(h.ExitEfficiencyBp))</td></tr>
+                    <tr><td title="Σ Net ÷ Σ MAE(원) — 감수한 역행 1원당 순익(청산 적시성)">MAE 대비 실현</td><td>@(Pct(a.MaeToRealizedBp))</td><td>@(Pct(h.MaeToRealizedBp))</td></tr>
+                    <tr><td>마지막 거래</td><td>@LastTrade(in a)</td><td>@LastTrade(in h)</td></tr>
+                </table>
+                <p class="ar-sub">@Verdict(in a, in h)</p>
+                <button class="ar-btn ar-forensic-close" @onclick="() => _forensicClosedAt = started">닫기</button>
+            </div>
+        </div>
+    };
+
+    private static string Pct(long bp) => (bp / 100.0).ToString("0.00") + "%";
+    private static string Pf(long bp) => bp < 0 ? "∞(손실 0)" : bp == 0 ? "-" : (bp / 10_000.0).ToString("0.00");
+    private static string LastTrade(in ArenaDebrief d)
+        => d.LastSide == 0 ? "-" : (d.LastSide > 0 ? "LONG " : "SHORT ") + d.LastEntryPx.ToString("N0") + "→" + d.LastExitPx.ToString("N0")
+           + " · MAE " + d.LastMaePx.ToString("N0") + " · MFE " + d.LastMfePx.ToString("N0") + " · Net " + d.LastNetWon.ToString("N0") + " · " + HoldText(d.LastHoldMs);
+    private static string Verdict(in ArenaDebrief a, in ArenaDebrief h)
+        => h.NetPnlWon == a.NetPnlWon ? "Net 동률"
+           : (h.NetPnlWon > a.NetPnlWon ? "휴먼" : "AI") + " Net 우위 " + Math.Abs(h.NetPnlWon - a.NetPnlWon).ToString("N0") + "원"
+             + (h.GrossPnlWon > a.GrossPnlWon != h.NetPnlWon > a.NetPnlWon ? " — Gross 기준으론 반대(마찰비용이 승부를 뒤집음)" : "");
 
     private static string HoldText(long ms) => ms >= 60_000 ? (ms / 60_000) + "분 " + (ms / 1_000 % 60) + "초" : (ms / 1_000.0).ToString("0.0") + "초";
 
@@ -550,6 +599,9 @@ else
     .ar-card h3 { font-size: 13.5px; margin: 0 0 8px; } .ar-card small { color: var(--sub); font-weight: 400; }
     .ar-pnl { font-size: 22px; font-weight: 700; } .ar-pnl small { font-size: 12px; }
     .ar-up { color: #E53935; } .ar-down { color: #1E88E5; }
+    .ar-forensic { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .ar-forensic-body { background: #151a24; border: 1px solid #4dd0e1; border-radius: 10px; padding: 14px 18px; max-width: 760px; width: 92%; }
+    .ar-forensic-body th { text-align: left; font-size: 12px; color: var(--sub); }
     .ar-pos { padding: 1px 6px; border-radius: 5px; font-weight: 700; margin-right: 4px; background: #3a3f4b; color: #ccc; }
     .ar-pos.long { background: #E53935; color: #fff; } .ar-pos.short { background: #1E88E5; color: #fff; }
     .ar-spark { width: 100%; height: 48px; margin: 6px 0; }

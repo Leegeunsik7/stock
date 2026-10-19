@@ -124,15 +124,17 @@ namespace StockManager.Tests.Blazor
             {
                 var up = Book(70_000, 69_900, 100_000); var dn = Book(70_000, 69_900, 100_001);   // 가격 고정 · 잔량만 변화(지정가 핫키 결정론 · 게시 버전은 매 Step 증가)
                 var sw = Stopwatch.StartNew();
-                long n = 0;
+                long n = 0, atMs = 0;
                 while (!ct.IsCancellationRequested)
                 {
-                    long due = sw.ElapsedTicks * 1_000 / Stopwatch.Frequency + 1;     // 목표 1,000/s
+                    long el = sw.ElapsedTicks;
+                    long due = el * 1_000 / Stopwatch.Frequency + 1;                  // 목표 1,000/s
                     while (n < due) { g.OnQuote((n & 1) == 0 ? up : dn); n++; }
+                    atMs = el * 1_000 / Stopwatch.Frequency;                          // 측정 경계 = 마지막 보충 시점(취소 후 경과 미포함)
                     Thread.Yield();
                 }
                 Volatile.Write(ref produced[0], n);
-                Volatile.Write(ref produced[1], sw.ElapsedMilliseconds);
+                Volatile.Write(ref produced[1], Math.Max(1, atMs));
             }) { IsBackground = true, Name = "hmi-quotes" };
             t.Start();
             return t;

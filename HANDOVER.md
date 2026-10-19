@@ -2518,3 +2518,33 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.23-GM 산출물 13건(zip 8AE33D29… · masterSeal B7F64DFF…) → release/superseded-v12.18.23-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(같은 커밋 7aadea2 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+
+## 95. v12.18.25-DEV — 아레나 초현실 3단계: 마찰비용 Gross/Net · Net 청산가치 리스크 · 틱 단위 MAE/MFE 포렌식 (2026-10-19)
+
+### 95.1 전제 교정
+- 거래세 0.18% · 수수료 0.015% 는 v12.18.13 부터 체결마다 원 미만 절사로 이미 차감(⑥ · 숏 개시 = 매도 → 거래세 포함 · v12.18.23). 재구현하지 않고 검증만 추가.
+- MAE/MFE 는 v12.18.14 ArenaTradeAnalytics 가 '원' 편차를 시가평가 주기(정산 50ms)로 표본 — 이번 추가 = 틱(호가 갱신) 단위 '가격' 추적 + 거래 기록.
+- 갭: Gross/Net 분리 부재 · −3% 하드 리스크가 시가평가 자산(퇴출 수수료/세금 미반영 = 덜 엄격) · 손익비/청산 효율 부재 · 종료 모달 부재.
+- 추적기 파일은 지시대로 `Engines/Arena/Analytics/` 지만 네임스페이스는 `StockManager.Engines.Arena`(기존 IL 허용목록 7곳을 넓히지 않고 그대로 통과).
+
+### 95.2 구성
+- ⑬ Gross/Net(DualBookSimulator.PnL): Net = 시가평가 자산 − 자본금 · Gross = Net + 누적 수수료 + 누적 거래세(항등식 · 재계산 없음). ArenaBook.CapitalWon 추가.
+- ⑭ LiquidationEquity: 현금 + Σ 롱(수량 × 매수 1호가 − 수수료 − 거래세) − Σ 숏(수량 × 매도 1호가 + 수수료) · 호가 없음 = 원가 폴백.
+  거버너 CheckRisk = 이 값 ≤ 자본금 × 97% → 동결 + 마진콜(발동 자산 = 청산가치). 표시 자산은 종전 시가평가. ArenaSideStats Gross/Net/LiquidationEquity 투영.
+- ⑮ `ArenaExecutionQualityTracker`(원장 단일 작성자 · 고정 배열 · Int128): OnQuote 마다 진행 중 trip 표시가(롱 = 매수 1호가 · 숏 = 매도 1호가) 최저/최고 · 진입 체결가 첫 표본 ·
+  OnFill = 개시/추가(평균 진입가) · 축소(평균 청산가 · Net 누적) · 체결별 수수료/세금 누적 · 청산 시 TradeExecutionRecord(링 256) — 진입/청산가 · MAE/MFE(원/주 · bp · 원) ·
+  보유 시간 · Gross = Net + 수수료 + 세금 · 청산 효율. 요약 = 승률 · 손익비(Net · 손실 0 = 무한 −1) · 평균 MAE/MFE bp · 청산 효율 · MAE 대비 실현(Σ Net ÷ Σ MAE 원).
+- ArenaDebrief 포렌식 필드(기본값 인자 — 기존 생성 호환) · 거버너 Publish 가 복기 계산을 seqlock 창 밖으로 이동(창 = 값 복사만).
+- /arena: 경기 종료 시 '📊 포렌식 성과 분석' 모달(AI vs 휴먼 — 거래/승률 · 손익비 · Net · Gross · 수수료/거래세 · MDD · 평균 MAE/MFE · 청산 효율 · MAE 대비 실현 · 마지막 거래 ·
+  Net 우위 판정 + Gross 와 승패가 갈리면 '마찰비용이 승부를 뒤집음' 표기) · 닫기 = 그 매치 동안 숨김.
+- HMI 강건화: 뷰가 seqlock 판독 상한 초과 시 직전 정상 스냅샷 유지('대기' 자리표시 깜빡임 0 — 아레나 그룹 부하에서 콘솔 요소가 순간 사라지던 현상).
+
+### 95.3 검증
+- FrictionAccountingTests 10건: 롱/숏 왕복 수수료 · 세금 정확 차감 + Gross/Net 항등식 + trip 기록 · 체결별 절사 5경계 · Net 청산가치 리스크(1원 단위 경계 탐색 —
+  시가평가 > 하한 ≥ 청산가치 = 동결 · 1원 위 = 미격발) · 무작위 롱/숏 10만 체결: FeesWon/TaxWon = 체결별 독립 재계산 합(오차 0원) · 무포지션 현금 = 자본 + Σ Net ·
+  trip Net 합 = 원장 실현 · 10만 체결(마찰 + 포렌식 + 청산가치 + 복기) 0B.
+- ExecutionQualityTests 7건: 롱 급락/급등 틱 MAE 2,000 · MFE 2,500 · bp · 청산 효율 40% · 보유 30초 · 진입 체결가 표본 · 숏 대칭(추가 진입 평균 · 부분 커버 · MAE 3,050 · MFE 2,950) ·
+  요약(승률 50% · 손익비 1.50 · MAE 대비 실현 30% · 링 순서/덮어씀) · 거버너 스냅샷/복기 포렌식 · 헤드리스 모달(종료 후 표시 · 닫기) · IL 허용목록.
+- 의미 변경 갱신 3건: HyperRealism −3% 발동 자산 · SyntheticShorting 발동 자산(9,696,370 → 9,695,278 = 커버 수수료 포함) · ArenaUIStress 생산 TPS 측정 경계(취소 후 경과 제외).
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,086/4,086 · 아레나 그룹 175건 5회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 틱 MAE/MFE = 최우선 호가 기준(체결 틱 가격 미포함 · 호가 사이 체결 극값 미포착 가능) · 청산가치 = 최우선 호가 전량 가정(호가 잔량 소진 미반영) · 대주 수수료 없음.

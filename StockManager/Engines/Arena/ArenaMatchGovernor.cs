@@ -464,6 +464,8 @@ namespace StockManager.Engines.Arena
             var ai = Stats(ArenaSide.Ai, _eqAi, _unrealAi);
             var hu = Stats(ArenaSide.Human, _eqHuman, _unrealHuman);
             int leader = _state == ArenaState.Idle || _eqAi == _eqHuman ? ArenaLeader.Draw : _eqAi > _eqHuman ? ArenaLeader.Ai : ArenaLeader.Human;
+            var dbAi = _sim.Debrief(ArenaSide.Ai, _eqAi, ai.MddBp);                // [v12.18.25-DEV] 복기 + 포렌식 — seqlock 창 밖에서 계산(창 = 값 복사만 · 판독 경합 최소화)
+            var dbHu = _sim.Debrief(ArenaSide.Human, _eqHuman, hu.MddBp);
             long s = _seq;
             Volatile.Write(ref _seq, s + 1);                                         // 작성 중(홀수)
             Interlocked.MemoryBarrier();
@@ -481,8 +483,8 @@ namespace StockManager.Engines.Arena
                                       _humanLocked != 0, _riskLimitBp, _riskTripTicks, _riskTripEquity,
                                       ArenaPositionSide.Of(_target > 0 ? _sim.Book(ArenaSide.Ai).Position(_target) : 0),
                                       ArenaPositionSide.Of(focus > 0 ? _sim.Book(ArenaSide.Human).Position(focus) : 0));
-            _debriefAi = _sim.Book(ArenaSide.Ai).Analytics.Snapshot(_sim.Book(ArenaSide.Ai).SlippageWon);
-            _debriefHuman = _sim.Book(ArenaSide.Human).Analytics.Snapshot(_sim.Book(ArenaSide.Human).SlippageWon);
+            _debriefAi = dbAi;
+            _debriefHuman = dbHu;
             Volatile.Write(ref _seq, s + 2);                                         // 안정(짝수)
         }
 
@@ -493,9 +495,10 @@ namespace StockManager.Engines.Arena
         {
             if (_riskLimitBp <= 0 || _humanLocked != 0) return;
             long floor = _capital - (long)((Int128)_capital * _riskLimitBp / 10_000);
-            if (_eqHuman > floor) return;
+            long liq = _sim.LiquidationEquity(ArenaSide.Human);                     // [v12.18.25-DEV] Net 청산가치(퇴출 수수료 · 거래세 포함) 기준 — 시가평가보다 엄격
+            if (liq > floor) return;
             Volatile.Write(ref _humanLocked, 1);                                    // 생산자 차단 먼저(이후 적재 0) → 원장 동결 · 강제 청산
-            _riskTripTicks = nowTicks; _riskTripEquity = _eqHuman;
+            _riskTripTicks = nowTicks; _riskTripEquity = liq;
             _sim.MarginCall(ArenaSide.Human);
             _eqHuman = _sim.MarkToMarket(ArenaSide.Human, out _unrealHuman);
         }
@@ -644,7 +647,8 @@ namespace StockManager.Engines.Arena
                                       b.Fills, b.Rejects, b.Wins, b.Losses, b.PosCount, b.LastReject,
                                       b.PendingCount, b.WorkingCount, b.OldestQueueAhead, b.Cancels, b.ReservedCashWon,
                                       b.VacuumEvents, b.VacuumPenaltyWon, b.IcebergRefills,
-                                      b.LongPositions, b.ShortPositions, b.ShortLockedWon, b.QueueCancelDepletedQty);
+                                      b.LongPositions, b.ShortPositions, b.ShortLockedWon, b.QueueCancelDepletedQty,
+                                      equity - b.CapitalWon + b.FeesWon + b.TaxWon, equity - b.CapitalWon, _sim.LiquidationEquity(side));
         }
 
         // ════════════ ③ 소비자(seqlock 사본 · 잠금/할당 0) ════════════

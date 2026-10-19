@@ -36,6 +36,12 @@
 //       비례 순매도 대금 − 커버 비용). 한 주문은 0 을 가로지르지 않는다(롱 청산 ≠ 숏 개시) · 롱 개시와 숏 개시는 같은 종목에 동시 진행 불가(OppositeExposure).
 //       시가평가: 숏 = 최우선 매도호가(되사는 값) · 자산 = 현금 + Σ 수량 × 표시가(숏은 음수 부채) — 하드 리스크(−3%) 판정이 숏 평가손을 그대로 반영.
 //       비상 청산 · 마진콜 = 롱 시장가 매도 + 숏 시장가 커버 매수(강제 — 현금 한도 무시 · 음수 현금 = 실제 손실) · 대주 수수료 없음(정직한 단순화).
+//   [v12.18.25-DEV] 초현실 3단계(마찰 · 포렌식):
+//    ⑬ Gross/Net 분리: Net = 자산 − 자본금(수수료 · 거래세 · 슬리피지 반영 후 = 원장 진실) · Gross = Net + 누적 수수료 + 누적 거래세(항등식 · 재계산 없음).
+//       수수료/세금은 체결마다 원 미만 절사(⑥ · 실 증권사 체결 단위 관행) — 원장 FeesWon/TaxWon = Σ 체결별 절사값(누적 오차 개념 없음 · 테스트가 독립 재계산 대조).
+//    ⑭ 청산가치 자산(LiquidationEquity): 지금 전량 청산하면 남는 현금 = 현금 + Σ 롱(수량 × 매수 1호가 − 수수료 − 거래세) − Σ 숏(수량 × 매도 1호가 + 수수료).
+//       하드 리스크(−3%) 판정은 이 값(Net · 퇴출 마찰 포함 — 시가평가 자산보다 엄격). 표시 자산은 종전 시가평가.
+//    ⑮ 체결 품질 포렌식(ArenaExecutionQualityTracker): 호가 갱신(틱)마다 진행 중 trip 의 가격 MAE/MFE · 체결마다 trip 수수료/세금/Net · 청산 시 기록 1건.
 //   ★브로커/주문 전송 타입 참조 0(테스트가 IL 로 확증). 스레드 계약: 모든 변경은 거버너 정산 스레드(단일 작성자)에서만.
 // ============================================================================
 using System;
@@ -98,6 +104,10 @@ namespace StockManager.Engines.Arena
 
         /// <summary>[v12.18.14-DEV] 사후 복기 분석(원장과 같은 단일 작성자).</summary>
         public ArenaTradeAnalytics Analytics { get; } = new();
+        /// <summary>[v12.18.25-DEV] 체결 품질 포렌식(틱 단위 가격 MAE/MFE · 거래 기록 · 손익비).</summary>
+        public ArenaExecutionQualityTracker Quality { get; } = new();
+        /// <summary>[v12.18.25-DEV] 라운드 자본금(Reset 값).</summary>
+        public long CapitalWon { get; private set; }
         public long CashWon { get; internal set; }
         public long ReservedCashWon { get; internal set; }
         public long RealizedWon { get; internal set; }
@@ -139,6 +149,8 @@ namespace StockManager.Engines.Arena
             Array.Clear(VacLevel); Array.Clear(VacUntil);
             Rng = _seed;
             Analytics.Reset();
+            Quality.Reset();
+            CapitalWon = capitalWon;
             CashWon = capitalWon; PeakWon = capitalWon; ReservedCashWon = 0;
             RealizedWon = FeesWon = TaxWon = SlippageWon = MddWon = Fills = Rejects = Cancels = 0;
             Wins = Losses = LastReject = 0;
@@ -280,6 +292,7 @@ namespace StockManager.Engines.Arena
             {
                 _books[s].ImpactAsk.AsSpan(i * Depth, Depth).Clear();
                 _books[s].ImpactBid.AsSpan(i * Depth, Depth).Clear();
+                _books[s].Quality.OnMark(b.SymbolCode, b.BidPrice[0], b.AskPrice[0]);   // ⑮ 틱 단위 MAE/MFE
             }
         }
 
@@ -612,7 +625,7 @@ namespace StockManager.Engines.Arena
         private static void Fill(ArenaBook book, ref ArenaWorkingOrder o, long qty, long notional, bool aggressive, long now)
         {
             long fee = Fee(notional);
-            long slipBefore = book.SlippageWon, posBefore = book.Position(o.Symbol), realizedNow = 0;
+            long slipBefore = book.SlippageWon, posBefore = book.Position(o.Symbol), realizedNow = 0, taxNow = 0;
             if (o.Dir > 0 && o.Mode == 1)                                           // [v12.18.23-DEV] 숏커버
             {
                 long cost = notional + fee;
@@ -641,6 +654,7 @@ namespace StockManager.Engines.Arena
             else if (o.Dir < 0 && o.Mode == 0)                                      // [v12.18.23-DEV] 숏 개시
             {
                 long tax = Tax(notional);
+                taxNow = tax;
                 long proceeds = notional - fee - tax;
                 long lockAdd = (long)((Int128)notional * (100 + ShortMarginPct) / 100);
                 int pi = book.IndexOf(o.Symbol);
@@ -676,6 +690,7 @@ namespace StockManager.Engines.Arena
             else
             {
                 long tax = Tax(notional);
+                taxNow = tax;
                 int pi = book.IndexOf(o.Symbol);
                 long held = book.PosQty[pi];
                 long basis = (long)((Int128)book.PosCost[pi] * qty / held);              // 비례 원가(절사 — 잔여 원가는 남은 수량이 보유)
@@ -694,7 +709,9 @@ namespace StockManager.Engines.Arena
             book.FeesWon += fee;
             book.Fills++;
             if (o.Peak > 0) o.Visible = Math.Max(0, o.Visible - qty);
-            book.Analytics.OnFill(o.Symbol, o.Dir, posBefore, book.Position(o.Symbol), realizedNow, now, slipBefore, book.SlippageWon);
+            long posAfter = book.Position(o.Symbol);
+            book.Analytics.OnFill(o.Symbol, o.Dir, posBefore, posAfter, realizedNow, now, slipBefore, book.SlippageWon);
+            book.Quality.OnFill(o.Symbol, posBefore, posAfter, qty, notional, fee, taxNow, realizedNow, now);
             o.Qty -= qty;
             o.Filled += qty;
             if (o.Qty == 0) { Release(book, ref o); o.Done = true; }
@@ -924,6 +941,58 @@ namespace StockManager.Engines.Arena
         /// 시가평가(롱 = 보유 × 최우선 매수호가 · [v12.18.23-DEV] 숏 = −수량 × 최우선 매도호가(되사는 값 · 부채) · 호가 없음 = 원가) →
         /// 자산(현금 + Σ 표시가) · 미실현 · 고점 · MDD 갱신. 반환 = 자산(원). 숏 평가손은 자산에 그대로 반영(하드 리스크 판정 포함).
         /// </summary>
+        /// <summary>[v12.18.25-DEV] ⑭ 청산가치 자산(지금 전량 시장가 청산 시 현금 · 최우선 호가 · 퇴출 수수료/거래세 포함 · δ=0).</summary>
+        public long LiquidationEquity(int side)
+        {
+            var book = Book(side);
+            long v = book.CashWon;
+            for (int i = 0; i < book.PosCount; i++)
+            {
+                long q = book.PosQty[i], sym = book.PosSym[i];
+                if (q > 0)
+                {
+                    long bid = BestBid(sym);
+                    if (bid <= 0) { v += book.PosCost[i]; continue; }                // 호가 없음 = 원가(시가평가와 같은 정직한 폴백)
+                    long n = q * bid;
+                    v += n - Fee(n) - Tax(n);
+                }
+                else if (q < 0)
+                {
+                    long ask = BestAsk(sym);
+                    if (ask <= 0) { v -= book.PosCost[i]; continue; }
+                    long n = -q * ask;
+                    v -= n + Fee(n);
+                }
+            }
+            return v;
+        }
+
+        /// <summary>[v12.18.25-DEV] ⑬ Net 손익 = 시가평가 자산 − 자본금 · Gross = Net + 누적 수수료 + 누적 거래세(마찰 전).</summary>
+        public void PnL(int side, long equityWon, out long grossWon, out long netWon)
+        {
+            var book = Book(side);
+            netWon = equityWon - book.CapitalWon;
+            grossWon = netWon + book.FeesWon + book.TaxWon;
+        }
+
+        /// <summary>[v12.18.25-DEV] 복기 + 포렌식 사본(δ=0 · 정산 스레드).</summary>
+        public ArenaDebrief Debrief(int side, long equityWon, int mddBp)
+        {
+            var book = Book(side);
+            var a = book.Analytics.Snapshot(book.SlippageWon);
+            var q = book.Quality.Summary();
+            PnL(side, equityWon, out long gross, out long net);
+            book.Quality.TryLast(out var last);
+            return new ArenaDebrief(a.Trips, a.Wins, a.Losses, a.OpenTrips, a.LossStreak, a.MaxLossStreak, a.TiltAlerts, a.LastTiltReason,
+                                    a.AvgHoldMs, a.MaxHoldMs, a.MaeWorstWon, a.MaeAvgWon, a.MfeBestWon, a.MfeAvgWon, a.RealizedWon,
+                                    a.SlippageDragWon, a.TripSlippageWon, a.CaptureBp, a.OpenMaeWon, a.OpenMfeWon,
+                                    grossPnlWon: gross, netPnlWon: net, feesWon: book.FeesWon, taxWon: book.TaxWon, mddWon: book.MddWon, mddBp: mddBp,
+                                    qualityTrips: q.Trips, winRateBp: q.WinRateBp, profitFactorBp: q.ProfitFactorBp, grossProfitWon: q.GrossProfitWon, grossLossWon: q.GrossLossWon,
+                                    avgMaeBp: q.AvgMaeBp, avgMfeBp: q.AvgMfeBp, exitEfficiencyBp: q.AvgExitEfficiencyBp, maeToRealizedBp: q.MaeToRealizedBp,
+                                    lastSide: last.Side, lastEntryPx: last.EntryPx, lastExitPx: last.ExitPx, lastMaePx: last.MaePx, lastMfePx: last.MfePx,
+                                    lastHoldMs: last.HoldTicks / TimeSpan.TicksPerMillisecond, lastGrossWon: last.GrossWon, lastNetWon: last.NetWon);
+        }
+
         public long MarkToMarket(int side, out long unrealizedWon)
         {
             var book = Book(side);

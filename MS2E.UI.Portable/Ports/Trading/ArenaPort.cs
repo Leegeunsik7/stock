@@ -67,13 +67,17 @@ namespace MS2E.UI.Portable.Ports.Trading
         /// <summary>[v12.18.23-DEV] 롱/숏 보유 종목 수 · 숏 담보 잠금(원 · 매도 대금 + 증거금 50%) · 대기열 취소 이탈로 단축된 앞 잔량 누적(주).</summary>
         public readonly int LongPositions, ShortPositions;
         public readonly long ShortLockedWon, QueueCancelDepletedQty;
+        /// <summary>[v12.18.25-DEV] Gross(마찰 전) · Net(= 자산 − 자본금) 손익 · 청산가치 자산(퇴출 수수료/거래세 포함 — 하드 리스크 판정 기준).</summary>
+        public readonly long GrossPnlWon, NetPnlWon, LiquidationEquityWon;
 
         public ArenaSideStats(long equityWon, long cashWon, long realizedWon, long unrealizedWon, long feesWon, long taxWon, long slippageWon,
                               long peakWon, long mddWon, int mddBp, long fills, long rejects, int wins, int losses, int openPositions, int lastReject,
                               int pendingOrders = 0, int workingOrders = 0, long queueAheadQty = -1, long cancels = 0, long reservedCashWon = 0,
                               long vacuumEvents = 0, long vacuumPenaltyWon = 0, long icebergRefills = 0,
-                              int longPositions = 0, int shortPositions = 0, long shortLockedWon = 0, long queueCancelDepletedQty = 0)
+                              int longPositions = 0, int shortPositions = 0, long shortLockedWon = 0, long queueCancelDepletedQty = 0,
+                              long grossPnlWon = 0, long netPnlWon = 0, long liquidationEquityWon = 0)
         {
+            GrossPnlWon = grossPnlWon; NetPnlWon = netPnlWon; LiquidationEquityWon = liquidationEquityWon;
             LongPositions = longPositions; ShortPositions = shortPositions; ShortLockedWon = shortLockedWon; QueueCancelDepletedQty = queueCancelDepletedQty;
             VacuumEvents = vacuumEvents; VacuumPenaltyWon = vacuumPenaltyWon; IcebergRefills = icebergRefills;
             EquityWon = equityWon; CashWon = cashWon; RealizedWon = realizedWon; UnrealizedWon = unrealizedWon;

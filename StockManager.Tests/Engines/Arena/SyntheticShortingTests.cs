@@ -184,7 +184,7 @@ namespace StockManager.Tests.Engines.Arena
             Step(g);
             s = Snap(g);
             Assert.True(s.HumanRiskLocked);
-            Assert.Equal(9_696_370, s.RiskTripEquityWon);                         // 발동 시 자산 = 16,976,370 − 7,280,000
+            Assert.Equal(9_695_278, s.RiskTripEquityWon);                         // [v12.18.25-DEV] Net 청산가치 = 16,976,370 − (7,280,000 + 커버 수수료 1,092)
             Assert.Equal((0, 0, 0L), (s.Human.OpenPositions, s.Human.ShortPositions, s.Human.ShortLockedWon));
             Assert.Equal(Proceeds - (7_280_000 + 1_092), s.Human.RealizedWon);   // −304,722
             Assert.Equal(10_000_000 + Proceeds - 7_281_092, s.Human.EquityWon);

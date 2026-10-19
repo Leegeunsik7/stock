@@ -327,7 +327,8 @@ namespace StockManager.Tests.Engines.Arena
             Assert.False(Snap(g, _now).HumanRiskLocked);                              // −0.11% = 한도 안
             g.OnQuote(Book(67_000, 1_000, 66_900, 1_000));
             Step(g);                                                                  // −3.11% → 같은 회차 강제 청산
-            tripEquity = 100_000_000 - (70_000_000 + DualBookSimulator.Fee(70_000_000)) + 66_900_000;
+            // [v12.18.25-DEV] 발동 자산 = Net 청산가치(퇴출 수수료 · 거래세 포함) — 종전 시가평가(66,900,000 그대로) 대비 엄격
+            tripEquity = 100_000_000 - (70_000_000 + DualBookSimulator.Fee(70_000_000)) + 66_900_000 - DualBookSimulator.Fee(66_900_000) - DualBookSimulator.Tax(66_900_000);
             return g;
         }
 

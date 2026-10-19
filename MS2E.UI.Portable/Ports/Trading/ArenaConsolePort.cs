@@ -51,11 +51,28 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly int Trips, Wins, Losses, OpenTrips, LossStreak, MaxLossStreak, TiltAlerts, LastTiltReason;
         public readonly long AvgHoldMs, MaxHoldMs, MaeWorstWon, MaeAvgWon, MfeBestWon, MfeAvgWon, RealizedWon, SlippageDragWon, TripSlippageWon, CaptureBp;
         public readonly long OpenMaeWon, OpenMfeWon;
+        /// <summary>
+        /// [v12.18.25-DEV] 포렌식: Gross(마찰 전) · Net(수수료 · 거래세 · 슬리피지 후 = 자산 − 자본금) · 누적 수수료/거래세 · MDD ·
+        /// 틱 단위 가격 MAE/MFE(평균 bp) · 승률/손익비(bp · −1 = 손실 0 무한) · 청산 효율(실현 이동 ÷ MFE bp) · MAE 대비 실현(bp) · 최근 거래 1건.
+        /// </summary>
+        public readonly long GrossPnlWon, NetPnlWon, FeesWon, TaxWon, MddWon, GrossProfitWon, GrossLossWon, WinRateBp, ProfitFactorBp,
+                             AvgMaeBp, AvgMfeBp, ExitEfficiencyBp, MaeToRealizedBp, LastEntryPx, LastExitPx, LastMaePx, LastMfePx, LastHoldMs, LastGrossWon, LastNetWon;
+        public readonly int MddBp, QualityTrips, LastSide;
 
         public ArenaDebrief(int trips, int wins, int losses, int openTrips, int lossStreak, int maxLossStreak, int tiltAlerts, int lastTiltReason,
                             long avgHoldMs, long maxHoldMs, long maeWorstWon, long maeAvgWon, long mfeBestWon, long mfeAvgWon, long realizedWon,
-                            long slippageDragWon, long tripSlippageWon, long captureBp, long openMaeWon, long openMfeWon)
+                            long slippageDragWon, long tripSlippageWon, long captureBp, long openMaeWon, long openMfeWon,
+                            long grossPnlWon = 0, long netPnlWon = 0, long feesWon = 0, long taxWon = 0, long mddWon = 0, int mddBp = 0,
+                            int qualityTrips = 0, long winRateBp = 0, long profitFactorBp = 0, long grossProfitWon = 0, long grossLossWon = 0,
+                            long avgMaeBp = 0, long avgMfeBp = 0, long exitEfficiencyBp = 0, long maeToRealizedBp = 0,
+                            int lastSide = 0, long lastEntryPx = 0, long lastExitPx = 0, long lastMaePx = 0, long lastMfePx = 0, long lastHoldMs = 0,
+                            long lastGrossWon = 0, long lastNetWon = 0)
         {
+            GrossPnlWon = grossPnlWon; NetPnlWon = netPnlWon; FeesWon = feesWon; TaxWon = taxWon; MddWon = mddWon; MddBp = mddBp;
+            QualityTrips = qualityTrips; WinRateBp = winRateBp; ProfitFactorBp = profitFactorBp; GrossProfitWon = grossProfitWon; GrossLossWon = grossLossWon;
+            AvgMaeBp = avgMaeBp; AvgMfeBp = avgMfeBp; ExitEfficiencyBp = exitEfficiencyBp; MaeToRealizedBp = maeToRealizedBp;
+            LastSide = lastSide; LastEntryPx = lastEntryPx; LastExitPx = lastExitPx; LastMaePx = lastMaePx; LastMfePx = lastMfePx; LastHoldMs = lastHoldMs;
+            LastGrossWon = lastGrossWon; LastNetWon = lastNetWon;
             Trips = trips; Wins = wins; Losses = losses; OpenTrips = openTrips; LossStreak = lossStreak; MaxLossStreak = maxLossStreak;
             TiltAlerts = tiltAlerts; LastTiltReason = lastTiltReason; AvgHoldMs = avgHoldMs; MaxHoldMs = maxHoldMs;
             MaeWorstWon = maeWorstWon; MaeAvgWon = maeAvgWon; MfeBestWon = mfeBestWon; MfeAvgWon = mfeAvgWon; RealizedWon = realizedWon;
