@@ -7,6 +7,9 @@
 //  §4 sticky — Failed 후 재진단 거부(프로브 미호출) · 물리 이중키 없이는 해제 불가
 //  §5 진단 통과 후 핑퐁 계측 · 판독 δ=0(Release · MinAllocated 3창)
 //  §6 비파괴 — 진단 타입에 송출/취소 경로 0 · 호스트 KIS 프로브 = 잔고 조회 GET 만 · /aidash 투영
+//  [v12.18.17-DEV 하드닝] 시한 = 가상 시계(VirtualTimeProvider) — 시한 직전 무래치 · 도달 즉시 래치를 벽시계/스레드풀 부하와 무관하게 판정.
+//   레인 순서 = 게이트(TaskCompletionSource) + 래치 통지 이벤트(ManualResetEventSlim) 핸드셰이크 — 실 Task.Delay 경주(400ms) 제거.
+//   '시한 안 정상' 판정 테스트도 가상 시계 결선(시각을 진행하지 않으면 시한 불발 → 부하 중 오시한 0). 벽시계 대기는 교착 감시용 상한(10초)뿐.
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -26,6 +29,7 @@ namespace StockManager.Tests.Services
     public class PreFlightSentinelTests
     {
         private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(100);
+        private static readonly TimeSpan Liveness = TimeSpan.FromSeconds(10);              // 교착 감시 상한(판정 기준 아님)
 
         private sealed class Rig
         {
@@ -45,7 +49,8 @@ namespace StockManager.Tests.Services
         {
             private readonly long _bit;
             public volatile BrokerLivenessPreFlight? Target;
-            public long RaisedAtTicks;
+            public VirtualTimeProvider? Clock;
+            public long RaisedAtTicks, RaisedAtVirtualTicks = -1;
             public int KiwoomVerdictAtRaise = -1, KisVerdictAtRaise = -1;
             public RaiseProbe(ArmingInterlockSource s) => _bit = 1L << (int)s;
             public void OnTransition(long raised, long cleared, long maskAfter)
@@ -57,6 +62,7 @@ namespace StockManager.Tests.Services
                     KiwoomVerdictAtRaise = (int)t.Verdict(BrokerLivenessPreFlight.LaneKiwoom);
                     KisVerdictAtRaise = (int)t.Verdict(BrokerLivenessPreFlight.LaneKis);
                 }
+                if (Clock is { } c) Interlocked.Exchange(ref RaisedAtVirtualTicks, c.Elapsed.Ticks);
                 Interlocked.Exchange(ref RaisedAtTicks, Stopwatch.GetTimestamp());
             }
         }
@@ -66,6 +72,21 @@ namespace StockManager.Tests.Services
 
         private static Func<CancellationToken, Task<BrokerProbeVerdict>> Returns(BrokerProbeVerdict v, int delayMs = 0)
             => async ct => { if (delayMs > 0) await Task.Delay(delayMs, CancellationToken.None); return v; };
+
+        /// <summary>게이트 프로브 — 테스트가 SetResult 할 때까지 판정 보류(취소 무시 · 비동기 continuation).</summary>
+        private static (Func<CancellationToken, Task<BrokerProbeVerdict>> probe, TaskCompletionSource<BrokerProbeVerdict> gate) Gated()
+        {
+            var gate = new TaskCompletionSource<BrokerProbeVerdict>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return (_ => gate.Task, gate);
+        }
+
+        /// <summary>진단 개시 → (타이머 등록은 ProbeAsync 동기 구간에서 완료) → 가상 시각을 시한만큼 진행 → 결과.</summary>
+        private static async Task<BrokerLivenessReport> ProbeThroughTimeout(BrokerLivenessPreFlight pf, VirtualTimeProvider clock)
+        {
+            var t = pf.ProbeAsync();
+            clock.Advance(pf.Timeout);
+            return await t.WaitAsync(Liveness);
+        }
 
         private static long MinAllocated(Action body, int windows = 3)
         {
@@ -98,17 +119,23 @@ namespace StockManager.Tests.Services
             Assert.False(rig.Raised(ArmingInterlockSource.KiwoomBridgeLink));
             Assert.False(rig.Raised(ArmingInterlockSource.AccountDivergence));
 
-            var pf = new BrokerLivenessPreFlight(Never(), Returns(BrokerProbeVerdict.Healthy, 20), rig.Account, rig.Link, ShortTimeout);
-            sink.Target = pf;
+            var clock = new VirtualTimeProvider();
+            var pf = new BrokerLivenessPreFlight(Never(), Returns(BrokerProbeVerdict.Healthy), rig.Account, rig.Link, ShortTimeout, timeProvider: clock);
+            sink.Target = pf; sink.Clock = clock;
             Assert.Equal(PreFlightLivenessState.Pending, pf.State);
 
-            long start = Stopwatch.GetTimestamp();
-            var report = await pf.ProbeAsync();
+            var probe = pf.ProbeAsync();
+            Assert.True(clock.ArmedTimers >= 2);                                             // 시한 토큰 + WaitAsync 시한(동기 구간에서 등록)
+            clock.Advance(ShortTimeout - TimeSpan.FromTicks(1));                             // 시한 1틱 전 = 래치 0(KIS 는 이미 정상)
+            Assert.False(probe.IsCompleted);
+            Assert.Equal(0, Interlocked.Read(ref sink.RaisedAtTicks));
+            Assert.False(rig.Raised(ArmingInterlockSource.KiwoomBridgeLink));
+            Assert.Equal(BrokerProbeVerdict.Pending, pf.Verdict(BrokerLivenessPreFlight.LaneKiwoom));
+            clock.Advance(TimeSpan.FromTicks(1));                                            // 시한 도달
+            var report = await probe.WaitAsync(Liveness);
 
-            // 래치 시점: 시한(100ms) 판정 continuation — 판정 기록 직후 같은 흐름에서 비트 반영
-            Assert.NotEqual(0, sink.RaisedAtTicks);
-            double raisedMs = (sink.RaisedAtTicks - start) * 1000.0 / Stopwatch.Frequency;
-            Assert.InRange(raisedMs, ShortTimeout.TotalMilliseconds - 5, 2_000);
+            // 래치 시점: 시한(100ms) 판정 continuation — 판정 기록 직후 같은 흐름에서 비트 반영(가상 시각 = 정확히 시한)
+            Assert.Equal(ShortTimeout.Ticks, Interlocked.Read(ref sink.RaisedAtVirtualTicks));
             Assert.Equal((int)BrokerProbeVerdict.Timeout, sink.KiwoomVerdictAtRaise);
 
             Assert.True(rig.Raised(ArmingInterlockSource.KiwoomBridgeLink));
@@ -132,16 +159,24 @@ namespace StockManager.Tests.Services
             var rig = new Rig();
             var sink = new RaiseProbe(ArmingInterlockSource.KiwoomBridgeLink);
             rig.Mask.AttachTransitionSink(sink);
-            const int kisDelayMs = 400;   // KIS 는 느리지만 시한(2초) 안의 정상 — 키움 래치는 이 레인을 기다리지 않아야 한다
-            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Invalid), Returns(BrokerProbeVerdict.Healthy, kisDelayMs),
-                                                 rig.Account, rig.Link, TimeSpan.FromSeconds(2));
+            // 두 레인 모두 게이트 — 키움만 Invalid 로 풀고, KIS 는 키움 래치를 '관측한 뒤에야' 푼다(실 지연 경주 0 · 순서 = 인과)
+            var (kiwoomProbe, kiwoomGate) = Gated();
+            var (kisProbe, kisGate) = Gated();
+            using var latched = new ManualResetEventSlim(false);
+            var clock = new VirtualTimeProvider();                                           // 시한은 진행하지 않음 = 시한 불발
+            var pf = new BrokerLivenessPreFlight(kiwoomProbe, kisProbe, rig.Account, rig.Link, TimeSpan.FromSeconds(2),
+                                                 onLatch: (lane, _) => { if (lane == BrokerLivenessPreFlight.LaneKiwoom) latched.Set(); }, timeProvider: clock);
             sink.Target = pf;
-            long start = Stopwatch.GetTimestamp();
-            var r = await pf.ProbeAsync();
-            double raisedMs = (sink.RaisedAtTicks - start) * 1000.0 / Stopwatch.Frequency;
-            Assert.InRange(raisedMs, 0, kisDelayMs - 1);
+            var probe = pf.ProbeAsync();
+            Assert.False(latched.IsSet);
+            kiwoomGate.SetResult(BrokerProbeVerdict.Invalid);
+            Assert.True(latched.Wait(Liveness), "키움 래치 미발생(교착)");
+            Assert.False(probe.IsCompleted);                                                 // 진단은 KIS 대기 중 — 그런데 래치는 이미
+            Assert.True(rig.Raised(ArmingInterlockSource.KiwoomBridgeLink));
             Assert.Equal((int)BrokerProbeVerdict.Invalid, sink.KiwoomVerdictAtRaise);
             Assert.Equal((int)BrokerProbeVerdict.Pending, sink.KisVerdictAtRaise);           // KIS 는 아직 판정 중이었다
+            kisGate.SetResult(BrokerProbeVerdict.Healthy);
+            var r = await probe.WaitAsync(Liveness);
             Assert.Equal(BrokerProbeVerdict.Healthy, r.Kis);
             Assert.Equal(PreFlightLivenessState.Failed, r.State);                            // 다른 레인 통과가 Failed 를 덮지 않음
         }
@@ -156,8 +191,9 @@ namespace StockManager.Tests.Services
             var mask = new ArmingInterlockBitmask();
             var link = new KiwoomBridgeLinkInterlock(() => linked, required: true);
             link.BindInterlock(mask, ArmingInterlockSource.KiwoomBridgeLink);
-            var pf = new BrokerLivenessPreFlight(Never(), null, null, link, ShortTimeout);
-            await pf.ProbeAsync();
+            var clock = new VirtualTimeProvider();
+            var pf = new BrokerLivenessPreFlight(Never(), null, null, link, ShortTimeout, timeProvider: clock);
+            Assert.Equal(BrokerProbeVerdict.Timeout, (await ProbeThroughTimeout(pf, clock)).Kiwoom);
             Assert.True(mask.IsRaised(ArmingInterlockSource.KiwoomBridgeLink));
 
             linked = true; link.Evaluate();                                                // 뒤늦은 링크 수립
@@ -174,7 +210,8 @@ namespace StockManager.Tests.Services
         public async Task Kis_Token_Invalid_Latches_Bit_14_Only()
         {
             var rig = new Rig();
-            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), Returns(BrokerProbeVerdict.Invalid), rig.Account, rig.Link, ShortTimeout);
+            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), Returns(BrokerProbeVerdict.Invalid), rig.Account, rig.Link, ShortTimeout,
+                                                 timeProvider: new VirtualTimeProvider());
             var r = await pf.ProbeAsync();
             Assert.Equal(PreFlightLivenessState.Failed, r.State);
             Assert.Equal(BrokerProbeVerdict.Invalid, r.Kis);
@@ -187,22 +224,23 @@ namespace StockManager.Tests.Services
         public async Task Probe_Exception_Undetermined_Answer_And_Host_Cancel_Are_Fail_Closed()
         {
             var rig = new Rig();
-            var pf = new BrokerLivenessPreFlight(_ => throw new InvalidOperationException("boom"), null, rig.Account, rig.Link, ShortTimeout);
+            var pf = new BrokerLivenessPreFlight(_ => throw new InvalidOperationException("boom"), null, rig.Account, rig.Link, ShortTimeout, timeProvider: new VirtualTimeProvider());
             Assert.Equal(BrokerProbeVerdict.Fault, (await pf.ProbeAsync()).Kiwoom);
             Assert.True(rig.Raised(ArmingInterlockSource.KiwoomBridgeLink));
 
             var rig2 = new Rig();
-            var pf2 = new BrokerLivenessPreFlight(null, Returns(BrokerProbeVerdict.NotConfigured), rig2.Account, rig2.Link, ShortTimeout);
+            var pf2 = new BrokerLivenessPreFlight(null, Returns(BrokerProbeVerdict.NotConfigured), rig2.Account, rig2.Link, ShortTimeout, timeProvider: new VirtualTimeProvider());
             Assert.Equal(BrokerProbeVerdict.Invalid, (await pf2.ProbeAsync()).Kis);           // 결선된 레인이 '미결선' 응답 = 무효
             Assert.True(rig2.Raised(ArmingInterlockSource.AccountDivergence));
 
             var rig3 = new Rig();
             using var cts = new CancellationTokenSource();
             var pf3 = new BrokerLivenessPreFlight(ct => Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => BrokerProbeVerdict.Healthy, TaskScheduler.Default),
-                                                  null, rig3.Account, rig3.Link, TimeSpan.FromSeconds(30));
+                                                  null, rig3.Account, rig3.Link, TimeSpan.FromSeconds(30), timeProvider: new VirtualTimeProvider());
             var t = pf3.ProbeAsync(cts.Token);
             cts.Cancel();
-            var r3 = await t;
+            var r3 = await t.WaitAsync(Liveness);
+            Assert.Equal(BrokerProbeVerdict.Fault, r3.Kiwoom);                                 // 시한 불발(가상 시계) — 호스트 취소만으로 판정 = Fault
             Assert.NotEqual(BrokerProbeVerdict.Healthy, r3.Kiwoom);
             Assert.Equal(PreFlightLivenessState.Failed, r3.State);
             Assert.True(rig3.Raised(ArmingInterlockSource.KiwoomBridgeLink));
@@ -214,8 +252,9 @@ namespace StockManager.Tests.Services
         public async Task Healthy_And_Unconfigured_Lanes_Pass_With_No_Bits()
         {
             var rig = new Rig();
-            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy, 10), null, rig.Account, rig.Link, ShortTimeout);
-            var r = await pf.ProbeAsync();
+            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy, 10), null, rig.Account, rig.Link, ShortTimeout,
+                                                 timeProvider: new VirtualTimeProvider());   // 실 10ms 지연이 부하로 늘어도 시한 불발(가상 시각 정지)
+            var r = await pf.ProbeAsync().WaitAsync(Liveness);
             Assert.True(r.Passed);
             Assert.Equal(BrokerProbeVerdict.Healthy, r.Kiwoom);
             Assert.Equal(BrokerProbeVerdict.NotConfigured, r.Kis);
@@ -235,13 +274,14 @@ namespace StockManager.Tests.Services
             Assert.False(GenesisPreFlightUpdater.RenewAllowed(false, true, null));
             Assert.False(GenesisPreFlightUpdater.RenewAllowed(true, false, null));
 
-            var pending = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), null, null, null, ShortTimeout);
+            var pending = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), null, null, null, ShortTimeout, timeProvider: new VirtualTimeProvider());
             Assert.False(GenesisPreFlightUpdater.RenewAllowed(true, true, pending));             // ★진단 전 = 갱신 0
             await pending.ProbeAsync();
             Assert.True(GenesisPreFlightUpdater.RenewAllowed(true, true, pending));
 
-            var failed = new BrokerLivenessPreFlight(Never(), null, null, null, ShortTimeout);
-            await failed.ProbeAsync();
+            var failClock = new VirtualTimeProvider();
+            var failed = new BrokerLivenessPreFlight(Never(), null, null, null, ShortTimeout, timeProvider: failClock);
+            await ProbeThroughTimeout(failed, failClock);
             Assert.False(GenesisPreFlightUpdater.RenewAllowed(true, true, failed));
 
             var updater = new GenesisPreFlightUpdater(new MS2E.Infrastructure.GenesisPreFlightCertifier(), new MS2E.Infrastructure.AtomicArmingLease(), liveness: failed);
@@ -260,7 +300,8 @@ namespace StockManager.Tests.Services
             var rig = new Rig();
             int calls = 0;
             var verdict = BrokerProbeVerdict.Invalid;
-            var pf = new BrokerLivenessPreFlight(_ => { Interlocked.Increment(ref calls); return Task.FromResult(verdict); }, null, rig.Account, rig.Link, ShortTimeout);
+            var pf = new BrokerLivenessPreFlight(_ => { Interlocked.Increment(ref calls); return Task.FromResult(verdict); }, null, rig.Account, rig.Link, ShortTimeout,
+                                                 timeProvider: new VirtualTimeProvider());
             await pf.ProbeAsync();
             Assert.Equal(1, calls);
             verdict = BrokerProbeVerdict.Healthy;
@@ -286,7 +327,8 @@ namespace StockManager.Tests.Services
         [Fact]
         public async Task PingPong_And_Readout_Path_Is_Zero_Alloc_After_Pass()
         {
-            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), Returns(BrokerProbeVerdict.Healthy), null, null, ShortTimeout);
+            var pf = new BrokerLivenessPreFlight(Returns(BrokerProbeVerdict.Healthy), Returns(BrokerProbeVerdict.Healthy), null, null, ShortTimeout,
+                                                 timeProvider: new VirtualTimeProvider());
             Assert.True((await pf.ProbeAsync()).Passed);
 
             pf.RecordPingPong(BrokerLivenessPreFlight.LaneKiwoom, 1);   // 워밍업(JIT)

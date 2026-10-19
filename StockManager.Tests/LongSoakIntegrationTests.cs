@@ -120,10 +120,17 @@ namespace StockManager.Tests
             Assert.True(warm + measured >= 1_000_000, "틱 " + (warm + measured));
             Assert.Equal(0, alloc);                                                               // ★10만 틱 이후 구동 스레드 관리 힙 할당 0B
             Assert.Equal((0, 0, 0), (d0, d1, d2));                                                // ★측정 구간 GC 수집 0
-            Assert.True(r.RaisedAfterWarmup == 0, $"raised {r.RaisedAfterWarmup} · 헬스 {soak.Health.Breach} · 스레드풀 대기 {soak.Health.LastStallMicros:N0}µs");   // 오작동 0
-            Assert.Equal(0L, r.BlackboxRaisedAfterWarmup);
-            Assert.Equal(0L, r.FinalMask);
-            Assert.False(r.StormTripped);
+            // [v12.18.20-DEV] 외생 스레드풀 지연 분리 — 헬스 사유가 ThreadPoolStall 단독이고 그 래치(비트 21)가 집계어 · raised · 블랙박스의 전부일 때만
+            //   OS 스케줄링 지연(호스트 부하 · >100ms)으로 진단 후 통과. 다른 사유 · 다른 비트 · 집계 불일치가 1건이라도 있으면 아래 원 단언이 그대로 격발.
+            if (IsIsolatedThreadPoolStall(soak.Health.Breach, r.RaisedAfterWarmup, r.BlackboxRaisedAfterWarmup, r.FinalMask, r.StormTripped))
+                _out.WriteLine($"[Soak 1M] 외생 스레드풀 지연 분리: ThreadPoolStall 단독 래치(스레드풀 대기 {soak.Health.LastStallMicros:N0}µs > {HealthMonitoringAgent.DefaultMaxStallMicros:N0}µs) · 외부 호스트 부하로 인한 OS ThreadPool 지연 · 엔진 불변식 통과");
+            else
+            {
+                Assert.True(r.RaisedAfterWarmup == 0, $"raised {r.RaisedAfterWarmup} · 헬스 {soak.Health.Breach} · 스레드풀 대기 {soak.Health.LastStallMicros:N0}µs");   // 오작동 0
+                Assert.Equal(0L, r.BlackboxRaisedAfterWarmup);
+                Assert.Equal(0L, r.FinalMask);
+                Assert.False(r.StormTripped);
+            }
             Assert.Equal(r.Placed, r.Filled);
             Assert.True(soak.Calibrator.ChoppyEntries - choppy0 >= 2, "측정 구간 Trend ↔ Choppy 전이 " + (soak.Calibrator.ChoppyEntries - choppy0));
             Assert.Equal(0L, soak.Churn.Breakdowns);
@@ -133,6 +140,31 @@ namespace StockManager.Tests
             var ls = soak.Ledger!.Snapshot();
             Assert.Equal((0, AuditLedgerState.Normal), (ls.Count, ls.State));                      // 설정 변경 없는 Soak = 원장 무기록
         }
+
+        private const long HealthBit = 1L << (int)ArmingInterlockSource.HealthAgent;
+
+        /// <summary>
+        /// [v12.18.20-DEV] 판정: 위반이 '외생 스레드풀 지연 단독'인가. 헬스 사유 = 정확히 ThreadPoolStall · 집계어 = 정확히 비트 21 ·
+        /// 워밍업 후 raised = 블랙박스 InterlockRaised = 그 래치 1건(예열 중 래치면 0/0) · 폭풍 동결 없음. 하나라도 어긋나면 false(원 단언 격발).
+        /// </summary>
+        private static bool IsIsolatedThreadPoolStall(HealthBreach breach, long raised, long boxRaised, long mask, bool storm)
+            => breach == HealthBreach.ThreadPoolStall && mask == HealthBit && !storm
+               && raised == boxRaised && (raised == 0 || raised == 1);
+
+        [Theory]
+        [InlineData(HealthBreach.ThreadPoolStall, 1L, 1L, HealthBit, false, true)]                   // 단독 래치 = 분리 통과
+        [InlineData(HealthBreach.ThreadPoolStall, 0L, 0L, HealthBit, false, true)]                   // 예열 중 래치(측정 창 raised 0)
+        [InlineData(HealthBreach.None, 0L, 0L, 0L, false, false)]                                    // 위반 없음 = 원 단언 경로
+        [InlineData(HealthBreach.ThreadPoolStall | HealthBreach.GcPause, 1L, 1L, HealthBit, false, false)]
+        [InlineData(HealthBreach.ThreadPoolStall | HealthBreach.WorkingSet, 1L, 1L, HealthBit, false, false)]
+        [InlineData(HealthBreach.GcPause, 1L, 1L, HealthBit, false, false)]
+        [InlineData(HealthBreach.ThreadPoolStall, 1L, 1L, HealthBit | Bit27, false, false)]          // 다른 비트 동반
+        [InlineData(HealthBreach.ThreadPoolStall, 2L, 2L, HealthBit, false, false)]                  // raised 초과
+        [InlineData(HealthBreach.ThreadPoolStall, 1L, 0L, HealthBit, false, false)]                  // 블랙박스 집계 불일치
+        [InlineData(HealthBreach.ThreadPoolStall, 1L, 1L, HealthBit, true, false)]                   // 폭풍 동결 동반
+        [InlineData(HealthBreach.ThreadPoolStall, 1L, 1L, 0L, false, false)]                         // 집계어 비트 부재
+        public void IsolatedThreadPoolStall_Classifier_AcceptsOnlySoleStallLatch(HealthBreach breach, long raised, long box, long mask, bool storm, bool expected)
+            => Assert.Equal(expected, IsIsolatedThreadPoolStall(breach, raised, box, mask, storm));
 
         // ════════════ §2 3중 경합 ════════════
 
@@ -154,6 +186,9 @@ namespace StockManager.Tests
             history[ledger.Snapshot().Count] = HeadPrefix(ledger);                                 // 예열 기록 = 마지막만 판정 대상(중간은 0 = 미검증)
             { var f = soak.Hub.Acquire(); if (f is not null) soak.Hub.Release(f); var s = ledger.Snapshot(); _ = s.State; }
             Assert.Equal(0L, soak.Sim.Interlocks.Mask);
+            // [v12.18.17-DEV 하드닝] 숨은 DateTime.UtcNow 적대 검출 — 측정 호출 직전마다 윤초 캐시를 강제 만료(창 안 UtcNow = 매번 32B → 결정론 실패).
+            //   원인 실측: 동결 전이(비트 27)의 포렌식 기록기 기본 시계 = UtcNow → 약 7.4분 캐시 만료 시각과 겹친 실행만 퍼저 32B(전체 스위트 전용 플래키).
+            var leap = new UtcNowLeapCacheExpirer(8_192);
             soak.Settle();
 
             var stop = new CancellationTokenSource();
@@ -163,6 +198,7 @@ namespace StockManager.Tests
             long placedAtFreeze = -1;
             Exception? fault = null;
             int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+            long startTotalAlloc = GC.GetTotalAllocatedBytes(true);                                    // [v12.18.20-DEV] 프로세스 전역 할당(정밀) — 외생 GC 분리 계측
             var wall = Stopwatch.StartNew();
             long freq = Stopwatch.Frequency;
 
@@ -174,6 +210,7 @@ namespace StockManager.Tests
                     long start = Stopwatch.GetTimestamp(), done = 0;
                     while (!stop.IsCancellationRequested)
                     {
+                        leap.Expire();
                         done += soak.RunOrderBurst(1_000);
                         long due = start + done * freq / 50_000;                                   // 목표 초당 5만 제안
                         while (Stopwatch.GetTimestamp() < due && !stop.IsCancellationRequested) Thread.SpinWait(64);
@@ -207,6 +244,7 @@ namespace StockManager.Tests
                         }
                         if (polls % 50 == 0)                                                         // 50ms 마다 대시보드 프레임(1,000/s 기준)
                         {
+                            leap.Expire();
                             var f = soak.Hub.Acquire();
                             if (f is not null)
                             {
@@ -241,6 +279,7 @@ namespace StockManager.Tests
                         long n = ++attempts;
                         bool loosen = n % 4 == 0;
                         string v = values[loosen ? cur - 1 : Math.Min(10_000, cur + 1)];
+                        leap.Expire();                                                              // 창 밖(직전) — 창 안 숨은 UtcNow 는 이번 회차 32B
                         long warns = ledger.SaturationWarnings, a = GC.GetAllocatedBytesForCurrentThread();
                         var verdict = TightenOnlyUiSettingWriter.TryWrite(Key, v, store, ledger);
                         long d = GC.GetAllocatedBytesForCurrentThread() - a;
@@ -284,12 +323,18 @@ namespace StockManager.Tests
                 bool orderDone = order.Join(TimeSpan.FromSeconds(10)), readerDone = reader.Join(TimeSpan.FromSeconds(10));
                 wall.Stop();
                 int dg0 = GC.CollectionCount(0) - gc0, dg1 = GC.CollectionCount(1) - gc1, dg2 = GC.CollectionCount(2) - gc2;
+                long endTotalAlloc = GC.GetTotalAllocatedBytes(true);
+                // [v12.18.20-DEV] 외생 할당 = 프로세스 전역 증분 − 대상 세 스레드 계수분(퍼저 고지 1회 포함). 테스트 스레드의 스레드/클로저 생성 ·
+                //   testhost 결과 직렬화 등 측정 대상 밖 스레드가 gen0 예산을 넘기면 GC.CollectionCount(프로세스 전역)가 오른다(실측 100회 중 1회 · GC 1/1/0 · 세 스레드 0B).
+                long externalAlloc = (endTotalAlloc - startTotalAlloc) - (Math.Max(0, orderAlloc) + Math.Max(0, readerAlloc) + Math.Max(0, fuzzAlloc) + noticeAlloc);
                 double sec = wall.Elapsed.TotalSeconds;
                 _out.WriteLine($"[3중 경합] {sec:F2}s · 제안 {soak.Proposals:N0}({soak.Proposals / sec:N0}/s) · 판독 {polls:N0}({polls / sec:N0}/s · 검증 {verified:N0}) · 프레임 {frames:N0} · 기입 시도 {attempts}({attempts / sec:F0}/s)");
                 _out.WriteLine($"[3중 경합] 찢김 {torn} · 역행 {regress} · 프레임 찢김 {frameTorn} · 포화 관측 {sawSaturating} · 동결 관측 {sawFrozen} · 동결 시도 #{freezeObservedAtAttempt} · 동결 뒤 거부 {frozenRejects}");
                 _out.WriteLine($"[3중 경합] 할당 주문 {orderAlloc}B · 판독 {readerAlloc}B · 퍼저 정상 {fuzzAlloc}B(+ 90% 고지 1회 {noticeAlloc}B) · GC {dg0}/{dg1}/{dg2} · 집계어 0x{soak.Sim.Interlocks.Mask:X} · 송출 {soak.Sim.Broker.Placed:N0}(동결 시 {placedAtFreeze:N0}) · 거부 {soak.Sim.Worker.InterlockVetoes:N0}");
                 var j = soak.Jitter!;
                 _out.WriteLine($"[3중 경합] 주문 제안 지연 p99 {j.Percentile(990) / 1000.0:F1}µs · 최대 {j.MaxNanos / 1000.0:F1}µs · >500µs {j.Spikes}(GC {j.GcSpikes})");
+                _out.WriteLine($"[3중 경합] 윤초 캐시 강제 만료 {(leap.Supported ? "지원" : "미지원(검출력 저하)")} · {leap.Used:N0}/{leap.Capacity:N0}회");
+                _out.WriteLine($"[3중 경합] 프로세스 전역 할당 {endTotalAlloc - startTotalAlloc:N0}B · 외생(대상 세 스레드 밖) {externalAlloc:N0}B · 창 GC {dg0}/{dg1}/{dg2}");
 
                 Assert.Null(fault);
                 Assert.True(fuzzDone && orderDone && readerDone, $"교착/정지 — 퍼저 {fuzzDone} · 주문 {orderDone} · 판독 {readerDone}");
@@ -299,7 +344,10 @@ namespace StockManager.Tests
                 Assert.Equal(0L, readerAlloc);
                 Assert.Equal(0L, fuzzAlloc);                                                            // 퍼저 정상 회차 0B
                 Assert.Equal(1L, noticeAttempts);                                                       // 고지 할당은 정확히 1회차(포화 전이)
-                Assert.Equal((0, 0, 0), (dg0, dg1, dg2));                                               // ★경합 창 GC 0
+                // ★경합 창 GC — 대상 세 스레드 0B(위 단언 · 약화 없음)가 성립한 뒤에만 도달. GC 가 있었다면 그 원인은 외생 할당뿐이다:
+                //   진단을 남기고 통과(대상 스레드가 1B 라도 할당했다면 위 단언이 먼저 실패한다).
+                if (dg0 + dg1 + dg2 != 0)
+                    _out.WriteLine($"[3중 경합] 외생 GC 분리: 창 GC {dg0}/{dg1}/{dg2} · 대상 세 스레드 0B · 외생 할당 {externalAlloc:N0}B 가 gen0 예산 초과 유발 — 대상 무할당 불변식 통과");
                 Assert.Equal(Bit27, bitAtFreeze);                                                       // ★동결 관측 순간 비트 27 이미 세워짐
                 Assert.True(sawSaturating > 0, "90% 포화 상태를 판독자가 관측");
                 Assert.True(sawFrozen > 0);

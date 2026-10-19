@@ -18,6 +18,8 @@
 //   · 진단 통과 후 핑퐁 계측(RecordPingPong) = Interlocked 만(δ=0) — 레인별 누계 · 최근 · 최대 · 시한 초과 건수.
 //
 //  불변: liveArmed:false(이 타입은 차단만 올린다 — IBroker 참조 0 · 송출 경로 0) · 핑퐁/판독 δ=0 · 프로브(콜드 비동기)만 할당.
+//  [v12.18.17-DEV] 시한 시계 주입(timeProvider · BCL TimeProvider · 기본 TimeProvider.System = 동작 동일) — 시한 토큰 · WaitAsync 시한 모두 같은 시계.
+//   테스트는 가상 시계로 '시한 직전 무래치 → 시한 도달 즉시 래치'를 벽시계 · 스레드풀 부하와 무관하게 결정론 판정한다.
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -58,6 +60,7 @@ namespace StockManager.Blazor
         private readonly long _timeoutRttTicks;
         private readonly Func<long> _nowTicks;
         private readonly Action<int, BrokerProbeVerdict>? _onLatch;
+        private readonly TimeProvider _time;
 
         private int _state, _probing;
         private readonly int[] _verdicts = { (int)BrokerProbeVerdict.Pending, (int)BrokerProbeVerdict.Pending };
@@ -69,10 +72,13 @@ namespace StockManager.Blazor
         /// <param name="account">비트 14 소유 인터락(실패 시 sticky Trip).</param>
         /// <param name="kiwoomLink">비트 25 소유 인터락(키움 실패 시 사전 진단 sticky 래치).</param>
         /// <param name="onLatch">래치 통지(레인 · 판정) — 비트 반영 '뒤' 호출 · 예외 흡수.</param>
+        /// <param name="timeProvider">[v12.18.17-DEV] 레인 시한 시계(null = TimeProvider.System).</param>
         public BrokerLivenessPreFlight(Func<CancellationToken, Task<BrokerProbeVerdict>>? kiwoomProbe, Func<CancellationToken, Task<BrokerProbeVerdict>>? kisProbe,
                                        AccountDivergenceInterlock? account, KiwoomBridgeLinkInterlock? kiwoomLink,
-                                       TimeSpan? timeout = null, Func<long>? nowTicks = null, Action<int, BrokerProbeVerdict>? onLatch = null)
+                                       TimeSpan? timeout = null, Func<long>? nowTicks = null, Action<int, BrokerProbeVerdict>? onLatch = null,
+                                       TimeProvider? timeProvider = null)
         {
+            _time = timeProvider ?? TimeProvider.System;
             _probes[LaneKiwoom] = kiwoomProbe; _probes[LaneKis] = kisProbe;
             _account = account; _kiwoomLink = kiwoomLink; _onLatch = onLatch;
             _timeout = timeout is { } t && t > TimeSpan.Zero ? t : DefaultTimeout;
@@ -132,11 +138,11 @@ namespace StockManager.Blazor
             if (probe is null) v = BrokerProbeVerdict.NotConfigured;
             else
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(_timeout);
+                using var deadline = new CancellationTokenSource(_timeout, _time);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
                 try
                 {
-                    v = await probe(cts.Token).WaitAsync(_timeout, ct).ConfigureAwait(false);
+                    v = await probe(cts.Token).WaitAsync(_timeout, _time, ct).ConfigureAwait(false);
                     if (v is BrokerProbeVerdict.NotConfigured or BrokerProbeVerdict.Pending) v = BrokerProbeVerdict.Invalid;   // 결선된 레인의 '미판정' 응답 = 무효
                 }
                 catch (TimeoutException) { v = BrokerProbeVerdict.Timeout; }

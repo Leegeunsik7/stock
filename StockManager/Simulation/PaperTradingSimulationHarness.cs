@@ -323,8 +323,11 @@ namespace StockManager.Simulation
             _profiler = stallThresholdMicros > 0 ? new TickToTradeLatencyProfiler(stallThresholdMicros) : new TickToTradeLatencyProfiler();
 
             Interlocks = new ArmingInterlockBitmask(SevenLayerInterlockInjector.Sources);
-            _forensic = new ZeroAllocForensicAuditStream(4096);
-            Recorder = new InterlockForensicRecorder(_forensic, blackbox);
+            // [v12.18.17-DEV] 포렌식 기록 시계 = 하네스 시계(µs × 10) — 기본값 DateTime.UtcNow 는 윤초 지원 Windows 에서 약 7.4분마다 내부 캐시를
+            //   재할당(32B · 만료 후 첫 호출자 부담)한다. 비트 전이는 Trip 스레드에서 동기 기록되므로 δ=0 측정 스레드(예: 감사 원장 동결 퍼저)가 그 32B 를 떠안았다.
+            Func<long> forensicClock = () => _nowMicros() * 10;
+            _forensic = new ZeroAllocForensicAuditStream(4096, forensicClock);
+            Recorder = new InterlockForensicRecorder(_forensic, blackbox, forensicClock);
             Interlocks.AttachTransitionSink(Recorder);
             Injector = new SevenLayerInterlockInjector(_price, "MS2E_SIM_" + Environment.ProcessId + "_" + Guid.NewGuid().ToString("N"), maxPriceSilenceMicros);
             Injector.BindAll(Interlocks);

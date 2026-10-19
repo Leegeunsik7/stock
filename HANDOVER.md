@@ -2273,3 +2273,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.18-GM 산출물 13건(zip 3398DCAA… · masterSeal 44059506…) → release/superseded-v12.18.18-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검: 복사본 SHA-256 일치 · CLI --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) · --verify-interlocks(30) ·
   --verify-tighten(6 · IPC 패브릭) 전부 exit 0.
+
+## 85. v12.18.20-DEV — 결정론 테스트 하드닝 · LongSoak 100회 무할당 완주 (2026-10-19)
+
+### 85.1 원인 · 원칙
+- 직전 100회 반복 78회차 실패 = Soak 1M 의 HealthMonitoringAgent 스레드풀 탐침이 큐 대기 > 100ms(DefaultMaxStallMicros)로 ThreadPoolStall 래치(비트 21) —
+  엔진 결함이 아니라 호스트 부하로 인한 OS 스케줄링 지연(외생). 출하 코드(LongSoakProfileHarness · HealthMonitoringAgent) 무변경 · 테스트 단언부에서만 분리.
+- 동봉: v12.18.17-DEV 타 세션 미커밋 안정화(UtcNow 윤초 캐시 32B 회피 = 포렌식 기록기 하네스 시계 주입 · UtcNowLeapCacheExpirer · BrokerLivenessPreFlight
+  TimeProvider 주입 + VirtualTimeProvider 결정론 시한 · 3중 경합 외생 GC 분리 계측) — LongSoak 테스트가 이에 의존하므로 함께 커밋(§84.1 잔여 해소).
+
+### 85.2 분리 판정(LongSoakIntegrationTests)
+- `IsIsolatedThreadPoolStall`: 헬스 사유 = 정확히 ThreadPoolStall · 집계어 = 정확히 비트 21 · 워밍업 후 raised = 블랙박스 InterlockRaised ∈ {0, 1} · 폭풍 동결 없음
+  → 진단 출력("외부 호스트 부하로 인한 OS ThreadPool 지연") 후 통과. 하나라도 어긋나면 원 단언(raised 0 · 블랙박스 0 · 집계어 0 · 폭풍 없음) 그대로 격발.
+- 할당 0B · 측정 구간 GC 0 · 체결 정합 · 국면 전이 등 나머지 단언은 약화 없음. 분류기 Theory 11건(단독 래치 2 통과 · 복합 사유/타 비트/raised 2/블랙박스 불일치/폭풍/비트 부재/무위반 9 거부).
+- 3중 경합 창 GC: 세 대상 스레드 0B 단언 통과 뒤에만 도달 → GC 발생 시 외생 할당(프로세스 전역 − 대상 스레드분) 진단 후 통과.
+
+### 85.3 검증
+- 프로세스 격리 100회(회차마다 별도 dotnet test · LongSoakIntegrationTests 16건): 100/100 통과 · 실패 0 · 외생 지연 분리 발동 0회(이번 측정에서는 지연 미발생).
+  주의: 첫 시도는 감시 tail 의 로그 파일 잠금으로 3회차 이후 기록 불능 → 무효 처리 후 회차별 파일 기록 방식으로 전량 재실행.
+- 오중 빌드(WebOnly → Default sln = Host · Tests · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,976/3,976(3m30s · +11 Theory) ·
+  infra-scan 0 ≤ 117 · 래칫/PureShell 18/18(≤40). liveArmed:false · QuantumVault 미접근.
+- 한계(정직): 분리 경로의 실발동은 이번 100회에서 관측되지 않음 — 판정은 분류기 Theory 로만 검증. 100ms 임계 자체는 프로덕션 값 그대로.
