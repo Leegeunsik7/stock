@@ -1,14 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.21-DEV — 락프리 브로커 레이트 게이트 · 적응형 지수 백오프
+- **Active Milestone**: v12.18.21-GM — 브로커 레이트 게이트 단독 출하(-NoPeer) 완료
 - **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 3,998/3,998 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-19
 
 ## Completed Deliverables
-- LockFreeTokenBucket: 슬라이딩 창 허가 기록 링 · 단일 태그 CAS · 임의 W 창 허가 ≤ N 보증(최대 2창 · 키움 1초 5 + 60초 100) · δ=0
-- BrokerBackoffController: 429/−308/−200 → 100ms × 2ⁿ(3s 상한) + 지터 · 연속 3회 sticky 래치(물리 이중키 해제) · 재시도/대기열 0
-- 키움 코어 주문/정정/취소/조회 게이트(취소 = 래치 무시) · 프록시 결선 · KisProvider 조회 게이트 · 허브 레인별 잔여/거부/래치 투영(KIS 레인)
-- BrokerRateLimiterTests 22건(16 스레드 경합 · 10만 회 0B · 백오프 단계 · IL 허용목록) · HANDOVER §87
+- 버전 12.18.21 승격 · 태그 v12.18.21-GM = d202286 · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(1회 통과)
+- release-v12.18.21-GM.zip(38 아티팩트 · SHA-256 A4B1FCA0…) · masterSeal 3AD2A89A… · 피어 기록 없음
+- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 통과
+- v12.18.20-GM 산출물 13건 → release/superseded-v12.18.20-GM/ · HANDOVER §88
 
 ## Next Milestone
 - 키움 프록시 게이트 텔레메트리 IPC 투영 · KIS EGW00201 초과 분류

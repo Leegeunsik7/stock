@@ -2352,3 +2352,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 보증 대상은 주입 시계의 '허가 시각' — 실 송신은 허가 직후(게이트 → 송신 사이 대기 없음)지만 OS 선점으로 송신 순서가 섞일 수 있다(서버 측 창 경계 근처 오차).
   KIS 실 초과 응답은 HTTP 500 + msg_cd EGW00201 로 오는 사례가 알려져 있으나 미분류(429 만 판정). 키움 게이트 텔레메트리는 프록시 → 호스트 IPC 미배선.
   실 키움/KIS 연결 미실시(liveArmed:false · 스텁).
+
+## 88. v12.18.21-GM — 브로커 레이트 게이트 단독 출하(-NoPeer) (2026-10-19)
+
+### 88.1 버전 · 태그
+- v12.18.21-DEV(§87) = 30e2fb5. 12.18.20 → 12.18.21(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = d202286(4파일 · 11/11 줄) ·
+  핀 테스트 48/48(Release).
+- 태그 v12.18.21-GM(annotated · -f) = d202286. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 88.2 출하 실행(형제 worktree StockManager-gm-12.18.21 · 태그 d202286 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 3,998/3,998 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @d202286565.
+- 산출물(release/): release-v12.18.21-GM.zip SHA-256 `A4B1FCA05E93E6C98CC56601545CAA258D194AD7DB0B7431ADD1521A1610A0C4` ·
+  masterSeal `3AD2A89A995529B1B2AF63936C0817F50FF99F48242053479E5F713DD0ABB808` · sourceCommit d202286 · 피어 기록 없음.
+- v12.18.20-GM 산출물 13건(zip 08807B09… · masterSeal 23D3D37B…) → release/superseded-v12.18.20-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(태그 빌드 호스트 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
