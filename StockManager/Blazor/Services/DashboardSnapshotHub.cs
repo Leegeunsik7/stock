@@ -172,6 +172,13 @@ namespace StockManager.Blazor.Services
         private KisFeedLatencyStatus _kisSnap;
         private StockManager.Engines.Arbitrage.SyntheticSpreadRadar? _arb;          // [v12.18.19-DEV] 멀티 브로커 합성 스프레드(펌프 = 스파크 표본 + 값 판독)
         private ArbitrageRadarStatus _arbSnap;
+        // ── [v12.18.21-DEV] 브로커 레이트 게이트(레인 0 키움 · 1 KIS · 판독 전용 · 펌프 δ=0) ──
+        public const int RateLaneKiwoom = 0, RateLaneKis = 1;
+        private readonly MS2E.Infrastructure.LockFreeTokenBucket?[] _rateGate = new MS2E.Infrastructure.LockFreeTokenBucket?[2];
+        private readonly MS2E.Infrastructure.BrokerBackoffController?[] _rateBackoff = new MS2E.Infrastructure.BrokerBackoffController?[2];
+        private readonly int[] _rateRemaining = new int[2];
+        private readonly long[] _rateRejected = new long[2], _rateConsecutive = new long[2];
+        private readonly bool[] _rateLatched = new bool[2];
         // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
         private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
         private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
@@ -304,6 +311,14 @@ namespace StockManager.Blazor.Services
         /// <summary>[v12.18.19-DEV] 아비트라지 레이더 결선 — 펌프가 회차마다 스파크라인 1표본(δ=0) + 상태 값 사본 투영(래치/재무장 경로 무간섭).</summary>
         public void AttachArbitrage(StockManager.Engines.Arbitrage.SyntheticSpreadRadar radar)
             => Volatile.Write(ref _arb, radar ?? throw new ArgumentNullException(nameof(radar)));
+
+        /// <summary>[v12.18.21-DEV] 브로커 레이트 게이트 관제 결선(레인 0 키움 · 1 KIS) — 펌프는 잔여 허가 · 거부 누계 · 백오프 상태만 판독(게이트 경로 무간섭).</summary>
+        public void AttachRateGate(int lane, MS2E.Infrastructure.LockFreeTokenBucket gate, MS2E.Infrastructure.BrokerBackoffController? backoff)
+        {
+            if ((uint)lane > RateLaneKis) throw new ArgumentOutOfRangeException(nameof(lane));
+            Volatile.Write(ref _rateBackoff[lane], backoff);
+            Volatile.Write(ref _rateGate[lane], gate ?? throw new ArgumentNullException(nameof(gate)));
+        }
 
         /// <summary>
         /// [v12.18.11-DEV] AI vs Human 아레나 결선 — 펌프가 회차마다 Step(가상 체결 · 정산 · seqlock 게시 · δ=0)을 구동하고
@@ -454,6 +469,17 @@ namespace StockManager.Blazor.Services
                 _arbSnap = ar.Status;                                                 // 상태 · 래치 · 기회 = 즉시 재게시 · 스프레드는 1bp 단위 변화만
                 sig = sig * 31 + 1 + _arbSnap.State * 7 + _arbSnap.Trips * 11 + _arbSnap.Opportunities * 13 + _arbSnap.SpreadCbp / 100 * 17;
             }
+            for (int lane = 0; lane < 2; lane++)
+            {
+                var rg = Volatile.Read(ref _rateGate[lane]);
+                if (rg is null) continue;
+                var bo = Volatile.Read(ref _rateBackoff[lane]);
+                _rateRemaining[lane] = rg.Remaining();                                // 최근 N 슬롯 판독(O(N) · 할당 0)
+                _rateRejected[lane] = rg.Denied + (bo is null ? 0 : bo.BackoffDenied + bo.LatchDenied);
+                _rateConsecutive[lane] = bo?.Consecutive ?? 0;
+                _rateLatched[lane] = bo?.Latched ?? false;
+                sig = sig * 31 + 1 + lane * 3 + _rateRemaining[lane] * 7 + _rateRejected[lane] * 11 + _rateConsecutive[lane] * 13 + (_rateLatched[lane] ? 17 : 0);
+            }
             // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
             if (sig != _lastSignature || _pendingDirty) dirty = true;
             if (!dirty && _front is not null) return false;
@@ -549,6 +575,11 @@ namespace StockManager.Blazor.Services
             ref readonly var abs = ref _arbSnap;
             f.ArbState = ar is null ? ArbRadar.Unbound : abs.State;
             f.ArbSpreadCbp = abs.SpreadCbp; f.ArbCrossCbp = abs.CrossCbp; f.ArbOpportunities = abs.Opportunities; f.ArbTrips = abs.Trips;
+            f.RateKiwoomBound = Volatile.Read(ref _rateGate[RateLaneKiwoom]) is not null; f.RateKisBound = Volatile.Read(ref _rateGate[RateLaneKis]) is not null;
+            f.RateKiwoomRemaining = _rateRemaining[RateLaneKiwoom]; f.RateKisRemaining = _rateRemaining[RateLaneKis];
+            f.RateKiwoomRejected = _rateRejected[RateLaneKiwoom]; f.RateKisRejected = _rateRejected[RateLaneKis];
+            f.RateKiwoomConsecutive = _rateConsecutive[RateLaneKiwoom]; f.RateKisConsecutive = _rateConsecutive[RateLaneKis];
+            f.RateKiwoomLatched = _rateLatched[RateLaneKiwoom]; f.RateKisLatched = _rateLatched[RateLaneKis];
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

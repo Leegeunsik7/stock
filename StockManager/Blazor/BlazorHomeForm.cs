@@ -1670,6 +1670,10 @@ namespace StockManager.Blazor
             arbRadar.BindDivergenceInterlock(openOrderRecon);
             bridge.OrderBookReceived += b => arbRadar.OnBook(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom, in b);
             dashHub.AttachArbitrage(arbRadar);
+            // [v12.18.21-DEV] 브로커 레이트 게이트 관제 — KIS 레인 = 호스트 KisProvider 의 실 게이트(구성 시에만). 키움 레인 게이트는 x86 프록시 프로세스 안
+            //   (KiwoomComEventCore.AttachRateGate)이라 호스트에서 판독할 경로가 없다 → 미결선(Bound false) 정직 렌더 · 가짜 잔여량 0.
+            if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisRest)
+                dashHub.AttachRateGate(StockManager.Blazor.Services.DashboardSnapshotHub.RateLaneKis, kisRest.RateGate, kisRest.Backoff);
             services.AddSingleton(arbRadar);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArbitrageRadarPort>(arbRadar);
             // [v12.18.16-DEV] KIS 시세 전문 시각 편차 감시 — 비트 28(OrderPathLatency) 2차 입력(비트 재결속 0 · 정의 불변) · 지연 하한 > 50ms/역전/시계 편차 = 래치.

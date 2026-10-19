@@ -140,6 +140,8 @@ namespace StockManager.KiwoomProxy
                     onPosition: row => PositionReceived?.Invoke(this, new PositionEventArgs { Row = row }),
                     onOpenOrder: row => OpenOrderReceived?.Invoke(this, new OpenOrderEventArgs { Row = row }),
                     onMapped: m => OrderMapped?.Invoke(this, new OrderMappedEventArgs { Map = m }));
+                // [v12.18.21-DEV] 키움 TR 한도 게이트(주문 · 조회 각 임의 1초 ≤ 5 · 60초 ≤ 100) + −308/−200 지수 백오프 · 연속 3회 sticky 래치.
+                _core.AttachRateGate(KiwoomComEventCore.CreateKiwoomLimiter(), KiwoomComEventCore.CreateKiwoomLimiter(), new BrokerBackoffController());
 
                 _ax.OnEventConnect      += (_, e) => _ready = _core.OnEventConnect(e.nErrCode);   // 0 = 로그인 성공 · [방향 B] 실패 = 서버 오류 통지(호스트 Disarm)
                 _ax.OnReceiveRealData   += (_, e) => _core.OnRealData(e.sRealType, e.sRealKey);

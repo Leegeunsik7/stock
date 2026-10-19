@@ -46,6 +46,7 @@ namespace MS2E.Infrastructure
     {
         Sent = 0, Deferred = 1, NotFound = 2, Duplicate = 3, NothingRemaining = 4, ExceedsRemaining = 5,
         InvalidPrice = 6, InvalidQuantity = 7, NotAccepted = 8, SendFailed = 9, NoAccount = 10,
+        RateLimited = 11,       // [v12.18.21-DEV] 로컬 레이트 게이트(슬라이딩 창 · 백오프 · 래치) 거부 — 송신 0 · 대기열 0
     }
 
     public enum KiwoomMsgVerdict : byte { Info = 0, Accepted = 1, Rejected = 2, CriticalRejected = 3 }
@@ -400,18 +401,73 @@ namespace MS2E.Infrastructure
         public long CancelDeferredExecuted => Interlocked.Read(ref _cancelDeferredExecuted);
         public long AccountBatches => Interlocked.Read(ref _batchId);
 
+        // ── [v12.18.21-DEV] 레이트 게이트(키움 OpenAPI 조회/주문 TR 초당 5 · 분당 100) ─────────────
+        //  주문 TR(신규 · 정정 · 취소)과 조회 TR(CommRqData)은 각자의 슬라이딩 창 게이트를 지난 뒤에만 OCX 로 나간다. 거부 = 즉시 실패
+        //  (신규 = EmitReject · 정정/취소 = RateLimited · 조회 = RcRateGated) — 대기열 · 자동 재시도 0(CLAUDE.md §2).
+        //  백오프: OCX 반환 −308(주문 과부하) · −200(조회 과부하) = 초과 · 0 = 성공 · 그 밖 오류 = 무기록(레이트와 무관).
+        //  취소는 백오프 창 · 창 상한은 따르되 sticky 래치는 무시(위험 감소 경로를 막지 않음). 미결선(null) = 종전 동작.
+        public const int RcRateGated = -9308;                                    // 로컬 게이트 거부(키움 서버 코드 아님)
+        private LockFreeTokenBucket? _orderLimiter, _queryLimiter;
+        private BrokerBackoffController? _backoff;
+        private long _rateGated;
+        public long RateGated => Interlocked.Read(ref _rateGated);
+        public LockFreeTokenBucket? OrderLimiter => Volatile.Read(ref _orderLimiter);
+        public LockFreeTokenBucket? QueryLimiter => Volatile.Read(ref _queryLimiter);
+        public BrokerBackoffController? Backoff => Volatile.Read(ref _backoff);
+
+        /// <summary>레이트 게이트 결선(콜드). 키움 기본값 = <see cref="CreateKiwoomLimiter"/> 주문 · 조회 각 1개 + 백오프 1개.</summary>
+        public void AttachRateGate(LockFreeTokenBucket? orderLimiter, LockFreeTokenBucket? queryLimiter, BrokerBackoffController? backoff)
+        {
+            Volatile.Write(ref _orderLimiter, orderLimiter);
+            Volatile.Write(ref _queryLimiter, queryLimiter);
+            Volatile.Write(ref _backoff, backoff);
+        }
+
+        /// <summary>키움 TR 한도 게이트: 임의 1초 ≤ 5 · 임의 60초 ≤ 100.</summary>
+        public static LockFreeTokenBucket CreateKiwoomLimiter(Func<long>? nowTicks = null, long tickFrequency = 0)
+            => new(5, LockFreeTokenBucket.SecondMicros, 100, LockFreeTokenBucket.MinuteMicros, nowTicks, tickFrequency);
+
+        private bool PassOrderGate(bool riskReducing)
+        {
+            var b = Volatile.Read(ref _backoff);
+            if (b is not null && !(riskReducing ? b.TryEnterRiskReducing() : b.TryEnter())) { Interlocked.Increment(ref _rateGated); return false; }
+            var l = Volatile.Read(ref _orderLimiter);
+            if (l is not null && !l.TryAcquire()) { Interlocked.Increment(ref _rateGated); return false; }
+            return true;
+        }
+
+        private bool PassQueryGate(int trs)
+        {
+            var b = Volatile.Read(ref _backoff);
+            if (b is not null && !b.TryEnter()) { Interlocked.Increment(ref _rateGated); return false; }
+            var l = Volatile.Read(ref _queryLimiter);
+            for (int i = 0; i < trs; i++)                                       // 다건 조회 = 전부 허가돼야 송신(부분 허가분은 소진 = 보수적)
+                if (l is not null && !l.TryAcquire()) { Interlocked.Increment(ref _rateGated); return false; }
+            return true;
+        }
+
+        private void NoteRc(int rc)
+        {
+            var b = Volatile.Read(ref _backoff);
+            if (b is null) return;
+            if (rc == 0) b.NoteSuccess();
+            else if (BrokerBackoffController.IsRateLimitCode(rc)) b.NoteLimitExceeded();
+        }
+
         // ── 주문 송신 ─────────────────────────────────────────────────────────
 
         /// <summary>신규 주문 송신. rc≠0 = 송신 단계 거부 → 즉시 Rejected 통보(슬롯 0ms 반납). 반환 = rc.</summary>
         public int SendOrder(long clientId, string screenNo, string accountNo, long symbolCode, int side, double price, long qty)
         {
             if (string.IsNullOrWhiteSpace(accountNo)) { EmitReject(clientId, symbolCode, side); Interlocked.Increment(ref _rejectsSend); return -1; }   // fail-closed
+            if (!PassOrderGate(riskReducing: false)) { EmitReject(clientId, symbolCode, side); return RcRateGated; }   // 슬롯 미등록 · 즉시 거부
             int orderType = side > 0 ? 1 : 2;                                   // 1 신규매수 · 2 신규매도
             string hoga = price <= 0.0 ? "03" : "00";                           // 03 시장가 · 00 지정가
             _screenNo = screenNo; _accountNo = accountNo;   // 정정/취소·조회 재사용
             _map.RegisterPending(clientId, symbolCode, side, qty);
             int rc = _ocx.SendOrder("RQ" + clientId.ToString(System.Globalization.CultureInfo.InvariantCulture), screenNo, accountNo, orderType,
                                     symbolCode.ToString("D6", System.Globalization.CultureInfo.InvariantCulture), (int)qty, (int)price, hoga, "");
+            NoteRc(rc);
             if (rc != 0)
             {
                 _map.RemoveClient(clientId);
@@ -489,10 +545,12 @@ namespace MS2E.Infrastructure
                     ? KiwoomAmendResult.Deferred : Blocked(KiwoomAmendResult.Duplicate);
             }
             if (remaining <= 0) return Blocked(KiwoomAmendResult.NothingRemaining);
+            if (!PassOrderGate(riskReducing: true)) return Blocked(KiwoomAmendResult.RateLimited);
             if (!_map.TrySetFlag(clientId, KiwoomOrderNumberMap.FlagCancelInFlight, KiwoomOrderNumberMap.FlagCancelInFlight)) return Blocked(KiwoomAmendResult.Duplicate);
             int rc = _ocx.SendOrder("RC" + clientId.ToString(System.Globalization.CultureInfo.InvariantCulture), _screenNo, _accountNo, side > 0 ? 3 : 4,
                                     symbol.ToString("D6", System.Globalization.CultureInfo.InvariantCulture), (int)remaining, 0, "00",
                                     kiwoomNo.ToString("D7", System.Globalization.CultureInfo.InvariantCulture));
+            NoteRc(rc);
             if (rc != 0) { _map.ClearFlag(clientId, KiwoomOrderNumberMap.FlagCancelInFlight); Interlocked.Increment(ref _amendFailed); return KiwoomAmendResult.SendFailed; }
             Interlocked.Increment(ref _amendSent);
             return KiwoomAmendResult.Sent;
@@ -509,9 +567,11 @@ namespace MS2E.Infrastructure
             if (newQty > remaining) return Blocked(KiwoomAmendResult.ExceedsRemaining);   // ★초과 정정 차단(체결 경합으로 줄어든 잔량 기준)
             if (!_map.TrySetFlag(clientId, KiwoomOrderNumberMap.FlagModifyInFlight,
                                  KiwoomOrderNumberMap.FlagCancelInFlight | KiwoomOrderNumberMap.FlagModifyInFlight)) return Blocked(KiwoomAmendResult.Duplicate);
+            if (!PassOrderGate(riskReducing: false)) { _map.ClearFlag(clientId, KiwoomOrderNumberMap.FlagModifyInFlight); return Blocked(KiwoomAmendResult.RateLimited); }
             int rc = _ocx.SendOrder("RM" + clientId.ToString(System.Globalization.CultureInfo.InvariantCulture), _screenNo, _accountNo, side > 0 ? 5 : 6,
                                     symbol.ToString("D6", System.Globalization.CultureInfo.InvariantCulture), (int)newQty, (int)newPrice, "00",
                                     kiwoomNo.ToString("D7", System.Globalization.CultureInfo.InvariantCulture));
+            NoteRc(rc);
             if (rc != 0) { _map.ClearFlag(clientId, KiwoomOrderNumberMap.FlagModifyInFlight); Interlocked.Increment(ref _amendFailed); return KiwoomAmendResult.SendFailed; }
             Interlocked.Increment(ref _amendSent);
             return KiwoomAmendResult.Sent;
@@ -545,12 +605,15 @@ namespace MS2E.Infrastructure
         {
             if (string.IsNullOrWhiteSpace(accountNo)) return -1;
             _accountNo = accountNo; _screenNo = screenNo;
+            if (!PassQueryGate(1)) return RcRateGated;
             _ocx.SetInputValue("계좌번호", accountNo);
             _ocx.SetInputValue("전체종목구분", "0");
             _ocx.SetInputValue("매매구분", "0");
             _ocx.SetInputValue("종목코드", "");
             _ocx.SetInputValue("체결구분", "1");                               // 1 = 미체결
-            return _ocx.CommRqData(RqOpenOrders, "opt10075", 0, screenNo);
+            int rq = _ocx.CommRqData(RqOpenOrders, "opt10075", 0, screenNo);
+            NoteRc(rq);
+            return rq;
         }
 
         /// <summary>[미체결 대사] 승계 확정 주문을 이 프록시의 사상표에 재등록 — 이후 체결/취소 통보가 호스트 클라이언트 ID 로 사상된다.</summary>
@@ -570,9 +633,11 @@ namespace MS2E.Infrastructure
         {
             if (string.IsNullOrWhiteSpace(_accountNo)) return Blocked(KiwoomAmendResult.NoAccount);
             if (kiwoomNo <= 0 || qty <= 0 || symbolCode <= 0) return Blocked(KiwoomAmendResult.InvalidQuantity);
+            if (!PassOrderGate(riskReducing: true)) return Blocked(KiwoomAmendResult.RateLimited);
             int rc = _ocx.SendOrder("RX" + kiwoomNo.ToString(System.Globalization.CultureInfo.InvariantCulture), _screenNo, _accountNo, side > 0 ? 3 : 4,
                                     symbolCode.ToString("D6", System.Globalization.CultureInfo.InvariantCulture), (int)Math.Min(qty, int.MaxValue), 0, "00",
                                     kiwoomNo.ToString("D7", System.Globalization.CultureInfo.InvariantCulture));
+            NoteRc(rc);
             if (rc != 0) { Interlocked.Increment(ref _amendFailed); return KiwoomAmendResult.SendFailed; }
             Interlocked.Increment(ref _ghostCancels);
             return KiwoomAmendResult.Sent;
@@ -617,16 +682,19 @@ namespace MS2E.Infrastructure
         {
             if (string.IsNullOrWhiteSpace(accountNo)) return -1;
             _accountNo = accountNo; _screenNo = screenNo;
+            if (!PassQueryGate(2)) return RcRateGated;
             _ocx.SetInputValue("계좌번호", accountNo);
             _ocx.SetInputValue("비밀번호", "");
             _ocx.SetInputValue("비밀번호입력매체구분", "00");
             _ocx.SetInputValue("조회구분", "1");
             int rc1 = _ocx.CommRqData(RqAccountBalance, "opw00018", 0, screenNo);
+            NoteRc(rc1);
             _ocx.SetInputValue("계좌번호", accountNo);
             _ocx.SetInputValue("비밀번호", "");
             _ocx.SetInputValue("비밀번호입력매체구분", "00");
             _ocx.SetInputValue("조회구분", "2");
             int rc2 = _ocx.CommRqData(RqAccountCash, "opw00001", 0, screenNo);
+            NoteRc(rc2);
             return rc1 != 0 ? rc1 : rc2;
         }
 

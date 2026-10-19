@@ -2318,3 +2318,37 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 체크아웃 재수검(태그 빌드 호스트 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 정직: 작업 사본 점검 명령에 QuantumVault 디렉터리 존재 확인(ls · 출력 폐기) 1회가 섞임 — 파일 판독/기록 · 피어 탐침 · 매니페스트 피어 기록 없음.
+
+## 87. v12.18.21-DEV — 락프리 브로커 레이트 게이트 · 적응형 지수 백오프 (2026-10-19)
+
+### 87.1 전제 교정(승인 반영)
+- 지시서의 `KisRestApiClient` · `KiwoomOrderDispatcher` · `StockManager/Adapters/Common/` 부재. 키움 실 송신 지점 = `KiwoomComEventCore`(src/02 KiwoomComBridgeCore.cs ·
+  x86 프록시 링크 소스) → 두 엔진은 `src/02_Infrastructure/Engine/` 배치(프록시 · 쉼 csproj 링크 추가 · Core 형식 무참조). KIS 주문 경로는 없음 → 실 REST 조회(`KisProvider`)에만 결선.
+- 고전 토큰 버킷(용량 C · 리필 r)은 임의 1초 창 최대 C + r(5 + 5 = 10) → 슬라이딩 창 허가 기록 링으로 대체(이름만 TokenBucket).
+- 대기 큐 없음(CLAUDE.md §2) → 허브는 큐 깊이 대신 거부 · 차단 누계 투영. 키움 초과 코드 = −308(주문) · −200(조회)(지시서의 0x8000 계열 아님).
+- 기존 TossLiveApiGovernor · AdaptiveOrderThrottle 무변경.
+
+### 87.2 구성
+- `LockFreeTokenBucket`: 머리 워드 = (허가 시각 µs << 16 | 순번 16비트) 단일 CAS — 시각 = max(now, 직전) 으로 순번 단조. 링 R = 2의 거듭제곱 ≥ max(N1, N2) · 슬롯 = (시각 | 순번 태그).
+  허가 k ⇔ 각 창 i 에서 t(k) − t(k − Ni) ≥ Wi · 슬롯 미발행 = 거부. 보증: 임의 [a, a + W) 허가 ≤ N(순번 단조 + 판정식 귀류 · 파일 머리말). 최대 2창(키움 = 1초 5 · 60초 100).
+  CAS 64회 경합 초과 = 거부 · 47비트 µs 소진 = 영구 거부 · 시계 역행 = 직전 유지. Remaining = 최근 N 슬롯 판독(O(N) · 0B).
+- `BrokerBackoffController`: 429 · −308 · −200 → 기준 min(100ms × 2^(n−1), 3,000ms) + 지터 [0, 기준/4](SplitMix64 원자 카운터 · 시드 결정론) · 3,000ms 상한 ·
+  차단 종료 CAS-max. 연속 3회 → sticky 래치 + 경보 콜백 1회 · 해제 = TryRearm(물리 이중키). TryEnterRiskReducing(취소) = 백오프 창만 따르고 래치 무시. 재시도 · 대기열 0.
+- 키움 코어 `AttachRateGate(주문, 조회, 백오프)`: 신규 = 게이트 거부 시 EmitReject + RcRateGated(−9308 · 로컬) · 정정 = RateLimited(플래그 원복) ·
+  취소/유령 취소 = 위험 감소 게이트 · 조회 QueryAccount = 2 허가 · QueryOpenOrders = 1 허가. OCX 반환 0 = 성공 · −308/−200 = 초과 · 그 밖 = 무기록. 미결선 = 종전 동작.
+  ProductionKiwoomApi(#if KIWOOM_COM) = 주문 · 조회 CreateKiwoomLimiter + 백오프 결선.
+- `KisProvider`: 기본 게이트 초당 5 + 백오프(생성자 주입 가능) · 시세/일봉 송신 직전 SendGatedAsync(거부 = null/빈 목록) · 429 = 초과 · 2xx = 성공.
+  GetQuotesAsync 간격 100 → 200ms(초당 5 정합). 토큰 발급은 23시간 캐시라 게이트 밖.
+- 허브 `AttachRateGate(레인, 게이트, 백오프)` → 프레임 RateKiwoom*/RateKis*(Bound · Remaining · Rejected · Consecutive · Latched). 호스트는 KIS 레인만 결선
+  (`QuoteAggregator.Find<KisProvider>()`) — 키움 게이트는 x86 프록시 프로세스 안이라 호스트 판독 경로 없음 → Bound false 정직 렌더.
+
+### 87.3 검증
+- `StockManager.Tests/Adapters/BrokerRateLimiterTests.cs` 22건: 버스트 5 · 정확히 W 경과 재허가 · 순차 만료 · 2창(60초 = 100 · 60초째 재허가) · 시계 역행 ·
+  임의 도착 20만 회 전수 창 대조(≤ 5/1초 · ≤ 40/10초 · 탐욕 95%+) · 16 스레드 가상 계단 65초(임의 1초 ≤ 5 · 60초 ≤ 100 · 이론 최대 125 중 ≥ 112 · 스레드별 0B) ·
+  16 스레드 실 Stopwatch 2.2초(허가 ≤ 5⌈경과⌉ · 0B) · 10만 회 TryAcquire + 백오프 0B · 단계 지연 100~3,000 + 지터 범위 · 창 경계 정확 · 시드 결정론 · 3회 래치/경보 1회/이중키 ·
+  성공 리셋 · 겹친 초과 창 비단축 · 키움 6건 → OCX 5 + 거부 통보 · −308 × 3 → 신규/정정 OCX 0 · 취소 통과 · 취소도 백오프 창 준수 · 조회 2 TR 소진 · 미결선 종전 동작 ·
+  KIS 스텁 핸들러 6건 → 서버 5 · 429 × 3 → 래치 후 서버 0 · IL 허용목록(브로커/OCX/HTTP/무장 형식 0 · 공개 발주 멤버 0). 10회 반복 10/10.
+- 오중 빌드(WebOnly → Default sln = Host · Tests · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,998/3,998(3m34s) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 보증 대상은 주입 시계의 '허가 시각' — 실 송신은 허가 직후(게이트 → 송신 사이 대기 없음)지만 OS 선점으로 송신 순서가 섞일 수 있다(서버 측 창 경계 근처 오차).
+  KIS 실 초과 응답은 HTTP 500 + msg_cd EGW00201 로 오는 사례가 알려져 있으나 미분류(429 만 판정). 키움 게이트 텔레메트리는 프록시 → 호스트 IPC 미배선.
+  실 키움/KIS 연결 미실시(liveArmed:false · 스텁).

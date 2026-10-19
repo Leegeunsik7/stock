@@ -121,11 +121,32 @@ namespace MS2E.Infrastructure
         private string? _accessToken;
         private DateTime _tokenExpiry;
         private readonly SemaphoreSlim _tokenLock = new(1, 1);
+        // [v12.18.21-DEV] KIS REST 레이트 게이트 — 시세/일봉 조회 송신 직전 슬라이딩 창(임의 1초 ≤ 5) + 429 지수 백오프 · 연속 3회 sticky 래치.
+        //   거부 = 그 조회만 즉시 실패(null/빈 목록 · 대기열 · 재시도 0). 토큰 발급(oauth2/tokenP)은 23시간 캐시라 게이트 밖.
+        private readonly LockFreeTokenBucket _rateGate;
+        private readonly BrokerBackoffController _backoff;
+        private long _rateGated;
+        public LockFreeTokenBucket RateGate => _rateGate;
+        public BrokerBackoffController Backoff => _backoff;
+        public long RateGated => Interlocked.Read(ref _rateGated);
+        public const int DefaultPerSecond = 5;
 
-        public KisProvider(KisConfig config, HttpClient? http = null)
+        public KisProvider(KisConfig config, HttpClient? http = null, LockFreeTokenBucket? rateGate = null, BrokerBackoffController? backoff = null)
         {
             _config = config;
             _http = http ?? HttpPool.Shared;
+            _rateGate = rateGate ?? new LockFreeTokenBucket(DefaultPerSecond, LockFreeTokenBucket.SecondMicros);
+            _backoff = backoff ?? new BrokerBackoffController();
+        }
+
+        // 게이트 통과 시에만 송신 · 429 = 백오프 · 2xx = 성공(연속 리셋) · 그 밖 상태 = 무기록. 거부 = null(요청 폐기).
+        private async Task<HttpResponseMessage?> SendGatedAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            if (!_backoff.TryEnter() || !_rateGate.TryAcquire()) { Interlocked.Increment(ref _rateGated); req.Dispose(); return null; }
+            var res = await _http.SendAsync(req, ct);
+            if ((int)res.StatusCode == BrokerBackoffController.HttpTooManyRequests) _backoff.NoteLimitExceeded();
+            else if (res.IsSuccessStatusCode) _backoff.NoteSuccess();
+            return res;
         }
 
         private string BaseUrl => _config.IsPaper
@@ -185,7 +206,8 @@ namespace MS2E.Infrastructure
                 req.Headers.Add("appkey", _config.AppKey);
                 req.Headers.Add("appsecret", _config.AppSecret);
 
-                var res = await _http.SendAsync(req, ct);
+                var res = await SendGatedAsync(req, ct);
+                if (res is null) return null;                                   // 레이트 게이트 거부 — 즉시 실패
                 res.EnsureSuccessStatusCode();
                 var json = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
                 var output = json.GetProperty("output");
@@ -249,7 +271,7 @@ namespace MS2E.Infrastructure
             {
                 var q = await GetQuoteAsync(s, market, ct);
                 if (q != null) list.Add(q);
-                try { await Task.Delay(100, ct); } catch (TaskCanceledException) { break; }
+                try { await Task.Delay(200, ct); } catch (TaskCanceledException) { break; }   // [v12.18.21-DEV] 100 → 200ms(초당 5 게이트와 정합)
             }
             return list;
         }
@@ -273,7 +295,8 @@ namespace MS2E.Infrastructure
                 req.Headers.Add("appkey", _config.AppKey);
                 req.Headers.Add("appsecret", _config.AppSecret);
 
-                var res = await _http.SendAsync(req, ct);
+                var res = await SendGatedAsync(req, ct);
+                if (res is null) return candles;                                // 레이트 게이트 거부 — 즉시 실패
                 res.EnsureSuccessStatusCode();
                 var json = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
                 foreach (var e in json.GetProperty("output2").EnumerateArray())

@@ -34,6 +34,8 @@
     <Compile Include="..\src\02_Infrastructure\Engine\BridgeProtocol.cs" />
     <Compile Include="..\src\02_Infrastructure\Engine\BridgeOrderStatus.cs" />
     <Compile Include="..\src\02_Infrastructure\Engine\KiwoomComBridgeCore.cs" />
+    <Compile Include="..\src\02_Infrastructure\Engine\LockFreeTokenBucket.cs" />
+    <Compile Include="..\src\02_Infrastructure\Engine\BrokerBackoffController.cs" />
     <!-- [헬스 · 방향 B] 호스트 하트비트 MMF 판독 → 주문 송신 직전 게이트 -->
     <Compile Include="..\src\02_Infrastructure\Engine\HostHealthHeartbeat.cs" />
   </ItemGroup>

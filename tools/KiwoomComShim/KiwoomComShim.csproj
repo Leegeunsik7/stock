@@ -32,6 +32,8 @@
     <Compile Include="..\..\src\02_Infrastructure\Engine\BridgeProtocol.cs" Link="Linked\BridgeProtocol.cs" />
     <Compile Include="..\..\src\02_Infrastructure\Engine\BridgeOrderStatus.cs" Link="Linked\BridgeOrderStatus.cs" />
     <Compile Include="..\..\src\02_Infrastructure\Engine\KiwoomComBridgeCore.cs" Link="Linked\KiwoomComBridgeCore.cs" />
+    <Compile Include="..\..\src\02_Infrastructure\Engine\LockFreeTokenBucket.cs" Link="Linked\LockFreeTokenBucket.cs" />
+    <Compile Include="..\..\src\02_Infrastructure\Engine\BrokerBackoffController.cs" Link="Linked\BrokerBackoffController.cs" />
   </ItemGroup>
 
 </Project>

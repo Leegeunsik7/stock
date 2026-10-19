@@ -205,6 +205,12 @@ namespace MS2E.UI.Portable.Ports.Trading
         public int ArbState = ArbRadar.Unbound;
         public long ArbSpreadCbp, ArbCrossCbp, ArbOpportunities, ArbTrips;
 
+        // [v12.18.21-DEV] 브로커 레이트 게이트(레인 키움 · KIS) — 결선 여부 · 지금 낼 수 있는 허가 수 · 거부/차단 누계(대기열 없음 = 큐 깊이 대신) ·
+        //   연속 한도 초과 수 · sticky 래치. 미결선 레인 = Bound false(값 0 은 '미측정'이지 '여유 0' 이 아님).
+        public bool RateKiwoomBound, RateKisBound, RateKiwoomLatched, RateKisLatched;
+        public int RateKiwoomRemaining, RateKisRemaining;
+        public long RateKiwoomRejected, RateKisRejected, RateKiwoomConsecutive, RateKisConsecutive;
+
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();
 

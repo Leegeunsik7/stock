@@ -348,6 +348,13 @@ namespace MS2E.Infrastructure
 
         public event EventHandler<Quote>? QuoteUpdated;
 
+        /// <summary>[v12.18.21-DEV] 구성 공급자 중 첫 T(없으면 null) — 관제 결선용(조회 경로 무간섭).</summary>
+        public T? Find<T>() where T : class, IQuoteProvider
+        {
+            foreach (var p in _providers) if (p is T t) return t;
+            return null;
+        }
+
         public QuoteAggregator(params IQuoteProvider[] providers)
         {
             _providers = new List<IQuoteProvider>(providers);
