@@ -2686,3 +2686,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,117 통과 + 1 건너뜀(§99 리얼 와이어 옵트인) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): release-package.ps1 [0/10]~[11/11] 전 구간 실행은 다음 GM(태그 필요)에서 첫 증명 · WebView2 런타임은 Windows 구성요소(미설치 PC = 창은 뜨나 화면 빈칸 가능 — 번들 미포함) ·
   격리 기동은 %LOCALAPPDATA%\StockManager(감사 원장 등)에 기록(개발 실행과 같은 위치).
+
+## 102. v12.18.28-GM — 감사 봉인본 + 즉시 실행 배포본 이중 출하(-NoPeer · 11단계 첫 완주) (2026-10-20)
+
+### 102.1 버전 · 태그
+- v12.18.28-DEV(§101) = 0371b5c. 12.18.27 → 12.18.28(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 4c1c193(4파일 · 11/11 줄 · 구버전 문자열 잔존 0) ·
+  핀 + StandaloneBundleTests 99/99(Release) · sln Release -warnaserror 0W/0E. (지시서의 GoldenMasterVersionPinTests.cs · ReleasePackagingVersionPinTests.cs 는 저장소에 없음 — 실제 핀 = 위 2종)
+- 태그 v12.18.28-GM(annotated · -f) = 4c1c193. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 102.2 출하 실행(형제 worktree StockManager-gm-12.18.28 · 태그 4c1c193 · 미커밋 0)
+- release-package.ps1 -NoPeer → [0/11]~[11/11] EXIT 0(1회 통과 · 11단계 첫 완주): [1]/[2] 오중 빌드 -warnaserror 0W/0E · [3] 4,117 통과 + 1 건너뜀(§99 옵트인) · [4] infra-scan 0 ≤ 117 ·
+  [5] 래칫 ≤40 · [6] liveArmed 소스 가드 · [7] 아티팩트 38 · manifest.sig · [9] verify-zip Ok · verify-live-armed Ok(⑪ · ⑫ 1 · ⑬ 1 · 위반 0) ·
+  [10] handshake Ok @4c1c193fdd · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · seqlock · IPC 패브릭 무대기/무슬립) ·
+  [11] 봉인 오버레이 38 = 봉인 해시(바이트 동일) · 판독 테스트 통과 · 격리 기동 PID 49044 · HWND 0x64113C · 'MS2-E Stock Suite' · 경로 = 임시 격리 폴더(종료 · 정리 완료).
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.28-GM.zip SHA-256 `2461B0C7C044AAFBF8B39C77F14931814BF95E4C6359CBCCF3B8225C425B832C` · masterSeal `BB55762C0C772BF81F350046DB341BBC38175D44FFB7685B40FD1DE27D7D9E28` · sourceCommit 4c1c193 · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.28-Standalone-win-x64.zip SHA-256 `1C794A30CEBDA79059F23376DEE047F111A0EA25D974BCDA934B7BF616656C7F` · 993 항목 · 147MB(전개 352MB) ·
+    봉인 38 바이트 동일 · artifacts.sha256.txt · manifest.sig · master-seal.txt 동봉.
+- v12.18.27-GM 산출물 13건(zip 64FC0CE1… · masterSeal 9FCB21B9…) → release/superseded-v12.18.27-GM/. 신규 15건 복사. worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 체크아웃 재수검(같은 커밋 4c1c193 Release 빌드 CLI · 메인 release/ 복사본 대상): 두 zip 복사본 SHA-256 = worktree 원본 = .sha256 기록 · --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0 · 배포본 판독기(StandaloneBundleTests 파이프라인 · 봉인 38 대조) 통과.
+- 한계(정직): WebView2 런타임 미포함(Windows 구성요소) · KIS 리얼 와이어 소크 미실행(§99).

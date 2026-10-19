@@ -1,13 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.28-DEV — 이중 산출 패키징(감사 봉인본 + 즉시 실행 배포본 Standalone win-x64)
-- **Build Status**: 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,117 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 불변
+- **Active Milestone**: v12.18.28-GM — 감사 봉인본 + 즉시 실행 배포본 이중 출하(-NoPeer · [0/11]~[11/11] 첫 완주) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,117 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-20
 
 ## Completed Deliverables
-- standalone-bundle.ps1: self-contained 런타임 층 + 봉인 바이너리 38개 바이트 동일 오버레이 · 누출 제거 · 판독 테스트 · 격리 실기동(주 창 핸들)
-- release-package.ps1 [11/11] 결선(감사 봉인 [0/10]~[10/10] 무변경 · 실패 = 배포본 포함 전량 폐기)
-- StandaloneBundleTests 16건 · 실 v12.18.27-GM 봉인 zip 대상 단독 실행 EXIT 0(기동 확인) · 1비트 변조본 거부 · HANDOVER §101
+- 버전 12.18.28 승격 · 태그 v12.18.28-GM = 4c1c193 · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/11]~[11/11] EXIT 0(1회 통과)
+- release-v12.18.28-GM.zip(38 아티팩트 · SHA-256 2461B0C7…) · masterSeal BB55762C… · 피어 기록 없음
+- StockManager-v12.18.28-Standalone-win-x64.zip(SHA-256 1C794A30… · 봉인 38 바이트 동일 · 격리 기동 창 핸들 확인)
+- IL 가드 ⑫ ⑬ 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 · v12.18.27-GM 13건 → superseded · HANDOVER §102
 
 ## Next Milestone
-- v12.18.28-GM 출하로 release-package.ps1 [0/10]~[11/11] 전 구간 첫 증명(감사 봉인 zip + Standalone zip 동시 사출)
+- 정규장 중 KIS 모의투자 리얼 와이어 소크(§99) · WebView2 미설치 PC 배포본 실기 확인
