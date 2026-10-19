@@ -2453,3 +2453,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   회귀 익절 · 포식자 스퀴즈 · 핫키/래더 양방향 · 10만 회 개시/커버 0B · IL 허용목록(브로커/디스패처/무장 형식 0).
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,065/4,065 · 아레나 141건 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 취소 균등 분포 = 기대값 모델(실 대기열 순번 미관측) · 대주 수수료/대차 가능 수량/업틱 룰 미반영 · 강제 커버는 호가 잔량까지(초과분 = 다음 호가 재순회).
+
+## 92. v12.18.23-GM — 아레나 대기열 취소 이탈 · 가상 공매도 단독 출하(-NoPeer) (2026-10-19)
+
+### 92.1 버전 · 태그
+- v12.18.23-DEV(§91) = 8e99ef3. 12.18.22 → 12.18.23(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 0c23671(4파일 · 11/11 줄) ·
+  핀 테스트 48/48(Release).
+- 태그 v12.18.23-GM(annotated · -f) = 0c23671. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 92.2 출하 실행(형제 worktree StockManager-gm-12.18.23 · 태그 0c23671 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 4,065/4,065 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @0c23671a63.
+- 산출물(release/): release-v12.18.23-GM.zip SHA-256 `8AE33D2991D3B125B9F0E09CF1D519D44ADC316CC26B03E6AD8DAFC3B028E131` ·
+  masterSeal `B7F64DFFA5B56A20964B7E32010CD7F6A854505B2EABE05B3D4D7393616CCC2E` · sourceCommit 0c23671 · 피어 기록 없음.
+- v12.18.22-GM 산출물 13건(zip EEF1C3B9… · masterSeal 97B6B3FD…) → release/superseded-v12.18.22-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(같은 커밋 0c23671 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
