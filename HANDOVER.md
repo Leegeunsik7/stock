@@ -2294,3 +2294,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(WebOnly → Default sln = Host · Tests · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 3,976/3,976(3m30s · +11 Theory) ·
   infra-scan 0 ≤ 117 · 래칫/PureShell 18/18(≤40). liveArmed:false · QuantumVault 미접근.
 - 한계(정직): 분리 경로의 실발동은 이번 100회에서 관측되지 않음 — 판정은 분류기 Theory 로만 검증. 100ms 임계 자체는 프로덕션 값 그대로.
+
+## 86. v12.18.20-GM — 결정론 테스트 하드닝 단독 출하(-NoPeer) (2026-10-19)
+
+### 86.1 버전 · 태그
+- v12.18.20-DEV(§85) = 2e8e3f9. 12.18.19 → 12.18.20(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말) = dbc3198(4파일 · 11/11 줄) ·
+  핀 테스트 48/48(Release).
+- 1차 출하 실행(태그 → dbc3198) [3/10] 1건 실패로 fail-closed 중단(ZIP 미사출): ZeroDowntimeRolloverTests.Health_RealThread_RealProbe_HeartbeatFresh_ZeroAllocScan
+  "실 가동 하트비트가 신선해야 함" — Scans ≥ 10 직후 AllowOrder 단발 판독이 전체 스위트 부하에서 노후(블로킹 GC 정지로 작성 스레드 정지) 또는
+  찢김(seqlock 홀수 구간 선점)으로 거부된 것으로 추정(거부 사유 미기록 → 원인 단정 불가). 게이트는 설계대로 fail-closed · 다음 10ms 박동에서 해소.
+- 교정 7b33bf5(테스트만 · 제품 코드 무변경): 2초 한도 재판독 · 트립/부재 거부 0 단언 추가 · 실패 시 거부 계수 출력. 클래스 12/12.
+- 태그 v12.18.20-GM(annotated · -f) = 7b33bf5(직전 태그 객체 253b1bb → dbc3198 폐기). 원격 푸시 없음.
+
+### 86.2 출하 실행(형제 worktree StockManager-gm-12.18.20 · 태그 7b33bf5 · 미커밋 0 · 1차 worktree 제거 후 재생성)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0: [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 3,976/3,976 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @7b33bf51ab.
+- 산출물(release/): release-v12.18.20-GM.zip SHA-256 `08807B099ECAACB5C30B5C4CBD098566F52B22C9FA64D15960601FF358439270` ·
+  masterSeal `23D3D37BC298A62F57CBAA05C51F8D040E61E22117825055C61DC6C851AE76B1` · sourceCommit 7b33bf5 · 피어 기록 없음(-NoPeer).
+- v12.18.19-GM 산출물 13건(zip D8DB82A9… · masterSeal 933BD01B…) → release/superseded-v12.18.19-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(태그 빌드 호스트 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 정직: 작업 사본 점검 명령에 QuantumVault 디렉터리 존재 확인(ls · 출력 폐기) 1회가 섞임 — 파일 판독/기록 · 피어 탐침 · 매니페스트 피어 기록 없음.
