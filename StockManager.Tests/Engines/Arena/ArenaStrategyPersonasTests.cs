@@ -254,7 +254,9 @@ namespace StockManager.Tests.Engines.Arena
             var askWall = Book(101_700, 300, 101_600, 100);
             hot.OnQuote(in askWall);
             var up = hot.Evaluate(State(101_600, 101_700, vwap: 100_000, devBp: 165, vwapTrades: 50));
-            Assert.Equal((ArenaAiAction.Hold, ArenaAiReason.UpperBandNoShort), (up.Action, up.Reason));   // 공매도 불가 → 관측만
+            Assert.Equal((ArenaAiAction.EnterShort, ArenaAiReason.VwapUpperShort), (up.Action, up.Reason));   // [v12.18.23-DEV] 상단 과열 + 매도벽 = 가상 공매도
+            Assert.Equal(100_000, up.TargetPx);                                                                  // 목표 = VWAP 회귀
+            Assert.Equal(102_150, up.StopPx);                                                                    // 손절 이격 = +165 + 50 = +2.15%
 
             var h = s.Evaluate(State(98_300, 98_400, 10, 984_000, vwap: 100_000, devBp: -165, vwapTrades: 50));
             Assert.Equal((ArenaAiReason.Holding, 97_850L), (h.Reason, h.StopPx));  // 손절 이격 = −165 − 50 = −2.15%

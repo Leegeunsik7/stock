@@ -2421,3 +2421,35 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.21-GM 산출물 13건(zip A4B1FCA0… · masterSeal 3AD2A89A…) → release/superseded-v12.18.21-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) · --verify-interlocks(30) ·
   --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0(태그 worktree 빌드 CLI + 같은 커밋 3db5698 의 메인 체크아웃 Release 빌드 CLI 양쪽).
+
+## 91. v12.18.23-DEV — 아레나 초현실 2단계: 대기열 취소 이탈 · 가상 공매도 (2026-10-19)
+
+### 91.1 전제 교정
+- `ArenaPositionLedger.cs` 부재 — 가상 원장 = `DualBookSimulator.cs` 안 `ArenaBook`(포지션 배열 · 현금 · 예약). 그 자리에서 확장.
+- 기존 '공매도 금지' 전제에 묶인 테스트 5건(무보유 매도 = InsufficientPosition · 평균회귀 상단 = 관측만 · 대칭 찢김 스트레스의 무보유 매도)은 의미 변화에 맞춰 갱신 —
+  무보유 매도 단언은 SyntheticShortingTests 로 이관(삭제 아님). 대주 수수료는 미도입(선택 항목 · 정직한 단순화로 명시).
+- 포식자 '숏 스퀴즈 유도': 진영 간 체결 간섭 0 원칙상 AI 매수가 휴먼 체결가를 움직일 수 없다 → 추격 선매수 + 휴먼 래더 1호가 허수 매수 잔량(표시 전용)으로 구현.
+
+### 91.2 구성
+- ⑪ 대기열 취소 이탈: 작동 지정가마다 직전 스냅샷 내 가격 표시 잔량(LastShown) · 그 이후 내 가격 체결량(TradedAtPx — 앞 잔량을 소진한 체결 틱과 같은 조건) 기록.
+  새 호가: C = max(0, (LastShown − 현재 표시) − TradedAtPx) · 앞 잔량 −= C × min(앞, LastShown) ÷ LastShown(절사 · `DualBookSimulator.CancelDepletion` 순수 정적) → 이후 표시 상한(min) 종전대로.
+  잔량 증가 = 뒤 합류(불변) · 10호가 밖/미표시 = 미상(LastShown 0 → 다음 관측 재기준 · 미상 구간 감축 0) · 최우선보다 좋은 가격 = 0. 원장 QueueCancelDepletedQty 누계.
+- ⑫ 가상 공매도: 롱 없음(무포지션 · 숏) 매도 = 숏 개시(PosQty < 0 · PosCost = 순매도 대금 · PosLock = 대금 × 150% 담보 · ShortLockedWon 합) ·
+  가용 현금 = 현금 − 예약 − 숏 담보. 개시 예약 = 추정 대금(지정가 = max(지정가, 매수 1호가)) × 50% + 수수료 + 세금. 숏 상태 매수 = 숏커버(커버 가능 = 숏 − 커버 예약 상한 ·
+  실현 = 비례 순매도 대금 − 커버 비용 · 담보 비례 해제 · 순회 예산 = 가용 + 해제분). 주문 Mode(0 개시 · 1 청산) 활성화 시 확정 — 한 주문은 0 을 가로지르지 않음(롱 청산 초과 매도 = 거부) ·
+  같은 종목 롱 개시 ↔ 숏 개시 동시 진행 = OppositeExposure(신규 ArenaReject 11). 시가평가: 숏 = −수량 × 매도 1호가(부채) — 하드 리스크(−3%) 가 숏 평가손을 그대로 반영.
+  비상 청산(Space) · 마진콜 = 롱 시장가 매도 + 숏 시장가 커버(Forced — 현금 한도 무시 · 음수 현금 = 실제 손실). 사후 분석 trip = 무포지션 → 롱/숏 개시 · |수량| 감소 = 청산.
+- AI: ArenaAiAction.EnterShort(3) · 평균회귀 상단(+1.5% · 매도벽 200%) = 숏 진입(VwapUpperShort 18) · 매도 1호가 ≤ VWAP = 커버 · 이격 ≥ max(진입, 1.5%) + 0.5% = 손절 커버.
+  포식자 ObservePreyShort(휴먼 대상 종목 숏 수량 · 평가손익) — 숏 평가손 = 스퀴즈(공격성 +2000 · 진입 임계 매복 45% · 허수 활성 · PreySqueeze 19). 거버너 Exit = 롱 매도 / 숏 커버.
+- UI/포트: ArenaPositionSide(FLAT/LONG/SHORT) · 스냅샷 AiTargetSide/HumanFocusSide · ArenaSideStats 롱/숏 종목 수 · 숏 담보 · 취소 이탈 누계 · ArenaDepth.Coverable.
+  래더 하단 [LONG]/[SHORT] 배지(상승 적색 · 하강 청색) · 평균 매입/순매도 단가 · 평가손익 색 반전 · AI 페르소나 카드 방향 배지. 핫키: 롱 보유 S = 청산 · 무포지션/숏 S = 숏 진입 ·
+  숏 B = 커버(상한) · 래더 매도호가 클릭 동일 규칙 · Space = 롱 매도 + 숏 커버.
+
+### 91.3 검증
+- QueueDepletionTests 19건: 수식 10 사례 · 체결 0 대량 취소 = 비례 전진(종전 min 모델 대비 500 → 200) · 체결/취소 혼합 이중 차감 0 · 매수 주도 체결 = 취소 판정 · 단축 후 체결 앞당김 ·
+  최우선 = 0 · 래더 이탈 재진입 재기준 · 10호가 밖 미상 · 매도 대칭 · 10만 회 0B.
+- SyntheticShortingTests 12건: 숏 개시 회계(순매도 6,976,370 · 담보 10,485,000 · 시가평가 −23,630) · 부분/전량 커버 익절/손절 · 현금 보존 · 증거금/0 교차/롱 초과 매도/반대 개시 거부 ·
+  숏 지정가 수동 체결 + 비상 청산 커버 · −3% 1틱 전 미격발 → 72,800 동결 + 강제 커버(실현 −304,722 · 발동 자산 9,696,370) · 급등 강제 커버 음수 현금 · 평균회귀 숏/커버 · 거버너 AI 숏 →
+  회귀 익절 · 포식자 스퀴즈 · 핫키/래더 양방향 · 10만 회 개시/커버 0B · IL 허용목록(브로커/디스패처/무장 형식 0).
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,065/4,065 · 아레나 141건 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 취소 균등 분포 = 기대값 모델(실 대기열 순번 미관측) · 대주 수수료/대차 가능 수량/업틱 룰 미반영 · 강제 커버는 호가 잔량까지(초과분 = 다음 호가 재순회).

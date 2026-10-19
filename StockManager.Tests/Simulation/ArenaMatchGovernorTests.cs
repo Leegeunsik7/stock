@@ -152,9 +152,9 @@ namespace StockManager.Tests.Simulation
             Step(g);
             Assert.Equal(ArenaReject.NoQuote, Read(g).Human.LastReject);
             g.OnQuote(Book(Sym, 70_000, 1_000, 69_900, 1_000));
-            g.SubmitHuman(Sym, -1, 1);                                          // 공매도
+            g.SubmitHuman(Sym, -1, 100);                                        // [v12.18.23-DEV] 가상 공매도 — 증거금 50%(349.5만) > 현금 100만 = 거부
             Step(g);
-            Assert.Equal(ArenaReject.InsufficientPosition, Read(g).Human.LastReject);
+            Assert.Equal(ArenaReject.InsufficientCash, Read(g).Human.LastReject);
             g.SubmitHuman(Sym, 1, 15);                                          // 1,050,158원 > 100만 → 전량 거부(축소 0)
             Step(g);
             var h = Read(g).Human;
@@ -287,7 +287,8 @@ namespace StockManager.Tests.Simulation
             }
             for (int i = 0; i < 20_000; i++)
             {
-                g.SubmitHuman(Sym, (i & 1) == 0 ? 1 : -1, 10);                   // AI 예산 7% ÷ 70,000 = 10주와 대칭
+                // AI 예산 7% ÷ 70,000 = 10주와 대칭. [v12.18.23-DEV] 휴먼 매도는 롱 보유 시에만(무보유 매도 = 가상 공매도 → 시그널 AI 청산 무동작과 비대칭)
+                if ((i & 1) == 0 || Read(g).Human.OpenPositions > 0) g.SubmitHuman(Sym, (i & 1) == 0 ? 1 : -1, 10);
                 g.OnAiDecision((i & 1) == 0 ? DashDecisionKind.Entry : DashDecisionKind.Exit, Sym);
                 Step(g);
             }

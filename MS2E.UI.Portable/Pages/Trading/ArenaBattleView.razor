@@ -151,7 +151,7 @@ else
             <span class="ar-sub">· 호가 미수신 — 체결 불가(가짜 시세 생성 0)</span>
         }
     </div>
-    @PersonaCard(s.AiHud)
+    @PersonaCard(s.AiHud, s.AiTargetSide)
     <div class="ar-grid">
         @Board(ArenaSide.Ai, "🤖 AI", s.Ai, s.CapitalWon)
         @Board(ArenaSide.Human, "🧑 휴먼", s.Human, s.CapitalWon)
@@ -212,7 +212,15 @@ else
                     </tr>
                 }
             </table>
-            <p class="ar-sub">@(d.Symbol.ToString("D6")) · 보유 @(d.PositionQty.ToString("N0"))주 · 매도 가능 @(d.Sellable.ToString("N0"))주@(d.MyOffLadderQty > 0 ? " · 래더 밖 내 지정가 " + d.MyOffLadderQty.ToString("N0") + "주" : "")@(d.MyHiddenQty > 0 ? " · 🧊 은닉 잔량 " + d.MyHiddenQty.ToString("N0") + "주" : "")</p>
+            <p class="ar-sub"><span class="ar-pos @ArenaPositionSide.Css(ArenaPositionSide.Of(d.PositionQty))" title="롱 = 매수 보유 · 숏 = 가상 공매도(담보 = 매도 대금 + 50% 증거금 잠금) · Space = 롱 매도/숏 커버 비상 청산">[@ArenaPositionSide.Label(ArenaPositionSide.Of(d.PositionQty))]</span>
+               @if (d.PositionQty != 0)
+               {
+                   long absQty = Math.Abs(d.PositionQty), avg = d.PositionCostWon / absQty;
+                   long mark = d.PositionQty > 0 ? d.BestBid : d.BestAsk;
+                   long upnl = mark <= 0 ? 0 : d.PositionQty > 0 ? d.PositionQty * mark - d.PositionCostWon : d.PositionCostWon - absQty * mark;
+                   <span> @(absQty.ToString("N0"))주 · @(d.PositionQty > 0 ? "평균 매입" : "평균 순매도") @(avg.ToString("N0"))원 · 평가 <b class="@(upnl > 0 ? "ar-up" : upnl < 0 ? "ar-down" : "")">@(upnl.ToString("+#,0;-#,0;0"))원</b></span>
+               }
+               @(d.Symbol.ToString("D6")) · 보유 @(d.PositionQty.ToString("N0"))주 · 매도 가능 @(d.Sellable.ToString("N0"))주 · 커버 가능 @(d.Coverable.ToString("N0"))주@(d.MyOffLadderQty > 0 ? " · 래더 밖 내 지정가 " + d.MyOffLadderQty.ToString("N0") + "주" : "")@(d.MyHiddenQty > 0 ? " · 🧊 은닉 잔량 " + d.MyHiddenQty.ToString("N0") + "주" : "")</p>
         }
         else
         {
@@ -374,7 +382,7 @@ else
         long pnl = st.PnlWon(capital);
         long retBp = capital > 0 ? pnl * 10_000 / capital : 0;
         <div class="ar-card">
-            <h3>@title <small>@(st.OpenPositions)종목 보유</small></h3>
+            <h3>@title <small>@(st.OpenPositions)종목 보유@(st.ShortPositions > 0 ? " (롱 " + st.LongPositions + " · 숏 " + st.ShortPositions + " · 숏 담보 " + st.ShortLockedWon.ToString("N0") + "원)" : "")@(st.QueueCancelDepletedQty > 0 ? " · 취소 이탈 순번 전진 " + st.QueueCancelDepletedQty.ToString("N0") + "주" : "")</small></h3>
             <div class="ar-pnl @Tone(pnl)">@(pnl >= 0 ? "+" : "")@(pnl.ToString("N0"))원 <small>(@(retBp >= 0 ? "+" : "")@((retBp / 100.0).ToString("0.00"))%)</small></div>
             <svg viewBox="0 0 @(SparkW) @(SparkH)" preserveAspectRatio="none" class="ar-spark" aria-label="자산곡선">
                 <polyline fill="none" stroke="@(pnl >= 0 ? "#E53935" : "#1E88E5")" stroke-width="1.6" points="@SparkPoints(side)" />
@@ -412,7 +420,7 @@ else
 
     private static string BpText(long bp) => (bp >= 0 ? "+" : "") + (bp / 100.0).ToString("0.00") + "%";
 
-    private RenderFragment PersonaCard(ArenaAiHud h) => __builder =>
+    private RenderFragment PersonaCard(ArenaAiHud h, int aiSide) => __builder =>
     {
         <div class="ar-card ar-persona">
             <div class="ar-mode" role="tablist">
@@ -428,6 +436,7 @@ else
                 <div class="ar-hud">
                     <div>
                         <span class="ar-sub">대상 @(h.TargetSymbol > 0 ? h.TargetSymbol.ToString("D6") : "-") · 판단</span>
+                        <span class="ar-pos @ArenaPositionSide.Css(aiSide)" title="AI 대상 종목 포지션 방향">[@ArenaPositionSide.Label(aiSide)]</span>
                         <b class="ar-act a@(h.Action)">@ArenaAiAction.Label(h.Action)</b>
                         <span>@ArenaAiReason.Label(h.Reason)</span>
                     </div>
@@ -523,6 +532,8 @@ else
     .ar-card h3 { font-size: 13.5px; margin: 0 0 8px; } .ar-card small { color: var(--sub); font-weight: 400; }
     .ar-pnl { font-size: 22px; font-weight: 700; } .ar-pnl small { font-size: 12px; }
     .ar-up { color: #E53935; } .ar-down { color: #1E88E5; }
+    .ar-pos { padding: 1px 6px; border-radius: 5px; font-weight: 700; margin-right: 4px; background: #3a3f4b; color: #ccc; }
+    .ar-pos.long { background: #E53935; color: #fff; } .ar-pos.short { background: #1E88E5; color: #fff; }
     .ar-spark { width: 100%; height: 48px; margin: 6px 0; }
     .ar-tbl { width: 100%; font-size: 11.5px; border-collapse: collapse; } .ar-tbl td { padding: 2px 4px; border-bottom: 1px solid #222837; }
     .ar-mode { display: flex; gap: 6px; margin: 4px 0 10px; }

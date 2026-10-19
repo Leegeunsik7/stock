@@ -34,13 +34,23 @@ namespace MS2E.UI.Portable.Ports.Trading
     public static class ArenaReject
     {
         public const int None = 0, NotRunning = 1, Invalid = 2, NoQuote = 3, NoLiquidity = 4, InsufficientCash = 5, InsufficientPosition = 6, BookFull = 7,
-                         OrdersFull = 8, CashExhausted = 9, RiskLocked = 10;
+                         OrdersFull = 8, CashExhausted = 9, RiskLocked = 10, OppositeExposure = 11;
         public static string Label(int r) => r switch
         {
             None => "-", NotRunning => "매치 미진행", Invalid => "주문 값 오류", NoQuote => "호가 미수신", NoLiquidity => "호가 잔량 없음",
             InsufficientCash => "가상 현금 부족", InsufficientPosition => "보유 수량 부족", BookFull => "보유 종목 한도",
-            OrdersFull => "미체결 주문 한도", CashExhausted => "잔여 수량 현금 부족 — 잔량 취소", RiskLocked => "계좌 동결 — 일일 손실 한도 초과", _ => "?",
+            OrdersFull => "미체결 주문 한도", CashExhausted => "잔여 수량 현금 부족 — 잔량 취소", RiskLocked => "계좌 동결 — 일일 손실 한도 초과",
+            OppositeExposure => "반대 방향 진입 주문 진행 중 — 롱/숏 동시 개시 불가", _ => "?",
         };
+    }
+
+    /// <summary>[v12.18.23-DEV] 포지션 방향(0 무포지션 · 1 롱 · 2 숏).</summary>
+    public static class ArenaPositionSide
+    {
+        public const int Flat = 0, Long = 1, Short = 2;
+        public static int Of(long qty) => qty > 0 ? Long : qty < 0 ? Short : Flat;
+        public static string Label(int s) => s switch { Long => "LONG", Short => "SHORT", _ => "FLAT" };
+        public static string Css(int s) => s switch { Long => "long", Short => "short", _ => "flat" };
     }
 
     /// <summary>진영 1개의 정산 지표(원 · 주 · bp = 1/10000). 손익 = 수수료 0.015% · 거래세 0.18% · 호가 슬리피지 반영 후.</summary>
@@ -54,12 +64,17 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly long QueueAheadQty, Cancels, ReservedCashWon;
         /// <summary>[v12.18.18-DEV] 유동성 진공 발동 누적 · 진공 페널티 누적(원 · 슬리피지에 포함) · 빙산 리필 누적.</summary>
         public readonly long VacuumEvents, VacuumPenaltyWon, IcebergRefills;
+        /// <summary>[v12.18.23-DEV] 롱/숏 보유 종목 수 · 숏 담보 잠금(원 · 매도 대금 + 증거금 50%) · 대기열 취소 이탈로 단축된 앞 잔량 누적(주).</summary>
+        public readonly int LongPositions, ShortPositions;
+        public readonly long ShortLockedWon, QueueCancelDepletedQty;
 
         public ArenaSideStats(long equityWon, long cashWon, long realizedWon, long unrealizedWon, long feesWon, long taxWon, long slippageWon,
                               long peakWon, long mddWon, int mddBp, long fills, long rejects, int wins, int losses, int openPositions, int lastReject,
                               int pendingOrders = 0, int workingOrders = 0, long queueAheadQty = -1, long cancels = 0, long reservedCashWon = 0,
-                              long vacuumEvents = 0, long vacuumPenaltyWon = 0, long icebergRefills = 0)
+                              long vacuumEvents = 0, long vacuumPenaltyWon = 0, long icebergRefills = 0,
+                              int longPositions = 0, int shortPositions = 0, long shortLockedWon = 0, long queueCancelDepletedQty = 0)
         {
+            LongPositions = longPositions; ShortPositions = shortPositions; ShortLockedWon = shortLockedWon; QueueCancelDepletedQty = queueCancelDepletedQty;
             VacuumEvents = vacuumEvents; VacuumPenaltyWon = vacuumPenaltyWon; IcebergRefills = icebergRefills;
             EquityWon = equityWon; CashWon = cashWon; RealizedWon = realizedWon; UnrealizedWon = unrealizedWon;
             FeesWon = feesWon; TaxWon = taxWon; SlippageWon = slippageWon; PeakWon = peakWon; MddWon = mddWon; MddBp = mddBp;
@@ -85,11 +100,15 @@ namespace MS2E.UI.Portable.Ports.Trading
         public readonly bool HumanRiskLocked;
         public readonly int RiskLimitBp;
         public readonly long RiskTripTicks, RiskTripEquityWon;
+        /// <summary>[v12.18.23-DEV] AI 대상 종목 포지션 방향(ArenaPositionSide) · 휴먼 포커스 종목 포지션 방향.</summary>
+        public readonly int AiTargetSide, HumanFocusSide;
 
         public ArenaSnapshot(long version, int state, long capitalWon, long startedTicks, long updatedTicks, long quotesSeen, long quotesLost,
                              int quoteSymbols, long ordersLost, long aiSignals, int leader, long leadWon, in ArenaSideStats ai, in ArenaSideStats human,
-                             in ArenaAiHud aiHud = default, bool humanRiskLocked = false, int riskLimitBp = 0, long riskTripTicks = 0, long riskTripEquityWon = 0)
+                             in ArenaAiHud aiHud = default, bool humanRiskLocked = false, int riskLimitBp = 0, long riskTripTicks = 0, long riskTripEquityWon = 0,
+                             int aiTargetSide = ArenaPositionSide.Flat, int humanFocusSide = ArenaPositionSide.Flat)
         {
+            AiTargetSide = aiTargetSide; HumanFocusSide = humanFocusSide;
             HumanRiskLocked = humanRiskLocked; RiskLimitBp = riskLimitBp; RiskTripTicks = riskTripTicks; RiskTripEquityWon = riskTripEquityWon;
             Version = version; State = state; CapitalWon = capitalWon; StartedTicks = startedTicks; UpdatedTicks = updatedTicks;
             QuotesSeen = quotesSeen; QuotesLost = quotesLost; QuoteSymbols = quoteSymbols; OrdersLost = ordersLost; AiSignals = aiSignals;
@@ -113,7 +132,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         bool Start(long capitalWon);
         /// <summary>매치 종료 요청(다음 펌프 회차 반영 · 최종 스냅샷 동결).</summary>
         void Stop();
-        /// <summary>휴먼 시장가 주문 → 시뮬레이터 휴먼 큐(가상 체결 전용). side +1 매수 · −1 매도. 반환 = ArenaReject(접수 단계).</summary>
+        /// <summary>
+        /// 휴먼 시장가 주문 → 시뮬레이터 휴먼 큐(가상 체결 전용). side +1 매수 · −1 매도. 반환 = ArenaReject(접수 단계).
+        /// [v12.18.23-DEV] 무포지션/숏 상태 매도 = 가상 공매도 진입(담보 = 매도 대금 + 50% 증거금 잠금) · 숏 상태 매수 = 숏커버(보유 숏 수량 상한).
+        /// </summary>
         int SubmitHuman(long symbol, int side, long qty);
         /// <summary>[v12.18.13-DEV] 휴먼 지정가 주문(체결 지연 후 시장성 부분 즉시 체결 · 잔량은 호가 대기열 뒤에 배치 → 체결 틱 거래량이 앞 잔량을 소진해야 체결).</summary>
         int SubmitHumanLimit(long symbol, int side, long qty, long priceWon);
@@ -124,7 +146,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         int SubmitHumanIceberg(long symbol, int side, long qty, long priceWon, long peakQty);
         /// <summary>[v12.18.13-DEV] 휴먼 미체결 전량 취소(취소도 체결 지연을 거친다 — 그 사이 체결 가능). [v12.18.18-DEV] 리스크 동결 중 = RiskLocked(강제 청산 매도 보호).</summary>
         int CancelHuman();
-        /// <summary>[v12.18.14-DEV] 휴먼 비상 전량 청산 — 지연 1회 후 미체결(지연 대기 포함) 전량 취소 + 보유 전 종목 시장가 매도(잔량 이월).</summary>
+        /// <summary>[v12.18.14-DEV] 휴먼 비상 전량 청산 — 지연 1회 후 미체결(지연 대기 포함) 전량 취소 + 롱 시장가 매도 · [v12.18.23-DEV] 숏 시장가 숏커버 매수(잔량 이월).</summary>
         int FlattenHuman();
         /// <summary>[v12.18.14-DEV] DOM 래더 포커스 종목(다음 게시부터 투영 · 0 = 해제).</summary>
         void SetFocus(long symbol);

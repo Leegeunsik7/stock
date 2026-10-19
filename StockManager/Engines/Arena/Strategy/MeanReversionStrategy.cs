@@ -3,7 +3,8 @@
 //
 //  진입: VWAP 예열(20체결) 후 (중간가 − VWAP) ÷ VWAP ≤ −1.5% + 매수 지지벽(상위 3단 매수 잔량 ≥ 매도 3단 × 200%) → 시장가 매수.
 //  청산: 매수 1호가 ≥ VWAP(회귀 · 전량 익절) · 이격률 ≤ min(진입 이격률, −1.5%) − 0.5%(밴드 추가 이탈 · 타이트 손절).
-//  상단(+1.5% · 매도벽) 과열은 공매도 불가 원장이라 진입하지 않고 HUD 에 '관측만' 사유로 노출(정직).
+//  [v12.18.23-DEV] 상단 대칭: 이격률 ≥ +1.5% + 매도 저항벽(상위 3단 매도 잔량 ≥ 매수 3단 × 200%) → 가상 공매도(시장가 매도).
+//   숏커버: 매도 1호가 ≤ VWAP(회귀 · 전량 익절) · 이격률 ≥ max(진입 이격률, +1.5%) + 0.5%(밴드 추가 이탈 · 타이트 손절).
 // ============================================================================
 using System;
 using MS2E.Infrastructure;
@@ -16,7 +17,7 @@ namespace StockManager.Engines.Arena.Strategy
         public const int BandBp = 150, StopExtraBp = 50, WallPct = 200, WallLevels = 3;
         public const long MinVwapTrades = 20;
 
-        private bool _hasQuote, _bidWall, _askWall, _inPosition;
+        private bool _hasQuote, _bidWall, _askWall, _inPosition, _inShort;
         private long _stopDevBp;
 
         public int Persona => ArenaPersona.MeanReversion;
@@ -50,19 +51,37 @@ namespace StockManager.Engines.Arena.Strategy
                 return StrategySignal.Hold(ArenaAiReason.Holding, state.VwapWon, stopPx);
             }
             _inPosition = false;
+            if (state.PositionQty < 0)
+            {
+                if (!_inShort)
+                {
+                    _inShort = true;
+                    _stopDevBp = Math.Max(state.VwapDevBp, BandBp) + StopExtraBp;
+                }
+                long stopPx = state.VwapWon + state.VwapWon * _stopDevBp / 10_000;
+                if (state.Busy) return StrategySignal.Hold(ArenaAiReason.Waiting, state.VwapWon, stopPx);
+                if (state.BestAsk <= state.VwapWon) return StrategySignal.Exit(ArenaAiReason.VwapReverted, state.VwapWon, stopPx);
+                if (state.VwapDevBp >= _stopDevBp) return StrategySignal.Exit(ArenaAiReason.BandBreak, state.VwapWon, stopPx);
+                return StrategySignal.Hold(ArenaAiReason.Holding, state.VwapWon, stopPx);
+            }
+            _inShort = false;
             if (state.Busy) return StrategySignal.Hold(ArenaAiReason.Waiting);
             if (state.VwapDevBp <= -BandBp && _bidWall)
             {
                 long stopDev = Math.Min(state.VwapDevBp, -BandBp) - StopExtraBp;
                 return StrategySignal.Enter(ArenaAiReason.VwapLowerRevert, state.VwapWon, state.VwapWon + state.VwapWon * stopDev / 10_000);
             }
-            if (state.VwapDevBp >= BandBp && _askWall) return StrategySignal.Hold(ArenaAiReason.UpperBandNoShort, state.VwapWon);
+            if (state.VwapDevBp >= BandBp && _askWall)
+            {
+                long stopDev = Math.Max(state.VwapDevBp, BandBp) + StopExtraBp;
+                return StrategySignal.EnterShort(ArenaAiReason.VwapUpperShort, state.VwapWon, state.VwapWon + state.VwapWon * stopDev / 10_000);
+            }
             return StrategySignal.Hold(ArenaAiReason.None);
         }
 
         public void Reset()
         {
-            _hasQuote = _bidWall = _askWall = _inPosition = false;
+            _hasQuote = _bidWall = _askWall = _inPosition = _inShort = false;
             _stopDevBp = 0;
         }
     }

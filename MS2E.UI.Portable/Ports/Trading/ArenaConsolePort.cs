@@ -19,6 +19,8 @@ namespace MS2E.UI.Portable.Ports.Trading
     {
         public const int Levels = 10;
         public long Symbol, BookVersion, PositionQty, Sellable, PositionCostWon;
+        /// <summary>[v12.18.23-DEV] 숏커버 가능 수량(숏 − 커버 예약 · 롱/무포지션 = 0). PositionQty &lt; 0 = 숏 · PositionCostWon = 숏 순매도 대금.</summary>
+        public long Coverable;
         public bool HasBook;
         public ArenaLevels10 AskPx, AskQty, BidPx, BidQty, MyAskQty, MyAskAhead, MyBidQty, MyBidAhead;
         /// <summary>래더 밖 가격의 내 대기 지정가 수량(매수 · 매도 합).</summary>

@@ -5,7 +5,7 @@
 //  판단: Evaluate(시장 상태 값 구조체) → StrategySignal(관망 · 진입 · 청산 + 사유 + 목표/손절가). 거버너가 원장 상태(무포지션 · 미체결 0)를
 //        재확인한 뒤에만 AI 가상 원장에 시장가 주문을 접수한다 — 전략은 원장을 직접 만지지 않는다.
 //  Reset: 매치 개시 · 페르소나 교체 · 대상 종목 재지정 시 지표/포지션 기억 초기화.
-//  ★공매도 불가 시뮬레이터 → 진입 = 매수 · 청산 = 보유 전량 매도. 브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트).
+//  [v12.18.23-DEV] 진입 = 매수(Enter) 또는 가상 공매도(EnterShort) · 청산(Exit) = 롱 전량 매도 / 숏 전량 커버. 브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트).
 // ============================================================================
 using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
@@ -29,8 +29,8 @@ namespace StockManager.Engines.Arena.Strategy
             SigmaWon = sigmaWon; VwapTrades = vwapTrades; PositionQty = positionQty; PositionCostWon = positionCostWon; Busy = busy;
         }
 
-        /// <summary>평균 매입가(원 · 무포지션 = 0).</summary>
-        public long AvgCostWon => PositionQty > 0 ? PositionCostWon / PositionQty : 0;
+        /// <summary>평균 매입가(원 · 무포지션 = 0) · [v12.18.23-DEV] 숏 = 평균 순매도 단가.</summary>
+        public long AvgCostWon => PositionQty > 0 ? PositionCostWon / PositionQty : PositionQty < 0 ? PositionCostWon / -PositionQty : 0;
     }
 
     /// <summary>판단 결과(ArenaAiAction · ArenaAiReason · 목표/손절가 원 · 0 = 없음).</summary>
@@ -47,6 +47,7 @@ namespace StockManager.Engines.Arena.Strategy
         public static StrategySignal Hold(int reason, long targetPx = 0, long stopPx = 0) => new(ArenaAiAction.Hold, reason, targetPx, stopPx);
         public static StrategySignal Enter(int reason, long targetPx, long stopPx) => new(ArenaAiAction.Enter, reason, targetPx, stopPx);
         public static StrategySignal Exit(int reason, long targetPx = 0, long stopPx = 0) => new(ArenaAiAction.Exit, reason, targetPx, stopPx);
+        public static StrategySignal EnterShort(int reason, long targetPx, long stopPx) => new(ArenaAiAction.EnterShort, reason, targetPx, stopPx);
     }
 
     public interface IArenaStrategy

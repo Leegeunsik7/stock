@@ -82,7 +82,7 @@ namespace StockManager.Engines.Arena
         public void OnFill(long symbol, int dir, long posBefore, long posAfter, long realizedWon, long nowTicks, long slipBefore, long slipAfter)
         {
             int i = IndexOf(symbol);
-            if (posBefore == 0 && dir > 0)
+            if (posBefore == 0 && posAfter != 0)                                     // [v12.18.23-DEV] trip 개시 = 무포지션 → 롱(매수) 또는 숏(매도)
             {
                 if (i < 0)
                 {
@@ -92,7 +92,7 @@ namespace StockManager.Engines.Arena
                 _sym[i] = symbol; _open[i] = nowTicks; _slip0[i] = slipBefore; _mae[i] = 0; _mfe[i] = 0; _real[i] = 0;
                 return;
             }
-            if (i < 0 || dir > 0) return;                                           // 추가 매수 = 같은 trip(편차는 시가평가가 갱신)
+            if (i < 0 || Math.Abs(posAfter) > Math.Abs(posBefore)) return;          // 추가 진입(롱 매수 · 숏 매도) = 같은 trip(편차는 시가평가가 갱신)
             _real[i] += realizedWon;
             if (posAfter != 0) return;
             long realized = _real[i];

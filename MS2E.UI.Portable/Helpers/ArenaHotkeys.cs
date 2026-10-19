@@ -52,6 +52,8 @@ namespace MS2E.UI.Portable.Helpers
         /// <summary>
         /// 동작 실행(δ=0) — 반환 = ArenaReject(None = 큐 적재). Weight 는 호출자가 상태로 보관(여기선 None).
         /// Buy/Sell 은 래더 포커스 종목 최우선 반대 호가 지정가(즉시 시장성) · 수량 0 = Invalid/InsufficientPosition.
+        /// [v12.18.23-DEV] 양방향: 롱 보유 중 Sell = 롱 청산(매도 가능 상한) · 무포지션/숏 Sell = 가상 공매도 진입(비중 수량) ·
+        /// 숏 보유 중 Buy = 숏커버(커버 가능 상한) · 그 밖 Buy = 롱 진입. 한 티켓은 0 을 가로지르지 않는다(시뮬레이터 규칙과 동일).
         /// </summary>
         public static int Execute(IArenaPort port, int action, in ArenaDepth depth, int weightBp, long capitalWon, out long qty)
         {
@@ -61,11 +63,13 @@ namespace MS2E.UI.Portable.Helpers
                 case Buy:
                     if (!depth.HasBook || depth.BestAsk <= 0) return ArenaReject.NoQuote;
                     qty = QtyFor(capitalWon, weightBp, depth.BestAsk);
-                    return qty <= 0 ? ArenaReject.Invalid : port.SubmitHumanLimit(depth.Symbol, 1, qty, depth.BestAsk);
+                    if (depth.PositionQty < 0) qty = Math.Min(qty, depth.Coverable);   // 숏커버
+                    return qty <= 0 ? (depth.PositionQty < 0 ? ArenaReject.InsufficientPosition : ArenaReject.Invalid) : port.SubmitHumanLimit(depth.Symbol, 1, qty, depth.BestAsk);
                 case Sell:
                     if (!depth.HasBook || depth.BestBid <= 0) return ArenaReject.NoQuote;
-                    qty = Math.Min(depth.Sellable, QtyFor(capitalWon, weightBp, depth.BestBid));
-                    return qty <= 0 ? ArenaReject.InsufficientPosition : port.SubmitHumanLimit(depth.Symbol, -1, qty, depth.BestBid);
+                    qty = QtyFor(capitalWon, weightBp, depth.BestBid);
+                    if (depth.PositionQty > 0) qty = Math.Min(qty, depth.Sellable);   // 롱 청산 · 무포지션/숏 = 공매도 진입
+                    return qty <= 0 ? (depth.PositionQty > 0 ? ArenaReject.InsufficientPosition : ArenaReject.Invalid) : port.SubmitHumanLimit(depth.Symbol, -1, qty, depth.BestBid);
                 case Flatten:
                     return port.FlattenHuman();
                 case CancelAll:
@@ -75,7 +79,10 @@ namespace MS2E.UI.Portable.Helpers
             }
         }
 
-        /// <summary>래더 셀 클릭(δ=0): isAsk = 매도호가 열(지정가 매도 · 매도 가능 상한) · 아니면 매수호가 열(지정가 매수).</summary>
+        /// <summary>
+        /// 래더 셀 클릭(δ=0): isAsk = 매도호가 열(지정가 매도 · 롱 보유 = 매도 가능 상한 · 무포지션/숏 = 공매도 진입) ·
+        /// 아니면 매수호가 열(지정가 매수 · 숏 보유 = 커버 가능 상한).
+        /// </summary>
         public static int ClickLadder(IArenaPort port, in ArenaDepth depth, bool isAsk, int level, int weightBp, long capitalWon, out long qty)
         {
             qty = 0;
@@ -83,8 +90,9 @@ namespace MS2E.UI.Portable.Helpers
             long px = isAsk ? depth.AskPx[level] : depth.BidPx[level];
             if (px <= 0) return ArenaReject.NoQuote;
             qty = QtyFor(capitalWon, weightBp, px);
-            if (isAsk) qty = Math.Min(qty, depth.Sellable);
-            if (qty <= 0) return isAsk ? ArenaReject.InsufficientPosition : ArenaReject.Invalid;
+            bool closing = isAsk ? depth.PositionQty > 0 : depth.PositionQty < 0;
+            if (closing) qty = Math.Min(qty, isAsk ? depth.Sellable : depth.Coverable);
+            if (qty <= 0) return closing ? ArenaReject.InsufficientPosition : ArenaReject.Invalid;
             return port.SubmitHumanLimit(depth.Symbol, isAsk ? -1 : 1, qty, px);
         }
     }

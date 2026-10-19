@@ -1,15 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.22-GM — 키움 레이트 관제 · KIS EGW00201 단독 출하(-NoPeer) 완료
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,034/4,034 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.23-DEV — 아레나 초현실 2단계(대기열 취소 이탈 · 가상 공매도)
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,065/4,065 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-19
 
 ## Completed Deliverables
-- 버전 12.18.22 승격 · 태그 v12.18.22-GM = 3db5698 · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(1회 통과)
-- release-v12.18.22-GM.zip(38 아티팩트 · SHA-256 EEF1C3B9…) · masterSeal 97B6B3FD… · 피어 기록 없음
-- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 통과
-- v12.18.21-GM 산출물 13건 → release/superseded-v12.18.21-GM/ · HANDOVER §90
+- 대기열 취소 이탈: C = max(0, ΔD − 체결) 비례 감축(내 앞 몫) · δ=0 · 미상 구간 재기준
+- 가상 공매도: 숏 개시(담보 150% 잠금) · 숏커버 실현손익 · 0 교차 금지 · 롱/숏 동시 개시 차단 · 숏 시가평가 = 매도호가 · −3% 마진콜 강제 커버
+- AI: 평균회귀 상단 숏/회귀 커버 · 포식자 휴먼 숏 손실 스퀴즈 · /arena [LONG]/[SHORT] 배지 · 양방향 핫키/래더 · Space 숏커버
+- 신규 테스트 31건(QueueDepletionTests 19 · SyntheticShortingTests 12) · HANDOVER §91
 
 ## Next Milestone
-- 실 키움 프록시 + KIS 연결 상태에서 레이트 관제 · EGW00201 실측 확인
-- 실 키움 + KIS 동시 피드로 괴리 상수 보정 · WebView2 육안 확인
+- v12.18.23 GM 단독 출하(-NoPeer) 판단
+- 대주 수수료 · 대차 가능 수량 모델(선택) · 실 키움 + KIS 동시 피드 보정

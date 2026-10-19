@@ -8,7 +8,10 @@
 //  청산: 목표(추격 물량에 매도) · 손절 · 불균형 ≤ 40% · 보유 5초 경과.
 //  허수 잔량(PhantomActive = 휴먼 연패 ≥ 2): 거버너가 휴먼 DOM 래더 표시의 1호가에만 얹는 가상 잔량(매수측 = 기준 × 공격성 × 3 · 매도측 = ⅓) —
 //   시뮬레이터 호가 · 체결 · 대기열 계산에는 존재하지 않는다(체결 불가 · 외부 송출 0 · HUD 에 수량 공개).
-//  ★공매도 불가 시뮬레이터 → 진입 = 매수 · 청산 = 보유 전량 매도. 브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트).
+//  [v12.18.23-DEV] 숏 스퀴즈(ObservePreyShort): 휴먼이 대상 종목을 숏 보유 중이고 평가손(되사는 값 &gt; 순매도 대금)이면 공격성 +2000 · 허수 매수벽 활성 ·
+//   진입 임계 = 매복(45%)으로 즉시 하향 → 선매수(PreySqueeze). ★진영 간 체결 간섭 0 원칙상 AI 매수는 휴먼 체결가를 움직이지 않는다 —
+//   '스퀴즈 유도'는 추격 선매수 + 휴먼 래더 1호가 허수 매수 잔량(표시 전용 · 체결 불가)로만 구현(정직). 진입 = 매수 · 청산 = 보유 전량 매도.
+//   브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트).
 // ============================================================================
 using System;
 using MS2E.Infrastructure;
@@ -22,8 +25,10 @@ namespace StockManager.Engines.Arena.Strategy
                          MinAggressionBp = 1_000, MaxAggressionBp = 10_000, StealthBelowBp = 5_000;
         public const int StalkImbalanceBp = 5_800, AmbushImbalanceBp = 4_500, ExitImbalanceBp = 4_000, StopTicks = 2, PhantomStreak = 2, PhantomMultiplier = 3;
         public const long TimeoutTicks = 5 * 10_000_000L, TiltMemoryTicks = 30 * 10_000_000L;
+        public const int SqueezeBoostBp = 2_000;
 
         private int _imbalanceBp = 5_000, _aggr = BaseAggressionBp, _preyStreak, _preyTilts;
+        private long _preyShortQty, _preyShortPnl;
         private long _tick = 1, _preyMae;
         private bool _hasQuote, _inPosition;
         private long _entryTicks, _target, _stop;
@@ -35,10 +40,23 @@ namespace StockManager.Engines.Arena.Strategy
         public long PreyMaeWon => _preyMae;
         /// <summary>은밀 집행(TWAP 분할) 여부.</summary>
         public bool Stealth => _aggr < StealthBelowBp;
-        /// <summary>휴먼 연패 ≥ 2 = 허수 잔량 주입 국면.</summary>
-        public bool PhantomActive => _preyStreak >= PhantomStreak;
-        /// <summary>현재 진입 임계(매수 잔량 비율 bp) — 공격성이 높을수록 낮은 우위에도 선매수.</summary>
-        public int EntryImbalanceBp => StalkImbalanceBp - (int)((long)(Math.Max(_aggr, BaseAggressionBp) - BaseAggressionBp) * (StalkImbalanceBp - AmbushImbalanceBp) / (MaxAggressionBp - BaseAggressionBp));
+        /// <summary>[v12.18.23-DEV] 휴먼 숏 평가손 국면(숏 보유 ∧ 평가손익 &lt; 0) — 스퀴즈 추격.</summary>
+        public bool SqueezeActive => _preyShortQty > 0 && _preyShortPnl < 0;
+        public long PreyShortQty => _preyShortQty;
+        public long PreyShortPnlWon => _preyShortPnl;
+        /// <summary>휴먼 연패 ≥ 2 또는 숏 스퀴즈 국면 = 허수 잔량 주입 국면.</summary>
+        public bool PhantomActive => _preyStreak >= PhantomStreak || SqueezeActive;
+        /// <summary>현재 진입 임계(매수 잔량 비율 bp) — 공격성이 높을수록 낮은 우위에도 선매수 · 스퀴즈 = 매복 임계.</summary>
+        public int EntryImbalanceBp => SqueezeActive ? AmbushImbalanceBp
+            : StalkImbalanceBp - (int)((long)(Math.Max(_aggr, BaseAggressionBp) - BaseAggressionBp) * (StalkImbalanceBp - AmbushImbalanceBp) / (MaxAggressionBp - BaseAggressionBp));
+
+        /// <summary>[v12.18.23-DEV] 휴먼 대상 종목 숏(수량 · 평가손익 원) 역추적 — ObservePrey 뒤 같은 회차 호출. 스퀴즈 = 공격성 가산.</summary>
+        public void ObservePreyShort(long shortQty, long unrealizedWon)
+        {
+            _preyShortQty = Math.Max(0, shortQty);
+            _preyShortPnl = _preyShortQty > 0 ? unrealizedWon : 0;
+            if (SqueezeActive) _aggr = Math.Min(MaxAggressionBp, _aggr + SqueezeBoostBp);
+        }
         public int TargetTicks => 1 + _aggr / 2_500;
 
         /// <summary>
@@ -96,7 +114,7 @@ namespace StockManager.Engines.Arena.Strategy
             _inPosition = false;
             if (state.Busy) return StrategySignal.Hold(ArenaAiReason.Waiting);
             if (_imbalanceBp >= EntryImbalanceBp)
-                return StrategySignal.Enter(PhantomActive ? ArenaAiReason.PreyAmbush : ArenaAiReason.PreyStalk,
+                return StrategySignal.Enter(SqueezeActive ? ArenaAiReason.PreySqueeze : PhantomActive ? ArenaAiReason.PreyAmbush : ArenaAiReason.PreyStalk,
                                             state.BestAsk + TargetTicks * _tick, state.BestAsk - StopTicks * _tick);
             return StrategySignal.Hold(ArenaAiReason.None);
         }
@@ -104,7 +122,7 @@ namespace StockManager.Engines.Arena.Strategy
         public void Reset()
         {
             _imbalanceBp = 5_000; _tick = 1; _aggr = BaseAggressionBp;
-            _preyStreak = _preyTilts = 0; _preyMae = 0;
+            _preyStreak = _preyTilts = 0; _preyMae = 0; _preyShortQty = _preyShortPnl = 0;
             _hasQuote = _inPosition = false;
             _entryTicks = _target = _stop = 0;
         }

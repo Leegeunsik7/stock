@@ -478,7 +478,9 @@ namespace StockManager.Engines.Arena
             var hud = Hud();                                                         // 래더 허수 투영 뒤(같은 창의 HUD 공개 수량 = 래더 가산량)
             _snap = new ArenaSnapshot((s + 2) >> 1, _state, _capital, _startedTicks, nowTicks, _quotesSeen, _quotesLost, _sim.QuoteSymbols,
                                       _ordersLost, _aiSignals, leader, Math.Abs(_eqAi - _eqHuman), in ai, in hu, in hud,
-                                      _humanLocked != 0, _riskLimitBp, _riskTripTicks, _riskTripEquity);
+                                      _humanLocked != 0, _riskLimitBp, _riskTripTicks, _riskTripEquity,
+                                      ArenaPositionSide.Of(_target > 0 ? _sim.Book(ArenaSide.Ai).Position(_target) : 0),
+                                      ArenaPositionSide.Of(focus > 0 ? _sim.Book(ArenaSide.Human).Position(focus) : 0));
             _debriefAi = _sim.Book(ArenaSide.Ai).Analytics.Snapshot(_sim.Book(ArenaSide.Ai).SlippageWon);
             _debriefHuman = _sim.Book(ArenaSide.Human).Analytics.Snapshot(_sim.Book(ArenaSide.Human).SlippageWon);
             Volatile.Write(ref _seq, s + 2);                                         // 안정(짝수)
@@ -588,6 +590,10 @@ namespace StockManager.Engines.Arena
             {
                 var prey = _sim.Book(ArenaSide.Human).Analytics;
                 _predator.ObservePrey(prey.LossStreak, prey.TiltAlerts, prey.LastTiltTicks, prey.OpenMaeWon, _capital, nowTicks);
+                var hb = _sim.Book(ArenaSide.Human);                                // [v12.18.23-DEV] 휴먼 대상 종목 숏 평가손(되사는 값 − 순매도 대금)
+                int hp = hb.IndexOf(_target);
+                long hq = hp < 0 ? 0 : hb.PosQty[hp];
+                _predator.ObservePreyShort(hq < 0 ? -hq : 0, hq < 0 ? hb.PosCost[hp] + hq * ask : 0);
             }
             long qty = pi < 0 ? 0 : aiBook.PosQty[pi], cost = pi < 0 ? 0 : aiBook.PosCost[pi];
             var st = new ArenaMarketState(_target, nowTicks, bid, ask, _vwap.LastPrice, _vwap.VwapWon, _vwap.DeviationBp((bid + ask) / 2), _vwap.SigmaWon,
@@ -603,12 +609,19 @@ namespace StockManager.Engines.Arena
                     _sim.Submit(ArenaSide.Ai, _target, 1, lot, ArenaOrderKind.Market, 0, nowTicks, peakQty: lot / PredatorTwapSlices, intervalTicks: PredatorTwapIntervalTicks);
                 else _sim.Submit(ArenaSide.Ai, _target, 1, lot, ArenaOrderKind.Market, 0, nowTicks);
             }
+            else if (_signal.Action == ArenaAiAction.EnterShort && qty == 0)          // [v12.18.23-DEV] 가상 공매도 진입(시장가 매도 · 담보 잠금)
+            {
+                long budget = (long)((Int128)_capital * _aiLotBp / 10_000);
+                long lot = Math.Clamp(budget / bid, 1, DualBookSimulator.MaxOrderQty);
+                _aiSignals++; _decisions++;
+                _sim.Submit(ArenaSide.Ai, _target, -1, lot, ArenaOrderKind.Market, 0, nowTicks);
+            }
             else if (_signal.Action == ArenaAiAction.Exit)
             {
-                long held = aiBook.Sellable(_target);
+                long held = qty > 0 ? aiBook.Sellable(_target) : aiBook.Coverable(_target);   // 롱 = 매도 · 숏 = 숏커버 매수
                 if (held <= 0) return;
                 _aiSignals++; _decisions++;
-                _sim.Submit(ArenaSide.Ai, _target, -1, held, ArenaOrderKind.Market, 0, nowTicks);
+                _sim.Submit(ArenaSide.Ai, _target, qty > 0 ? -1 : 1, held, ArenaOrderKind.Market, 0, nowTicks);
             }
         }
 
@@ -630,7 +643,8 @@ namespace StockManager.Engines.Arena
             return new ArenaSideStats(equity, b.CashWon, b.RealizedWon, unrealized, b.FeesWon, b.TaxWon, b.SlippageWon, b.PeakWon, b.MddWon, mddBp,
                                       b.Fills, b.Rejects, b.Wins, b.Losses, b.PosCount, b.LastReject,
                                       b.PendingCount, b.WorkingCount, b.OldestQueueAhead, b.Cancels, b.ReservedCashWon,
-                                      b.VacuumEvents, b.VacuumPenaltyWon, b.IcebergRefills);
+                                      b.VacuumEvents, b.VacuumPenaltyWon, b.IcebergRefills,
+                                      b.LongPositions, b.ShortPositions, b.ShortLockedWon, b.QueueCancelDepletedQty);
         }
 
         // ════════════ ③ 소비자(seqlock 사본 · 잠금/할당 0) ════════════

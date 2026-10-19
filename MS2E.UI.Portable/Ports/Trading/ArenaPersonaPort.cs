@@ -33,8 +33,8 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>페르소나 판단(0 관망 · 1 진입 · 2 청산).</summary>
     public static class ArenaAiAction
     {
-        public const int Hold = 0, Enter = 1, Exit = 2;
-        public static string Label(int a) => a switch { Enter => "진입", Exit => "청산", _ => "관망" };
+        public const int Hold = 0, Enter = 1, Exit = 2, EnterShort = 3;
+        public static string Label(int a) => a switch { Enter => "진입", Exit => "청산", EnterShort => "숏 진입", _ => "관망" };
     }
 
     /// <summary>판단 사유 코드(설명 가능 AI HUD).</summary>
@@ -42,14 +42,15 @@ namespace MS2E.UI.Portable.Ports.Trading
     {
         public const int None = 0, Warmup = 1, Waiting = 2, Holding = 3, ImbalanceBuy = 4, ImbalanceFlip = 5, TakeProfit = 6, StopLoss = 7, Timeout = 8,
                          TrendBreakout = 9, TrailingStop = 10, DeadCross = 11, VwapLowerRevert = 12, VwapReverted = 13, BandBreak = 14, UpperBandNoShort = 15,
-                         PreyStalk = 16, PreyAmbush = 17;
+                         PreyStalk = 16, PreyAmbush = 17, VwapUpperShort = 18, PreySqueeze = 19;
         public static string Label(int r) => r switch
         {
             None => "조건 미충족 — 관망", Warmup => "지표 예열 중", Waiting => "주문 지연/작동 중 — 결과 대기", Holding => "보유 — 목표/손절 감시",
             ImbalanceBuy => "매수 잔량 우위 + 스프레드 압축", ImbalanceFlip => "호가 불균형 역전", TakeProfit => "목표가 도달 익절", StopLoss => "손절가 이탈",
             Timeout => "시간 초과 청산", TrendBreakout => "EMA 정배열 + 거래량 폭증", TrailingStop => "트레일링 스탑 발동", DeadCross => "EMA 역배열 전환",
             VwapLowerRevert => "VWAP 하단 과다 이격 + 매수 지지벽", VwapReverted => "VWAP 회귀 익절", BandBreak => "밴드 추가 이탈 손절",
-            UpperBandNoShort => "VWAP 상단 과열 — 공매도 불가로 관측만",
+            UpperBandNoShort => "VWAP 상단 과열 — 공매도 불가로 관측만(v12.18.22 이전)",
+            VwapUpperShort => "VWAP 상단 과다 이격 + 매도 저항벽 — 가상 공매도", PreySqueeze => "휴먼 숏 손실 포착 — 숏 스퀴즈 추격 선매수",
             PreyStalk => "매수 우위 감지 — 은밀 분할 선매수", PreyAmbush => "휴먼 연패/틸트 포착 — 추격 유도 선매수", _ => "?",
         };
     }

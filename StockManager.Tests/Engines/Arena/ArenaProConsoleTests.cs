@@ -103,7 +103,7 @@ namespace StockManager.Tests.Engines.Arena
             Step(g);
             var d = Depth(g);
             Assert.Equal(70_000, d.BestAsk);
-            Assert.Equal(ArenaReject.InsufficientPosition, ArenaHotkeys.Execute(g, ArenaHotkeys.Sell, in d, 1_000, 10_000_000, out _));   // 무보유 매도
+            // [v12.18.23-DEV] 무보유 S = 가상 공매도 진입 — SyntheticShortingTests.Hotkeys_* 로 이관(이 시나리오는 롱 흐름 유지)
             Assert.Equal(ArenaReject.None, ArenaHotkeys.Execute(g, ArenaHotkeys.Buy, in d, 2_500, 10_000_000, out long q));
             Assert.Equal(35, q);
             Step(g);
@@ -138,7 +138,7 @@ namespace StockManager.Tests.Engines.Arena
             Assert.Equal(500, d.MyBidAhead[2]);                                  // 맨 앞 내 주문의 앞 잔량 = 표시 잔량
             Assert.Equal(-1, d.MyBidAhead[0]);
             Assert.Equal(0, d.MyBidQty[0]);
-            Assert.Equal(ArenaReject.InsufficientPosition, ArenaHotkeys.ClickLadder(g, in d, isAsk: true, level: 0, 1_000, 100_000_000, out _));
+            // [v12.18.23-DEV] 무보유 매도호가 클릭 = 가상 공매도 진입 — SyntheticShortingTests.Hotkeys_* 로 이관
             Assert.Equal(ArenaReject.NoQuote, ArenaHotkeys.ClickLadder(g, in d, isAsk: false, level: 10, 1_000, 100_000_000, out _));
             g.OnQuote(Book(72_500, 800, 72_400, 500));                           // 호가 급등 = 내 가격(69,700) 래더(72,400 ~ 71,500) 밖
             Step(g);
