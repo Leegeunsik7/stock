@@ -2548,3 +2548,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 의미 변경 갱신 3건: HyperRealism −3% 발동 자산 · SyntheticShorting 발동 자산(9,696,370 → 9,695,278 = 커버 수수료 포함) · ArenaUIStress 생산 TPS 측정 경계(취소 후 경과 제외).
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,086/4,086 · 아레나 그룹 175건 5회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 틱 MAE/MFE = 최우선 호가 기준(체결 틱 가격 미포함 · 호가 사이 체결 극값 미포착 가능) · 청산가치 = 최우선 호가 전량 가정(호가 잔량 소진 미반영) · 대주 수수료 없음.
+
+## 96. v12.18.25-GM — 아레나 마찰비용 · Net 청산가치 리스크 · 틱 MAE/MFE 포렌식 단독 출하(-NoPeer) (2026-10-19)
+
+### 96.1 버전 · 태그
+- v12.18.25-DEV(§95) = 1624433. 12.18.24 → 12.18.25(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 0bbfa73(4파일 · 11/11 줄 · 구버전 문자열 잔존 0) ·
+  핀 테스트 48/48(Release). 빌드 전 공유 체크아웃 testhost 잠금 0 확인(§94 교훈).
+- 태그 v12.18.25-GM(annotated · -f) = 0bbfa73. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 96.2 출하 실행(형제 worktree StockManager-gm-12.18.25 · 태그 0bbfa73 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 4,086/4,086 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @0bbfa73d8d.
+- 산출물(release/): release-v12.18.25-GM.zip SHA-256 `B29FA15D2C285A1E003E26B0700838C02C2736605BB1D8D39C242FFF99BDA9A9` ·
+  masterSeal `6FB1A71F7F1A5A16448DE1D2FC9050F9F2E80E2127FE0539F0677DA7DDDEEA5B` · sourceCommit 0bbfa73 · 피어 기록 없음.
+- v12.18.24-GM 산출물 13건(zip 7FC52AEC… · masterSeal E13BBA07…) → release/superseded-v12.18.24-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(같은 커밋 0bbfa73 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
