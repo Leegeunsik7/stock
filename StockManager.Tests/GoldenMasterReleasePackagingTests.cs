@@ -170,10 +170,10 @@ namespace StockManager.Tests
                 _out.WriteLine($"[§13 실행] exit={ps.ExitCode} · {sw.ElapsedMilliseconds}ms\n{stdout}");
 
                 Assert.Equal(1, ps.ExitCode);                                                       // Fail = exit 1
-                Assert.Contains("[0/10]", stdout);
+                Assert.Contains("[0/11]", stdout);                                                  // v12.18.28-DEV 단계 표기 /11([11/11] 배포본)
                 Assert.Contains("exit=2", stdout);                                                  // 판정기 ManifestStale = CLI 2 → 착수 거부
-                Assert.DoesNotContain("[1/10]", stdout);                                            // 빌드 단계 진입 0
-                Assert.DoesNotContain("[2/10]", stdout);
+                Assert.DoesNotContain("[1/11]", stdout);                                            // 빌드 단계 진입 0
+                Assert.DoesNotContain("[2/11]", stdout);
                 string report = File.ReadAllText(Path.Combine(hostRepo, "release", "cli-peer-readiness.txt"), Encoding.UTF8);
                 Assert.Contains("ManifestStale", report);
                 Assert.DoesNotContain("UncommittedCode", report);                                   // 거부 사유 = 낡은 봉인 단독
@@ -1299,7 +1299,7 @@ namespace StockManager.Tests
             string s = File.ReadAllText(Path.Combine(RepoRoot(), "release-package.ps1"));
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-pump-jitter', '--require-cancel-arming') \"verify-live-armed\"", s);
             Assert.Contains("'--expect-tighten-keys', \"$ExpectedTightenKeys\", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') \"verify-tighten\"", s);
-            Assert.Equal(8, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // 기존 거부 줄에 요구 인자만 추가 · v12.18.4-GM: + 피어 드리프트 거부(Assert-PeerPinned)
+            Assert.Equal(9, Regex.Matches(s, "Remove-ReleaseOutputs; Fail").Count);              // v12.18.28-DEV: + [11/11] 배포본 실패 · 기존 거부 줄에 요구 인자만 추가 · v12.18.4-GM: + 피어 드리프트 거부(Assert-PeerPinned)
             string dir = TempDir();
             try
             {

@@ -2659,3 +2659,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 체크아웃 재수검(같은 커밋 7c5cc1d Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 출하본의 KIS 리얼 와이어 소크는 여전히 미실행(§99 — 정규장 + 모의투자 자격증명 필요).
+
+## 101. v12.18.28-DEV — 이중 산출 패키징: 감사 봉인본 + 즉시 실행 배포본(Standalone win-x64) (2026-10-20)
+
+### 101.1 전제 교정
+- v12.18.26 스모크(§98 이후)에서 확인: 감사 봉인 zip(38 바이너리)에는 runtimeconfig · deps.json · 네이티브(WebView2Loader · e_sqlite3) · wwwroot 가 없어 exit 131(hostpolicy) — 실행본이 아님.
+- 배포본 바이너리를 publish 산출물 그대로 쓰면 봉인 바이너리와 바이트가 다르다(RID 빌드 · 실측 MS2E.StockSuite.dll/exe 해시 상이). 그래서 설계 =
+  self-contained publish 는 '런타임 층'만 제공하고, 앱/의존 바이너리 38개는 봉인 zip 에서 꺼내 덮어쓴다(바이트 동일 · 실측 기동 정상).
+- 버전은 12.18.27 유지(DEV) — 배포본 이름은 csproj 버전을 따른다(다음 GM 승격 시 StockManager-v12.18.28-Standalone-win-x64.zip).
+
+### 101.2 구성
+- `standalone-bundle.ps1`(UTF-8 BOM): ① 봉인 zip 추출(바이너리 원천) ② dotnet publish self-contained(호스트 win-x64 · KiwoomProxy win-x86) ③ 봉인 38개 오버레이 +
+  artifacts.sha256.txt 전 항목 해시 대조(불일치 = 중단) · artifacts.sha256.txt · manifest.sig · master-seal.txt 동봉 ④ *.staticwebassets.runtime.json(빌드 머신 절대 경로) · *.pdb 제거 ·
+  필수 자산 14종 · runtimeconfig includedFrameworks 확인 ⑤ zip + .sha256 → 판독 테스트(MS2E_RELEASE_STANDALONE_ZIP) → 새 임시 폴더에 풀어 실기동 · 주 창 핸들 ≤ 45초 · 경로 격리 확인 후 종료
+  (-SkipLaunch = 무인 CI). 실패-닫힘: Abort = 배포 zip 삭제 + 임시 폴더 정리 + exit 1 · trap 으로 종료 오류도 같은 경로. 피어 참조 0 · 감사 봉인 산출물 쓰기 0.
+- `release-package.ps1`: [11/11] = [10/10] 인터락/강화 대조 뒤 · 완료 전에 호출 · 실패 = Remove-ReleaseOutputs(배포본 포함으로 확장) + Fail · -SkipStandaloneLaunch ·
+  단계 표기 [n/11](주석의 [n/10] = 감사 봉인 단계 번호 그대로). 감사 봉인 [0/10]~[10/10] 로직 · IL 가드 · 봉인 해시 체인 무변경.
+- `StockManager.Tests/Packaging/StandaloneBundleTests.cs` 16건: 판독기(역슬래시 항목 정상 · 필수 자산 8종 누락 · 프레임워크 의존 runtimeconfig · 봉인 바이너리 1비트 변조 ·
+  봉인 등재 누락 · 개발 경로 누출 = 거부) · 파이프라인(봉인 38 = 배포본) · 스크립트 결선 2건(순서 · 폐기 · BOM · publish · 오버레이 · 격리 기동 · 피어 0 · 봉인 산출물 쓰기 0).
+- 핀 갱신(의도된 명세 변경): `Remove-ReleaseOutputs; Fail` 8 → 9(3곳) · 실행 스크립트 출력 [0/10] → [0/11](§13 낡은 피어 거부 테스트).
+
+### 101.3 검증
+- 실 봉인 zip(release-v12.18.27-GM.zip) 대상 standalone-bundle.ps1 단독 실행(출력 = 스크래치패드 · 메인 release/ 무변경) EXIT 0: 봉인 38 = 바이트 동일 · 995 항목 · 147MB(전개 352MB) ·
+  pdb/staticwebassets 0 · 판독 테스트 통과 · 격리 기동 PID 35944 · HWND 0xDE1082 · 'MS2-E Stock Suite' · 경로 = 임시 격리 폴더.
+- 적대: 봉인 zip 의 MS2E.UI.Portable.dll 1비트 변조본 → '배포본 바이너리 ≠ 봉인 해시' EXIT 1 · 배포 zip 0 · 임시 폴더 0. 판독 테스트 환경변수 오경로 = 실패(통과 위장 0).
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,117 통과 + 1 건너뜀(§99 리얼 와이어 옵트인) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): release-package.ps1 [0/10]~[11/11] 전 구간 실행은 다음 GM(태그 필요)에서 첫 증명 · WebView2 런타임은 Windows 구성요소(미설치 PC = 창은 뜨나 화면 빈칸 가능 — 번들 미포함) ·
+  격리 기동은 %LOCALAPPDATA%\StockManager(감사 원장 등)에 기록(개발 실행과 같은 위치).

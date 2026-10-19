@@ -50,15 +50,20 @@
 #   [v12.18.4-GM · 방향 B] 피어 철회 드리프트 방어(PeerRevocationDriftSafeguard · --peer-drift) — [0/10] 이 피어 '브랜치'까지 고정(분리 HEAD = 중단)하고
 #     [7/10] zip 생성 직전 · [10/10] 동기화 전 · 완료 직전에 브랜치 · HEAD · 봉인 매니페스트 SHA-256 · 미커밋 코드 0 을 재판독.
 #     1비트라도 이동(브랜치 전환 · 1커밋 전진 · 재봉인) = 스테이징 · 출하 산출물 전량 폐기 후 중단(-NoPeer = 생략).
+#     [11/11] [v12.18.28-DEV] 즉시 실행 배포본(standalone-bundle.ps1) — 감사 봉인본 완료 후 봉인 zip 을 원천으로 self-contained publish
+#            (호스트 win-x64 · KiwoomProxy win-x86) 런타임 층 위에 봉인 바이너리 38개를 바이트 그대로 오버레이(해시 대조) →
+#            StockManager-v<ver>-Standalone-win-x64.zip · 판독 테스트 · 격리 폴더 실기동(주 창 핸들). 실패 = 감사 봉인 산출물까지 전량 폐기.
+#            감사 봉인 zip · master-seal.txt · RELEASE_MANIFEST.json 은 이 단계에서 읽기만 한다(봉인 해시 체인 불변).
 #   전부 실패-닫힘: 어느 단계든 실패하면 즉시 중단, 불완전 zip 은 남기지 않는다.
 #
-#   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]
+#   사용:  powershell -File ./release-package.ps1  [-Version <자동: csproj>]  [-SkipWebOnlyGate]  [-PeerRepo <..\QuantumVault>]  [-NoPeer]  [-SkipStandaloneLaunch]
 # ============================================================================
 param(
     [string]$Version = "",
     [switch]$SkipWebOnlyGate,
     [string]$PeerRepo = "",
-    [switch]$NoPeer
+    [switch]$NoPeer,
+    [switch]$SkipStandaloneLaunch
 )
 $ErrorActionPreference = "Stop"
 $root       = $PSScriptRoot
@@ -75,18 +80,19 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 $manifestOut = Join-Path $releaseDir "manifest.sig"
 $zipOut      = Join-Path $releaseDir "release-v$Version-GM.zip"
+$standaloneZip = Join-Path $releaseDir "StockManager-v$Version-Standalone-win-x64.zip"   # [v12.18.28-DEV] 즉시 실행 배포본([11/11])
 $ExpectedInterlocks = 30   # [v12.18.0-GM] ArmingInterlockSource 0~28 + StartupSanity(63) — 출하 명세(바이너리 · 매니페스트와 불일치 = 폐기)
 $ExpectedTightenKeys = 6   # [v12.18.1-GM] 강화 전용 키(SignalGateEnabled · AdaptiveThreshold · ConfidenceThresholdBp · AdaptiveMaxBp · ChurnSoftPerMin · ChurnHardPerMin)
 
 function Fail($msg) { Write-Host "✗ $msg" -ForegroundColor Red; exit 1 }
-function Step($n, $msg) { Write-Host "[$n/10] $msg" -ForegroundColor Cyan }
+function Step($n, $msg) { Write-Host "[$n/11] $msg" -ForegroundColor Cyan }   # [v12.18.28-DEV] [11/11] 배포본 단계 추가(주석의 [n/10] 표기 = 감사 봉인 단계 번호 그대로)
 $hostExe = Join-Path $hostBin "MS2E.StockSuite.exe"
 $shimDll = Join-Path $root "tools\KiwoomComShim\bin\Release\net8.0-windows\MS2E.KiwoomComShim.dll"
 if ([string]::IsNullOrWhiteSpace($PeerRepo)) { $PeerRepo = Join-Path (Split-Path $root -Parent) "QuantumVault" }
 
 # [릴리스 CI] 출하 산출물 전량 폐기(부분 산출 잔존 금지)
 function Remove-ReleaseOutputs {
-    foreach ($f in @($zipOut, "$zipOut.sha256", (Join-Path $releaseDir "master-seal.txt"), (Join-Path $releaseDir "RELEASE_MANIFEST.json"))) {
+    foreach ($f in @($zipOut, "$zipOut.sha256", (Join-Path $releaseDir "master-seal.txt"), (Join-Path $releaseDir "RELEASE_MANIFEST.json"), $standaloneZip, "$standaloneZip.sha256")) {
         Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
     }
 }
@@ -348,6 +354,16 @@ if ($ilkExit -ne 0) { Remove-ReleaseOutputs; Fail "30대 인터락 봉인 대조
 $tightExit = Invoke-HostCli @('--verify-tighten', ('"' + $zipOut + '"'), '--manifest', ('"' + (Join-Path $releaseDir "RELEASE_MANIFEST.json") + '"'), '--seal-file', ('"' + (Join-Path $releaseDir "master-seal.txt") + '"'), '--expect-tighten-keys', "$ExpectedTightenKeys", '--require-audit-ledger', '--require-audit-telemetry', '--require-ipc-fabric') "verify-tighten"
 if ($tightExit -ne 0) { Remove-ReleaseOutputs; Fail "강화 전용 단조성 행렬 대조 거부(exit=$tightExit) — 출하 산출물 전량 폐기" }
 
+# ── [11/11] [v12.18.28-DEV] 즉시 실행 배포본(봉인 바이너리 오버레이 · self-contained 런타임 · 격리 기동) ──
+Step 11 "즉시 실행 배포본(self-contained win-x64 · 봉인 바이너리 오버레이 · 판독 테스트 · 격리 기동)..."
+$bundleArgs = @{ Version = $Version; SealedZip = $zipOut; OutDir = $releaseDir }
+if ($SkipStandaloneLaunch) { $bundleArgs.SkipLaunch = $true }
+& (Join-Path $root "standalone-bundle.ps1") @bundleArgs
+$bundleExit = $LASTEXITCODE
+if ($bundleExit -ne 0) { Remove-ReleaseOutputs; Fail "즉시 실행 배포본 생성/검증 실패(exit=$bundleExit) — 출하 산출물 전량 폐기" }
+$standaloneSha = (Get-FileHash -Algorithm SHA256 -Path $standaloneZip).Hash
+
 Assert-PeerPinned "final"
 Write-Host "== 완료: $zipOut (SHA-256 $zipSha) · RELEASE_MANIFEST.json 봉인 ==" -ForegroundColor Green
+Write-Host "== 배포본: $standaloneZip (SHA-256 $standaloneSha) ==" -ForegroundColor Green
 exit 0
