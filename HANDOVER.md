@@ -2402,3 +2402,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,034/4,034 · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): 형식 오류 본문(HTML · 잘림)은 판독기가 JsonException 을 던져 예외 객체 할당(콜드 오류 경로 · 판정 false). 실 키움 프록시 · 실 KIS 미연결(스텁) —
   프로세스 간 실측은 같은 프로세스 내 두 핸들(동일 OS 경로)로 대체. Local 네임스페이스 = 같은 로그온 세션 전제(프록시를 다른 세션/서비스로 띄우면 관제 미수신).
+
+## 90. v12.18.22-GM — 키움 레이트 관제 · KIS EGW00201 단독 출하(-NoPeer) (2026-10-19)
+
+### 90.1 버전 · 태그
+- v12.18.22-DEV(§89) = 8ce2f39. 12.18.21 → 12.18.22(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 3db5698(4파일 · 11/11 줄) ·
+  핀 테스트 48/48(Release).
+- 태그 v12.18.22-GM(annotated · -f) = 3db5698. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 90.2 출하 실행(형제 worktree StockManager-gm-12.18.22 · 태그 3db5698 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 4,034/4,034 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @3db5698b33.
+- 산출물(release/): release-v12.18.22-GM.zip SHA-256 `EEF1C3B92405592EF60A4857A5645C0B1E5163D7D872F46372C32ADCED16AF4E` ·
+  masterSeal `97B6B3FD260F5C5A5003CECC5327BD871209286A899E87108CC2481871D5A5BB` · sourceCommit 3db5698 · 피어 기록 없음.
+- v12.18.21-GM 산출물 13건(zip A4B1FCA0… · masterSeal 3AD2A89A…) → release/superseded-v12.18.21-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) · --verify-interlocks(30) ·
+  --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0(태그 worktree 빌드 CLI + 같은 커밋 3db5698 의 메인 체크아웃 Release 빌드 CLI 양쪽).
