@@ -2639,3 +2639,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   연결당 콜드(구독 JSON · 취소원 · 예외) 약 27KB.
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,101 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 다음: 정규장 중 모의투자 자격증명 환경변수 설정 후 `dotnet test … --filter "FullyQualifiedName~LiveWire_Vts"` 실행 → 결과로 이 절 보강.
+
+## 100. v12.18.27-GM — KIS 리얼 와이어 LongSoak 하네스 단독 출하(-NoPeer) (2026-10-20)
+
+### 100.1 버전 · 태그
+- v12.18.27-DEV(§99) = e298961. 12.18.26 → 12.18.27(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 7c5cc1d(4파일 · 11/11 줄 · 구버전 문자열 잔존 0) ·
+  GoldenMaster 핀 테스트 83/83(Release) · sln Release -warnaserror 0W/0E.
+- 태그 v12.18.27-GM(annotated · -f) = 7c5cc1d. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 100.2 출하 실행(형제 worktree StockManager-gm-12.18.27 · 태그 7c5cc1d · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E ·
+  [3] 4,101 통과 + 1 건너뜀(§99 리얼 와이어 옵트인 — 자격증명 미설정) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 기본값 소스 가드 · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock · IPC 패브릭 무대기/무슬립 · Stopwatch) · handshake Ok @7c5cc1d1da.
+- 산출물(release/): release-v12.18.27-GM.zip SHA-256 `64FC0CE1A6689468AAF4FFF646BFB75964B7A3F860AB801DEABE2A3A3FF5EFBD` ·
+  masterSeal `9FCB21B9F4B6CC164EFC34C8675DE2D06D4DF67B60BBCA579EF08F1439CEC87A` · sourceCommit 7c5cc1d · 피어 기록 없음.
+- v12.18.26-GM 산출물 13건(zip 0F3A42B3… · masterSeal 22850C20…) → release/superseded-v12.18.26-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(같은 커밋 7c5cc1d Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 출하본의 KIS 리얼 와이어 소크는 여전히 미실행(§99 — 정규장 + 모의투자 자격증명 필요).

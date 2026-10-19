@@ -1,13 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.27-DEV — KIS 리얼 와이어 LongSoak 하네스(100만 프레임 δ=0 · 단절/리셋/핑 타임아웃 복구)
-- **Build Status**: 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,101 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 불변
+- **Active Milestone**: v12.18.27-GM — KIS 리얼 와이어 LongSoak 하네스 단독 출하(-NoPeer) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,101 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-20
 
 ## Completed Deliverables
-- LiveWireKisLongSoakTests: 오프라인 결정론 소크(실 수신 루프 + 판독 · 100만 프레임 · 장애 19회 복구 · 정상 구간 0B/20창) 3회 연속 통과
-- 리얼 와이어 VTS 옵트인 테스트(자격증명 환경변수 + 정규장 조건 · 모의 도메인 고정 · 시세 구독만 · 실 프레임 캡처 재주입 δ=0)
-- ★리얼 와이어 미실행: 장외 시각 + 자격증명 미설정 — 건너뜀으로 정직 표기 · HANDOVER §99
+- 버전 12.18.27 승격 · 태그 v12.18.27-GM = 7c5cc1d · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(1회 통과)
+- release-v12.18.27-GM.zip(38 아티팩트 · SHA-256 64FC0CE1…) · masterSeal 9FCB21B9… · 피어 기록 없음
+- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 통과
+- v12.18.26-GM 산출물 13건 → release/superseded-v12.18.26-GM/ · HANDOVER §100
 
 ## Next Milestone
-- 정규장 중 KIS 모의투자 자격증명 설정 후 리얼 와이어 소크 실행 → 결과 §99 보강
+- 정규장 중 KIS 모의투자 자격증명 설정 후 리얼 와이어 소크 실행(§99 보강)
