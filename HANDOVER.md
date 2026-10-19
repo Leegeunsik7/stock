@@ -2497,3 +2497,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   가격 진동 호가에서 지정가 핫키가 대기열로 남는 정상 동작 → 생산기는 가격 고정 · 잔량만 변화. B 는 비중 수량 커버(숏 143 · 비중 142 → 잔여 1)라 기대값 = 숏 감소.
 - 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,069/4,069 · HMI 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40.
 - 한계(정직): bUnit 렌더러 ≠ WebView2(실 DOM · JS interop 지연 미측정 · 육안 확인 미실시) · 지시서 목표 4,070+ 건은 1건 미달(의미 없는 테스트로 채우지 않음).
+
+## 94. v12.18.24-GM — /arena HMI 렌더 펌프 단독 출하(-NoPeer) (2026-10-19)
+
+### 94.1 버전 · 태그
+- v12.18.24-DEV(§93) = 0b201e3. 12.18.23 → 12.18.24(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 7aadea2(4파일 · 11/11 줄) ·
+  핀 테스트 48/48(Release).
+- 승격 직후 첫 빌드 MSB3021/3026(24건) = 타 세션 testhost(PID 45496 · vstest 16:06 시작 · 본 세션 명령 아님)가 공유 체크아웃 Tests/bin 출력 DLL 잠금 —
+  강제 종료하지 않고 자연 종료 대기 → 재빌드 0W/0E · 핀 48/48 후 커밋(실패 상태 커밋 0). 출하 실행은 형제 worktree 라 공유 체크아웃 잠금과 무관.
+- 태그 v12.18.24-GM(annotated · -f) = 7aadea2. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 94.2 출하 실행(형제 worktree StockManager-gm-12.18.24 · 태그 7aadea2 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E(KiwoomComShim 산출 확인) ·
+  [3] 4,069/4,069 · [4] infra-scan · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드(이중키 16 · 마스터 플래그 1 전부 false) · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock ⑤ · IPC 패브릭 무대기/무슬립 · Stopwatch ⑥) · handshake Ok @7aadea21cb.
+- 산출물(release/): release-v12.18.24-GM.zip SHA-256 `7FC52AECF7D103426FA6E564E06C998EF1DED8EE375B898C5699F51F5FF8710A` ·
+  masterSeal `E13BBA072A1169F261918A313F1B5E6B0AF1E18BDC2C768FEFBF0C839B982B6A` · sourceCommit 7aadea2 · 피어 기록 없음.
+- v12.18.23-GM 산출물 13건(zip 8AE33D29… · masterSeal B7F64DFF…) → release/superseded-v12.18.23-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(같은 커밋 7aadea2 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.

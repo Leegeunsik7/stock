@@ -1,13 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.24-DEV — /arena HMI 렌더 펌프 최적화 · 핫키 입력 지연 헤드리스 검증
+- **Active Milestone**: v12.18.24-GM — /arena HMI 렌더 펌프 단독 출하(-NoPeer) 완료
 - **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,069/4,069 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-19
 
 ## Completed Deliverables
-- ArenaBattleView 렌더 펌프: 250ms 엣지 폴링(≤4 FPS) → 50ms 레벨 트리거(≤20 FPS) · 진행 중 렌더 중첩 0 · 후행 유실 0 · 무변경 렌더 0
-- ArenaUIStressTests 4건: 1,000 TPS 중 S/B/Space 120키 — 키→포트 접수 p99 < 1ms · 접수→상태 전이(Step 1회) p99 < 3ms · 전이 불일치 0 · 정산 0B
-- 마운트/해제 50회 누수 0 · 포트 표면 브로커/무장 멤버 0 · HANDOVER §93
+- 버전 12.18.24 승격 · 태그 v12.18.24-GM = 7aadea2 · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(1회 통과)
+- release-v12.18.24-GM.zip(38 아티팩트 · SHA-256 7FC52AEC…) · masterSeal E13BBA07… · 피어 기록 없음
+- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 통과
+- v12.18.23-GM 산출물 13건 → release/superseded-v12.18.23-GM/ · HANDOVER §94
 
 ## Next Milestone
-- WebView2 실기 렌더 지연 · 육안 확인 · v12.18.24 GM 단독 출하(-NoPeer) 판단
+- WebView2 실기 렌더 지연 · 육안 확인 · 실 키움 + KIS 동시 피드 보정
