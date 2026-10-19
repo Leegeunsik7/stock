@@ -2615,3 +2615,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.25-GM 산출물 13건(zip B29FA15D… · masterSeal 6FB1A71F…) → release/superseded-v12.18.25-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(같은 커밋 7f71894 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+
+## 99. v12.18.27-DEV — KIS 리얼 와이어 LongSoak 하네스: 100만 프레임 수신 경로 δ=0 · 단절/리셋/핑 타임아웃 복구 (2026-10-20)
+
+### 99.1 전제 교정
+- 실 시세 수신 경로는 이미 존재(`KisRealtimeSession` 접속키 → WS 구독 · 조각 조립 · PINGPONG 반송 · 단절 인터락 / `KisOpenApiAdapter.OnFrame` → H0STASP0 · H0STCNT0 δ=0 판독기). 재구현하지 않고 그 경로를 소크.
+- ★리얼 와이어 미실행: 착수 시점(2026-10-20 02:37 KST) = KRX 장외 · 이 호스트에 KIS 모의투자 자격증명 환경변수 없음. 리얼 와이어 테스트는 옵트인 Fact 로 작성 —
+  조건 미충족 시 '건너뜀'(사유 표기 · 통과 위장 0). 실 수신 결과 · 실 프레임 판독 δ=0 · 실망 재접속은 아직 증명되지 않았다.
+- KIS 실시간 구독에는 REST 토큰 버킷이 개입하지 않는다(접속키 1회 · 구독 ≤ 41/세션). 지시의 'Rate Limiter' 감시 대상은 이 경로에 없음 — 재접속 백오프(고정 지연)만 해당.
+
+### 99.2 구성 — `StockManager.Tests/Integration/LiveWireKisLongSoakTests.cs`
+- §1 오프라인 결정론 소크(상시): 동기 완료 대역 전송으로 실 `RunAsync` 수신 루프 + 어댑터 판독을 테스트 스레드에서 구동 — 38종목 H0STASP0 · H0STCNT0 · PINGPONG(1/64) ·
+  2조각 분할(1/16) · 연결마다 300KB 버퍼 초과 메시지 1건 · 연결당 5만 프레임 후 장애 순환(서버 Close · WebSocketException 리셋 · 핑/퐁 61초 침묵 → Evaluate 트립 + SilentNow → AbortConnection).
+  연결별 정상 상태 창(프레임 1,000 ~ 끝) 스레드 할당을 GC.GetAllocatedBytesForCurrentThread 로 직접 측정.
+- §2 리얼 와이어(옵트인 `[KisVtsLiveFact]`): MS2E_KIS_VTS_APPKEY · MS2E_KIS_VTS_SECRETKEY · MS2E_KIS_VTS_HTSID + KRX 정규장일 때만. 모의 도메인 고정
+  (접속키 = openapivts…:29443/oauth2/Approval 1회 · WS = ops…:31000) · 시세/체결통보 구독만 · 주문/잔고/토큰 REST 0 · 브로커 인스턴스 0.
+  100만 틱(호가 + 체결) 또는 MS2E_KIS_SOAK_MINUTES(기본 60) 중 빠른 쪽 · 1초 감시(Evaluate · 침묵 시 AbortConnection) · 실 프레임 8,192건 고정 버퍼 캡처 →
+  종료 후 새 어댑터로 재주입해 판독 할당 0B 단언 · 실 소켓 프로세스 할당은 B/프레임 보고만(BCL ClientWebSocket 내부 — 판독 핫패스 아님).
+
+### 99.3 검증
+- 오프라인 소크 3회 연속: 1,000,000프레임(0.3 ~ 0.9M/s) · 연결 20 · 단절 20 · 장애 19(종료 6 · 리셋 7 · 핑타임아웃 6) · 강제종료 6 · 수신 예외 13(크래시 0) ·
+  인터락 sticky 트립 · 호가 500,000 · 체결 484,360 · 핑 반송 15,620(= 어댑터 반송) · 조각 62,500 · 초과 폐기 20 · 형식 이탈 0 · ★정상 구간 할당 0B/20창 ·
+  연결당 콜드(구독 JSON · 취소원 · 예외) 약 27KB.
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,101 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 다음: 정규장 중 모의투자 자격증명 환경변수 설정 후 `dotnet test … --filter "FullyQualifiedName~LiveWire_Vts"` 실행 → 결과로 이 절 보강.
