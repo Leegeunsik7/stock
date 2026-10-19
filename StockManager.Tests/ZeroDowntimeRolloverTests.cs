@@ -297,7 +297,12 @@ namespace StockManager.Tests
             var sw = Stopwatch.StartNew();
             while (agent.Scans < 10 && sw.ElapsedMilliseconds < 5_000) Thread.Sleep(5);
             Assert.True(agent.Scans >= 10);
-            Assert.True(gate.AllowOrder(), "실 가동 하트비트가 신선해야 함");
+            // [v12.18.20-GM 하드닝] 단발 판독 → 2초 한도 재판독. 전체 스위트 후반 블로킹 GC 정지(>200ms)가 작성 스레드를 함께 멈추면 판독자가 먼저 재개해
+            //   직전 박동을 노후로, 작성자 seqlock 홀수 구간 선점은 찢김으로 거부한다(게이트 설계대로 fail-closed · 다음 10ms 박동에서 해소). 트립 · 부재 거부는 0 이어야 한다.
+            bool fresh = false;
+            for (var w = Stopwatch.StartNew(); !fresh && w.ElapsedMilliseconds < 2_000;) { fresh = gate.AllowOrder(); if (!fresh) Thread.Sleep(5); }
+            Assert.True(fresh, $"실 가동 하트비트가 신선해야 함 — 노후 {gate.RejectedStale} · 찢김 {gate.RejectedTorn} · 트립 {gate.RejectedTripped} · 부재 {gate.RejectedMissing}");
+            Assert.Equal((0L, 0L), (gate.RejectedTripped, gate.RejectedMissing));
             Assert.True(agent.LastWorkingSetBytes > 0);
             Assert.False(agent.Tripped);
             var solo = new HealthMonitoringAgent(maxWorkingSetBytes: 64L << 30, maxStallMicros: 5_000_000, heartbeat: writer);
