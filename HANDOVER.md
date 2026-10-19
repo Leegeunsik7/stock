@@ -2567,3 +2567,32 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.24-GM 산출물 13건(zip 7FC52AEC… · masterSeal E13BBA07…) → release/superseded-v12.18.24-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(같은 커밋 0bbfa73 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+
+## 97. v12.18.26-DEV — 아레나 극한 생존 훈련: 플래시 크래시 · 숏 스퀴즈 시나리오 인젝터(블라인드) (2026-10-19)
+
+### 97.1 전제 교정
+- '기존 Random Walk' = `SyntheticTickSource`(시드 고정 압력 국면 랜덤 워크). 대체가 아니라 데코레이터로 감쌈 — 원천(합성 · 녹화 .tape) 무변경, 시나리오 끔 = 종전 테이프 그대로.
+- 주입 대상은 고속 틱 리플레이(훈련) 원장만. 정규장 라이브 아레나는 실 수신 호가 — 가짜 시세 주입 경로를 만들지 않음.
+- 인젝터 파일은 지시대로 `Engines/Arena/Simulation/` 이나 네임스페이스는 `StockManager.Engines.Arena`(§95 Analytics 선례 — 기존 IL 허용목록 7곳 무변경 통과).
+
+### 97.2 구성
+- `FlashCrashScenarioInjector : ArenaTickSource`: 발동 시각(원천 시작 + offset) 이후 첫 호가 틱 앞에 버스트 8,000틱(간격 0.25ms = 4,000틱/초 · 2초) 삽입 · 이후 원천 시각 +2초(단조 유지).
+  버스트 앞 60% = 볼록 급락(급등) 경로로 깊이 도달 · 뒤 40% = 깊이의 40% 되돌림. 급락 국면 = 유동성 진공(무너지는 쪽 10호가 잔량 1 ~ 30주 · 2틱 간격 · 스프레드 2 ~ 6틱 ·
+  반대쪽 1,500 ~ 4,500주) + 매 틱 주도 체결 300 ~ 3,000주. 여진 = 버스트 종료 편차를 대상 종목 원천 호가/체결에 더하고 60초 선형 감쇠(KRX 호가 단위 재정렬).
+  판독 δ=0(버스트 = 인덱스 해시 결정론 파생 · 저장 0B). 원천이 발동 시각보다 짧으면 미발동(통과 · 가짜 발동 표시 0). 버스트 간격 > 0.5ms(< 2,000틱/초) 생성 거부.
+- 블라인드(`CreateBlind`): 엔트로피 1개 → 종류(급락/급등 반반) · offset 3 ~ 5분 균등 · 깊이 5 ~ 12% · 지터 시드.
+- `ArenaTickReplayEngine`: `_source`(원천 · 소유/폐기 기준) / `_tape`(재생 = 원천 또는 인젝터) 분리. 새 매치(Rewind running) + 블라인드 = 인젝터 생성(콜드 · 엔트로피 기본
+  Stopwatch ⊕ TickCount64 · 생성자 주입 가능) · 리셋/원천 교체 = 해제. 게시 시 국면(잠복 → 발동 → 여진) 판정 — 종류 · 종목 · 버스트 틱/초는 발동부터만 게시.
+- 포트(`IArenaReplayPort.SetScenario` · `ArenaScenario`/`ArenaScenarioProfile`/`ArenaScenarioPhase` · `ArenaReplayStatus` 시나리오 필드 — 기본값 인자로 기존 생성 호환):
+  재생/일시정지 중 변경 거부(진행 매치 불변). 브로커 · 무장 · 실주문 경로 없음.
+- /arena 리플레이 세팅: ⚡ Extreme Scenario · 블라인드 체크(진행 중 비활성) · 인디케이터 = 잠복(종류/시각 비공개 · 종료 시 잠복 = '미발동' 정직 표기) /
+  발동(role=alert 펄스 · 종류 · 종목 · 틱/초 · 급락 청 · 급등 적) / 여진(60초 회복 구간).
+
+### 97.3 검증
+- FlashCrashInjectorTests 14건: 10만 틱 원천 + 버스트 = 108,000틱 전수(시각 단조 · 호가 비역전 · 4,000틱/초 · 발동 이전/비대상 종목/회복 후 원천 동일 · 급락/급등 양쪽) ·
+  급락 61,000 → 56,100(8%) · 매도 주도 · 진공 잔량/구멍/스프레드 · 되돌림 · 여진 연속 · 급등 대칭 · 블라인드 2,000회(3 ~ 5분 · 5 ~ 12% · 반반 · 결정론) · 짧은 원천 통과 ·
+  인자 fail-closed · 108k 판독 0B · 최대 배속 버스트 재생 0B · 엔진 국면 잠복→발동→여진(잠복 중 비공개) + 휴먼 시장가 진공 발동 · 진행/일시정지 중 변경 거부 · 리셋 해제 ·
+  전 구간 완주 · 인젝터 IL 허용목록 · 헤드리스 UI(체크 · 인디케이터 3국면 · 진행 중 비활성).
+- 오중 빌드(WebOnly → Default sln: StockSuite · Portable · PrimesBench · KiwoomProxy · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 4,100/4,100 ·
+  아레나 그룹 189건 3회 연속 · 신규 14건 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40(PureShellFitness).
+- 한계(정직): 합성 훈련 데이터 — 실 플래시 크래시 통계 재현 아님 · 버스트는 대상 1종목만(타 종목 동조 하락 없음) · 블라인드 발동 시각 = 재생 시뮬레이션 시각 기준(배속 비례로 벽시계 단축).

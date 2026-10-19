@@ -26,15 +26,46 @@ namespace MS2E.UI.Portable.Ports.Trading
         public static string Label(int speed) => speed == Max ? "최대" : speed + "x";
     }
 
+    /// <summary>[v12.18.26-DEV] 극한 시나리오 모드(0 끔 · 1 블라인드 — 종류 · 발동 시각 비공개 · 재생 시각 3 ~ 5분 사이 무작위 1회).</summary>
+    public static class ArenaScenario
+    {
+        public const int Off = 0, Blind = 1;
+        public static bool IsValid(int mode) => mode is Off or Blind;
+        public static string Label(int mode) => mode switch { Off => "끔", Blind => "블라인드", _ => "?" };
+    }
+
+    /// <summary>[v12.18.26-DEV] 극한 시나리오 종류(0 없음 · 1 플래시 크래시 급락 · 2 숏 스퀴즈 급등).</summary>
+    public static class ArenaScenarioProfile
+    {
+        public const int None = 0, FlashCrash = 1, ShortSqueeze = 2;
+        public static string Label(int p) => p switch { FlashCrash => "플래시 크래시(급락)", ShortSqueeze => "숏 스퀴즈(급등)", _ => "-" };
+    }
+
+    /// <summary>[v12.18.26-DEV] 극한 시나리오 국면(0 없음 · 1 잠복 — 미발동 · 2 발동 — 패닉 버스트 재생 중 · 3 여진 — 버스트 종료 후 회복 구간).</summary>
+    public static class ArenaScenarioPhase
+    {
+        public const int None = 0, Armed = 1, Active = 2, Aftermath = 3;
+        public static string Label(int p) => p switch { Armed => "잠복", Active => "발동", Aftermath => "여진", _ => "-" };
+    }
+
     /// <summary>재생 진행 상태(50ms 게시 주기에 갱신 · 값 복사).</summary>
     public readonly struct ArenaReplayStatus
     {
         public readonly int State, Speed;
         public readonly long Cursor, Total, SimTicks, TicksPerSecond, Version;
+        /// <summary>
+        /// [v12.18.26-DEV] 극한 시나리오: 모드(ArenaScenario) · 국면(ArenaScenarioPhase) · 종류(ArenaScenarioProfile) · 대상 종목 · 버스트 틱/초.
+        /// ★블라인드: 잠복 국면에서는 종류 · 종목 · 틱/초가 0 — 발동 시점에 처음 공개된다(발동 시각은 끝까지 비공개).
+        /// </summary>
+        public readonly int ScenarioMode, ScenarioPhase, ScenarioProfile;
+        public readonly long ScenarioSymbol, ScenarioTicksPerSecond;
 
-        public ArenaReplayStatus(int state, int speed, long cursor, long total, long simTicks, long ticksPerSecond, long version)
+        public ArenaReplayStatus(int state, int speed, long cursor, long total, long simTicks, long ticksPerSecond, long version,
+                                 int scenarioMode = ArenaScenario.Off, int scenarioPhase = ArenaScenarioPhase.None, int scenarioProfile = ArenaScenarioProfile.None,
+                                 long scenarioSymbol = 0, long scenarioTicksPerSecond = 0)
         {
             State = state; Speed = speed; Cursor = cursor; Total = total; SimTicks = simTicks; TicksPerSecond = ticksPerSecond; Version = version;
+            ScenarioMode = scenarioMode; ScenarioPhase = scenarioPhase; ScenarioProfile = scenarioProfile; ScenarioSymbol = scenarioSymbol; ScenarioTicksPerSecond = scenarioTicksPerSecond;
         }
 
         /// <summary>진행률(0 ~ 10000 bp).</summary>
@@ -58,5 +89,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         string SourceLabel { get; }
         /// <summary>[v12.18.13-DEV] 재생 원천 교체(null = 합성 테이프 · 경로 = 녹화 .tape). 열기/검증 실패 = false(원천 유지). 교체 후 처음 · 대기.</summary>
         bool LoadTape(string? path);
+        /// <summary>
+        /// [v12.18.26-DEV] 극한 시나리오 모드(ArenaScenario) — 다음 '처음부터' 재생(대기/완료 → 시작)에 반영. 재생/일시정지 중 = false(진행 중 매치 불변).
+        /// 블라인드 = 매치마다 종류(급락/급등) · 발동 시각(재생 시각 3 ~ 5분)을 무작위로 정해 원천 테이프에 패닉 버스트(≥ 2,000틱/초 · 유동성 진공)를 삽입.
+        /// </summary>
+        bool SetScenario(int mode);
     }
 }

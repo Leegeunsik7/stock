@@ -13,6 +13,9 @@
 //  콜드 경로(할당 허용): 첫 명령 시 테이프 생성 · 재생 스레드 기동 · 처음부터 재생(AI 인스턴스 재생성).
 //  [v12.18.13-DEV] 인덱스마다 체결(있으면) → 원장 ApplyTrade(지정가 대기열 소진) → 호가(있으면) → AI OnBook → 원장 Advance(시장 시각 = 테이프 시각 —
 //   체결 지연 30 ~ 50ms 판정 기준). LoadTape = .tape(MMF) 판독기 교체(호출 스레드에서 열기/검증 → 재생 스레드가 교체 · 이전 판독기 폐기 · 처음 · 대기).
+//  [v12.18.26-DEV] 극한 시나리오(SetScenario · 블라인드): '처음부터' 재생 시(콜드 · Rewind) 원천(_source)을 FlashCrashScenarioInjector 로 감싼다 —
+//   엔트로피(기본 Stopwatch ⊕ TickCount64 · 테스트 주입)로 종류 · 발동 시각(3 ~ 5분) 결정. 국면(잠복 → 발동 → 여진)은 게시 시 커서 대 버스트 구간으로 판정 ·
+//   종류 · 대상 종목 · 버스트 틱/초는 발동 국면부터만 게시(블라인드 — 잠복 중 0). 리셋 · 원천 교체 = 원천 그대로(인젝터 해제).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -32,6 +35,7 @@ namespace StockManager.Engines.Arena
         private readonly Func<ArenaTickSource> _tapeFactory;
         private readonly bool _ownThread;
         private readonly Func<long> _clock;
+        private readonly Func<ulong> _entropy;
         private readonly long _freq;
         private readonly ArenaMatchGovernor _gov;
         private readonly AiSink _aiSink;
@@ -40,7 +44,9 @@ namespace StockManager.Engines.Arena
         private long _cmdCursor;
 
         // ── 재생 스레드 상태(단일 작성자) ──
-        private ArenaTickSource? _tape;
+        private ArenaTickSource? _tape;                                         // 재생 중 테이프(원천 또는 시나리오 인젝터)
+        private ArenaTickSource? _source;                                       // [v12.18.26-DEV] 원천(합성 · 녹화) — 소유/폐기 기준
+        private FlashCrashScenarioInjector? _scenario;
         private QuantSignalProvider? _ai;
         private int _cursor, _appliedSpeed = 1;
         private long _capital = ArenaMatchGovernor.DefaultCapitalWon;
@@ -54,6 +60,8 @@ namespace StockManager.Engines.Arena
 
         // ── 게시 상태(Volatile) ──
         private int _state, _speed = 1, _requestedSpeed = 1, _threadStarted, _disposed, _hubRequest;
+        private int _scenarioMode, _pubScnPhase, _pubScnProfile;
+        private long _pubScnSymbol, _pubScnTps;
         private long _pubCursor, _pubTotal, _pubSim, _pubTps, _pubVersion, _processed;
         private Thread? _thread;
 
@@ -63,9 +71,12 @@ namespace StockManager.Engines.Arena
         /// <param name="ownThread">true = 첫 명령 시 전용 재생 스레드 기동 · false = 호출자가 Pump 를 직접 구동(단일 작성자 · 테스트).</param>
         /// <param name="latencyMinTicks">[v12.18.13-DEV] 체결 지연 하한(시장 시각 · 기본 30ms).</param>
         /// <param name="latencyMaxTicks">체결 지연 상한(기본 50ms).</param>
+        /// <param name="scenarioEntropy">[v12.18.26-DEV] 블라인드 시나리오 엔트로피(기본 Stopwatch ⊕ TickCount64 · 테스트 주입).</param>
         public ArenaTickReplayEngine(Func<ArenaTickSource> tapeFactory, Func<long>? timestamp = null, long frequency = 0, bool ownThread = true,
-                                     long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks)
+                                     long latencyMinTicks = DualBookSimulator.DefaultLatencyMinTicks, long latencyMaxTicks = DualBookSimulator.DefaultLatencyMaxTicks,
+                                     Func<ulong>? scenarioEntropy = null)
         {
+            _entropy = scenarioEntropy ?? DefaultEntropy;
             _ownThread = ownThread;
             _tapeFactory = tapeFactory ?? throw new ArgumentNullException(nameof(tapeFactory));
             _clock = timestamp ?? Stopwatch.GetTimestamp;
@@ -101,7 +112,20 @@ namespace StockManager.Engines.Arena
         }
 
         public ArenaReplayStatus Status => new(Volatile.Read(ref _state), Volatile.Read(ref _speed), Volatile.Read(ref _pubCursor), Volatile.Read(ref _pubTotal),
-                                               Volatile.Read(ref _pubSim), Volatile.Read(ref _pubTps), Volatile.Read(ref _pubVersion));
+                                               Volatile.Read(ref _pubSim), Volatile.Read(ref _pubTps), Volatile.Read(ref _pubVersion),
+                                               Volatile.Read(ref _scenarioMode), Volatile.Read(ref _pubScnPhase), Volatile.Read(ref _pubScnProfile),
+                                               Volatile.Read(ref _pubScnSymbol), Volatile.Read(ref _pubScnTps));
+
+        /// <summary>[v12.18.26-DEV] 현재 매치의 시나리오 인젝터(없음 = null · 진단/테스트 — UI 포트에는 비노출).</summary>
+        public FlashCrashScenarioInjector? Scenario => Volatile.Read(ref _scenario);
+
+        public bool SetScenario(int mode)
+        {
+            if (!ArenaScenario.IsValid(mode) || Volatile.Read(ref _disposed) != 0) return false;
+            if (Volatile.Read(ref _state) is ArenaReplayState.Playing or ArenaReplayState.Paused) return false;
+            Volatile.Write(ref _scenarioMode, mode);
+            return true;
+        }
 
         // ════════════ 명령(임의 스레드 · 링 적재 + 깨우기) ════════════
 
@@ -214,7 +238,7 @@ namespace StockManager.Engines.Arena
         private void EnsureTape()
         {
             if (_tape is not null) return;
-            _tape = _synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음");
+            _tape = _source = _synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음");
             Volatile.Write(ref _pubTotal, _tape.Count);
         }
 
@@ -223,9 +247,9 @@ namespace StockManager.Engines.Arena
         {
             var next = Interlocked.Exchange(ref _pendingTape, null);
             string label = Volatile.Read(ref _pendingLabel) ?? SyntheticLabel;
-            var old = _tape;
-            _tape = next ?? (_synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음"));
-            if (old is IDisposable d && !ReferenceEquals(old, _tape) && !ReferenceEquals(old, _synthetic)) d.Dispose();
+            var old = _source;
+            _tape = _source = next ?? (_synthetic ??= _tapeFactory() ?? throw new InvalidOperationException("틱 테이프 없음"));
+            if (old is IDisposable d && !ReferenceEquals(old, _source) && !ReferenceEquals(old, _synthetic)) d.Dispose();
             Volatile.Write(ref _sourceLabel, label);
             Volatile.Write(ref _pubTotal, _tape.Count);
             Rewind(running: false, WallTicksAt(now));
@@ -236,9 +260,36 @@ namespace StockManager.Engines.Arena
         private void Rewind(bool running, long wall)
         {
             _cursor = 0;
+            ApplyScenario(running);
             _simTicks = _tape!.Count > 0 ? _tape.TimestampOf(0) : 0;
             _ai = new QuantSignalProvider(new StrategyAnomalyInterlock(), _aiSink, nowMicros: SimMicros);
             _gov.Rearm(_capital, running, Math.Max(1, _tape.Count / EquityPoints), wall);
+        }
+
+        // [v12.18.26-DEV] 시나리오 결선(콜드): 새 매치 + 블라인드 = 원천을 인젝터로 감쌈(엔트로피 1회) · 그 외 = 원천 그대로
+        private void ApplyScenario(bool running)
+        {
+            var src = _source!;
+            FlashCrashScenarioInjector? inj = running && Volatile.Read(ref _scenarioMode) == ArenaScenario.Blind
+                ? FlashCrashScenarioInjector.CreateBlind(src, _entropy()) : null;
+            _tape = inj is { Injected: true } ? inj : src;
+            Volatile.Write(ref _scenario, inj);
+            Volatile.Write(ref _pubTotal, _tape.Count);
+            PublishScenario();
+        }
+
+        // 국면 게시: 잠복(커서 ≤ 버스트 시작) → 발동(버스트 구간) → 여진. 종류 · 종목 · 틱/초는 발동부터만(블라인드).
+        private void PublishScenario()
+        {
+            var inj = _scenario;
+            int phase = inj is null ? ArenaScenarioPhase.None
+                : !inj.Injected || _cursor <= inj.BurstStart ? ArenaScenarioPhase.Armed
+                : _cursor <= inj.BurstEnd ? ArenaScenarioPhase.Active : ArenaScenarioPhase.Aftermath;
+            bool revealed = phase >= ArenaScenarioPhase.Active;
+            Volatile.Write(ref _pubScnProfile, revealed ? inj!.Profile : ArenaScenarioProfile.None);
+            Volatile.Write(ref _pubScnSymbol, revealed ? inj!.TargetSymbol : 0);
+            Volatile.Write(ref _pubScnTps, revealed ? inj!.BurstTicksPerSecond : 0);
+            Volatile.Write(ref _pubScnPhase, phase);
         }
 
         // 배속 재기준: 현재 재생 위치(마지막 처리 틱 시각)를 지금 벽시계에 고정 — 다음 틱은 (간격 ÷ 배속) 뒤 도래
@@ -261,6 +312,7 @@ namespace StockManager.Engines.Arena
                 _windowTicks = 0; _windowStart = now;
             }
             if (_state != ArenaReplayState.Playing) Volatile.Write(ref _pubTps, 0);
+            PublishScenario();
             Volatile.Write(ref _pubCursor, _cursor);
             Volatile.Write(ref _pubSim, _simTicks);
             Interlocked.Increment(ref _pubVersion);
@@ -268,6 +320,7 @@ namespace StockManager.Engines.Arena
         }
 
         private long SimMicros() => _simTicks / 10;
+        private static ulong DefaultEntropy() => (ulong)Stopwatch.GetTimestamp() ^ (ulong)Environment.TickCount64 * 0x9E3779B97F4A7C15UL;
         private long WallTicks() => WallTicksAt(_clock());
         private long WallTicksAt(long ts) => (long)((Int128)ts * TimeSpan.TicksPerSecond / _freq);
 
@@ -308,7 +361,7 @@ namespace StockManager.Engines.Arena
             if (_thread is { } t && !t.Join(2_000)) Trace.WriteLine("[ArenaReplay] 재생 스레드 종료 시한 초과");
             _wake.Dispose();
             if (Interlocked.Exchange(ref _pendingTape, null) is IDisposable p) p.Dispose();
-            if (_tape is IDisposable cur && !ReferenceEquals(_tape, _synthetic)) cur.Dispose();
+            if (_source is IDisposable cur && !ReferenceEquals(_source, _synthetic)) cur.Dispose();
         }
 
         /// <summary>AI 결정 싱크 — 진입/청산만 리플레이 원장 AI 링으로(δ=0).</summary>

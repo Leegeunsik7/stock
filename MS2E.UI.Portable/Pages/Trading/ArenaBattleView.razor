@@ -17,7 +17,10 @@
    포식자 🦈 HUD(공격성 · 휴먼 연패/틸트/MAE 역추적 · 래더에 얹은 허수 잔량 공개) · 스코어보드 유동성 진공 발동/페널티 · 빙산 리필.
    [v12.18.24-DEV] 렌더 펌프 = 레벨 트리거 50ms(≤ 20 FPS = 정산 펌프 게시 주기와 같음 · 종전 250ms ≤ 4 FPS): '마지막으로 그려진' 버전과 현재 버전을 비교 →
    다르고 진행 중 렌더가 없을 때만 InvokeAsync 1건(디스패처 큐 적체 0 · 호가 1,000 TPS 도 정산 게시 20Hz 로 이미 합쳐짐). 그려진 버전은 렌더 본문에서 기록 →
-   렌더 중 들어온 갱신은 다음 폴링이 다시 집어 간다(후행 유실 0 · 엣지 아닌 레벨 판정). 진행 중 플래그는 OnAfterRender 에서 해제. *@
+   렌더 중 들어온 갱신은 다음 폴링이 다시 집어 간다(후행 유실 0 · 엣지 아닌 레벨 판정). 진행 중 플래그는 OnAfterRender 에서 해제.
+   [v12.18.26-DEV] 리플레이 훈련 세팅 = ⚡ Extreme Scenario(블라인드) 체크(IArenaReplayPort.SetScenario · 재생/일시정지 중 비활성 — 다음 '처음부터' 재생 반영) ·
+   경고 인디케이터(ArenaReplayStatus.ScenarioPhase): 잠복 = 종류/시각 비공개 뱃지 · 발동 = 펄스 경보(종류 · 종목 · 버스트 틱/초 — 급락 청 · 급등 적) · 여진 = 회복 구간 안내.
+   종료 시 잠복 그대로 = 원천 테이프가 발동 시각보다 짧아 미발동(정직 표기 — 가짜 발동 0). *@
 @implements IDisposable
 @inject IArenaPort LiveArena
 @inject IArenaReplayPort Replay
@@ -90,7 +93,26 @@
             <button class="ar-btn" @onclick="RefreshTapes">↻ 목록</button>
             <button class="ar-btn go" disabled="@(rs.State is ArenaReplayState.Playing)" @onclick="LoadTape">⏏ 불러오기</button>
         </div>
+        <div class="ar-row">
+            <label class="ar-xs-opt"><input type="checkbox" checked="@(rs.ScenarioMode == ArenaScenario.Blind)" disabled="@(rs.State is ArenaReplayState.Playing or ArenaReplayState.Paused)" @onchange="ToggleScenario" /> ⚡ Extreme Scenario · 블라인드</label>
+            <span class="ar-sub">재생 시각 3 ~ 5분 사이 무작위 1회 · 급락/급등 종류와 시각 비공개 · 패닉 버스트 ≥ 2,000틱/초 + 유동성 진공(합성 훈련 데이터 · 다음 시작부터 반영)</span>
+        </div>
     </div>
+    @if (rs.ScenarioPhase == ArenaScenarioPhase.Armed)
+    {
+        <div class="ar-xs armed" role="status">🎲 블라인드 극한 시나리오 @(rs.State == ArenaReplayState.Finished ? "미발동 — 원천 테이프가 발동 시각(3 ~ 5분)보다 짧습니다" : "잠복 중 — 종류 · 발동 시각 비공개")</div>
+    }
+    else if (rs.ScenarioPhase == ArenaScenarioPhase.Active)
+    {
+        <div class="ar-xs active p@(rs.ScenarioProfile)" role="alert">
+            <b>🚨 EXTREME — @ArenaScenarioProfile.Label(rs.ScenarioProfile) 발동</b>
+            <span>종목 @(rs.ScenarioSymbol.ToString("D6")) · 패닉 버스트 @(rs.ScenarioTicksPerSecond.ToString("N0"))틱/초 · 유동성 진공(@(rs.ScenarioProfile == ArenaScenarioProfile.FlashCrash ? "매수" : "매도") 호가 잔량 고갈 · 스프레드 확대) — 시장가 슬리피지 급증</span>
+        </div>
+    }
+    else if (rs.ScenarioPhase == ArenaScenarioPhase.Aftermath)
+    {
+        <div class="ar-xs after p@(rs.ScenarioProfile)" role="status">⚠ 여진 — @ArenaScenarioProfile.Label(rs.ScenarioProfile) 버스트 종료 · 종목 @(rs.ScenarioSymbol.ToString("D6")) 편차 60초 선형 회복 구간</div>
+    }
 }
 else
 {
@@ -288,6 +310,10 @@ else
 
     private void ReplayPlay()
         => _msg = Replay.Play(_capital) ? null : "자본금 범위 밖(100만 ~ 100억 원)";
+
+    // [v12.18.26-DEV] 블라인드 극한 시나리오 토글(재생/일시정지 중 = 포트 거부)
+    private void ToggleScenario(ChangeEventArgs e)
+        => _msg = Replay.SetScenario(e.Value is true ? ArenaScenario.Blind : ArenaScenario.Off) ? null : "재생 · 일시정지 중에는 시나리오를 바꿀 수 없습니다(리셋 후 변경)";
 
     // ── [v12.18.14-DEV] 프로 콘솔 ──
     private void SyncFocus()
@@ -640,5 +666,12 @@ else
     .ar-frozen { border: 2px solid #E53935; background: rgba(229, 57, 53, .12); display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; font-size: 12.5px; position: relative; z-index: 51; }
     .ar-frozen b { color: #E53935; font-size: 16px; }
     .ar-gauge .bar.aggr { background: linear-gradient(90deg, #2a3040 0%, #f9a825 50%, #E53935 100%); }
+    .ar-xs-opt { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; } .ar-row .ar-xs-opt input { width: auto; }
+    .ar-xs { border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
+    .ar-xs.armed { background: #1d2230; border: 1px dashed #f9a825; color: #f9a825; }
+    .ar-xs.active { border: 2px solid #f9a825; background: rgba(249, 168, 37, .12); animation: ar-xs-pulse .8s ease-in-out infinite alternate; }
+    .ar-xs.active b { font-size: 16px; } .ar-xs.active.p1 b { color: #1E88E5; } .ar-xs.active.p2 b { color: #E53935; }
+    .ar-xs.after { background: #1d2230; border: 1px solid #616161; color: var(--sub); }
+    @@keyframes ar-xs-pulse { from { box-shadow: 0 0 0 0 rgba(249, 168, 37, .2); } to { box-shadow: 0 0 18px 4px rgba(249, 168, 37, .65); } }
     .ar-debrief { margin-top: 10px; border: 1px solid #4dd0e1; } .ar-debrief h4 { font-size: 12.5px; margin: 0 0 6px; } .ar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 </style>
