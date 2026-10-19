@@ -122,6 +122,16 @@ namespace MS2E.Infrastructure
             return r;
         }
 
+        /// <summary>[v12.18.22-DEV] 창별 잔여 허가(0 = 창 1 · 1 = 창 2 · 미사용 창 = 0 · 관측 · δ=0).</summary>
+        public int RemainingInWindow(int window)
+        {
+            if (window != 0 && (window != 1 || _n2 == 0)) return 0;
+            long h = Volatile.Read(ref _head);
+            long now = NowMicros(), last = h >> TagBits, seq = h & TagMask;
+            long t = now > last ? now : last;
+            return window == 0 ? Free(seq, t, _n1, _w1) : Free(seq, t, _n2, _w2);
+        }
+
         // 순번 seq 허가 판정: 슬롯 (seq − n) 이 발행돼 있고 t − 그 시각 ≥ w.
         private const int Open = 0, Full = 1, NotPublished = 2;
         private int Verdict(long seq, long t, int n, long w)

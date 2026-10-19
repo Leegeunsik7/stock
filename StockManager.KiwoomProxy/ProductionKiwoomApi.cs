@@ -61,6 +61,7 @@ namespace StockManager.KiwoomProxy
         private Form?        _host;
         private AxKHOpenAPI? _ax;
         private System.Windows.Forms.Timer? _beat;
+        private KiwoomRateTelemetryWriter? _rateTelemetry;
         private KiwoomComEventCore? _core;
         private volatile bool _ready;
 
@@ -142,6 +143,8 @@ namespace StockManager.KiwoomProxy
                     onMapped: m => OrderMapped?.Invoke(this, new OrderMappedEventArgs { Map = m }));
                 // [v12.18.21-DEV] 키움 TR 한도 게이트(주문 · 조회 각 임의 1초 ≤ 5 · 60초 ≤ 100) + −308/−200 지수 백오프 · 연속 3회 sticky 래치.
                 _core.AttachRateGate(KiwoomComEventCore.CreateKiwoomLimiter(), KiwoomComEventCore.CreateKiwoomLimiter(), new BrokerBackoffController());
+                // [v12.18.22-DEV] 게이트 관제 → 호스트 MMF(관측 전용 · 생성 실패 = 관제 없이 게이트만 동작 · 호스트는 '미수신' 정직 렌더).
+                try { _rateTelemetry = new KiwoomRateTelemetryWriter(); _core.AttachRateTelemetry(_rateTelemetry); } catch (Exception) { _rateTelemetry = null; }
 
                 _ax.OnEventConnect      += (_, e) => _ready = _core.OnEventConnect(e.nErrCode);   // 0 = 로그인 성공 · [방향 B] 실패 = 서버 오류 통지(호스트 Disarm)
                 _ax.OnReceiveRealData   += (_, e) => _core.OnRealData(e.sRealType, e.sRealKey);
@@ -151,7 +154,7 @@ namespace StockManager.KiwoomProxy
 
                 // [방향 A] STA 펌프 Beat(50ms) — 펌프가 얼면 Beat 가 멈추고 프록시 Ping 응답이 억제된다. 보류 체결 통보 만료도 여기서.
                 _beat = new System.Windows.Forms.Timer { Interval = 50 };
-                _beat.Tick += (_, _) => { _pump.Beat(); _core.FlushExpired(); };
+                _beat.Tick += (_, _) => { _pump.Beat(); _core.FlushExpired(); _core.PublishRateTelemetry(); };
                 _beat.Start();
 
                 _host.HandleCreated += (_, _) => { _ax.CommConnect(); started.Set(); };
@@ -204,7 +207,7 @@ namespace StockManager.KiwoomProxy
         // ── 드라이버 해제(Phase 95-A §1) — COM RCW 결정적 해제 ──────────────────────────────
         public void Dispose()
         {
-            var ax = _ax; var host = _host; var beat = _beat;
+            var ax = _ax; var host = _host; var beat = _beat; var rate = _rateTelemetry;
             try
             {
                 host?.BeginInvoke(new Action(() =>
@@ -214,10 +217,11 @@ namespace StockManager.KiwoomProxy
                     if (ax is not null && Marshal.IsComObject(ax))                               // (2) RCW refcount 0 까지 강제 해제
                         try { while (Marshal.FinalReleaseComObject(ax) > 0) { } } catch { }
                     try { host!.Dispose(); } catch { }                                          // (3) 숨김 Form 해제
+                    try { rate?.Dispose(); } catch { }                                          // (4) 관제 맵 해제(호스트 판독 = 노후 전이)
                 }));
             }
             catch { }
-            _staThread = null; _ax = null; _host = null; _beat = null; _core = null;
+            _staThread = null; _ax = null; _host = null; _beat = null; _core = null; _rateTelemetry = null;
         }
     }
 }

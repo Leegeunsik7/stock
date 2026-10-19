@@ -344,7 +344,7 @@ namespace MS2E.Infrastructure
     /// 키움 OCX 이벤트 → 브리지 와이어 페이로드 사상 코어. 이벤트 순서/경합·거부·사상을 전부 여기서 처리한다.
     /// 출력은 콜백(프록시는 EventArgs 로 변환해 기존 IKiwoomApi 계약 유지). 스레드: COM 이벤트(STA) + SendOrder(파이프) — 내부 직렬화.
     /// </summary>
-    public sealed class KiwoomComEventCore
+    public sealed class KiwoomComEventCore : IKiwoomRateTelemetrySource
     {
         public const int PendingCapacity = 64;
         private readonly IKiwoomOcx _ocx;
@@ -427,7 +427,20 @@ namespace MS2E.Infrastructure
         public static LockFreeTokenBucket CreateKiwoomLimiter(Func<long>? nowTicks = null, long tickFrequency = 0)
             => new(5, LockFreeTokenBucket.SecondMicros, 100, LockFreeTokenBucket.MinuteMicros, nowTicks, tickFrequency);
 
-        private bool PassOrderGate(bool riskReducing)
+        // [v12.18.22-DEV] 게이트 관제 채널(프록시 → 호스트 MMF) — 판정 · OCX 응답 기록마다 + 펌프 박동마다 게시(δ=0 · 대기 0). 미결선 = 무동작.
+        private KiwoomRateTelemetryWriter? _rateTelemetry;
+        public void AttachRateTelemetry(KiwoomRateTelemetryWriter? writer) { Volatile.Write(ref _rateTelemetry, writer); PublishRateTelemetry(); }
+
+        /// <summary>현재 게이트 상태를 관제 채널에 게시(δ=0). 50ms 펌프 박동에서도 호출 — 시간 경과에 따른 잔여 회복이 화면에 반영된다.</summary>
+        public void PublishRateTelemetry() => Volatile.Read(ref _rateTelemetry)?.Publish(this);
+
+        void IKiwoomRateTelemetrySource.FillRateTelemetry(ref KiwoomRateTelemetrySnapshot s)
+            => KiwoomRateTelemetrySnapshot.FromGates(ref s, Volatile.Read(ref _orderLimiter), Volatile.Read(ref _queryLimiter), Volatile.Read(ref _backoff), Interlocked.Read(ref _rateGated));
+
+        private bool PassOrderGate(bool riskReducing) { bool ok = PassOrderGateCore(riskReducing); PublishRateTelemetry(); return ok; }
+        private bool PassQueryGate(int trs) { bool ok = PassQueryGateCore(trs); PublishRateTelemetry(); return ok; }
+
+        private bool PassOrderGateCore(bool riskReducing)
         {
             var b = Volatile.Read(ref _backoff);
             if (b is not null && !(riskReducing ? b.TryEnterRiskReducing() : b.TryEnter())) { Interlocked.Increment(ref _rateGated); return false; }
@@ -436,7 +449,7 @@ namespace MS2E.Infrastructure
             return true;
         }
 
-        private bool PassQueryGate(int trs)
+        private bool PassQueryGateCore(int trs)
         {
             var b = Volatile.Read(ref _backoff);
             if (b is not null && !b.TryEnter()) { Interlocked.Increment(ref _rateGated); return false; }
@@ -452,6 +465,7 @@ namespace MS2E.Infrastructure
             if (b is null) return;
             if (rc == 0) b.NoteSuccess();
             else if (BrokerBackoffController.IsRateLimitCode(rc)) b.NoteLimitExceeded();
+            PublishRateTelemetry();
         }
 
         // ── 주문 송신 ─────────────────────────────────────────────────────────

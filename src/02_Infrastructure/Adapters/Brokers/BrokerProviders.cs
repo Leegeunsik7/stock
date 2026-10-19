@@ -139,13 +139,22 @@ namespace MS2E.Infrastructure
             _backoff = backoff ?? new BrokerBackoffController();
         }
 
-        // 게이트 통과 시에만 송신 · 429 = 백오프 · 2xx = 성공(연속 리셋) · 그 밖 상태 = 무기록. 거부 = null(요청 폐기).
+        // 게이트 통과 시에만 송신 · 429 또는 [v12.18.22-DEV] 비성공 + 본문 msg_cd EGW00201 = 백오프 · 2xx = 성공(연속 리셋) · 그 밖 상태 = 무기록.
+        //   거부 = null(요청 폐기). 비성공 본문은 버퍼링 후 바이트로 분류(콜드 오류 경로 · 분류 자체는 δ=0).
+        private long _egwRateLimits;
+        public long EgwRateLimits => Interlocked.Read(ref _egwRateLimits);
         private async Task<HttpResponseMessage?> SendGatedAsync(HttpRequestMessage req, CancellationToken ct)
         {
             if (!_backoff.TryEnter() || !_rateGate.TryAcquire()) { Interlocked.Increment(ref _rateGated); req.Dispose(); return null; }
             var res = await _http.SendAsync(req, ct);
-            if ((int)res.StatusCode == BrokerBackoffController.HttpTooManyRequests) _backoff.NoteLimitExceeded();
+            int status = (int)res.StatusCode;
+            if (status == BrokerBackoffController.HttpTooManyRequests) _backoff.NoteLimitExceeded();
             else if (res.IsSuccessStatusCode) _backoff.NoteSuccess();
+            else if (status >= 400)
+            {
+                byte[] body = await res.Content.ReadAsByteArrayAsync(ct);
+                if (KisRateLimitClassifier.IsRateLimit(status, body)) { Interlocked.Increment(ref _egwRateLimits); _backoff.NoteLimitExceeded(); }
+            }
             return res;
         }
 

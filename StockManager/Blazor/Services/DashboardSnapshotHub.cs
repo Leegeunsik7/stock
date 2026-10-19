@@ -179,6 +179,11 @@ namespace StockManager.Blazor.Services
         private readonly int[] _rateRemaining = new int[2];
         private readonly long[] _rateRejected = new long[2], _rateConsecutive = new long[2];
         private readonly bool[] _rateLatched = new bool[2];
+        // [v12.18.22-DEV] 레인 상태(DashRateGate) · 60초 잔여 · 백오프 남은 ms · 키움 조회 잔여(1초/60초). 키움 레인 = 프록시 MMF 판독자(우선) 또는 동일 프로세스 게이트.
+        private readonly int[] _rateState = new int[2], _rateRemaining60 = new int[2];
+        private readonly long[] _rateBackoffMs = new long[2];
+        private int _rateKiwoomQuery1, _rateKiwoomQuery60;
+        private MS2E.Infrastructure.KiwoomRateTelemetryReader? _kiwoomRateReader;
         // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
         private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
         private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
@@ -319,6 +324,30 @@ namespace StockManager.Blazor.Services
             Volatile.Write(ref _rateBackoff[lane], backoff);
             Volatile.Write(ref _rateGate[lane], gate ?? throw new ArgumentNullException(nameof(gate)));
         }
+
+        // 키움 MMF 관제 1회 판독(δ=0 · 블로킹 0). Live 만 값을 갱신 — 부재/찢김/노후는 상태만 바꾸고 잔여량을 0 으로 비운다(낡은 '여유' 표시 금지).
+        private void PumpKiwoomRateTelemetry(MS2E.Infrastructure.KiwoomRateTelemetryReader r)
+        {
+            const int K = RateLaneKiwoom;
+            var res = r.TryRead(out var s);
+            if (res == MS2E.Infrastructure.KiwoomRateTelemetryRead.Live)
+            {
+                _rateRemaining[K] = s.OrderRemaining1s; _rateRemaining60[K] = s.OrderRemaining60s;
+                _rateKiwoomQuery1 = s.QueryRemaining1s; _rateKiwoomQuery60 = s.QueryRemaining60s;
+                _rateRejected[K] = s.Rejected; _rateConsecutive[K] = s.Consecutive; _rateLatched[K] = s.Latched;
+                _rateBackoffMs[K] = s.BackoffMicros / 1000;
+                _rateState[K] = !s.GateAttached ? DashRateGate.Waiting : s.Latched ? DashRateGate.Latched : _rateBackoffMs[K] > 0 ? DashRateGate.Backoff : DashRateGate.Live;
+                return;
+            }
+            _rateRemaining[K] = 0; _rateRemaining60[K] = 0; _rateKiwoomQuery1 = 0; _rateKiwoomQuery60 = 0; _rateBackoffMs[K] = 0;
+            _rateState[K] = res == MS2E.Infrastructure.KiwoomRateTelemetryRead.Stale ? DashRateGate.Stale
+                          : res == MS2E.Infrastructure.KiwoomRateTelemetryRead.Torn ? DashRateGate.Stale : DashRateGate.Waiting;
+            if (res == MS2E.Infrastructure.KiwoomRateTelemetryRead.Stale) { _rateRejected[K] = s.Rejected; _rateLatched[K] = s.Latched; _rateConsecutive[K] = s.Consecutive; }   // 누계 · 래치는 마지막 값 유지(노후 표기)
+        }
+
+        /// <summary>[v12.18.22-DEV] 키움 레인 = x86 프록시 MMF 관제 판독자(펌프 회차마다 1회 판독 · 블로킹 0 · 부재/찢김/노후 = 상태로 정직 렌더).</summary>
+        public void AttachKiwoomRateTelemetry(MS2E.Infrastructure.KiwoomRateTelemetryReader reader)
+            => Volatile.Write(ref _kiwoomRateReader, reader ?? throw new ArgumentNullException(nameof(reader)));
 
         /// <summary>
         /// [v12.18.11-DEV] AI vs Human 아레나 결선 — 펌프가 회차마다 Step(가상 체결 · 정산 · seqlock 게시 · δ=0)을 구동하고
@@ -469,16 +498,25 @@ namespace StockManager.Blazor.Services
                 _arbSnap = ar.Status;                                                 // 상태 · 래치 · 기회 = 즉시 재게시 · 스프레드는 1bp 단위 변화만
                 sig = sig * 31 + 1 + _arbSnap.State * 7 + _arbSnap.Trips * 11 + _arbSnap.Opportunities * 13 + _arbSnap.SpreadCbp / 100 * 17;
             }
+            var krr = Volatile.Read(ref _kiwoomRateReader);
             for (int lane = 0; lane < 2; lane++)
             {
-                var rg = Volatile.Read(ref _rateGate[lane]);
-                if (rg is null) continue;
-                var bo = Volatile.Read(ref _rateBackoff[lane]);
-                _rateRemaining[lane] = rg.Remaining();                                // 최근 N 슬롯 판독(O(N) · 할당 0)
-                _rateRejected[lane] = rg.Denied + (bo is null ? 0 : bo.BackoffDenied + bo.LatchDenied);
-                _rateConsecutive[lane] = bo?.Consecutive ?? 0;
-                _rateLatched[lane] = bo?.Latched ?? false;
-                sig = sig * 31 + 1 + lane * 3 + _rateRemaining[lane] * 7 + _rateRejected[lane] * 11 + _rateConsecutive[lane] * 13 + (_rateLatched[lane] ? 17 : 0);
+                if (lane == RateLaneKiwoom && krr is not null) { PumpKiwoomRateTelemetry(krr); }
+                else
+                {
+                    var rg = Volatile.Read(ref _rateGate[lane]);
+                    if (rg is null) continue;
+                    var bo = Volatile.Read(ref _rateBackoff[lane]);
+                    _rateRemaining[lane] = rg.RemainingInWindow(0);                   // 최근 N 슬롯 판독(O(N) · 할당 0)
+                    _rateRemaining60[lane] = rg.RemainingInWindow(1);
+                    _rateRejected[lane] = rg.Denied + (bo is null ? 0 : bo.BackoffDenied + bo.LatchDenied);
+                    _rateConsecutive[lane] = bo?.Consecutive ?? 0;
+                    _rateLatched[lane] = bo?.Latched ?? false;
+                    _rateBackoffMs[lane] = (bo?.RemainingBackoffMicros() ?? 0) / 1000;
+                    _rateState[lane] = _rateLatched[lane] ? DashRateGate.Latched : _rateBackoffMs[lane] > 0 ? DashRateGate.Backoff : DashRateGate.Live;
+                }
+                sig = sig * 31 + 1 + lane * 3 + _rateState[lane] * 5 + _rateRemaining[lane] * 7 + _rateRemaining60[lane] * 19 + _rateRejected[lane] * 11
+                    + _rateConsecutive[lane] * 13 + (_rateLatched[lane] ? 17 : 0) + _rateBackoffMs[lane] / 100 * 23;
             }
             // ★서명은 '게시 성공 시에만' 확정 — 조립 생략(3버퍼 리스) 회차의 변경이 소비돼 화면에 영영 반영되지 않는 유실 방지
             if (sig != _lastSignature || _pendingDirty) dirty = true;
@@ -580,6 +618,12 @@ namespace StockManager.Blazor.Services
             f.RateKiwoomRejected = _rateRejected[RateLaneKiwoom]; f.RateKisRejected = _rateRejected[RateLaneKis];
             f.RateKiwoomConsecutive = _rateConsecutive[RateLaneKiwoom]; f.RateKisConsecutive = _rateConsecutive[RateLaneKis];
             f.RateKiwoomLatched = _rateLatched[RateLaneKiwoom]; f.RateKisLatched = _rateLatched[RateLaneKis];
+            f.RateKiwoomBound |= krr is not null;
+            f.RateKiwoomState = f.RateKiwoomBound ? _rateState[RateLaneKiwoom] : DashRateGate.Unbound;
+            f.RateKisState = f.RateKisBound ? _rateState[RateLaneKis] : DashRateGate.Unbound;
+            f.RateKiwoomRemaining60 = _rateRemaining60[RateLaneKiwoom]; f.RateKisRemaining60 = _rateRemaining60[RateLaneKis];
+            f.RateKiwoomBackoffMs = _rateBackoffMs[RateLaneKiwoom]; f.RateKisBackoffMs = _rateBackoffMs[RateLaneKis];
+            f.RateKiwoomQueryRemaining = _rateKiwoomQuery1; f.RateKiwoomQueryRemaining60 = _rateKiwoomQuery60;
             f.BuildMicros = (Stopwatch.GetTimestamp() - t0) * 1_000_000 / Stopwatch.Frequency;
             long ver = Interlocked.Increment(ref _version);
             f.Version = ver;

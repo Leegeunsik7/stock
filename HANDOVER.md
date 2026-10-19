@@ -2371,3 +2371,34 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.20-GM 산출물 13건(zip 08807B09… · masterSeal 23D3D37B…) → release/superseded-v12.18.20-GM/. worktree 제거 · prune.
 - 메인 체크아웃 재수검(태그 빌드 호스트 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
   --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+
+## 89. v12.18.22-DEV — 키움 프록시 → 호스트 레이트 게이트 MMF 관제 · KIS EGW00201 분류 (2026-10-19)
+
+### 89.1 전제 교정
+- 프록시 → 호스트 방향 MMF 는 없었다(기존 = 호스트 → 프록시 HostHealthHeartbeat 단방향) → 같은 패턴(64B 고정 · seqlock · 지연 열기)으로 역방향 채널 신설.
+- /aidash = 포터블 PaperTradingDashboardView — v12.18.21 은 프레임 필드만 있고 마크업이 없었다 → 키움 · KIS 쿼터 배지 신설(DashRateGate 상태 6종).
+- EGW00201 판정은 '문자열 파싱 없이'를 CLAUDE.md §3 에 맞춰 Utf8JsonReader 타입드 판독(ValueTextEquals 바이트 비교 · catch JsonException)으로 구현 — 바이트 검색(IndexOf)은
+  중첩/msg1 문구 오분류 위험으로 배제. 분류기는 별도 정적 형식(KisRateLimitClassifier) — x86 링크 대상인 BrokerBackoffController 는 JSON 무참조 유지.
+
+### 89.2 구성
+- `src/02_Infrastructure/Engine/KiwoomRateTelemetry.cs`(프록시 · 쉼 링크): 맵 Local\MS2E_KIWOOM_RATE_V1 · 64B(magic · seq · QPC · freq · 거부 누계 · 백오프 µs ·
+  주문/조회 1초·60초 잔여 i16 · 연속 초과 · 플래그(래치 · 게이트 결선) · pid). 작성자 = in-process CAS 소유권 단일화(점유 중 호출 = 더티 → 소유자가 원천
+  IKiwoomRateTelemetrySource 를 다시 읽어 재게시 · 대기 0 · 유실 0). 판독자 = 시퀀스 판독 32회 상한 · 첫 게시 전 = Missing · 노후(> 2초) = Stale · 홀수 고착 = Torn ·
+  맵 부재 재열기 1초 간격(예외 생성 콜드) · Dispose 경합 = Missing(예외 전파 0).
+- 키움 코어: IKiwoomRateTelemetrySource 구현 · AttachRateTelemetry · 게이트 판정 · OCX 응답 기록마다 게시. 프록시(#if KIWOOM_COM) = 작성자 생성(실패 = 관제 없이 게이트만) ·
+  50ms 펌프 박동 게시(시간 경과 회복 반영) · Dispose 시 해제. LockFreeTokenBucket.RemainingInWindow(창별 잔여) 추가.
+- 허브 AttachKiwoomRateTelemetry(판독자) → 펌프 회차마다 1회 판독 → 프레임 RateKiwoomState/Remaining/Remaining60/QueryRemaining(60)/Rejected/BackoffMs/Consecutive/Latched ·
+  비 Live = 잔여 0(낡은 여유 비표시) · 노후 = 누계 · 래치 마지막 값 유지. KIS 레인도 상태/60초/백오프 ms 투영. 호스트 BlazorHomeForm = 판독자 결선 · FormClosed 해제.
+- `KisRateLimitClassifier.IsRateLimit(status, utf8)`: 429(본문 무관) · 또는 ≥ 400 + 최상위 msg_cd == "EGW00201"(중첩 무시 · BOM 허용 · 형식 오류 = false).
+  KisProvider.SendGatedAsync: 비성공 본문 버퍼링(콜드) → 분류 → NoteLimitExceeded(429 와 같은 백오프 · 3회 래치) · EgwRateLimits 계수.
+
+### 89.3 검증
+- KiwoomIpcRateLimitTelemetryTests 14건: 코어 판정 → 호스트 Live 정확 쿼터(주문 0/95 · 조회 3/98 · 1초 경과 회복) · −308 백오프/3회 래치 가시화 · 부재/첫 게시 전 Missing ·
+  재열기 1,000회 중 시도 1 · 노후 Stale(누계 보존) · 홀수 고착 Torn 100회 < 2초(무블로킹) · 프록시 종료 후 뷰 유지 + 재기동 시퀀스 단조 · 판독자 Dispose 경합 50라운드 예외 0 ·
+  해제 후 게시 무동작 · 10만 회 판독/게시 0B · 작성 4 + 판독 1 스레드 1.5초 찢김 0 · 누계/시퀀스 역행 0 · 허브 투영(미결선 → 수신 대기 → 정상 → 노후) · 뷰/호스트 결선 ·
+  IL 허용목록(브로커/OCX/HTTP/무장 형식 0).
+- KisErrorClassificationTests 22건: 분류 16 사례(필드 순서 · 상태 · 다른 코드 · 중첩 · 문구만 · 비문자열 · 접두 · 잘림 · HTML · 빈 본문 · 배열) · BOM/중첩 선행 ·
+  EGW 1회 = 즉시 백오프 + 창 안 서버 0 · 3회 = 래치 + 서버 0 · EGW/429 혼합 누적 · 다른 500 무기록 + 성공 리셋 · 정상 형식 10만 회 분류 0B.
+- 오중 빌드(WebOnly → Default sln) Release -warnaserror 0W/0E · 전체 스위트 4,034/4,034 · infra-scan 0 ≤ 117 · 래칫 ≤40.
+- 한계(정직): 형식 오류 본문(HTML · 잘림)은 판독기가 JsonException 을 던져 예외 객체 할당(콜드 오류 경로 · 판정 false). 실 키움 프록시 · 실 KIS 미연결(스텁) —
+  프로세스 간 실측은 같은 프로세스 내 두 핸들(동일 OS 경로)로 대체. Local 네임스페이스 = 같은 로그온 세션 전제(프록시를 다른 세션/서비스로 띄우면 관제 미수신).

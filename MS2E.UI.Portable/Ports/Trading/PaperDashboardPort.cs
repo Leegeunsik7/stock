@@ -210,6 +210,10 @@ namespace MS2E.UI.Portable.Ports.Trading
         public bool RateKiwoomBound, RateKisBound, RateKiwoomLatched, RateKisLatched;
         public int RateKiwoomRemaining, RateKisRemaining;
         public long RateKiwoomRejected, RateKisRejected, RateKiwoomConsecutive, RateKisConsecutive;
+        // [v12.18.22-DEV] 레인 상태(DashRateGate) · 60초 창 잔여(키움) · 백오프 남은 ms · 키움 조회 TR 잔여(1초/60초 · 프록시 MMF 관제).
+        public int RateKiwoomState = DashRateGate.Unbound, RateKisState = DashRateGate.Unbound;
+        public int RateKiwoomRemaining60, RateKisRemaining60, RateKiwoomQueryRemaining, RateKiwoomQueryRemaining60;
+        public long RateKiwoomBackoffMs, RateKisBackoffMs;
 
         /// <summary>비트 이름(허브가 기동 시 1회 채움 · 이후 불변).</summary>
         public string[] BitNames = Array.Empty<string>();
