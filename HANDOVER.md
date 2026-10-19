@@ -2596,3 +2596,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 오중 빌드(WebOnly → Default sln: StockSuite · Portable · PrimesBench · KiwoomProxy · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 4,100/4,100 ·
   아레나 그룹 189건 3회 연속 · 신규 14건 3회 연속 · infra-scan 0 ≤ 117 · 래칫 ≤40(PureShellFitness).
 - 한계(정직): 합성 훈련 데이터 — 실 플래시 크래시 통계 재현 아님 · 버스트는 대상 1종목만(타 종목 동조 하락 없음) · 블라인드 발동 시각 = 재생 시뮬레이션 시각 기준(배속 비례로 벽시계 단축).
+
+## 98. v12.18.26-GM — 아레나 블라인드 플래시 크래시 · 숏 스퀴즈 인젝터 단독 출하(-NoPeer) (2026-10-19)
+
+### 98.1 버전 · 태그
+- v12.18.26-DEV(§97) = 11e1d0b. 12.18.25 → 12.18.26(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 7f71894(4파일 · 11/11 줄 · 구버전 문자열 잔존 0) ·
+  GoldenMaster 핀 테스트 83/83(Release) · sln Release -warnaserror 0W/0E.
+- 태그 v12.18.26-GM(annotated · -f) = 7f71894. QuantumVault 미접근(-NoPeer · 경로 참조 0) · 매니페스트 피어 기록 없음 · 원격 푸시 없음.
+
+### 98.2 출하 실행(형제 worktree StockManager-gm-12.18.26 · 태그 7f71894 · 미커밋 0)
+- safe.directory · core.commitGraph=false = 프로세스 GIT_CONFIG_* 환경변수(전역 설정 · .git 무변경).
+- release-package.ps1 -NoPeer → [0/10]~[10/10] EXIT 0(1회 통과): [0] 태그 = HEAD 코드 · 미커밋 0 · [1]/[2] 오중 빌드 -warnaserror 0W/0E ·
+  [3] 4,100/4,100 · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40(2/2) · [6] liveArmed 기본값 소스 가드 · [7] 아티팩트 38 SHA-256 · manifest.sig ·
+  [9] verify-zip Ok · verify-live-armed Ok(조회 21 · 마스터 1 · UI 가드 3/3 · 시뮬레이션 격리 50(CLI 29) · 강화 키 6(호스트 8) · 원장 ⑪ · 펌프 지터 ⑫ 1 · 유령 취소 무장 ⑬ 1 · 위반 0) ·
+  [10] interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6 · ⑪ · seqlock · IPC 패브릭 무대기/무슬립 · Stopwatch) · handshake Ok @7f718949e5.
+- 산출물(release/): release-v12.18.26-GM.zip SHA-256 `0F3A42B3238D6B9A15C0B01E65B0D108E4A1DC991C5450FE38D10D493B86DB0C` ·
+  masterSeal `22850C200A94B8E6BC547F4D255BAED3597946E6CE9DFC53FD0D7D1BE0F05FB5` · sourceCommit 7f71894 · 피어 기록 없음.
+- v12.18.25-GM 산출물 13건(zip B29FA15D… · masterSeal 6FB1A71F…) → release/superseded-v12.18.25-GM/. worktree 제거 · prune.
+- 메인 체크아웃 재수검(같은 커밋 7f71894 Release 빌드 CLI · 메인 release/ 복사본 대상): 복사본 SHA-256 일치 · --verify-zip(--seal-file) · --verify-live-armed(⑪ ⑫ ⑬ 강제 · 강화 키 6) ·
+  --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.

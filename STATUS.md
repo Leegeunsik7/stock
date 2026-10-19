@@ -1,12 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.26-DEV 아레나 극한 생존 훈련 — 플래시 크래시 · 숏 스퀴즈 시나리오 인젝터(블라인드)
-- **Build Status**: 오중 빌드(WebOnly → Default sln: StockSuite · Portable · PrimesBench · KiwoomProxy · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 4,100/4,100 · 아레나 그룹 189건 3회 연속 · infra-scan 0 ≤117 · 래칫 ≤40 · liveArmed:false 불변
+- **Active Milestone**: v12.18.26-GM — 아레나 블라인드 플래시 크래시 · 숏 스퀴즈 인젝터 단독 출하(-NoPeer) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,100/4,100 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-19
-- **Completed Deliverables**:
-  - FlashCrashScenarioInjector(Engines/Arena/Simulation · 원천 테이프 데코레이터 · 버스트 8,000틱 4,000틱/초 · 유동성 진공 · 되돌림 · 60초 여진 감쇠 · 판독 δ=0)
-  - 블라인드 생성(종류 반반 · 발동 3 ~ 5분 · 깊이 5 ~ 12%) · 짧은 원천 = 미발동 통과 · < 2,000틱/초 생성 거부
-  - 리플레이 엔진 결선(새 매치 시 콜드 생성 · 국면 잠복/발동/여진 · 발동 전 종류/종목 비공개) · IArenaReplayPort.SetScenario(진행 중 거부)
-  - /arena ⚡ Extreme Scenario 블라인드 체크 + 경고 인디케이터(잠복 · 발동 펄스 경보 · 여진)
-  - FlashCrashInjectorTests 14건(10만 틱 고속 주입 · 0B · 국면 · 진공 발동 · IL · 헤드리스 UI) · HANDOVER §97
-- **Next Milestone**: v12.18.26-GM 단독 출하(-NoPeer) 또는 다종목 동조 하락(상관 전염) 시나리오
+
+## Completed Deliverables
+- 버전 12.18.26 승격 · 태그 v12.18.26-GM = 7f71894 · 형제 클린 worktree에서 release-package.ps1 -NoPeer [0/10]~[10/10] EXIT 0(1회 통과)
+- release-v12.18.26-GM.zip(38 아티팩트 · SHA-256 0F3A42B3…) · masterSeal 22850C20… · 피어 기록 없음
+- IL 가드 ⑫ 펌프 지터 · ⑬ 유령 취소 무장 위반 0 · 인터락 30(0x800000001FFFFFFF) · Tighten 키 6 · seqlock · IPC 무수면 통과
+- v12.18.25-GM 산출물 13건 → release/superseded-v12.18.25-GM/ · HANDOVER §98
+
+## Next Milestone
+- WebView2 실기 렌더 · Extreme Scenario 인디케이터 육안 확인 · 다종목 동조 하락(상관 전염) 시나리오
