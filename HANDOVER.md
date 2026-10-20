@@ -2869,3 +2869,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 불변: liveArmed:false(레이더 브로커/디스패처/무장 키 참조 0 — IL 테스트) · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
 - 한계(정직): 오더 목표 '4,170건+' 미달(4,169 = 기존 4,163 + 신규 6 — 건수 맞추기용 테스트 미추가). 피드별 병합(conflation) 시점 차로 급변 구간 L1 불일치가 50ms 를
   넘으면 실지연이 아니어도 비트 28 래치(안전 방향 · 실 피드 오탐률 미관측). 가격 동일 상태에서 한 피드만 정지 = 변경 전까지 미포착. 30bp 역전 임계는 실 호가 분포 미보정.
+
+## 112. v12.18.33-GM — 합성 스프레드 레이더 인터락 경화 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 112.1 버전 · 태그
+- v12.18.33-DEV(§111) = b413489. 12.18.32 → 12.18.33(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 55ae770(4파일 · 11/11 줄).
+- 태그 v12.18.33-GM(annotated · -f) = 55ae770. 패키징 셸 MS2E_KIS_VTS_* 미설정 · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 112.2 출하 실행(형제 worktree SM_GM_wt · 태그 55ae770 · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [0] 태그 = HEAD · 미커밋 코드 0 · [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) ·
+  [3] 4,168 통과 + 1 건너뜀(§99 옵트인 · Offline_1M 원패스) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드 · [7] 아티팩트 38 · manifest.sig · [8] 봉인 재검 38 ·
+  [9] verify-zip Ok · verify-live-armed Ok · [10] handshake Ok @55ae7700c7 · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) ·
+  [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 10080 · HWND 0x2B31076 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.33-GM.zip SHA-256 `3FAA0CB2D0ECBCD005DB6BA0A9BE93096C370E952AC25B8F2F122A5EBE5E587B` · masterSeal `514129100B0CA847444109D19E49F8536787D0719B2BCD979DDC27F9C0481B05` · sourceCommit 55ae770 · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.33-Standalone-win-x64.zip SHA-256 `EFB8DF1C7F0FAFB646577FDFCCF0F500753061EB4A1A006B10F3DB50C7C8601B`.
+- v12.18.32-GM 산출물 15건 → release/superseded-v12.18.32-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 비트 28 실 피드 오탐률 미관측(LagBudget 50ms 보정 미실시 · §111) · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
