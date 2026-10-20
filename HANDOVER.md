@@ -2979,3 +2979,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,220 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
 - 한계(정직): 오더 목표 4,225건 미달(+9 · 수 맞추기용 테스트 추가 안 함) · 실 KRX 동시호가 잠김 스냅샷 실측 미실시 · QueueLockedHolds 는 포트/UI 미노출(엔진 내부 계수).
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 118. v12.18.36-GM — 아레나 잠김/역전 호가 FIFO 가드 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 118.1 버전 · 태그
+- v12.18.36-DEV(§117) = 70a83e5. 12.18.35 → 12.18.36(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 6aefd7a(4파일 · 11/11 줄 · 핀 테스트 48 통과).
+- 태그 v12.18.36-GM(annotated · -f) = 6aefd7a. 패키징 셸 MS2E_* 환경 변수 0 · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 118.2 출하 실행(형제 worktree SM_GM_wt · 태그 6aefd7a · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [0] 태그 = HEAD · 미커밋 코드 0 · [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) ·
+  [3] 4,220 통과 + 1 건너뜀(§99 옵트인 · Offline_1M 원패스) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드 · [7] 아티팩트 38 · manifest.sig · [8] 봉인 재검 38 ·
+  [9] verify-zip Ok · verify-live-armed Ok · [10] handshake Ok · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) ·
+  [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 36804 · HWND 0x1480D48 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.36-GM.zip SHA-256 `8B49B044719029C829D7254A2C6A261D7BA97B9E19ACF05A0EE57839D4ADA477` · masterSeal `306AA14534AC98ADAA8CB5DF5FCDBCFFFC707C3F449D119FC830207FA79F26FD` · sourceCommit 6aefd7a · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.36-Standalone-win-x64.zip SHA-256 `2A2BB3F20FA7D0A739129D4C82362D08F8BB9C638CEAF3AFB9065971069364DB`.
+- v12.18.35-GM 산출물 15건 → release/superseded-v12.18.35-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 실 KRX 동시호가 잠김 스냅샷 미관측(§117) · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 비트 28 실 피드 오탐률 미관측 · 실 VTS 재소크 미실시(§99).
