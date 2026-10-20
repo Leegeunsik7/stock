@@ -1,14 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.38-DEV — 전역 피드 동시 두절 워치독(FeedStallWatchdog · 비트 28 4차 입력)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,234 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40
-- **Updated At**: 2026-10-20
+- **Active Milestone**: v12.18.38-GM — 전역 피드 동시 두절 워치독 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,234 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
+- **Updated At**: 2026-10-21
 
 ## Completed Deliverables
-- 틱 경로와 분리된 100ms 타이머 워치독 — 장중 모든 활성 피드 무수신 > 3초 = 비트 28 능동 래치(틱 0건에도 격발)
-- Interlocked 수신 스탬프 · 정적 타이머 콜백(클로저/박싱 0) · 10만 폴링 0B
-- OrderPathLatencyInterlock 4차 슬롯(교체 금지 · 판독 예외 = 차단) · 호스트 결선(키움 브리지 호가/체결)
-- 테스트 FeedStallWatchdogTests 9건 · HANDOVER §121
+- 버전 12.18.38 승격 · 태그 v12.18.38-GM(647fb9a) · 클린 worktree -NoPeer 패키징(QuantumVault 미접근)
+- 감사 봉인본 release-v12.18.38-GM.zip(8EA020CF) · masterSeal 368A2591 · 아티팩트 38
+- 즉시 실행 배포본 StockManager-v12.18.38-Standalone-win-x64.zip(A4105A1F) · 봉인 38 바이트 동일 · 격리 기동 주 창 실측
+- CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) 메인 복사본 exit 0 · v12.18.37-GM 이관 · HANDOVER §122
 
 ## Next Milestone
-- KIS 실시간 피드 Stamp 결선 · 실 장중 오탐률 관측 · v12.18.38-GM 출하
+- KIS 실시간 피드 워치독 Stamp 결선 · 실 장중 오탐률 관측 · 실 손상 런타임/미설치 PC 배포본 실기 · 실 VTS 재소크

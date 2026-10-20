@@ -3047,3 +3047,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 호스트 결선 = 키움 브리지 1 피드(KIS 실시간은 레이더 미결선과 동일 — 결선 시 Stamp(1) 1줄) · 한 번도 수신 안 한 피드 = 비활성(미구성 PC 상시 차단 방지) ·
   공휴일 미반영 · 구독 종목 전부 비유동이면 3초 무수신이 정상일 수 있음(차단 측 오탐 = 안전 방향) · 실 장중 오탐률 미관측.
 - 불변: liveArmed:false · 워치독 발주 경로 0 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 122. v12.18.38-GM — 전역 피드 동시 두절 워치독 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- 사전 점검: 패키징 셸 잔류 MS2E_* 환경 변수 0 · QuantumVault 미접근(-NoPeer 고정 · 피어 탐침 0).
+- v12.18.38-DEV(§121) = 4be732d. 12.18.37 → 12.18.38(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 647fb9a(4파일 · 11/11 줄 · 핀 테스트 83 통과) · 태그 v12.18.38-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,234 통과 + 1 건너뜀 · infra-scan 0 · 래칫 ≤40 · liveArmed:false 소스 가드 ·
+  봉인 38 아티팩트 · masterSeal 368A259151F6D3E9… · verify-zip 무추출 일치.
+- 산출물: release-v12.18.38-GM.zip(8EA020CF…) · StockManager-v12.18.38-Standalone-win-x64.zip(A4105A1F…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 2548 · HWND 0x1110D86 'MS2-E Stock Suite' 실측.
+- 이관: v12.18.37-GM 산출물 15종 → release/superseded-v12.18.37-GM/. 신규 산출물 메인 release/ 복사.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30 · 0x800000001FFFFFFF) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): 워치독 호스트 결선 = 키움 1 피드(KIS 실시간 Stamp 미결선 · §121) · 실 장중 오탐률 미관측 · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
