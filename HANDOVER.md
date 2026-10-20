@@ -3015,3 +3015,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 두 피드 동시 정지 = 조용한 시장과 구별 불가(판정은 산 피드 틱에서만) · 같은 스냅샷만 반복하는 고착 피드 = 수신 간주(가격 이동 시 ③ 포착) ·
   침묵 판정은 다음 산 피드 틱까지 지연(펌프 스윕 미도입 — 단발 갱신 후 병합 소거 오탐 회피) · 실 피드 오탐률 미관측 · 기존 bUnit 헤드리스 뷰 테스트 1회 부하 플래키(단독 3/3 · 전체 스위트 통과).
 - 불변: liveArmed:false · 레이더 발주 경로 0 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 120. v12.18.37-GM — SyntheticSpreadRadar 비트 28 정밀화 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+- 사전 점검: 패키징 셸 잔류 MS2E_* 환경 변수 0 · QuantumVault 미접근(-NoPeer 고정 · 피어 탐침 0).
+- v12.18.37-DEV(§119) = ebf97ae. 12.18.36 → 12.18.37(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = a5c9f37(4파일 · 11/11 줄 · 핀 테스트 83 통과) · 태그 v12.18.37-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,225 통과 + 1 건너뜀(헤드리스 뷰 플래키 미발생) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 소스 가드 ·
+  봉인 38 아티팩트 · masterSeal 604FC634F6C8A8BC… · verify-zip 무추출 일치.
+- 산출물: release-v12.18.37-GM.zip(B7F015D3…) · StockManager-v12.18.37-Standalone-win-x64.zip(2770BB37…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 1716 · HWND 0x10A0D86 'MS2-E Stock Suite' 실측.
+- 이관: v12.18.36-GM 산출물 15종 → release/superseded-v12.18.36-GM/. 신규 산출물 메인 release/ 복사.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30 · 0x800000001FFFFFFF) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): 두 피드 동시 정지 미감지(§119) · 실 피드 비트 28 오탐률 미관측 · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
