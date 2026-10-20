@@ -11,6 +11,10 @@
 //  방향 B — 불균형 체결 차단기: 같은 부모에서 어떤 자식이 체결을 시작(최초 체결)한 뒤 임계(기본 500ms) 넘게 체결 0 인 '접수된' 형제가 있으면
 //    그 부모의 잔여 자식(미체결 잔량 &gt; 0) 전부 취소 요청(브로커 · 브로커 주문번호 콜백) + 비트 Raise. 취소는 노출 축소 — 무장 상태와 무관.
 //    같은 자식에 대한 취소 요청은 1회(Cancelling 표지).
+//  [v12.18.40-DEV] ★미추적 단일 주문 비동기 거부: 이 매트릭스가 추적하지 않는 주문(분할 안 된 단일 주문 · 다른 세션/HTS 발주 · 해독 불가 번호)의
+//    명시 Rejected 통보(키움 브리지 · KIS H0STCNI0 거부 플래그) = 비트 23 sticky Raise(브로커 · 거부 코드 무관 · 1통보 = 그 호출에서 래치).
+//    동기 거부(REST rt_cd ≠ 0 · SendOrder 반환 < 0)는 OrderDrainWorker 가 이미 ForceFreeze — 이 경로는 송출 후 거부의 공백만 메운다.
+//    Legacy(매직 불일치 · 체결량 0 모호 통보) · 접수 · 취소확인 = 래치 아님(평범한 통보가 전체를 동결하는 freeze-storm 회피 — 명시 거부만).
 //  ★No Over-Dispatch: Open 시 자식 주수 합 ≤ 부모 수량을 검증(초과 = 거부) · 체결 누적이 자식 주문 수량을 넘으면 Overfill 계수 + 비트 Raise.
 // ============================================================================
 using System;
@@ -61,7 +65,7 @@ namespace StockManager.Engines
         private readonly long _imbalanceMicros;
         private readonly Action<int, long>? _cancel;       // (브로커, 브로커 주문번호) → 취소 송신
         private int _tripped;
-        private long _opened, _rejectTrips, _imbalanceTrips, _reclaimed, _cancelRequests, _cancelFaults, _overfills, _unknownFills, _released;
+        private long _opened, _rejectTrips, _imbalanceTrips, _reclaimed, _cancelRequests, _cancelFaults, _overfills, _unknownFills, _released, _untrackedRejects;
         private ArmingInterlockLink? _link;
 
         public ChildSlotTrackingMatrix(int parentCapacity = 256, Func<long>? nowMicros = null, long imbalanceMicros = DefaultImbalanceMicros, Action<int, long>? cancel = null)
@@ -84,6 +88,8 @@ namespace StockManager.Engines
         public long CancelFaults => Interlocked.Read(ref _cancelFaults);
         public long Overfills => Interlocked.Read(ref _overfills);
         public long UnknownFills => Interlocked.Read(ref _unknownFills);
+        /// <summary>[v12.18.40-DEV] 미추적 주문 명시 거부 통보 수(각각 비트 23 래치 — 래치 중 포함).</summary>
+        public long UntrackedRejects => Interlocked.Read(ref _untrackedRejects);
         public long ReleasedGroups => Interlocked.Read(ref _released);
         public int Capacity => _groups.Length;
 
@@ -196,7 +202,12 @@ namespace StockManager.Engines
         {
             var st = BridgeFillStatusCodec.Decode(in fill, out _);
             long now = _nowMicros();
-            if (!TryLocate(fill.OrderId, out int g, out int i)) { Interlocked.Increment(ref _unknownFills); return; }
+            if (!TryLocate(fill.OrderId, out int g, out int i))
+            {
+                Interlocked.Increment(ref _unknownFills);
+                if (st == BridgeFillStatus.Rejected) { Interlocked.Increment(ref _untrackedRejects); Trip(ref _rejectTrips); }   // ★[v12.18.40-DEV] 미추적 거부 = Disarm(sticky)
+                return;
+            }
             ref var grp = ref _groups[g];
             bool overfill = false, rejected = false;
             BeginWrite(ref grp);

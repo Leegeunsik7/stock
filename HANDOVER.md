@@ -3093,3 +3093,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 실 KIS 장중 수신 간격/워치독 오탐률 미관측(§123) · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 125. v12.18.40-DEV — 미추적 단일 주문 비동기 거부 = 비트 23(ChildSlotRejection) sticky 래치 (2026-10-21)
+
+- 전제 정정(1차 오더 · 증거 보고 후 방향 수령): KisOrderRoutingAdapter.cs 부재(KIS 송출 = LiveBrokers.Place) · 비트 21 = HealthAgent(StrategyAnomaly = 27 · AI 시그널 전용) →
+  주문 거부 = 정의상 비트 23(ChildSlotRejection) 재사용(30종 정의 불변). 범위 = 모든 명시 Rejected(A안 · 거부 코드 무관).
+- 기존 방어(무변경): 동기 거부(KIS REST rt_cd ≠ 0 · TryParseOrderAck / 키움 SendOrder < 0) = OrderDrainWorker throw → ForceFreeze(파이프라인 영구 락업 · 재시도 루프 0) ·
+  분할 자식 송출 실패 = MarkSendFailed 비트 23 · 추적 자식 비동기 거부 = OnFill 형제 회수 + 비트 23.
+- 공백: 추적 슬롯 없는 주문(분할 안 된 단일 주문 · 다른 세션/HTS 발주 · 해독 불가 번호)의 비동기 거부 = UnknownFills 계수만 → 무장 차단 0.
+- 교정 ChildSlotTrackingMatrix.OnFill: 미추적 ∧ 명시 Rejected(매직 0xA5 · 코드 3) = UntrackedRejects 계수 + 비트 23 sticky Raise(그 통보 호출 안 · δ=0).
+  Legacy(매직 불일치 · 체결량 0 모호) · 접수 · 취소확인 · 체결 = 래치 아님(평범한 통보 동결 freeze-storm 회피 — 명시 거부만). 추적 슬롯 무오염.
+  결선 무변경: 키움 bridge.FillReceived(OrderRejected 포함) · KIS onFill(H0STCNI0 거부 플래그 → Rejected) 이 이미 같은 OnFill 로 들어옴.
+- 테스트 UntrackedOrderRejectionTests 8건: 비트 23 정의 핀 · 실 KIS 어댑터 AES 거부 통보 → 그 프레임 안 래치(0x00800000) · 호스트 결선 소스 핀 ·
+  키움 브리지 56B/48B 거부 프레임 래치 · 미추적 비거부 5종(접수/취소확인/체결/Legacy/매직 없는 3) 래치 0 · 추적 분할 거부 경로 무변경 + 미추적 거부 슬롯 무오염 ·
+  이중키 재무장(한쪽 = 거부) + 재래치 · 미추적 거부 10만 통보(재무장 순환 · 실 마스크) δ=0(3창 최솟값 0B).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,248 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 다른 세션/HTS 수동 주문의 거부도 같은 계좌 통보면 비트 23 래치(안전 측 · 이중키 재무장) · Legacy 구 프록시의 모호 통보(체결량 0)는 거부로 단정 불가 = 미래치 ·
+  거부 사유 코드 미분류(A안) · 실 KIS/키움 거부 통보 실수신 캡처 미보유(KIS 필드 순서 = 공개 예제 기준).
+- 불변: liveArmed:false · 발주 경로 무변경 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
