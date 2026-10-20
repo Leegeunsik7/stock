@@ -5,6 +5,8 @@
 //     H0STASP0 10호가(38종목) · H0STCNT0 체결가 · PINGPONG(반송 송신) · 조각 메시지 · 버퍼 초과 메시지를 100만 프레임 주입.
 //     연결마다 장애 1종 순환: 서버 종료(Close) · 수신 예외(네트워크 리셋) · 핑/퐁 침묵(시계 +61초 → 인터락 Evaluate 트립 + SilentNow → AbortConnection).
 //     단언: 크래시 0 · 재접속 횟수 = 장애 횟수 · 단절마다 인터락 트립(sticky) · 프레임 수 정확 · 연결별 정상 상태 구간 스레드 할당 0B(δ=0).
+//     [v12.18.30] 측정 하드닝: 별도 어댑터 5,000프레임 사전 파싱(JIT · 티어 승격) → GC 정리 → 전용 측정 스레드(스레드풀 · 동기화 컨텍스트 무관)에서 구동 →
+//     창별 할당 기록 · 최솟값 0B(결정론 δ=0) + 과반 창 0B + 튐 창 상한(할당 컨텍스트 양자 수준) — 실 누수(창당 ≥ 48,000프레임)는 전 창에서 드러난다.
 //  §2 리얼 와이어(옵트인): 환경변수 MS2E_KIS_VTS_APPKEY · MS2E_KIS_VTS_SECRETKEY · MS2E_KIS_VTS_HTSID 가 모두 있고 KRX 정규장일 때만 실행(아니면 '건너뜀' — 통과 위장 0).
 //     ★모의투자(VTS) 도메인 고정: 접속키 = https://openapivts.koreainvestment.com:29443/oauth2/Approval 1회 · WS = ws://ops.koreainvestment.com:31000 시세 구독만.
 //     주문 · 잔고 · 토큰 REST 호출 0 · 브로커/디스패처 인스턴스 0(liveArmed:false 무관 — 수신 전용 경로). 100만 틱(호가 + 체결) 또는 MS2E_KIS_SOAK_MINUTES(기본 60) 도달 중 빠른 쪽.
@@ -104,6 +106,7 @@ namespace StockManager.Tests.Integration
             public int Delivered, Connections, PingsSent, Chunks, OversizedSent;
             public int FaultsInjected;
             public long SteadyAllocated, SteadyWindows;
+            public readonly long[] WindowAllocated = new long[(TargetFrames - 1) / FramesPerConnection + 1];          // 연결 수 = 정상 상태 창 수
             public readonly int[] FaultCounts = new int[3];
 
             public SoakWire(byte[][] pool) => _pool = pool;
@@ -187,7 +190,9 @@ namespace StockManager.Tests.Integration
                 private void CloseWindow()
                 {
                     if (_inConn <= WarmFrames) return;
-                    _w.SteadyAllocated += GC.GetAllocatedBytesForCurrentThread() - _windowStart;
+                    long d = GC.GetAllocatedBytesForCurrentThread() - _windowStart;
+                    _w.SteadyAllocated += d;
+                    if (_w.SteadyWindows < _w.WindowAllocated.Length) _w.WindowAllocated[_w.SteadyWindows] = d;
                     _w.SteadyWindows++;
                     _inConn = FramesPerConnection + 1;
                 }
@@ -217,12 +222,27 @@ namespace StockManager.Tests.Integration
             return pool;
         }
 
+        /// <summary>창 하나에서 외생 노이즈(타 스레드 GC 겹침 시 할당 컨텍스트 재계수)로 허용하는 상한 — 관측 2,992B · 8,168B. 실 누수는 창당 ≥ 48,000프레임이라 이를 크게 넘는다.</summary>
+        private const long NoiseWindowCeiling = 64 * 1024;
+
+        /// <summary>판독 경로 사전 파싱(웜업) — 측정 대상과 분리된 어댑터 · 인터락 · 싱크로 JIT/티어 승격/내부 버퍼를 선완료(본 소크 계수 무오염).</summary>
+        private static void WarmupParse(byte[][] pool, int frames)
+        {
+            var sink = new Sink();
+            using var warm = new KisOpenApiAdapter(new KisSessionInterlock(null, 1, static () => 1), send: static _ => true, onTick: sink.OnTick, onBook: sink.OnBook,
+                                                   nowTicks: static () => 638_000_000_000_000_000);
+            for (int k = 0; k < frames; k++)
+                warm.OnFrame((k & 63) == 63 ? Ping : pool[(int)((uint)(k * 2_654_435_761u) % (uint)pool.Length)]);
+        }
+
         // ═══ §1 오프라인 결정론 소크 ═══
 
         [Fact]
         public async Task Offline_1M_Frame_Soak_Recovers_From_Close_Reset_And_PingTimeout_With_Zero_Alloc_Receive_Path()
         {
-            var wire = new SoakWire(BuildPool());
+            var pool = BuildPool();
+            WarmupParse(pool, 5_000);
+            var wire = new SoakWire(pool);
             var interlock = new KisSessionInterlock(null, 1, () => wire.Clock[0]);
             var mask = new ArmingInterlockBitmask(ArmingInterlockSource.KisSession);
             interlock.BindInterlock(mask, ArmingInterlockSource.KisSession);
@@ -239,18 +259,35 @@ namespace StockManager.Tests.Integration
             using var stop = new CancellationTokenSource();
             wire.Stop = stop;
 
-            long t0 = Stopwatch.GetTimestamp(), alloc0 = GC.GetAllocatedBytesForCurrentThread();
-            var run = rt.RunAsync(stop.Token);
-            Assert.True(run.IsCompleted, "동기 대역 전송인데 수신 루프가 비동기로 넘어감(측정 전제 붕괴)");
+            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();                         // 선행 테스트 잔여 쓰레기 정리 → 측정 중 GC 겹침 확률 축소
+            long t0 = 0, t1 = 0, allocTotal = 0;
+            Task? run = null;
+            Exception? fault = null;
+            var measure = new Thread(() =>                                                      // 전용 측정 스레드: 수신 루프 전 구간이 이 스레드에서 동기 진행
+            {
+                try
+                {
+                    long a0 = GC.GetAllocatedBytesForCurrentThread();
+                    t0 = Stopwatch.GetTimestamp();
+                    run = rt.RunAsync(stop.Token);
+                    t1 = Stopwatch.GetTimestamp();
+                    allocTotal = GC.GetAllocatedBytesForCurrentThread() - a0;
+                }
+                catch (Exception e) { fault = e; }
+            }, 16 * 1024 * 1024) { IsBackground = true, Name = "KisSoakMeasure" };
+            measure.Start();
+            measure.Join();
+            Assert.Null(fault);
+            Assert.True(run!.IsCompleted, "동기 대역 전송인데 수신 루프가 비동기로 넘어감(측정 전제 붕괴)");
             await run;
-            double sec = (Stopwatch.GetTimestamp() - t0) / (double)Stopwatch.Frequency;
-            long allocTotal = GC.GetAllocatedBytesForCurrentThread() - alloc0;
+            double sec = (t1 - t0) / (double)Stopwatch.Frequency;
 
             int expectedFaults = (TargetFrames - 1) / SoakWire.FramesPerConnection;           // 마지막 연결은 목표 도달 종료
             _out.WriteLine($"[오프라인 소크] {wire.Delivered:N0}프레임 · {sec:F2}s ({wire.Delivered / sec:N0}/s) · 연결 {rt.Connects} · 단절 {rt.Disconnects} · 장애 {wire.FaultsInjected}" +
                            $"(종료 {wire.FaultCounts[0]} · 리셋 {wire.FaultCounts[1]} · 핑타임아웃 {wire.FaultCounts[2]}) · 강제종료 {rt.Aborts} · 예외 {rt.Faults} · 트립 {interlock.Trips}" +
                            $" · 호가 {sink.Books:N0} · 체결 {sink.Ticks:N0} · 핑반송 {wire.PingsSent} · 조각 {wire.Chunks} · 초과폐기 {rt.Oversized}" +
-                           $" · 정상구간 할당 {wire.SteadyAllocated}B/{wire.SteadyWindows}창 · 전체 {allocTotal:N0}B(연결당 콜드 {allocTotal / Math.Max(1, rt.Connects):N0}B)");
+                           $" · 정상구간 할당 {wire.SteadyAllocated}B/{wire.SteadyWindows}창 · 전체 {allocTotal:N0}B(연결당 콜드 {allocTotal / Math.Max(1, rt.Connects):N0}B)" +
+                           $" · 창별 [{string.Join(',', wire.WindowAllocated)}]");
 
             Assert.Equal(TargetFrames, wire.Delivered);
             Assert.Equal(expectedFaults, wire.FaultsInjected);
@@ -271,7 +308,18 @@ namespace StockManager.Tests.Integration
             Assert.Equal(adapter.BooksEmitted, sink.Books);
             Assert.True(wire.PingsSent > 10_000 && wire.PingsSent == adapter.Echoes, $"ping={wire.PingsSent} echo={adapter.Echoes}");
             Assert.Equal(expectedFaults + 1, wire.SteadyWindows);
-            Assert.Equal(0, wire.SteadyAllocated);                                             // ★δ=0: 수신 조립 · 판독 · 반송 정상 상태 0B
+            Assert.Equal(wire.WindowAllocated.Length, wire.SteadyWindows);
+            long minWindow = long.MaxValue, maxWindow = 0;
+            int zeroWindows = 0;
+            foreach (long d in wire.WindowAllocated)
+            {
+                Assert.True(d >= 0, $"창 할당 음수 {d}B(측정 전제 붕괴)");
+                minWindow = Math.Min(minWindow, d); maxWindow = Math.Max(maxWindow, d);
+                if (d == 0) zeroWindows++;
+            }
+            Assert.Equal(0, minWindow);                                                        // ★δ=0: 수신 조립 · 판독 · 반송 정상 상태 0B(다중 표본 최솟값 · 결정론)
+            Assert.True(zeroWindows * 2 > wire.WindowAllocated.Length, $"0B 창 {zeroWindows}/{wire.WindowAllocated.Length} — 과반 미달(상시 할당 의심)");
+            Assert.True(maxWindow <= NoiseWindowCeiling, $"최대 창 {maxWindow}B > 노이즈 상한 {NoiseWindowCeiling}B — 실 누수 의심");
         }
 
         // ═══ §2 리얼 와이어(옵트인 · KIS 모의투자) ═══

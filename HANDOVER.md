@@ -2742,3 +2742,15 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 체크아웃 재수검(같은 커밋 00176b5 Release CLI · 메인 release/ 복사본): 두 zip SHA-256 = .sha256 기록 · --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) ·
   --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0 · StandaloneBundleTests 파이프라인(MS2E_RELEASE_STANDALONE_ZIP) 16/16.
 - 한계(정직): WebView2 미설치 PC 실기 미확인(가드 분기는 모의 UI 증명) · KIS 리얼 와이어 소크 미실행(§99) · Offline_1M δ=0 단일 창 판정은 전체 스위트 부하 하 플래키(창별 최솟값/재측정 하드닝 후보).
+
+## 105. v12.18.30-DEV — LiveWireKisLongSoakTests.Offline_1M δ=0 측정 하드닝 (2026-10-20)
+
+- 문제(실측 근거): v12.18.29-GM 1차 출하 [3/11] 에서 Offline_1M 정상구간 할당 2,992B ≠ 0(20창 합산 단일 판정) → fail-closed. 같은 빌드 단독 5회 = 0B · KIS 수신 경로 무변경 → 전체 스위트 부하 하 외생 노이즈(타 스레드 GC 겹침 시 할당 컨텍스트 재계수).
+- 수정(StockManager.Tests/Integration/LiveWireKisLongSoakTests.cs 단일 파일 · 제품 코드 0):
+  - 웜업: 측정 대상과 분리된 어댑터 · 인터락 · 싱크로 5,000프레임 사전 파싱(JIT · 티어 승격 · 내부 버퍼) — 본 소크 계수 무오염.
+  - 격리: 측정 직전 GC.Collect · WaitForPendingFinalizers(선행 테스트 잔여 정리) → 전용 측정 스레드(KisSoakMeasure)에서 RunAsync 동기 구동(스레드풀 · 동기화 컨텍스트 무관 · 예외는 캡처 후 단언).
+  - 판정: 창별 할당 배열 기록(20창) → 최솟값 0B(다중 표본 · 결정론 δ=0) + 0B 창 과반 + 최대 창 ≤ 64KB(노이즈 상한 · 관측 2,992B/8,168B). 실 누수는 창당 ≥ 48,000프레임이라 전 창에서 드러남(완화 아님).
+  - 기존 단언(프레임 · 재접속 · 트립 · 핑 반송 · 초과 폐기 등) 전부 유지 · 출력에 창별 할당 표기.
+- 검증: Offline_1M 단독 5회 연속 통과(20창 전부 0B × 5) · 전체 스위트 Release 4,135 통과 + 1 건너뜀(§99 옵트인) · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E.
+- 불변: liveArmed:false · RCL/래칫 ≤40 무변경(테스트 파일만) · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
+- 한계(정직): 전체 스위트 부하 하 재발 여부는 1회 실행으로만 확인 — 다음 출하 [3/11] 에서 재관측 필요. §99 리얼 와이어 VTS 옵트인 시도(사용자 보고): 접속키 발급 682회 연속 실패 · 연결 0 · 프레임 0 → 자격증명(모의 전용 AppKey · HTS ID) 확인 전까지 MS2E_KIS_VTS_* 미설정 유지(건너뜀). 접속키 실패 시 5초 간격 무한 재발급(1시간 682회 REST)은 백오프 부재 — 후속 검토 후보.
