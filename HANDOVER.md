@@ -2887,3 +2887,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.32-GM 산출물 15건 → release/superseded-v12.18.32-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
 - 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 비트 28 실 피드 오탐률 미관측(LagBudget 50ms 보정 미실시 · §111) · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
+
+## 113. v12.18.34-DEV — WebView2 미설치 런타임 결함 주입 · 실 프로세스 안전 종료 실증 (2026-10-20)
+
+- 전제 검증: 오더가 명명한 WebView2RuntimeGuard.cs · WebView2RuntimeGuardTests.cs 는 v12.18.29-DEV(91d885d)에 이미 존재(탐침 · 온라인/오프라인 안내 · Program.cs 에서 DB/브로커/Blazor 홈 이전 결선 · exit 0).
+  실제 공백 2건: ① 설치 PC 에서 미설치 경로를 재현할 수단 없음 ② 실 프로세스 수준 exit 0 · 창 미생성 실증 없음(단위 테스트만). 신규 파일 0.
+- WebView2RuntimeGuard: MS2E_FORCE_WEBVIEW2_MISSING 결함 주입.
+  - "1" = 탐침 강제 미설치(실 미설치 PC 와 같은 WebView2RuntimeNotFoundException) + 실 안내 대화상자(운용자 리허설).
+  - "silent"(대소문자 · 공백 무시) = 강제 미설치 + SilentUi(대화상자 · 브라우저 실행 0 · 안내 문구는 로그 싱크).
+  - 그 외 값 = 주입 없음. 주입은 미설치 방향만 강제하고, 설치로 위장하는 값은 없음(가드 우회 0).
+- Program.cs: 가드 블록에서 주입 판독 → 탐침/UI 교체 → 결함 주입 WARN 로그. 클래식/헤드리스 제외 · DB/브로커/뮤텍스/BlazorHomeForm 이전 · exit 0 결선 무변경.
+- 테스트(WebView2RuntimeGuardTests §4/§5 · +15):
+  - §4 해석 표(정확한 값만) · 열거값 = None/ForceMissing/ForceMissingSilent(우회값 0) · 주입 탐침 = 실 예외 · 온라인/오프라인 모두 Present 불가.
+  - §4 SilentUi 강제 미설치 = Declined/OfflineExit · 로그 1줄 · 브라우저 실행 0. Main 진입~안전 종료 구간 QuantumVault/KisProvider/LocalDatabase/IBroker/BlazorHomeForm/LiveArm/ValveWired 0.
+  - §5 실 프로세스(ConcurrencyStress): 테스트 출력의 MS2E.StockSuite.exe 를 silent 주입으로 기동 → 주 창 미관측 · 30초 내 exit 0.
+- 대조 실측: 주입 없이 같은 exe 기동 = 주 창 생성(HWND 관측 → 강제 종료) → §5 가 가드 작동과 미작동을 구분함을 확인.
+  주입 기동 로그 = 결함 주입 → silent 트리거 생략 → BootstrapperDeclined · 안전 종료.
+- 하네스 교정: S26cTelemetryTests.Reader_NeverBlocks — 부하 중 리더 스케줄 전 발행 완료 시 reads=0 헛실패(1회 18ms 실측 · 단독 8/8 통과) → 첫 판독 확인 후 발행. 제품 코드 무변경.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,183 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40.
+- 한계(정직): 실 미설치 PC 기동은 여전히 미실측(주입 탐침으로 대체). 런타임은 있으나 BlazorWebView 비동기 초기화가 실패하는 경로(손상 런타임 · 사용자 데이터 폴더 쓰기 불가)는 이 가드 범위 밖.
+  로그는 실 %LOCALAPPDATA%\StockManager\logs 에 기록됨. 메인 체크아웃 빌드는 타 세션 미커밋 파일 포함.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.

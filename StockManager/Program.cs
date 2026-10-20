@@ -48,12 +48,20 @@ namespace StockManager
 
             // [v12.18.29] WebView2 런타임 사전 비행 가드 — Blazor 경로만(클래식·헤드리스 = WebView 미사용). DB·브로커 구성 '이전'에
             //   탐침 → 미설치 PC 의 빈 화면 원천 차단 · 공식 부트스트래퍼 안내/오프라인 안내 후 안전 종료(0). 실 발주 경로 미접촉.
+            //   [v12.18.34] MS2E_FORCE_WEBVIEW2_MISSING 결함 주입 = 미설치 방향만 강제(1 = 실 대화상자 · silent = 무대화 로그).
             if (!Has("--classic") && !Has("--headless"))
             {
+                var wv2Fault = StockManager.Blazor.WebView2RuntimeGuard.ReadFaultInjection();
+                if (wv2Fault != StockManager.Blazor.WebView2FaultInjection.None)
+                    Log.Warn($"[WebView2] 결함 주입 {StockManager.Blazor.WebView2RuntimeGuard.ForceMissingEnvVar} → {wv2Fault} · 런타임 미설치 강제");
                 if (!StockManager.Blazor.WebView2RuntimeGuard.EnsureRuntime(
-                        StockManager.Blazor.WebView2RuntimeGuard.DefaultProbe,
+                        wv2Fault == StockManager.Blazor.WebView2FaultInjection.None
+                            ? StockManager.Blazor.WebView2RuntimeGuard.DefaultProbe
+                            : StockManager.Blazor.WebView2RuntimeGuard.ForcedMissingProbe,
                         StockManager.Blazor.WebView2RuntimeGuard.DefaultNetworkProbe,
-                        new StockManager.Blazor.WebView2RuntimeGuard.MessageBoxUi(),
+                        wv2Fault == StockManager.Blazor.WebView2FaultInjection.ForceMissingSilent
+                            ? new StockManager.Blazor.WebView2RuntimeGuard.SilentUi(m => Log.Warn(m))
+                            : new StockManager.Blazor.WebView2RuntimeGuard.MessageBoxUi(),
                         out var wv2Outcome))
                 {
                     Log.Warn($"[WebView2] 런타임 미설치 → {wv2Outcome} · 안전 종료");

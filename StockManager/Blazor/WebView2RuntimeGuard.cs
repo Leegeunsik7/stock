@@ -11,6 +11,11 @@
 //        브로커·DB·피어 저장소 접점 0 — 실 발주 경로 미접촉(liveArmed:false 무관).
 //  ※ 무인 백그라운드 설치(내려받은 exe 직접 실행)는 Authenticode 체인 검증 없이 원격 바이너리를 실행하게 되므로 미채택 —
 //    설치형 배포본(Inno Setup)은 동봉 부트스트래퍼로 이미 무인 설치(/silent /install)한다.
+//
+//  [v12.18.34-DEV] 결함 주입 — 설치 PC 에서 미설치 경로를 실기 재현(MS2E_FORCE_WEBVIEW2_MISSING):
+//        "1"      → 탐침 강제 미설치(WebView2RuntimeNotFoundException) · 실 안내 대화상자(운용자 리허설)
+//        "silent" → 탐침 강제 미설치 · 무대화 로그 UI(다운로드 트리거 0 · 프로세스 수준 자동 검증용)
+//        그 외    → 주입 없음. 주입은 '미설치' 방향만 강제 — 미설치 PC 를 설치로 위장하는 값은 존재하지 않는다(우회 0).
 using System;
 using System.Windows.Forms;
 
@@ -26,6 +31,8 @@ namespace StockManager.Blazor
         BootstrapperOpenFailed,  // 트리거 실패 → 수동 안내 후 종료(0)
         OfflineExit,             // 오프라인 안내 → 종료(0)
     }
+
+    internal enum WebView2FaultInjection { None, ForceMissing, ForceMissingSilent }
 
     /// <summary>가드의 사용자 상호작용 봉합선 — 단위 테스트는 모의, 실 호스트는 MessageBox/셸 실행.</summary>
     internal interface IWebView2GuardUi
@@ -47,6 +54,23 @@ namespace StockManager.Blazor
         public static string? DefaultProbe() => Microsoft.Web.WebView2.Core.CoreWebView2Environment.GetAvailableBrowserVersionString();
 
         public static bool DefaultNetworkProbe() => System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable();
+
+        public const string ForceMissingEnvVar = "MS2E_FORCE_WEBVIEW2_MISSING";
+
+        /// <summary>결함 주입 값 해석 — "1" · "silent"(대소문자 무시 · 앞뒤 공백 무시) 외 전부 None.</summary>
+        public static WebView2FaultInjection ParseFaultInjection(string? raw)
+        {
+            var v = raw?.Trim();
+            if (v == "1") return WebView2FaultInjection.ForceMissing;
+            if (string.Equals(v, "silent", StringComparison.OrdinalIgnoreCase)) return WebView2FaultInjection.ForceMissingSilent;
+            return WebView2FaultInjection.None;
+        }
+
+        public static WebView2FaultInjection ReadFaultInjection() =>
+            ParseFaultInjection(Environment.GetEnvironmentVariable(ForceMissingEnvVar));
+
+        /// <summary>주입 탐침 — 실 미설치 PC 와 동일한 예외 형식으로 실패.</summary>
+        public static string? ForcedMissingProbe() => throw new Microsoft.Web.WebView2.Core.WebView2RuntimeNotFoundException();
 
         /// <summary>설치 버전 문자열 — 어떤 실패든 null(미설치 취급).</summary>
         public static string? ProbeVersion(Func<string?> probe)
@@ -96,6 +120,18 @@ namespace StockManager.Blazor
         {
             outcome = Resolve(Classify(probe, isNetworkAvailable), ui);
             return outcome == WebView2GuardOutcome.ProceedBlazor;
+        }
+
+        /// <summary>[v12.18.34] 무대화 UI(silent 주입 전용) — 대화상자 · 브라우저 실행 0, 안내 문구는 로그 싱크로만.</summary>
+        internal sealed class SilentUi : IWebView2GuardUi
+        {
+            private readonly Action<string> _sink;
+            public SilentUi(Action<string> sink) => _sink = sink;
+
+            public bool AskOpenBootstrapper(string url) { _sink("[WebView2] 미설치(온라인) · silent → 부트스트래퍼 트리거 생략: " + url); return false; }
+            public void OpenUrl(string url) => _sink("[WebView2] silent → 브라우저 실행 생략: " + url);
+            public void ShowOffline(string url) => _sink("[WebView2] 미설치(오프라인) · silent → 안내 생략: " + url);
+            public void ShowOpenFailed(string url) => _sink("[WebView2] 트리거 실패 · silent → 안내 생략: " + url);
         }
 
         /// <summary>실 호스트 UI — MessageBox + 셸 실행(기본 브라우저가 부트스트래퍼 다운로드).</summary>

@@ -111,6 +111,8 @@ namespace StockManager.Tests
             bool stop = false; long reads = 0;
             var reader = new Thread(() => { while (!Volatile.Read(ref stop)) { ch.TryRead(out _); Interlocked.Increment(ref reads); } }) { IsBackground = true };
             reader.Start();
+            // [v12.18.34] 하네스 레이스 교정 — 부하 중 리더 스케줄 전에 발행이 끝나면 reads=0 헛실패(18ms 실측). 첫 판독 확인 후 발행.
+            Assert.True(SpinWait.SpinUntil(() => Interlocked.Read(ref reads) > 0, 15000));
             for (long s = 1; s <= 200000; s++) ch.Publish(T(s));
             Volatile.Write(ref stop, true);
             Assert.True(reader.Join(15000));   // 3초 내 완주 = 비블록

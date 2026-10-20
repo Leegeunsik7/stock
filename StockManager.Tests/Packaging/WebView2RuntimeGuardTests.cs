@@ -5,10 +5,15 @@
 //  §2 상태 전이 — Present = Blazor 진행(UI 상호작용 0) · MissingOnline 수락 = 공식 부트스트래퍼 트리거 · 거부 = 트리거 0 ·
 //     트리거 실패 = 수동 안내 강등 · MissingOffline = 오프라인 안내만 · 미설치 전 경로 = 진행 거부(안전 종료 0)
 //  §3 진입점 결선 — Program.cs: 가드가 DB/브로커/Blazor 홈 구성 '이전' · 클래식/헤드리스 제외 · 종료 코드 0 · 가드 소스 피어/브로커 접점 0
+//  §4 [v12.18.34-DEV] 결함 주입 — MS2E_FORCE_WEBVIEW2_MISSING 해석("1" · "silent" 외 None) · 주입 탐침 = 실 미설치 예외 · 설치 위장 값 0 ·
+//     silent UI = 대화상자/브라우저 0 · 진입점 결선(주입 시 DefaultProbe 미사용)
+//  §5 [v12.18.34-DEV] 실 프로세스 — 설치 PC 에서 silent 주입 호스트 기동 = 주 창 생성 0 · 제한 시간 내 exit 0(빈 화면 원천 차단 실증)
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using StockManager.Blazor;
 using Xunit;
@@ -183,6 +188,104 @@ namespace StockManager.Tests.Packaging
             Assert.Contains("CoreWebView2Environment.GetAvailableBrowserVersionString()", s);
             foreach (var banned in new[] { "QuantumVault", "IBroker", "KisProvider", "LocalDatabase", "HttpClient", "WebClient", "/silent" + " /install\"" })
                 Assert.DoesNotContain(banned, s);
+        }
+
+        // ── §4 결함 주입 ────────────────────────────────────────────────
+
+        [Theory]
+        [InlineData("1", "ForceMissing")]
+        [InlineData(" 1 ", "ForceMissing")]
+        [InlineData("silent", "ForceMissingSilent")]
+        [InlineData("SILENT", "ForceMissingSilent")]
+        [InlineData(null, "None")]
+        [InlineData("", "None")]
+        [InlineData("0", "None")]
+        [InlineData("true", "None")]
+        [InlineData("present", "None")]
+        [InlineData("11", "None")]
+        public void FaultInjection_Parse_OnlyExactValues(string? raw, string expected)
+        {
+            Assert.Equal(Enum.Parse<WebView2FaultInjection>(expected), WebView2RuntimeGuard.ParseFaultInjection(raw));
+        }
+
+        [Fact]
+        public void FaultInjection_OnlyForcesMissing_NoBypassValue()
+        {
+            Assert.Equal(new[] { "None", "ForceMissing", "ForceMissingSilent" }, Enum.GetNames<WebView2FaultInjection>());
+            Assert.Equal("MS2E_FORCE_WEBVIEW2_MISSING", WebView2RuntimeGuard.ForceMissingEnvVar);
+            Assert.Throws<WebView2RuntimeNotFoundException>(() => WebView2RuntimeGuard.ForcedMissingProbe());
+            foreach (bool online in new[] { true, false })
+                Assert.NotEqual(WebView2RuntimeState.Present, WebView2RuntimeGuard.Classify(WebView2RuntimeGuard.ForcedMissingProbe, () => online));
+        }
+
+        [Theory]
+        [InlineData(true, "BootstrapperDeclined")]
+        [InlineData(false, "OfflineExit")]
+        public void SilentUi_ForcedMissing_NoDialogNoDownload_SafeExit(bool online, string expected)
+        {
+            var lines = new List<string>();
+            var ui = new WebView2RuntimeGuard.SilentUi(lines.Add);
+            Assert.False(WebView2RuntimeGuard.EnsureRuntime(WebView2RuntimeGuard.ForcedMissingProbe, () => online, ui, out var outcome));
+            Assert.Equal(Enum.Parse<WebView2GuardOutcome>(expected), outcome);
+            Assert.Single(lines);
+            Assert.Contains(Url, lines[0]);
+            Assert.DoesNotContain(lines, l => l.Contains("브라우저 실행", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void ProgramEntry_FaultInjection_ReplacesProbeAndUi_BeforeAnyEngineWiring()
+        {
+            string s = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "Program.cs"));
+            int read = s.IndexOf("WebView2RuntimeGuard.ReadFaultInjection()", StringComparison.Ordinal);
+            int ensure = s.IndexOf("WebView2RuntimeGuard.EnsureRuntime(", StringComparison.Ordinal);
+            int exit = s.IndexOf("WebView2RuntimeGuard.SafeExitCode", StringComparison.Ordinal);
+            Assert.True(read > 0 && read < ensure && ensure < exit, "주입 판독 → 가드 → 안전 종료 순서 위반");
+            string window = s.Substring(read, s.IndexOf("return;", exit, StringComparison.Ordinal) - read);
+            Assert.Contains("WebView2RuntimeGuard.ForcedMissingProbe", window);
+            Assert.Contains("WebView2FaultInjection.None", window);
+            Assert.Contains("new StockManager.Blazor.WebView2RuntimeGuard.SilentUi(", window);
+            // 가드 이전(Main 진입 ~ 안전 종료) 구간에 브로커 · DB · 피어 · 무장 접점 0
+            int main = s.IndexOf("static void Main(", StringComparison.Ordinal);
+            string pre = s.Substring(main, s.IndexOf("return;", exit, StringComparison.Ordinal) - main);
+            foreach (var banned in new[] { "QuantumVault", "KisProvider", "LocalDatabase", "IBroker", "BlazorHomeForm", "LiveArm", "ValveWired" })
+                Assert.DoesNotContain(banned, pre);
+        }
+    }
+
+    // ── §5 실 프로세스 — silent 주입 호스트 기동 ───────────────────────────
+    [Collection("ConcurrencyStress")]
+    public sealed class WebView2MissingRuntimeProcessTests
+    {
+        [Fact]
+        public void HostProcess_ForcedMissingSilent_NoMainWindow_ExitsZero()
+        {
+            string exe = Path.Combine(AppContext.BaseDirectory, "MS2E.StockSuite.exe");
+            Assert.True(File.Exists(exe), "테스트 출력에 호스트 apphost 없음: " + exe);
+
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = AppContext.BaseDirectory };
+            psi.Environment[WebView2RuntimeGuard.ForceMissingEnvVar] = "silent";
+            psi.Environment.Remove("MS2E_LIVE_ARM");
+
+            using var p = Process.Start(psi)!;
+            bool windowSeen = false;
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                while (!p.HasExited && sw.Elapsed < TimeSpan.FromSeconds(30))
+                {
+                    p.Refresh();
+                    if (p.MainWindowHandle != IntPtr.Zero) windowSeen = true;
+                    Thread.Sleep(25);
+                }
+                Assert.True(p.HasExited, "가드 미작동 — 30초 내 종료되지 않음(Blazor 기동 진행 의심)");
+                p.WaitForExit();
+                Assert.False(windowSeen, "주 창 생성 관측 — 미설치 강제 하에서 호스트 윈도우가 만들어짐");
+                Assert.Equal(WebView2RuntimeGuard.SafeExitCode, p.ExitCode);
+            }
+            finally
+            {
+                if (!p.HasExited) { try { p.Kill(entireProcessTree: true); } catch (Exception) { } }
+            }
         }
     }
 }
