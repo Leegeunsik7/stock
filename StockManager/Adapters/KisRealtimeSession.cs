@@ -13,6 +13,9 @@
 //  ⑥ [세션 복구] SessionRecoveryManager 결속 시: 고정 지연 대신 펌프 구동 지수 백오프 허가(1·2·4·8·16s) · 연결마다 별도 취소원 —
 //     침묵(half-open) 판정 시 관리자가 AbortConnection 으로 죽은 소켓을 닫아 재접속 · 재구독(체결통보 · 심박 · 호가 ≤38) → 대사 결속.
 //     미결속(null) = 기존 고정 지연 동작 그대로(하위 호환).
+//  ⑦ [v12.18.31] 접속키 발급 백오프(KisApprovalBackoff): 일시 실패 = 5 · 10 · 20 · 40 · 60s 상한 + 지터 대기 후 재발급(연결 재시도 지연과 max 합성 —
+//     복구 관리자 결속 시에도 발급 간격 하한 유지) · 자격증명 거부(KisApprovalRejectedException · 401/403) = sticky 래치 → 수신 루프 종료(발급 시도 0).
+//     수정 전: 실패마다 고정 5s(복구 관리자 결속 시 1~16s) 무한 재발급 — VTS 실측 1시간 682회 REST(재시도 폭풍).
 //  ★liveArmed:false 무관 — 이 세션은 수신 전용(주문 송신 0).
 // ============================================================================
 using System;
@@ -66,15 +69,17 @@ namespace StockManager.Adapters
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private IKisWsTransport? _transport;
         private readonly SessionRecoveryManager? _recovery;
+        private readonly KisApprovalBackoff _approvalBackoff;
         private CancellationTokenSource? _conn;                                      // 현재 연결 전용 취소원(침묵 강제 종료)
         private long _aborts;
         private long _connects, _disconnects, _approvalFailures, _faults, _oversized, _framesIn, _echoes;
 
         public KisRealtimeSession(KisOpenApiAdapter adapter, KisSessionInterlock session, Func<IKisWsTransport> transportFactory, Func<string?> approvalKey,
                                   string htsId, bool vts, string heartbeatSymbol = "005930", Uri? uri = null, TimeSpan? reconnectDelay = null,
-                                  string[]? bookSymbols = null, SessionRecoveryManager? recovery = null)
+                                  string[]? bookSymbols = null, SessionRecoveryManager? recovery = null, KisApprovalBackoff? approvalBackoff = null)
         {
             _recovery = recovery;
+            _approvalBackoff = approvalBackoff ?? new KisApprovalBackoff();
             _bookSymbols = bookSymbols ?? Array.Empty<string>();
             if (_bookSymbols.Length > MaxBookSymbols) throw new ArgumentOutOfRangeException(nameof(bookSymbols), "호가 구독 종목 상한 " + MaxBookSymbols);
             foreach (var b in _bookSymbols) if (b is null || b.Length != 6) throw new ArgumentException("종목코드 6자리", nameof(bookSymbols));
@@ -91,6 +96,9 @@ namespace StockManager.Adapters
         public long Connects => Interlocked.Read(ref _connects);
         public long Disconnects => Interlocked.Read(ref _disconnects);
         public long ApprovalFailures => Interlocked.Read(ref _approvalFailures);
+        /// <summary>접속키 자격증명 거부 래치(sticky · 발급 시도 0 · 상태 보고).</summary>
+        public bool ApprovalRejected => _approvalBackoff.Rejected;
+        public KisApprovalBackoff ApprovalBackoff => _approvalBackoff;
         public long Faults => Interlocked.Read(ref _faults);
         public long Oversized => Interlocked.Read(ref _oversized);
         public long FramesIn => Interlocked.Read(ref _framesIn);
@@ -116,15 +124,21 @@ namespace StockManager.Adapters
             while (!ct.IsCancellationRequested)
             {
                 if (rec is not null && !await rec.WaitForAttemptAsync().ConfigureAwait(false)) break;   // [방향 A] 펌프 허가(무할당 대기)
+                if (_approvalBackoff.Rejected) break;                                     // [v12.18.31] 자격증명 거부 래치 = 발급 시도 0
+                if (!await _approvalBackoff.WaitAsync(ct).ConfigureAwait(false)) break;   // [v12.18.31] 발급 간격 하한(지수 백오프 잔여 대기)
                 string? key = null;
-                try { key = _approval(); } catch (Exception) { key = null; }
+                try { key = _approval(); }
+                catch (MS2E.Infrastructure.KisApprovalRejectedException e) { _approvalBackoff.NoteRejected(e.StatusCode); key = null; }
+                catch (Exception) { key = null; }
                 if (string.IsNullOrWhiteSpace(key))
                 {
                     Interlocked.Increment(ref _approvalFailures);
+                    if (_approvalBackoff.Rejected) break;                                 // 영구 거부 — 무한 재발급 차단(미연결 = 인터락 차단 유지)
+                    _approvalBackoff.NoteFailure();
                     if (rec is not null) { rec.OnAttemptFailed(); continue; }
-                    if (!await DelayAsync(ct).ConfigureAwait(false)) break;
-                    continue;
+                    continue;                                                             // 대기 = 루프 머리 WaitAsync(백오프 잔여)
                 }
+                _approvalBackoff.NoteSuccess();
                 var t = _factory();
                 var conn = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 Volatile.Write(ref _conn, conn);

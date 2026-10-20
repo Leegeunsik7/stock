@@ -2773,3 +2773,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.29-GM 산출물 15건 → release/superseded-v12.18.29-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
 - 메인 체크아웃 재수검(같은 소스 e0cfa3e Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): Offline_1M 부하 하 통과는 이번 1회 관측 · WebView2 미설치 PC 실기 미확인 · KIS 리얼 와이어 소크 미실행(§99 · 접속키 682회 실패 보고 — 자격증명 재확인 대기).
+
+## 107. v12.18.31-DEV — KIS 접속키 발급 지수 백오프 · 자격증명 거부 sticky 래치(재시도 폭풍 차단) (2026-10-20)
+
+- 문제(실측 · 사용자 보고): §99 VTS 옵트인 소크에서 접속키(POST /oauth2/Approval) 발급 실패 시 고정 5s 간격 무한 재요청 → 1시간 682회 REST(연결 0 · 프레임 0).
+  복구 관리자 결속(호스트 실배선) 경로도 1~16s 펌프 간격으로 무한 재발급 — 같은 폭풍 위험. 401/403(자격증명 오류)도 일시 실패와 구분 없음.
+- 신규 StockManager/Adapters/KisApprovalBackoff.cs(호스트 · RCL 미접촉):
+  - 일시 실패 n 회 → 기준 지연 5 · 10 · 20 · 40 · 60s 상한 + 지터 +12.5~25%(SplitMix64 무할당 · 주입 시드). 지터 하한이 상한 구간 최소 간격 67.5s 를 보장 → 1시간 발급 ≤ 57회(시드 무관).
+  - 자격증명 거부 = sticky 래치(발급 시도 0 · 재시작 전 해제 없음 · 상태 보고 ApprovalRejected/LastRejectStatus). 성공 = 연속 실패 리셋.
+  - δ=0: NoteFailure · NoteSuccess · RemainingMicros = long 연산 + Interlocked/Volatile. 대기(Task.Delay)는 실패당 1회 콜드.
+- KisRealtimeSession: 발급 직전 백오프 잔여 대기(복구 관리자 펌프 간격과 max 합성 — 두 모드 모두 적용) · 거부 래치 = 수신 루프 종료(미연결 = 세션 인터락 차단 유지).
+- KisLiveBroker.RequestApprovalKey: HTTP 401/403 = KisApprovalRejectedException(IsCredentialRejection) · 그 밖(429 · 5xx · 네트워크 · 본문 이상) = 종전대로 null(일시 실패).
+- 개발 중 발견 · 수정: 해제 표지 long.MinValue − 시계 감산 오버플로 → 거대 대기(TimeSpan 오버플로) — 비교 후 감산 + 회귀 단언.
+- 테스트(LiveWireKisLongSoakTests §3 · 가상 시계 + 모의 발급 엔드포인트 대역): 1시간 일시 실패 54회(< 60 · 간격 5.7 → 11.5 → 22.7 → 48.9 → 67.7~74.8s) ·
+  시드 64종 최악 54회(≤ 57 단언) · 401/403 = 발급 1회 후 래치 · 상태 분류 6종 · 3회 실패 후 성공 = 리셋 + 접속 1회 · 상태 머신 δ=0(3창 최솟값 0B).
+  기존 2건(KisLivePipelineWiring · SessionAutoRecovery 접속키 장애)은 재시도/펌프 검증 목적이라 축소 백오프(1~4ms) 주입.
+- 검증: Offline_1M 단독 5회 연속 통과(20창 0B × 5) · 전체 스위트 Release 4,147 통과 + 1 건너뜀 · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 래칫 ≤40(RCL 변경 0).
+- 불변: liveArmed:false(수신 전용 경로 · 주문 송신 0) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
+- 한계(정직): 401/403 분류는 HTTP 상태 기준 — KIS 가 자격증명 오류를 다른 상태(예: 500 + 본문 코드)로 돌려주면 일시 실패(≤ 57회/시간)로 처리된다(실 응답 미관측).
+  KisLiveBroker 의 실 HTTP 매핑은 정적 HttpClient 라 단위 테스트 미적용(분류 함수만 검증). 실 VTS 재소크 미실시.

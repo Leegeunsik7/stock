@@ -250,7 +250,8 @@ namespace StockManager.Tests
             using var adapter = new KisOpenApiAdapter(interlock);
             int factory = 0;
             var rt = new KisRealtimeSession(adapter, interlock, () => { factory++; return new FakeTransport(); }, () => null, "htsuser", vts: true,
-                                            reconnectDelay: TimeSpan.FromMilliseconds(5));
+                                            reconnectDelay: TimeSpan.FromMilliseconds(5),
+                                            approvalBackoff: new KisApprovalBackoff(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(4)));   // 발급 백오프 축소(재시도 계수 검증)
             Assert.Equal("H0STCNI9", rt.NoticeTrId);                               // 모의 체결통보 TR
             using var cts = new CancellationTokenSource();
             var run = Task.Run(() => rt.RunAsync(cts.Token));

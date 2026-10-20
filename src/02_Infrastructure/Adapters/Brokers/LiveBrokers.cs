@@ -154,6 +154,16 @@ namespace MS2E.Infrastructure
     ///    라우터 게이트(OnBrokerAccepted)가 번호를 못 읽어 추적 슬롯이 TTL 까지 미결 → OrderSlotAge sticky Disarm. → KIS 네임스페이스 번호 반환.
     /// ④ 소수 수량을 (int) 절단해 송출(요청 ≠ 송출) → 거부. Cancel 미구현 → 원 조직번호 보관 후 order-rvsecncl 취소 구현.
     /// 비밀값(AppKey/AppSecret/토큰)은 FinancialPiiMasker·RawCredentialLeakInterlock 에 등록 — 오류 본문도 마스킹 후 반환.</remarks>
+    /// <summary>[v12.18.31] KIS 접속키 자격증명 거부(HTTP 401/403) — 일시 실패(null)와 구분해 재발급 sticky 중단(재시도 폭풍 차단).</summary>
+    public sealed class KisApprovalRejectedException : Exception
+    {
+        public int StatusCode { get; }
+        public KisApprovalRejectedException(int statusCode) : base("KIS 접속키 자격증명 거부(HTTP " + statusCode + ")") => StatusCode = statusCode;
+
+        /// <summary>영구 거부 상태인가 — 401(인증 실패) · 403(권한/키 거부). 그 밖(429 · 5xx · 네트워크) = 일시 실패.</summary>
+        public static bool IsCredentialRejection(int httpStatus) => httpStatus == 401 || httpStatus == 403;
+    }
+
     public class KisLiveBroker : IBroker
     {
         private static readonly HttpClient Http = new();
@@ -378,7 +388,10 @@ namespace MS2E.Infrastructure
             catch (Exception) { return false; }
         }
 
-        /// <summary>실시간(WebSocket) 접속키 발급(POST /oauth2/Approval · appkey/secretkey). 실패 = null. 접속키는 마스커/유출 인터락에 등록.</summary>
+        /// <summary>
+        /// 실시간(WebSocket) 접속키 발급(POST /oauth2/Approval · appkey/secretkey). 일시 실패 = null. 접속키는 마스커/유출 인터락에 등록.
+        /// [v12.18.31] 자격증명 거부(HTTP 401/403) = KisApprovalRejectedException — 세션이 sticky 래치로 재발급을 멈춘다(재시도 폭풍 차단).
+        /// </summary>
         public string? RequestApprovalKey()
         {
             if (!Configured) return null;
@@ -387,14 +400,18 @@ namespace MS2E.Infrastructure
                 var json = JsonSerializer.Serialize(new Dictionary<string, string>
                 { ["grant_type"] = "client_credentials", ["appkey"] = _appKey, ["secretkey"] = _appSecret });
                 using var req = new HttpRequestMessage(HttpMethod.Post, Domain + "/oauth2/Approval") { Content = new StringContent(json, Encoding.UTF8, "application/json") };
-                var (ok, body) = SendRead(req);
-                if (!ok) return null;
+                using var res = Http.Send(req);
+                int status = (int)res.StatusCode;
+                if (KisApprovalRejectedException.IsCredentialRejection(status)) throw new KisApprovalRejectedException(status);
+                if (!res.IsSuccessStatusCode) return null;
+                var body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 using var doc = JsonDocument.Parse(body);
                 var key = doc.RootElement.TryGetProperty("approval_key", out var k) ? k.GetString() : null;
                 if (string.IsNullOrWhiteSpace(key)) return null;
                 RegisterSecrets(key);
                 return key;
             }
+            catch (KisApprovalRejectedException) { throw; }
             catch (Exception) { return null; }
         }
 

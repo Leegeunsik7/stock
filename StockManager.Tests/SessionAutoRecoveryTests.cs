@@ -496,7 +496,8 @@ namespace StockManager.Tests
                                                onExhausted: () => Interlocked.Increment(ref exhausted), nowTicks: () => Volatile.Read(ref micros) * 10);
             var transports = new List<HalfOpenTransport>();
             var rt = new KisRealtimeSession(adapter, interlock, () => { var t = new HalfOpenTransport(); lock (transports) transports.Add(t); return t; },
-                                            () => { Interlocked.Increment(ref keyCalls); return Volatile.Read(ref keyOk) ? "k" : null; }, "htsuser", vts: false, recovery: m);
+                                            () => { Interlocked.Increment(ref keyCalls); return Volatile.Read(ref keyOk) ? "k" : null; }, "htsuser", vts: false, recovery: m,
+                                            approvalBackoff: new KisApprovalBackoff(TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(4)));   // 발급 백오프 축소(펌프 간격 검증)
             m.BindAbort(rt.AbortConnection);
             using var cts = new CancellationTokenSource();
             var run = Task.Run(() => rt.RunAsync(cts.Token));

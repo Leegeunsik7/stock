@@ -445,5 +445,146 @@ namespace StockManager.Tests.Integration
             Assert.True(cap.Frames > 0);
             Assert.Equal(0, min);
         }
+
+        // ═══ §3 [v12.18.31] 접속키 발급 백오프 · 재시도 폭풍 차단(가상 시계 · 모의 발급 엔드포인트) ═══
+
+        private const long HourMicros = 3_600_000_000;
+
+        /// <summary>모의 발급 엔드포인트(HTTP 결과를 대역 함수로 재현) + 가상 시계 1시간 구동 — 반환 = 발급 시도 시각(µs) 목록.</summary>
+        private static System.Collections.Generic.List<long> SimulateApprovalHour(Func<int, string?> endpoint, ulong seed, out KisRealtimeSession rt, out int factoryCalls,
+                                                                                  out KisSessionInterlock interlock)
+        {
+            long[] clock = { 0 };
+            var calls = new System.Collections.Generic.List<long>();
+            var backoff = new KisApprovalBackoff(nowMicros: () => clock[0],
+                                                 delay: (d, ct) => { clock[0] += (long)d.TotalMicroseconds; return Task.CompletedTask; }, jitterSeed: seed);
+            interlock = new KisSessionInterlock(null, 1, () => clock[0]);
+            var adapter = new KisOpenApiAdapter(interlock);
+            int factory = 0;
+            var stop = new CancellationTokenSource();
+            var wire = new SoakWire(BuildPool()) { Stop = stop };
+            rt = new KisRealtimeSession(adapter, interlock, () => { factory++; stop.Cancel(); return wire.Next(); },   // 첫 접속 = 시뮬레이션 종료(접속 1회 확인)
+                                        () =>
+                                        {
+                                            if (clock[0] >= HourMicros) { stop.Cancel(); return null; }
+                                            calls.Add(clock[0]);
+                                            return endpoint(calls.Count);
+                                        }, "soakuser", vts: true, reconnectDelay: TimeSpan.Zero, approvalBackoff: backoff);
+            wire.Session = rt; wire.Interlock = interlock;
+            var run = rt.RunAsync(stop.Token);
+            Assert.True(run.IsCompleted, "가상 시계 대기가 동기 완료되지 않음(시뮬레이션 전제 붕괴)");
+            run.GetAwaiter().GetResult();
+            factoryCalls = factory;
+            stop.Dispose();
+            return calls;
+        }
+
+        [Fact]
+        public void ApprovalKey_TransientFailures_OneHour_BackoffEscalates_5_10_20_40_Then_60Cap_And_StaysUnder60Calls()
+        {
+            var calls = SimulateApprovalHour(_ => null, 0x9E37_79B9_7F4A_7C15UL, out var rt, out int factory, out var interlock);   // 발급 실패 연속(5xx · 네트워크)
+            var gaps = new long[calls.Count - 1];
+            for (int i = 1; i < calls.Count; i++) gaps[i - 1] = calls[i] - calls[i - 1];
+            _out.WriteLine($"[접속키 백오프 1시간] 시도 {calls.Count}회(수정 전 실측 682회) · 간격(s) [{string.Join(',', Array.ConvertAll(gaps, g => (g / 1_000_000.0).ToString("F1")))}]");
+
+            long[] bases = { 5_000_000, 10_000_000, 20_000_000, 40_000_000 };
+            for (int i = 0; i < bases.Length; i++)                                             // 5 → 10 → 20 → 40s(+12.5~25% 지터)
+                Assert.InRange(gaps[i], bases[i] + bases[i] / 8, bases[i] + bases[i] / 4);
+            for (int i = bases.Length; i < gaps.Length; i++)                                    // 60s 상한(+12.5~25% 지터)
+                Assert.InRange(gaps[i], 67_500_000, 75_000_000);
+            Assert.True(calls.Count < 60, $"1시간 발급 시도 {calls.Count}회 ≥ 60(재시도 폭풍)");
+            Assert.Equal(0, factory);                                                          // 접속키 없으면 소켓 접속 0
+            Assert.True(interlock.ArmingBlocked);                                              // 미연결 = 차단 유지
+            Assert.False(rt.ApprovalRejected);                                                 // 일시 실패는 래치 아님(복구 가시성 유지)
+            Assert.Equal(calls.Count + 1, rt.ApprovalFailures);                                // 시뮬레이션 종료 호출 1회 포함
+        }
+
+        [Fact]
+        public void ApprovalKey_HourlyCallCeiling_HoldsForAnyJitterSeed()
+        {
+            int worst = 0;
+            for (ulong seed = 1; seed <= 64; seed++)
+                worst = Math.Max(worst, SimulateApprovalHour(_ => null, seed * 0x9E37_79B9UL, out _, out _, out _).Count);
+            _out.WriteLine($"[접속키 백오프] 시드 64종 최악 시도 {worst}회/시간");
+            Assert.True(worst <= 57, $"최악 {worst}회 > 57(지터 하한 +12.5% 결정론 상한)");
+        }
+
+        [Theory]
+        [InlineData(401)]
+        [InlineData(403)]
+        public void ApprovalKey_CredentialRejection_LatchesStickyAndStopsAfterOneCall(int status)
+        {
+            var calls = SimulateApprovalHour(_ => throw new MS2E.Infrastructure.KisApprovalRejectedException(status), 7, out var rt, out int factory, out var interlock);
+            Assert.Single(calls);                                                              // 거부 1회 = 발급 시도 영구 중단
+            Assert.True(rt.ApprovalRejected);
+            Assert.Equal(status, rt.ApprovalBackoff.LastRejectStatus);
+            Assert.Equal(1, rt.ApprovalBackoff.Rejections);
+            Assert.Equal(1, rt.ApprovalFailures);
+            Assert.Equal(0, factory);
+            Assert.True(interlock.ArmingBlocked);
+        }
+
+        [Theory]
+        [InlineData(401, true)]
+        [InlineData(403, true)]
+        [InlineData(429, false)]
+        [InlineData(500, false)]
+        [InlineData(502, false)]
+        [InlineData(200, false)]
+        public void ApprovalKey_RejectionClassifier_OnlyCredentialStatusesAreSticky(int status, bool sticky)
+            => Assert.Equal(sticky, MS2E.Infrastructure.KisApprovalRejectedException.IsCredentialRejection(status));
+
+        [Fact]
+        public void ApprovalKey_TransientThenSuccess_ResetsBackoffAndConnects()
+        {
+            long[] clock = { 0 };
+            var b = new KisApprovalBackoff(nowMicros: () => clock[0], jitterSeed: 3);
+            Assert.Equal(0, b.RemainingMicros());                                              // 해제 표지(long.MinValue) − 시계 오버플로 회귀 방지
+            Assert.Equal(0, new KisApprovalBackoff().RemainingMicros());                       // 실 Stopwatch 시계
+            for (int n = 1; n <= 8; n++) b.NoteFailure();
+            Assert.Equal(8, b.Consecutive);
+            Assert.InRange(b.LastDelayMicros, 67_500_000, 75_000_000);
+            Assert.True(b.RemainingMicros() > 0);
+            b.NoteSuccess();
+            Assert.Equal(0, b.Consecutive);
+            Assert.Equal(0, b.RemainingMicros());
+            Assert.Equal(5_000_000, b.BaseDelayMicros(1));
+            Assert.Equal(40_000_000, b.BaseDelayMicros(4));
+            Assert.Equal(60_000_000, b.BaseDelayMicros(5));
+            Assert.Equal(60_000_000, b.BaseDelayMicros(long.MaxValue));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new KisApprovalBackoff(TimeSpan.Zero));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new KisApprovalBackoff(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)));
+
+            var calls = SimulateApprovalHour(n => n <= 3 ? null : "vts-approval", 11, out var rt, out int factory, out _);   // 3회 실패 후 발급 성공 → 접속
+            Assert.Equal(4, calls.Count);
+            Assert.Equal(1, factory);
+            Assert.Equal(1, rt.Connects);
+            Assert.Equal(3, rt.ApprovalFailures);
+            Assert.Equal(0, rt.ApprovalBackoff.Consecutive);                                   // 성공 = 연속 실패 리셋
+        }
+
+        [Fact]
+        public void ApprovalKey_BackoffStateMachine_ZeroAlloc()
+        {
+            long[] clock = { 0 };
+            var b = new KisApprovalBackoff(nowMicros: () => clock[0]);
+            void Spin()
+            {
+                for (int i = 0; i < 10_000; i++)
+                {
+                    b.NoteFailure(); clock[0] += b.RemainingMicros();
+                    if ((i & 15) == 15) b.NoteSuccess();
+                }
+            }
+            Spin();
+            long min = long.MaxValue;
+            for (int w = 0; w < 3; w++)
+            {
+                long a = GC.GetAllocatedBytesForCurrentThread();
+                Spin();
+                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - a);
+            }
+            Assert.Equal(0, min);                                                              // ★δ=0: 백오프 계산 · 상태 전이 0B(3창 최솟값)
+        }
     }
 }

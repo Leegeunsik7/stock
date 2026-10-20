@@ -1,15 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.30-GM — Offline_1M δ=0 측정 하드닝 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer · [0/11]~[11/11]) 완료
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,135 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.31-DEV — KIS 접속키 발급 지수 백오프 · 자격증명 거부 sticky 래치(재시도 폭풍 차단) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,147 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-20
 
 ## Completed Deliverables
-- 버전 12.18.30 승격 · 태그 v12.18.30-GM = e0cfa3e · 클린 worktree release-package.ps1 -NoPeer 1차 EXIT 0([3/11] 하드닝된 Offline_1M 원패스)
-- release-v12.18.30-GM.zip(38 아티팩트 · SHA-256 DE76FAAD…) · masterSeal 2851B8DC… · 피어 기록 없음
-- StockManager-v12.18.30-Standalone-win-x64.zip(SHA-256 232822F4… · 봉인 38 바이트 동일 · 격리 기동 창 핸들 확인)
-- 메인 체크아웃 CLI 4게이트 재수검 exit 0 · v12.18.29-GM 15건 → superseded · HANDOVER §106
+- KisApprovalBackoff: 5 · 10 · 20 · 40 · 60s 상한 + 지터(+12.5~25%) · 1시간 발급 ≤ 57회(실측 54 · 수정 전 682) · δ=0 상태 머신
+- 401/403 = KisApprovalRejectedException → sticky 래치(발급 1회 후 중단) · 복구 관리자 경로 포함 두 모드 적용
+- 해제 표지 오버플로 결함 개발 중 발견 · 수정 · Offline_1M 5회 연속 통과 · HANDOVER §107
 
 ## Next Milestone
-- WebView2 미설치 PC 배포본 실기 확인 · 다음 출하에서 Offline_1M 부하 하 재관측
-- KIS 모의투자 자격증명 재확인 후 리얼 와이어 소크(§99) · 접속키 재발급 백오프 검토
+- v12.18.31-GM 출하(-NoPeer) · KIS 모의투자 자격증명 재확인 후 리얼 와이어 소크(§99 · 실 거부 응답 형식 관측)
+- WebView2 미설치 PC 배포본 실기 확인
