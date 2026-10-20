@@ -1,14 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.32-DEV — KIS 접속키 비표준 본문 거부(HTTP 200/500 + error_code/msg_cd) 1회 즉시 sticky 래치
-- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,162 통과 + 1 건너뜀(리얼 와이어 옵트인) · Offline_1M 5회 연속 통과 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.32-GM — KIS 본문 거부 래치 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer · [0/11]~[11/11]) 완료
+- **Build Status**: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0/0 · 전체 스위트 4,162 통과 + 1 건너뜀(리얼 와이어 옵트인) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-20
 
 ## Completed Deliverables
-- KisApprovalRejectedException.MatchFatalBodyCode — Utf8JsonReader 최상위 error_code/msg_cd 판독 δ=0(EGW00103/105/121/123/133 · OPS00001)
-- KisLiveBroker.ParseApprovalResponse — 본문 치명 코드 = 상태 무관 거부 · 성공 판독 Utf8JsonReader 전환 · 단위 테스트 가능
-- LiveWireKisLongSoakTests §4 +15 — 200/500 본문 거부 1회 래치 · 일시 실패 7종 비래치 · 정상 키 접속 · 판독 0B · HANDOVER §109
+- 버전 12.18.32 승격 · 태그 v12.18.32-GM = cbbd8ce · 클린 worktree release-package.ps1 -NoPeer 1차 EXIT 0([3/11] Offline_1M 원패스)
+- release-v12.18.32-GM.zip(38 아티팩트 · SHA-256 A370A53F…) · masterSeal 3C2F018D… · 피어 기록 없음
+- StockManager-v12.18.32-Standalone-win-x64.zip(SHA-256 EA00DA39… · 봉인 38 바이트 동일 · 격리 기동 창 핸들 확인)
+- 메인 체크아웃 CLI 4게이트 재수검 exit 0 · v12.18.31-GM 15건 → superseded · HANDOVER §110
 
 ## Next Milestone
-- 실 VTS 거부 응답 관측 → 치명 코드 표 재검토(EGW00121/123/133 과잉 래치 여부)
-- v12.18.32-GM 이중 출하(-NoPeer)
+- 실 VTS 거부 응답 관측 → 본문 치명 코드 표 재검토(EGW00121/123/133 과잉 래치 여부)
+- WebView2 미설치 PC 배포본 실기 확인

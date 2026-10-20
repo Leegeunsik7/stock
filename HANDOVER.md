@@ -2826,3 +2826,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 불변: liveArmed:false(수신 전용 · 주문 송신 0) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
 - 한계(정직): 코드 표는 오더 명세 + 공개 문서 기억 기반(실 응답 미관측). EGW00121/00123 은 토큰 무효/만료, EGW00133 은 토큰 발급 빈도 제한(1분 1회)으로 알려져 있어
   접속키 경로에서 영구 래치는 과잉(재시작 전까지 실시간 수신 중단)일 수 있음 — 실 VTS 응답 관측 후 표 재검토 필요. 본문 판독 범위 = 최상위 필드만.
+
+## 110. v12.18.32-GM — KIS 본문 거부 래치 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 110.1 버전 · 태그
+- v12.18.32-DEV(§109) = b47745a. 12.18.31 → 12.18.32(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = cbbd8ce(4파일 · 11/11 줄) ·
+  sln Release -warnaserror 0W/0E · 핀/패키징/배포본/가드 테스트 136/136(Release).
+- 태그 v12.18.32-GM(annotated · -f) = cbbd8ce. 패키징 셸 MS2E_KIS_VTS_* 미설정(프로세스 · 사용자 · 시스템 0) · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 110.2 출하 실행(형제 worktree StockManager-gm-12.18.32 · 태그 cbbd8ce · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) · [3] 4,162 통과 + 1 건너뜀(§99 옵트인 · Offline_1M 원패스) ·
+  [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드 · [7] 아티팩트 38 · manifest.sig · [9] verify-zip Ok · verify-live-armed Ok ·
+  [10] handshake Ok @cbbd8ce793 · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) · [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 53024 · HWND 0x1C181C · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.32-GM.zip SHA-256 `A370A53F73B4D93D44C8E84D13CB8E950B2511C1B5958277304A5CAC08853F96` · masterSeal `3C2F018DB0CC25FC62B7BC0945DFA446559158BD264B1C6CCA09B0CB8ABAFC65` · sourceCommit cbbd8ce · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.32-Standalone-win-x64.zip SHA-256 `EA00DA39FB5C53A4EFE46131A84571EA06AE7B7ACFFA89866A99CDB56644817B`.
+- v12.18.31-GM 산출물 15건 → release/superseded-v12.18.31-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 체크아웃 재수검(메인 Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 본문 치명 코드 표 실 응답 미관측(EGW00121/123/133 과잉 래치 가능 · §109) · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
+  메인 CLI 바이너리는 타 세션 미커밋 BrokerSettingsPage.razor 변경이 포함된 작업 트리 빌드(수검 로직 무관).
