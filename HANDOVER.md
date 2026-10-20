@@ -3126,3 +3126,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 실 KIS/키움 거부 통보 실수신 캡처 미대조(§125) · 실 KIS 장중 워치독 오탐률 미관측 · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 127. v12.18.41-DEV — KIS VTS 고의 거부 프로브 하네스 + 도메인 격리 하드 가드(테스트 도구 · 개장 전 사전 구축) (2026-10-21)
+
+- 배경: 실 거부 페이로드 캡처 필요 — 제품은 liveArmed:false 라 VTS 주문 경로 없음. 01:37 KST 점검 시 정규장 밖 · MS2E_KIS_VTS_* 미주입(그때 미실행 · 날조 0).
+- 신규 StockManager.Tests/Integration/VtsOrderRejectionProbeHarness.cs(테스트 전용 · 제품 코드 무변경):
+  VtsDomainGuard — IsRealDomain=false ∧ REST https 호스트 '정확히' openapivts.koreainvestment.com:29443(부분 문자열 포함 판정은 위장 호스트 통과 → 정확 일치) ∧
+  WebSocket = KisRealtimeSession.VtsUri(31000) ∧ 주문 TR = VTTC… · 송출 직전 재검(SendGuardedAsync: 요청 URI + tr_id 헤더) — 위반 = 예외(HttpMessageInvoker 도달 0).
+  자격증명 = 환경변수만(사용자 LocalDatabase · KisLiveBroker · 디스패처 · 무장 키 참조 0). 주문 = 005930 매도 1주 지정가 999,999(상한가 초과 + 보유 없는 매도 = 체결 불가) ·
+  만에 하나 접수 시 즉시 전량 취소(VTTC0803U). 실행 = 자격증명 4종(APPKEY · SECRETKEY · HTSID · ACCOUNT) + MS2E_KIS_VTS_PROBE=1 + 정규장 — 미충족 = Skip.
+  덤프 = 출력 + %TEMP%\ms2e-vts-probe\probe-*.txt(고객 ID · 계좌 마스킹) — REST 응답 원문 · H0STCNI9 원시/평문 · 필드 대조 · 제품 판독기/매트릭스 재생 결과.
+- 정정: 모의투자 체결통보 TR = H0STCNI9(H0STCNI0 = 실전) — 세션(NoticeTrId) · KisProtocol 이미 둘 다 수용. 고의 거부는 대개 REST 동기 거부(rt_cd ≠ 0)로 올 수 있음 → 하네스가 둘 다 캡처.
+- 테스트 VtsOrderRejectionProbeTests 7건(오프라인 6 + 리얼 와이어 1 · 옵트인 Skip): 가드 10종 위반 예외 · 가드 위반 요청 핸들러 도달 0 · 주문/취소 명세 ·
+  Skip 사유(PROBE=1 없으면 소크 자격증명만으로 주문 0) · 마스킹 · 모의 H0STCNI9 거부 통보 → 제품 어댑터(VTS 검증기 · 계좌 핀) → 비트 23 래치(도메인 이탈 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,254 통과 + 2 건너뜀(§99 소크 · 프로브 옵트인) · infra-scan 0 · 래칫 ≤40.
+- 실행 절차(장중): 셸에 MS2E_KIS_VTS_APPKEY/SECRETKEY/HTSID/ACCOUNT(8자리-2자리) + MS2E_KIS_VTS_PROBE=1 →
+  dotnet test StockManager.Tests\StockManager.Tests.csproj -c Release --filter "FullyQualifiedName~LiveWire_Vts_Deliberate_Rejection" --logger "console;verbosity=detailed"
+- 한계(정직): 실 송출 · 실 페이로드 미캡처(개장 전) · KIS 주문 hashkey 헤더 미부착(공개 문서상 선택 — 거부 시 그 응답도 캡처됨) · 토큰 발급 분당 1회 제한.
+- 불변: liveArmed:false · 제품 코드 무변경 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
