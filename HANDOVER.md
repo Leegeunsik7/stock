@@ -3030,3 +3030,20 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 두 피드 동시 정지 미감지(§119) · 실 피드 비트 28 오탐률 미관측 · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 121. v12.18.38-DEV — 전역 피드 동시 두절 워치독(FeedStallWatchdog · 비트 28 4차 입력) (2026-10-20)
+
+- 공백(§119 한계): 레이더 전파 지연 · 침묵 판정은 산 피드 틱에서만 일어남 → 두 피드 동시 정지(ISP 다운 · 프록시 프리징) = 판정할 틱 0 = 맹목.
+- 신규 StockManager/Engines/Arbitrage/FeedStallWatchdog.cs: 수신마다 Stamp(venue) = Interlocked.Exchange 로 venue 별 마지막 수신 µs(락 0 · δ=0).
+  틱 경로와 분리된 System.Threading.Timer(기본 100ms · 정적 람다 + 상태 인자 = 클로저/박싱 0)가 Poll: 장중 ∧ 활성 피드(1회 이상 수신) ≥ 1 ∧
+  가장 최근 수신(어느 피드든) 이후 > 3,000ms = sticky 래치 → 비트 28 Raise. 장외 → 장중 전환 관측 시 예산 재기산(개장 첫 폴링 오격발 0) · 장중 판정 예외 = 장중 취급.
+  재무장 = 물리 이중키 · 두절 지속이면 다음 폴링 즉시 재래치. 격발 지연 ≤ 예산 + 폴링 주기.
+- OrderPathLatencyInterlock: 4차 입력 슬롯 AttachStallGuard(IFeedStallHost · 1회 · 교체 금지 · 판독 예외 = 차단) — 2 · 3차 슬롯 계약 · 비트 정의 무변경.
+- 호스트 결선(BlazorHomeForm): 워치독(marketHours = OrderbookIlliquidityInterlock.KrxContinuousSessionNow) · 브리지 OrderBookReceived/TickReceived → Stamp(키움) · Start · FormClosed Dispose.
+- 테스트 FeedStallWatchdogTests 9건: 틱 0건 3,000ms 무격발 / 3,000.001ms 폴링 격발(실 집계 마스크 0x10000000) · 한 피드 생존 60초 무격발 · 미수신 피드 = 비활성 ·
+  장외 무격발 + 개장 진입부터 재기산 · 판정 예외 = 장중 · 이중키 재무장/즉시 재래치/재개 후 유지 · 2/3/4차 슬롯 공존 + 교체 금지 · 10만 폴링 δ=0(3창 최솟값 0B) ·
+  실 타이머 틱 0건 능동 격발(약 168ms · 예산 150ms) + 처분 후 정지 · 동시 수신 스레드 중 오탐 0 · 호스트 결선 소스 핀.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,234 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 호스트 결선 = 키움 브리지 1 피드(KIS 실시간은 레이더 미결선과 동일 — 결선 시 Stamp(1) 1줄) · 한 번도 수신 안 한 피드 = 비활성(미구성 PC 상시 차단 방지) ·
+  공휴일 미반영 · 구독 종목 전부 비유동이면 3초 무수신이 정상일 수 있음(차단 측 오탐 = 안전 방향) · 실 장중 오탐률 미관측.
+- 불변: liveArmed:false · 워치독 발주 경로 0 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

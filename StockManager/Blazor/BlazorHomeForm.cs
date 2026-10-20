@@ -1672,6 +1672,15 @@ namespace StockManager.Blazor
             // [v12.18.33-DEV] 깊은 역전(≥ 30bp) = 그 틱 비트 22 래치 · 피드 간 L1 전파 지연 > 50ms = 비트 28 3차 입력(AttachCrossFeedGuard · 비트 재결속 0 · 정의 불변).
             arbRadar.BindLatencyInterlock(orderPathLatency);
             bridge.OrderBookReceived += b => arbRadar.OnBook(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom, in b);
+            // [v12.18.38-DEV] 전역 피드 동시 두절 워치독 — 틱 경로와 분리된 100ms 타이머 · KRX 연속매매 중 모든 활성 피드 무수신 > 3초 = 비트 28 4차 입력
+            //   (AttachStallGuard · 비트 재결속 0 · 정의 불변). 수신 = 호가 · 체결 모두 생존 증거(Interlocked 1회 · δ=0). 미수신 피드 = 비활성(미구성 PC 차단 0).
+            var feedStall = new StockManager.Engines.Arbitrage.FeedStallWatchdog(marketHours: StockManager.Engines.OrderbookIlliquidityInterlock.KrxContinuousSessionNow);
+            feedStall.BindLatencyInterlock(orderPathLatency);
+            bridge.OrderBookReceived += _ => feedStall.Stamp(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom);
+            bridge.TickReceived += _ => feedStall.Stamp(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom);
+            feedStall.Start();
+            services.AddSingleton(feedStall);
+            FormClosed += (_, _) => ShutdownTrace.Step("feedStall", feedStall.Dispose);
             dashHub.AttachArbitrage(arbRadar);
             // [v12.18.21-DEV] 브로커 레이트 게이트 관제 — KIS 레인 = 호스트 KisProvider 의 실 게이트(구성 시에만).
             if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisRest)
