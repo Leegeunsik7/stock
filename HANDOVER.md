@@ -2721,3 +2721,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 테스트 StockManager.Tests/Packaging/WebView2RuntimeGuardTests.cs 18건: 탐침 분류(6종 실패 = 미설치) · 상태 전이(Present = UI 0 · 수락/거부/트리거 실패/오프라인) · 미설치 = 진행 0 · 실 탐침 무예외 · Program.cs 결선 순서 · 가드 소스 피어/브로커/원격 실행 접점 0.
 - 검증: 오중 빌드(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 4,135 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL 변경 0).
 - 한계(정직): 미설치 PC 실기 확인 미실시(개발 호스트는 런타임 설치됨 — 분기는 모의 UI 로 증명). QuantumVault 미접근 · 원격 푸시 없음.
+
+## 104. v12.18.29-GM — WebView2 런타임 가드 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 104.1 버전 · 태그
+- v12.18.29-DEV(§103) = 91d885d. 12.18.28 → 12.18.29(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 00176b5(4파일 · 11/11 줄) ·
+  sln Release -warnaserror 0W/0E · 핀/패키징/배포본/가드 테스트 82/82(Release).
+- 태그 v12.18.29-GM(annotated · -f) = 00176b5. QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 104.2 출하 실행(형제 worktree StockManager-gm-12.18.29 · 태그 00176b5 · 미커밋 0)
+- 1차 실행 EXIT 1 — [3/11] 전체 스위트 4,134 통과 · 1 실패(LiveWireKisLongSoakTests.Offline_1M: 정상구간 할당 2,992B ≠ 0 · 20창 중 부하 시 단일 창 튐) → fail-closed 산출물 폐기.
+  판정: 같은 빌드 단독 5회 = 0B/20창 × 5 · KIS 수신 경로는 e298961 이후 무변경 → 회귀 아님 · 전체 스위트 부하 하 δ=0 단일 창 측정 아티팩트. 코드/게이트 무수정 재실행.
+- 2차 실행 release-package.ps1 -NoPeer → [0/11]~[11/11] EXIT 0: [1]/[2] 오중 빌드 0W/0E · [3] 4,135 통과 + 1 건너뜀(§99 옵트인) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 ·
+  [6] liveArmed 소스 가드(이중키 16 · 마스터 플래그 1) · [7] 아티팩트 38 · manifest.sig · [9] verify-zip Ok · verify-live-armed Ok(⑪ · ⑫ · ⑬) ·
+  [10] handshake Ok @00176b574b · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) · [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 50744 · HWND 0xC812D6 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.29-GM.zip SHA-256 `512549CF9C6A5129CF72D8980DBDF39317289BEE8CC8BD937EBC355D194614EF` · masterSeal `D5E5ADCEB16A6085B3DCBBDBC01413785BA91D5CC1FAF3D7EB0BF46C3001D10F` · sourceCommit 00176b5 · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.29-Standalone-win-x64.zip SHA-256 `DAEB089B8AC0CAF09D16ADD27A5782D9E0E442FB120431E625B616228C42CFC1` · 993 항목 · 전개 352MB · WebView2RuntimeGuard 포함.
+- v12.18.28-GM 산출물 15건 → release/superseded-v12.18.28-GM/. 신규 15건 복사. worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 체크아웃 재수검(같은 커밋 00176b5 Release CLI · 메인 release/ 복사본): 두 zip SHA-256 = .sha256 기록 · --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) ·
+  --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0 · StandaloneBundleTests 파이프라인(MS2E_RELEASE_STANDALONE_ZIP) 16/16.
+- 한계(정직): WebView2 미설치 PC 실기 미확인(가드 분기는 모의 UI 증명) · KIS 리얼 와이어 소크 미실행(§99) · Offline_1M δ=0 단일 창 판정은 전체 스위트 부하 하 플래키(창별 최솟값/재측정 하드닝 후보).
