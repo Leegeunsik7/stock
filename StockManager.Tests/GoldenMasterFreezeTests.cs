@@ -122,8 +122,8 @@ namespace StockManager.Tests
         public void Host_Version_Matches_Golden_Master_Milestone()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 36, 0), v);                  // 수정 전: 10.1.0.0 → release-v10.1.0-GM.zip 발행
-            Assert.Equal("12.18.36", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 37, 0), v);                  // 수정 전: 10.1.0.0 → release-v10.1.0-GM.zip 발행
+            Assert.Equal("12.18.37", ReleasePackager.DefaultVersion);
         }
 
         [Fact]
