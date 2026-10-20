@@ -1,13 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.40-DEV — 미추적 단일 주문 비동기 거부 = 비트 23(ChildSlotRejection) sticky 래치
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,248 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.40-GM — 미추적 비동기 거부 비트 23 래치 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,248 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
 - **Updated At**: 2026-10-21
 
 ## Completed Deliverables
-- ChildSlotTrackingMatrix.OnFill: 미추적 주문 명시 Rejected 통보 = 비트 23 즉시 래치(브로커/거부 코드 무관 · δ=0)
-- 거부 경로 전수: 동기(ForceFreeze) · 분할 송출 실패/비동기 · 단일 비동기(신규) — KIS/키움 모두 1통보 내 무장 차단
-- UntrackedOrderRejectionTests 8건(실 KIS AES 통보 · 키움 56B/48B · 비거부 무래치 · 이중키 · 10만 0B) · HANDOVER §125
+- 버전 12.18.40 승격 · 태그 v12.18.40-GM(29c5ec1) · 클린 worktree -NoPeer 패키징(QuantumVault 미접근)
+- 감사 봉인본 release-v12.18.40-GM.zip(81805778) · masterSeal 65F148AD · 아티팩트 38
+- 즉시 실행 배포본 StockManager-v12.18.40-Standalone-win-x64.zip(F17C82CB) · 봉인 38 바이트 동일 · 격리 기동 주 창 실측
+- CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) 메인 복사본 exit 0 · v12.18.39-GM 이관 · HANDOVER §126
 
 ## Next Milestone
-- v12.18.40-GM 출하 · 실 KIS VTS 거부 통보 실수신 캡처 대조
+- 실 KIS VTS 거부 통보 실수신 캡처 대조 · 실 KIS 장중 워치독 오탐률 관측 · 실 손상 런타임/미설치 PC 배포본 실기 · 실 VTS 재소크
