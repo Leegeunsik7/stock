@@ -1,14 +1,13 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.36-GM — 아레나 잠김/역전 호가 FIFO 가드 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,220 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
+- **Active Milestone**: v12.18.37-DEV — SyntheticSpreadRadar 비트 28 정밀화(지터 오탐 방어 · 침묵 피드 감시)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,225 통과 + 1 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-20
 
 ## Completed Deliverables
-- 버전 12.18.36 승격 · 태그 v12.18.36-GM(6aefd7a) · 클린 worktree -NoPeer 패키징(QuantumVault 미접근)
-- 감사 봉인본 release-v12.18.36-GM.zip(8B49B044) · masterSeal 306AA145 · 아티팩트 38
-- 즉시 실행 배포본 StockManager-v12.18.36-Standalone-win-x64.zip(2A2BB3F2) · 봉인 38 바이트 동일 · 격리 기동 주 창 실측
-- CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) 메인 복사본 exit 0 · v12.18.35-GM 이관 · HANDOVER §118
+- 단계 추적: 피드별 L1 단계 이력으로 단계 지연만 판정 — 10~30ms 번들링/병합 지터 무격발 · L1 고착 >50ms 1틱 격발
+- 침묵 감시: 산 피드 갱신 중 상대 수신 0 > 500ms = 비트 28 래치(같은 가격도 포착 · 원인 Silence)
+- 테스트 §8 5건(지터 · 고착 · 침묵 · 비유동 · 1M 틱 δ=0) · HANDOVER §119
 
 ## Next Milestone
-- 실 KRX 동시호가 잠김 스냅샷 관측 · 실 손상 런타임/미설치 PC 배포본 실기 · 실 피드 비트 28 오탐률 · 실 VTS 재소크
+- 실 피드 비트 28 오탐률 관측 · 두 피드 동시 정지 감지(외부 하트비트 결속) · v12.18.37-GM 출하

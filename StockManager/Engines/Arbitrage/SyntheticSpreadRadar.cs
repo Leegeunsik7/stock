@@ -19,8 +19,16 @@
 //   ② 피드 간 L1 전파 지연 = 두 피드 최우선 매수/매도 가격 불일치가 지속된 시간(한 피드가 같은 KRX 변경을 아직 미도달).
 //      불일치 경과 > LagBudget(기본 50ms) 을 관측한 틱(진행 중 경과 · 또는 뒤처진 피드 도달로 확정된 지연) = 비트 28(OrderPathLatency) 3차 입력 래치.
 //      노후 생략(> MaxSkew) 이전에 판정 — 피드 정지 + 가격 변경 = 산 피드의 다음 틱에 격발. 래치 = sticky · 해제 = TryRearm(두 래치 공통 · 물리 이중키).
-//   ★한계(정직): 피드가 서로 다른 시점에서 병합(conflation)하면 급변 구간 불일치가 50ms 를 넘을 수 있다 — 이 경우도 차단(안전 방향).
-//      가격이 같은 채로 한 피드만 멈추면 변경 전까지 미포착(관측할 지연이 없음).
+//  [v12.18.37-DEV] 비트 28 정밀화:
+//   ③ 단계 추적(지터 오탐 방어): venue 별 최근 L1 단계 이력(종목당 8 · 고정 배열)을 두고, 뒤처진 피드가 상대가 이미 지난 단계에 도달하면
+//      그 단계의 지연(도달 시각 − 상대 진입 시각)을 확정하고 불일치 기준 시각을 '아직 미반영인 가장 오래된 상대 단계'로 옮긴다.
+//      → 급변 구간에서 한 피드가 10~30ms 씩 꾸준히 뒤처져 두 L1 이 한 번도 같아지지 않아도(번들링 · 병합) 단계별 지연만 판정 = 오탐 0.
+//      뒤처진 피드가 전진하지 않으면(L1 고착) 기준 시각 불변 → 경과 > 50ms 관측 틱에 격발(기존 보장 유지). 이력 밖 단계 = 기준 유지(안전 방향).
+//   ④ 침묵 감시(Stale Feed Silence): 한 피드가 내용(10호가 가격 · 잔량)이 바뀐 스냅샷을 계속 보내는 동안 상대 피드 수신이 0 인 시간 >
+//      SilenceBudget(기본 500ms) = 그 산 피드 틱에 비트 28 래치 — 가격이 같아 불일치가 없어도 포착. 기준 = 상대 마지막 수신 이후 산 피드의 첫 변경
+//      (둘 다 조용한 비유동 구간의 첫 갱신은 오탐 아님). 재무장 후에도 침묵 지속이면 다음 산 피드 틱에 즉시 재래치(타이머 재시작 없음 · 안전 방향).
+//   ★한계(정직): 두 피드가 함께 멈추면 레이더는 조용한 시장과 구별 불가(판정할 틱이 없음) — 판정은 언제나 산 피드의 틱에서 일어난다.
+//      같은 스냅샷만 반복 송출하는 고착 피드는 '수신'으로 간주한다(가격이 움직이면 ③ 이 포착).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -49,8 +57,10 @@ namespace StockManager.Engines.Arbitrage
     {
         public const int Capacity = 64, SparkLength = ArbRadar.SparkLength;
         public const long DefaultThresholdCbp = 3_000, DefaultSustainMicros = 500_000, DefaultMaxSkewMicros = 1_000_000, DefaultMaxPaperQty = 100;
-        public const long DefaultLagBudgetMicros = 50_000, DefaultInversionTripCbp = DefaultThresholdCbp;
+        public const long DefaultLagBudgetMicros = 50_000, DefaultInversionTripCbp = DefaultThresholdCbp, DefaultSilenceBudgetMicros = 500_000;
         public const int ReasonNone = 0, ReasonDivergence = 1, ReasonInversion = 2;
+        public const int LagReasonNone = 0, LagReasonPropagation = 1, LagReasonSilence = 2;
+        public const int L1Depth = 8;
 
         /// <summary>비트 28 3차 입력 뷰 — 레이더 자체(비트 22 래치)와 분리된 전파 지연 래치만 노출.</summary>
         private sealed class LagGuard : IArmingBlockSource
@@ -64,7 +74,11 @@ namespace StockManager.Engines.Arbitrage
         {
             public OrderBookPayload Book;
             public long RxMicros, Books;
+            public long ActiveSinceMicros;              // 상대 마지막 수신 이후 이 피드의 첫 내용 변경 시각(0 = 없음)
+            public int L1Head, L1Count;                 // 단계 이력 링(_l1) 최신 위치 · 유효 수
         }
+
+        private struct L1Mark { public long Bid, Ask, RxMicros; }
 
         private struct Slot
         {
@@ -78,15 +92,16 @@ namespace StockManager.Engines.Arbitrage
         }
 
         private readonly Slot[] _slots = new Slot[Capacity];
+        private readonly L1Mark[] _l1 = new L1Mark[Capacity * 2 * L1Depth];   // [슬롯 · venue] 별 L1 단계 이력 — 슬롯 seqlock 작성자만 접근
         private readonly int[] _spark = new int[SparkLength];
         private readonly Func<long> _nowMicros;
-        private readonly long _thresholdCbp, _sustainMicros, _maxSkewMicros, _maxPaperQty, _lagBudgetMicros, _inversionTripCbp;
+        private readonly long _thresholdCbp, _sustainMicros, _maxSkewMicros, _maxPaperQty, _lagBudgetMicros, _inversionTripCbp, _silenceBudgetMicros;
         private readonly LagGuard _lagGuard;
         private long _sparkHead;                        // 펌프 단일 작성자
         private long _focusPinned, _focusAuto;
-        private int _latched, _latchReason, _lagLatched, _epoch;
+        private int _latched, _latchReason, _lagLatched, _lagReason, _epoch;
         private long _latchSymbol, _latchCbp, _trips;
-        private long _lagSymbol, _lagLatchMicros, _lagTrips, _lagViolations, _maxLagMicros;
+        private long _lagSymbol, _lagLatchMicros, _lagTrips, _lagViolations, _maxLagMicros, _silenceViolations, _maxSilenceMicros;
         private long _books, _invalid, _tsInversions, _staleSkips, _tableFull, _comparisons;
         private long _opportunities, _paperQty, _paperGrossWon, _paperRefusedLatched, _lastOppSymbol;
         private IQuoteGuardHost? _bit22;
@@ -94,14 +109,16 @@ namespace StockManager.Engines.Arbitrage
 
         public SyntheticSpreadRadar(Func<long>? nowMicros = null, long thresholdCbp = DefaultThresholdCbp, long sustainMicros = DefaultSustainMicros,
                                     long maxSkewMicros = DefaultMaxSkewMicros, long maxPaperQty = DefaultMaxPaperQty,
-                                    long lagBudgetMicros = DefaultLagBudgetMicros, long inversionTripCbp = DefaultInversionTripCbp)
+                                    long lagBudgetMicros = DefaultLagBudgetMicros, long inversionTripCbp = DefaultInversionTripCbp,
+                                    long silenceBudgetMicros = DefaultSilenceBudgetMicros)
         {
             if (thresholdCbp <= 0 || sustainMicros < 0 || maxSkewMicros <= 0 || maxPaperQty <= 0) throw new ArgumentOutOfRangeException(nameof(thresholdCbp));
             if (lagBudgetMicros <= 0) throw new ArgumentOutOfRangeException(nameof(lagBudgetMicros));
             if (inversionTripCbp <= 0) throw new ArgumentOutOfRangeException(nameof(inversionTripCbp));
+            if (silenceBudgetMicros <= 0) throw new ArgumentOutOfRangeException(nameof(silenceBudgetMicros));
             _nowMicros = nowMicros ?? StopwatchMicros;
             _thresholdCbp = thresholdCbp; _sustainMicros = sustainMicros; _maxSkewMicros = maxSkewMicros; _maxPaperQty = maxPaperQty;
-            _lagBudgetMicros = lagBudgetMicros; _inversionTripCbp = inversionTripCbp;
+            _lagBudgetMicros = lagBudgetMicros; _inversionTripCbp = inversionTripCbp; _silenceBudgetMicros = silenceBudgetMicros;
             _lagGuard = new LagGuard(this);
         }
 
@@ -138,6 +155,12 @@ namespace StockManager.Engines.Arbitrage
         public long LagLatchMicros => Volatile.Read(ref _lagLatchMicros);
         public long MaxLagMicros => Interlocked.Read(ref _maxLagMicros);
         public long LagBudgetMicros => _lagBudgetMicros;
+        /// <summary>[v12.18.37-DEV] 최초 비트 28 래치 원인(LagReasonPropagation · LagReasonSilence · 미래치 = LagReasonNone).</summary>
+        public int LagLatchReason => Volatile.Read(ref _lagReason);
+        /// <summary>[v12.18.37-DEV] 침묵 예산 초과 관측 수(래치 중 포함).</summary>
+        public long SilenceViolations => Interlocked.Read(ref _silenceViolations);
+        public long MaxSilenceMicros => Interlocked.Read(ref _maxSilenceMicros);
+        public long SilenceBudgetMicros => _silenceBudgetMicros;
         public long Books => Interlocked.Read(ref _books);
         public long InvalidBooks => Interlocked.Read(ref _invalid);
         public long TimestampInversions => Interlocked.Read(ref _tsInversions);
@@ -159,8 +182,8 @@ namespace StockManager.Engines.Arbitrage
             Interlocked.Increment(ref _books);
             long now = _nowMicros();
             ref var x = ref _slots[s];
-            bool compared = false, trip = false, opp = false, lagTrip = false;
-            long oppQty = 0, oppGross = 0, tripCbp = 0, lag = 0;
+            bool compared = false, trip = false, opp = false, lagTrip = false, silenceTrip = false;
+            long oppQty = 0, oppGross = 0, tripCbp = 0, lag = 0, silence = 0;
             int tripReason = ReasonNone;
             BeginWrite(ref x);
             try
@@ -171,17 +194,37 @@ namespace StockManager.Engines.Arbitrage
                     Interlocked.Increment(ref _tsInversions);                           // 더 오래된 스냅샷 = 폐기(최신 상태 보존)
                     return false;
                 }
+                bool l1Moved = v.Books == 0 || b.BidPrice[0] != v.Book.BidPrice[0] || b.AskPrice[0] != v.Book.AskPrice[0];
+                bool changed = l1Moved || !SameDepth(in b, in v.Book);
                 v.Book = b; v.RxMicros = now == 0 ? 1 : now; v.Books++;
+                int vBase = (s * 2 + venue) * L1Depth, oBase = (s * 2 + (venue ^ 1)) * L1Depth;
+                if (l1Moved) PushL1(vBase, ref v, b.BidPrice[0], b.AskPrice[0]);
                 ref var o = ref (venue == ArbRadar.VenueKiwoom ? ref x.S : ref x.K);
+                if (changed && (v.ActiveSinceMicros == 0 || v.ActiveSinceMicros <= o.RxMicros)) v.ActiveSinceMicros = v.RxMicros;   // 상대 수신 이후 첫 변경
                 if (o.Books == 0) return false;
+                if (v.ActiveSinceMicros > o.RxMicros) silence = v.RxMicros - v.ActiveSinceMicros;   // 산 피드가 갱신하는 동안 상대 수신 0 인 시간
+                silenceTrip = silence > _silenceBudgetMicros;
                 int epoch = Volatile.Read(ref _epoch);
-                if (v.Book.BidPrice[0] == o.Book.BidPrice[0] && v.Book.AskPrice[0] == o.Book.AskPrice[0])
+                bool pending = x.LagSinceMicros != 0 && x.LagEpoch == epoch;
+                long vb = v.Book.BidPrice[0], va = v.Book.AskPrice[0];
+                if (vb == o.Book.BidPrice[0] && va == o.Book.AskPrice[0])
                 {
-                    if (x.LagSinceMicros != 0 && x.LagEpoch == epoch) lag = v.RxMicros - x.LagSinceMicros;   // 뒤처진 피드 도달 = 이번 전파 지연 확정
+                    if (pending) lag = v.RxMicros - Math.Max(_l1[oBase + o.L1Head].RxMicros, x.LagSinceMicros);   // 뒤처진 피드 도달 = 이 단계 전파 지연 확정
                     x.LagSinceMicros = 0;
+                    o.L1Count = 1; v.L1Count = 1;                                       // 동기 = 이력 절단(이전 단계 재등장 오측정 방지)
                 }
-                else if (x.LagSinceMicros == 0 || x.LagEpoch != epoch) { x.LagSinceMicros = v.RxMicros; x.LagEpoch = epoch; }
-                else lag = v.RxMicros - x.LagSinceMicros;                               // 불일치 진행 중 = 경과(피드 정지도 산 피드 틱에서 포착)
+                else if (!pending) { x.LagSinceMicros = v.RxMicros; x.LagEpoch = epoch; }
+                else
+                {
+                    int j = l1Moved ? FindL1(oBase, in o, vb, va) : -1;
+                    if (j > 0)                                                          // 상대가 이미 지난 단계 도달 = 부분 추격(번들링 · 병합 지터)
+                    {
+                        lag = v.RxMicros - Math.Max(_l1[oBase + ((o.L1Head - j) & (L1Depth - 1))].RxMicros, x.LagSinceMicros);
+                        x.LagSinceMicros = Math.Max(_l1[oBase + ((o.L1Head - j + 1) & (L1Depth - 1))].RxMicros, x.LagSinceMicros);   // 미반영 최고참 단계
+                        o.L1Count = j + 1; v.L1Count = 1;
+                    }
+                    lag = Math.Max(lag, v.RxMicros - x.LagSinceMicros);                 // 불일치 진행 중 = 경과(L1 고착 피드도 산 피드 틱에서 포착)
+                }
                 lagTrip = lag > _lagBudgetMicros;
                 if (Math.Abs(v.RxMicros - o.RxMicros) > _maxSkewMicros)
                 {
@@ -224,7 +267,9 @@ namespace StockManager.Engines.Arbitrage
             Volatile.Write(ref _focusAuto, b.SymbolCode);
         Settle:
             if (lag > 0) MaxUpdate(ref _maxLagMicros, lag);
-            if (lagTrip) TripLag(b.SymbolCode, lag);
+            if (silence > 0) MaxUpdate(ref _maxSilenceMicros, silence);
+            if (lagTrip) TripLag(b.SymbolCode, lag, LagReasonPropagation);
+            if (silenceTrip) TripLag(b.SymbolCode, silence, LagReasonSilence);
             if (trip) Trip(b.SymbolCode, tripCbp, tripReason);                         // 래치 판정 먼저 — 래치 틱의 역전 = 모의 기록 거부
             if (opp)
             {
@@ -250,12 +295,13 @@ namespace StockManager.Engines.Arbitrage
             Volatile.Read(ref _bit22)?.Resync();                                        // ★비트 22 Raise — 무장 차단
         }
 
-        private void TripLag(long symbol, long lagMicros)
+        private void TripLag(long symbol, long lagMicros, int reason)
         {
-            Interlocked.Increment(ref _lagViolations);
+            Interlocked.Increment(ref reason == LagReasonSilence ? ref _silenceViolations : ref _lagViolations);
             if (Interlocked.CompareExchange(ref _lagLatched, 1, 0) != 0) return;       // 최초 원인만 기록(sticky)
             Volatile.Write(ref _lagSymbol, symbol);
             Volatile.Write(ref _lagLatchMicros, lagMicros);
+            Volatile.Write(ref _lagReason, reason);
             Interlocked.Increment(ref _lagTrips);
             Volatile.Read(ref _bit28)?.Resync();                                        // ★비트 28 Raise — 무장 차단
         }
@@ -278,6 +324,7 @@ namespace StockManager.Engines.Arbitrage
             Interlocked.Increment(ref _epoch);
             Volatile.Write(ref _latchReason, ReasonNone);
             Volatile.Write(ref _latched, 0);
+            Volatile.Write(ref _lagReason, LagReasonNone);
             Volatile.Write(ref _lagLatched, 0);
             Volatile.Read(ref _bit22)?.Resync();
             Volatile.Read(ref _bit28)?.Resync();
@@ -355,6 +402,32 @@ namespace StockManager.Engines.Arbitrage
                 bq += b.BidQty[i]; aq += b.AskQty[i];
             }
             return bq + aq > 0;
+        }
+
+        private static bool SameDepth(in OrderBookPayload a, in OrderBookPayload b)
+        {
+            for (int i = 0; i < 10; i++)
+                if (a.BidPrice[i] != b.BidPrice[i] || a.AskPrice[i] != b.AskPrice[i] || a.BidQty[i] != b.BidQty[i] || a.AskQty[i] != b.AskQty[i]) return false;
+            return true;
+        }
+
+        private void PushL1(int baseIdx, ref VenueBook v, long bid, long ask)
+        {
+            v.L1Head = (v.L1Head + 1) & (L1Depth - 1);
+            ref var m = ref _l1[baseIdx + v.L1Head];
+            m.Bid = bid; m.Ask = ask; m.RxMicros = v.RxMicros;
+            if (v.L1Count < L1Depth) v.L1Count++;                                       // 포화 = 최고참 덮어씀
+        }
+
+        /// <summary>상대 이력에서 (bid, ask) 단계 위치(0 = 최신 · −1 = 없음).</summary>
+        private int FindL1(int baseIdx, in VenueBook o, long bid, long ask)
+        {
+            for (int j = 0; j < o.L1Count; j++)
+            {
+                ref readonly var m = ref _l1[baseIdx + ((o.L1Head - j) & (L1Depth - 1))];
+                if (m.Bid == bid && m.Ask == ask) return j;
+            }
+            return -1;
         }
 
         private static long ImbalanceCbp(in OrderBookPayload b)

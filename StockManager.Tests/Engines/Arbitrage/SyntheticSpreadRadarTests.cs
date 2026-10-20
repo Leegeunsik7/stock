@@ -11,6 +11,9 @@
 //   §7 [v12.18.33-DEV] 인터락 경화: 깊은 역전(≥ 30bp) = 1틱 비트 22(0x00400000) · 얕은 역전 = 관측 유지 · 피드 간 L1 전파 지연 > 50ms = 1틱 비트 28
 //      (0x10000000 · 실 OrderPathLatencyInterlock 3차 입력 · KIS 2차 입력과 공존 · 교체 금지) · 피드 정지 + 노후 생략 경로 격발 · 이중키 재무장 ·
 //      두 비트 결속 상태 1M 틱 격발/재무장 순환 δ=0
+//   §8 [v12.18.37-DEV] 비트 28 정밀화: 급변 스트림에서 KIS 가 10~30ms 씩 뒤처져(번들링 · 병합 포함) L1 이 2초간 한 번도 일치하지 않아도 무격발 ·
+//      L1 고착 > 50ms = 정확히 그 관측 틱 격발 · 같은 가격 + 한 피드 침묵 > 500ms = 산 피드 틱 격발(원인 = 침묵) · 조용한 시장 첫 갱신 / 중복 스냅샷 = 무격발 ·
+//      침묵 지속 중 재무장 = 다음 틱 즉시 재래치 · 지터 + 침묵 + 재무장 순환 1M 틱 δ=0
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -634,6 +637,198 @@ namespace StockManager.Tests.Engines.Arbitrage
             Assert.Equal(0, alloc);
             Assert.True(r.Trips > 10 && r.LagTrips > 10);
             Assert.Equal(Bit22Mask | Bit28Mask, mask.Mask & (Bit22Mask | Bit28Mask));
+        }
+
+        // ════════════ §8 [v12.18.37-DEV] 비트 28 정밀화(지터 · 침묵) ════════════
+
+        private static OrderBookPayload Step(int level, long qty = 1_000) => Book(70_000 + level * 10L, 70_100 + level * 10L, qty, qty, tick: 10);
+
+        /// <summary>키움 10ms 마다 1단계 상승 · KIS 는 각 단계를 10~30ms 뒤 도달(순서 보존 · 5단계마다 1단계 병합 생략 · 7단계마다 직전 단계 보류 후 번들 동시 도달).</summary>
+        private static List<(long t, int venue, int level)> JitterStream(long t0, int steps)
+        {
+            var ev = new List<(long t, int venue, int level)>();
+            var ts = new long[steps + 1];                                                      // 0 = KIS 생략(병합)
+            for (int n = 1; n <= steps; n++)
+            {
+                long tk = t0 + n * 10_000L;
+                ev.Add((tk, K, n));
+                if (n % 5 != 0) ts[n] = tk + 10_000 + (n % 3) * 10_000L;                        // 10 / 20 / 30ms 지터
+            }
+            for (int n = 7; n <= steps; n += 7)
+                if (ts[n] != 0 && ts[n - 1] != 0) { ts[n] = t0 + n * 10_000L + 10_000; ts[n - 1] = ts[n] - 1; }   // 번들 — 직전 단계 보류 · 1µs 차 동시 도달
+            long last = t0;
+            for (int n = 1; n <= steps; n++)
+            {
+                if (ts[n] == 0) continue;
+                last = Math.Max(ts[n], last + 1);                                               // 피드 내 순서 보존
+                ev.Add((last, S, n));
+            }
+            ev.Sort((a, b) => a.t != b.t ? a.t.CompareTo(b.t) : a.venue.CompareTo(b.venue));    // 동시각 = 키움 먼저(불일치 유지 방향)
+            return ev;
+        }
+
+        [Fact]
+        public void Bursty_10_To_30ms_Jitter_Never_Trips_Bit28_Even_When_L1_Never_Realigns()
+        {
+            var c = new Clock();
+            var (mask, _, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindLatencyInterlock(il);
+            r.OnBook(K, Step(0));
+            r.OnBook(S, Step(0));                                                               // L1 일치에서 출발
+            int kl = 0, sl = 0, aligned = 0;
+            long maxStep = 0;
+            var lastK = new Dictionary<int, long>();
+            foreach (var (t, venue, level) in JitterStream(c.Micros, 200))                      // 2초 급변 구간
+            {
+                c.Micros = t;
+                r.OnBook(venue, Step(level));
+                if (venue == K) { kl = level; lastK[level] = t; } else { sl = level; maxStep = Math.Max(maxStep, t - lastK[level]); }
+                if (kl == sl) aligned++;
+                Assert.False(r.LagLatched);
+            }
+            _out.WriteLine($"[지터] 최대 단계 지연 {maxStep}µs · 레이더 최대 {r.MaxLagMicros}µs · L1 재일치 {aligned}회");
+            Assert.Equal(0, aligned);                                                           // ★2초 내내 불일치 — v12.18.33 판정(불일치 지속 시간)이면 격발했을 구간
+            Assert.InRange(maxStep, 10_000, 30_000);
+            Assert.InRange(r.MaxLagMicros, 1, 40_000);                                          // 단계 지연 + 병합 생략 단계 1개분 이내
+            Assert.Equal(0, r.LagViolations);
+            Assert.Equal(0, r.SilenceViolations);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+            Assert.False(il.FeedBlocked);
+        }
+
+        [Fact]
+        public void Laggard_Frozen_L1_Trips_Bit28_On_The_First_Tick_Past_50ms()
+        {
+            var c = new Clock();
+            var (mask, _, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindLatencyInterlock(il);
+            r.OnBook(K, Step(0));
+            r.OnBook(S, Step(0));
+            var ev = JitterStream(c.Micros, 40);
+            foreach (var (t, venue, lv) in ev) { c.Micros = t; r.OnBook(venue, Step(lv)); }
+            Assert.False(r.LagLatched);
+            // 키움 41 단계 진입 → KIS 는 40 단계까지 추격한 뒤 L1 고착(잔량만 갱신 — 침묵 아님) · 키움은 계속 상승. 미반영 최고참 단계 = 41.
+            long t41 = (c.Micros / 10_000 + 1) * 10_000;
+            int level = 40;
+            c.Micros = t41; r.OnBook(K, Step(++level));
+            long qty = 2_000;
+            while (true)
+            {
+                c.Micros += 1_000;
+                if (c.Micros % 10_000 == 0) r.OnBook(K, Step(++level));
+                else r.OnBook(S, Step(40, qty++));
+                long elapsed = c.Micros - t41;
+                if (elapsed <= 50_000) { Assert.False(r.LagLatched); continue; }
+                Assert.True(r.LagLatched);                                                      // ★50ms 초과 첫 관측 틱 = 격발(1틱 이내)
+                Assert.Equal(51_000, elapsed);
+                Assert.Equal(elapsed, r.LagLatchMicros);
+                break;
+            }
+            Assert.Equal(SyntheticSpreadRadar.LagReasonPropagation, r.LagLatchReason);
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+            Assert.Equal(0, r.SilenceViolations);
+
+            r.OnBook(S, Step(level));                                                           // 추격 완료 후 재무장 = 해제
+            Assert.True(r.TryRearm(true, true));
+            Assert.Equal(SyntheticSpreadRadar.LagReasonNone, r.LagLatchReason);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+        }
+
+        [Fact]
+        public void Same_Price_Silent_Feed_Trips_Bit28_After_Silence_Budget()
+        {
+            var c = new Clock();
+            var (mask, _, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindLatencyInterlock(il);
+            r.OnBook(K, Step(0));
+            r.OnBook(S, Step(0));
+            long t0 = c.Micros + 1_000;
+            long qty = 1_001;
+            c.Micros = t0; r.OnBook(K, Step(0, qty++));                                         // 가격 동일 · 잔량만 변경 · KIS 정지
+            while (c.Micros - t0 < 500_000)
+            {
+                c.Micros += 1_000;
+                r.OnBook(K, Step(0, qty++));
+                Assert.False(r.LagLatched);                                                     // 500ms 경계 이하 = 무격발
+            }
+            c.Micros += 1; r.OnBook(K, Step(0, qty++));                                         // ★500.001ms 관측 틱 = 격발
+            Assert.True(r.LagLatched);
+            Assert.Equal(SyntheticSpreadRadar.LagReasonSilence, r.LagLatchReason);
+            Assert.Equal(500_001, r.LagLatchMicros);
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+            Assert.True(il.FeedBlocked && !il.Tripped);
+            Assert.Equal(0, r.LagViolations);                                                   // 가격 불일치 0 — 전파 지연 경로로는 포착 불가였던 결함
+            Assert.Equal(1, r.SilenceViolations);
+
+            Assert.True(r.TryRearm(true, true));                                                // 침묵 지속 중 재무장
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+            c.Micros += 1_000; r.OnBook(K, Step(0, qty++));
+            Assert.True(r.LagLatched);                                                          // 다음 산 피드 틱 = 즉시 재래치(타이머 재시작 없음)
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+
+            c.Micros += 1_000; r.OnBook(S, Step(0, qty - 1));                                   // KIS 재개
+            Assert.True(r.TryRearm(true, true));
+            c.Micros += 1_000; r.OnBook(K, Step(0, qty++));
+            Assert.False(r.LagLatched);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+        }
+
+        [Fact]
+        public void Quiet_Market_First_Update_And_Duplicate_Snapshots_Are_Not_Silence()
+        {
+            var c = new Clock();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.OnBook(K, Step(0));
+            r.OnBook(S, Step(0));
+            c.Micros += 3_000_000;                                                              // 두 피드 모두 3초 무변화(비유동)
+            r.OnBook(K, Step(0, 1_500));                                                        // 첫 갱신 = 상대 침묵 3초지만 오탐 아님
+            c.Micros += 4_000; r.OnBook(S, Step(0, 1_500));                                     // 4ms 후 KIS 도달
+            Assert.False(r.LagLatched);
+            for (int i = 0; i < 2_000; i++) { c.Micros += 1_000; r.OnBook(K, Step(0, 1_500)); } // 2초 동일 스냅샷 반복 · KIS 정지
+            Assert.False(r.LagLatched);                                                         // 내용 변경 없는 반복 = 활동 아님
+            Assert.Equal(0, r.SilenceViolations);
+            Assert.Equal(0, r.MaxSilenceMicros);
+            Assert.Throws<ArgumentOutOfRangeException>(() => new SyntheticSpreadRadar(silenceBudgetMicros: 0));
+        }
+
+        [Fact]
+        public void OneMillion_Ticks_Jitter_Silence_And_Rearm_Allocate_Zero_Bytes()
+        {
+            var c = new Clock();
+            var (mask, b22, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindDivergenceInterlock(b22);
+            r.BindLatencyInterlock(il);
+            var steps = new OrderBookPayload[64];
+            var quiet = new OrderBookPayload[16];
+            for (int i = 0; i < steps.Length; i++) { steps[i] = Step(i); steps[i].SymbolCode = 300; }
+            for (int i = 0; i < quiet.Length; i++) { quiet[i] = Step(0, 1_000 + i); quiet[i].SymbolCode = 301; }
+            void Run()
+            {
+                for (int i = 0; i < 1_000_000; i++)
+                {
+                    c.Micros += 13;
+                    int phase = i & 7;
+                    if (phase < 4)                                                              // 종목 300: 키움 선도 · KIS 2단계 뒤(지터 추격)
+                    {
+                        int lv = (i >> 3) & 63;
+                        r.OnBook(phase & 1, in steps[(phase & 1) == 0 ? lv : (lv - 2) & 63]);
+                    }
+                    else if ((phase & 1) == 0 || ((i >> 16) & 1) == 0) r.OnBook(phase & 1, in quiet[(i >> 3) & 15]);   // 종목 301: 같은 가격 · 홀수 구간 KIS 침묵
+                    if ((i & 65535) == 0) r.TryRearm(true, true);
+                }
+            }
+            Run();                                                                              // 예열(JIT)
+            long alloc = MinAllocated(Run);
+            _out.WriteLine($"[δ] 지터 · 침묵 · 재무장 1M 틱 × 3창 최소 = {alloc}B · 비트28 래치 {r.LagTrips} · 침묵 위반 {r.SilenceViolations} · 최대 침묵 {r.MaxSilenceMicros}µs");
+            Assert.Equal(0, alloc);
+            Assert.True(r.LagTrips > 10 && r.SilenceViolations > 0);                         // 홀수 구간마다 침묵 래치 → 재무장 순환
+            Assert.InRange(r.MaxSilenceMicros, SyntheticSpreadRadar.DefaultSilenceBudgetMicros + 1, 65_536L * 13);
+            Assert.Equal(0, r.LagViolations);                                                   // 종목 300 지터 추격(단계 지연 ≈ 0.2ms) = 전파 지연 위반 0
+            GC.KeepAlive(mask);
         }
 
         private static string RepoRoot()

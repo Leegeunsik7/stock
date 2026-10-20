@@ -2997,3 +2997,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.35-GM 산출물 15건 → release/superseded-v12.18.35-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
 - 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 실 KRX 동시호가 잠김 스냅샷 미관측(§117) · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 비트 28 실 피드 오탐률 미관측 · 실 VTS 재소크 미실시(§99).
+
+## 119. v12.18.37-DEV — SyntheticSpreadRadar 비트 28 정밀화(지터 오탐 방어 · 침묵 피드 감시) (2026-10-20)
+
+- 전제 검증: SyntheticSpreadRadar · OrderPathLatencyInterlock(3차 입력 AttachCrossFeedGuard) 실재. 인터락 측 계약은 충분 → 레이더만 변경(인터락 · 포트 · RCL 무변경).
+- 결함 a(지터 오탐): v12.18.33 판정 = 'L1 불일치 지속 시간'. 급변 구간에서 한 피드가 단계마다 10~30ms 씩 뒤처지면 두 L1 이 한 번도 같아지지 않아 50ms 초과 → 오격발.
+  수정 ③ 단계 추적: venue 별 L1 단계 이력(종목당 8 · 고정 배열 _l1). 뒤처진 피드가 상대가 이미 지난 단계에 도달 = 그 단계 지연 확정 + 기준 시각을 '미반영 최고참 상대 단계'로 이동.
+  동기(L1 일치) = 이력 절단(이전 단계 재등장 오측정 방지). L1 고착 피드 = 기준 불변 → 50ms 초과 관측 틱 격발(기존 보장 유지). 이력 밖 단계 = 기준 유지(안전 방향).
+- 결함 b(침묵 미포착): 가격이 같은 채 한 피드가 멈추면 관측할 불일치가 없어 미포착.
+  수정 ④ 침묵 감시: 산 피드가 내용(10호가 가격 · 잔량) 변경 스냅샷을 보내는 동안 상대 수신 0 인 시간 > SilenceBudget(기본 500ms) = 그 틱에 비트 28 래치(LagLatchReason = Silence).
+  기준 = 상대 마지막 수신 이후 산 피드의 첫 변경(비유동 구간 첫 갱신 · 동일 스냅샷 반복 = 오탐 아님). 침묵 지속 중 재무장 = 다음 산 피드 틱 즉시 재래치.
+- 신규 표면: LagLatchReason · SilenceViolations · MaxSilenceMicros · SilenceBudgetMicros · 생성자 silenceBudgetMicros(기본 500ms).
+- 테스트 §8 5건: 2초 급변 스트림(10/20/30ms 지터 · 병합 생략 · 번들 동시 도달 · L1 재일치 0회) 무격발 · L1 고착 51ms 첫 관측 틱 격발(50ms 무격발) ·
+  같은 가격 + KIS 침묵 500.001ms 틱 격발(500ms 무격발 · 전파 지연 위반 0) + 재무장 즉시 재래치 + 재개 후 해제 · 조용한 시장/중복 스냅샷 무격발 · 지터+침묵+재무장 1M 틱 δ=0(3창 최솟값 0B).
+  기존 레이더 18건 무수정 통과.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,225 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 두 피드 동시 정지 = 조용한 시장과 구별 불가(판정은 산 피드 틱에서만) · 같은 스냅샷만 반복하는 고착 피드 = 수신 간주(가격 이동 시 ③ 포착) ·
+  침묵 판정은 다음 산 피드 틱까지 지연(펌프 스윕 미도입 — 단발 갱신 후 병합 소거 오탐 회피) · 실 피드 오탐률 미관측 · 기존 bUnit 헤드리스 뷰 테스트 1회 부하 플래키(단독 3/3 · 전체 스위트 통과).
+- 불변: liveArmed:false · 레이더 발주 경로 0 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
