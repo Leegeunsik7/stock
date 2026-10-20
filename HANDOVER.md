@@ -2908,3 +2908,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 실 미설치 PC 기동은 여전히 미실측(주입 탐침으로 대체). 런타임은 있으나 BlazorWebView 비동기 초기화가 실패하는 경로(손상 런타임 · 사용자 데이터 폴더 쓰기 불가)는 이 가드 범위 밖.
   로그는 실 %LOCALAPPDATA%\StockManager\logs 에 기록됨. 메인 체크아웃 빌드는 타 세션 미커밋 파일 포함.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
+
+## 114. v12.18.34-GM — WebView2 미설치 런타임 결함 주입 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 114.1 버전 · 태그
+- v12.18.34-DEV(§113) = 7efcec9. 12.18.33 → 12.18.34(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 980544a(4파일 · 11/11 줄).
+- 태그 v12.18.34-GM(annotated · -f) = 980544a. 패키징 셸 MS2E_KIS_VTS_* · MS2E_FORCE_WEBVIEW2_MISSING 미설정 · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 114.2 출하 실행(형제 worktree SM_GM_wt · 태그 980544a · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [0] 태그 = HEAD · 미커밋 코드 0 · [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) ·
+  [3] 4,183 통과 + 1 건너뜀(§99 옵트인 · Offline_1M 원패스) · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드 · [7] 아티팩트 38 · manifest.sig · [8] 봉인 재검 38 ·
+  [9] verify-zip Ok · verify-live-armed Ok · [10] handshake Ok · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) ·
+  [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 48996 · HWND 0x1581B84 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.34-GM.zip SHA-256 `B937510352BF7F4810C61CFACF242FB37900B9AFC966BF6D915B4F95B2403D30` · masterSeal `5308C4B0A2A9796D13BB5DAE9A987C7E487DF0441F61239C2421731194D737F6` · sourceCommit 980544a · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.34-Standalone-win-x64.zip SHA-256 `9ED3CD500D1A2F77F9A5BF1D394A4B6BB80945B8460031180CF3C705C64E560D`.
+- v12.18.33-GM 산출물 15건 → release/superseded-v12.18.33-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 실 WebView2 미설치 PC 배포본 실기 미확인(§113 주입 탐침으로 대체) · 비트 28 실 피드 오탐률 미관측 · 실 VTS 재소크 미실시(§99).
