@@ -13,6 +13,14 @@
 //   '모의 차익'은 관측 지표일 뿐 실현 가능 손익이 아니다(정직).
 //  방어: venue 별 전문 시각 역전(더 오래된 스냅샷) = 폐기(최신 상태 보존 · 계수) · 무효 호가(결측 · 교차 · 음수 잔량) = 폐기 · 테이블 포화 = 계수.
 //  ★브로커 · 디스패처 · 무장 키 참조 0(IL 허용목록 테스트) — 실주문 송출 경로 없음(liveArmed:false 무관 · 구조적 0).
+//  [v12.18.33-DEV] 인터락 경화:
+//   ① 깊은 역전(교차 ≥ InversionTripCbp · 기본 30bp) = 같은 KRX 호가창 중계로는 불가능한 정합성 파손 → 지속 대기 없이 그 틱에 비트 22 래치.
+//      얕은 역전(< 임계) = 기존대로 모의 차익 관측. 래치 틱의 역전 = 모의 기록 거부(래치 판정을 기록보다 먼저).
+//   ② 피드 간 L1 전파 지연 = 두 피드 최우선 매수/매도 가격 불일치가 지속된 시간(한 피드가 같은 KRX 변경을 아직 미도달).
+//      불일치 경과 > LagBudget(기본 50ms) 을 관측한 틱(진행 중 경과 · 또는 뒤처진 피드 도달로 확정된 지연) = 비트 28(OrderPathLatency) 3차 입력 래치.
+//      노후 생략(> MaxSkew) 이전에 판정 — 피드 정지 + 가격 변경 = 산 피드의 다음 틱에 격발. 래치 = sticky · 해제 = TryRearm(두 래치 공통 · 물리 이중키).
+//   ★한계(정직): 피드가 서로 다른 시점에서 병합(conflation)하면 급변 구간 불일치가 50ms 를 넘을 수 있다 — 이 경우도 차단(안전 방향).
+//      가격이 같은 채로 한 피드만 멈추면 변경 전까지 미포착(관측할 지연이 없음).
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -30,10 +38,27 @@ namespace StockManager.Engines.Arbitrage
         void Resync();
     }
 
+    /// <summary>[v12.18.33-DEV] 비트 28 3차 입력 수용자(호스트 = OrderPathLatencyInterlock) — 레이더는 지연 인터락 형식을 참조하지 않는다.</summary>
+    public interface IFeedLatencyHost
+    {
+        void AttachCrossFeedGuard(IArmingBlockSource guard);
+        void Resync();
+    }
+
     public sealed class SyntheticSpreadRadar : IArbitrageRadarPort, IArmingBlockSource
     {
         public const int Capacity = 64, SparkLength = ArbRadar.SparkLength;
         public const long DefaultThresholdCbp = 3_000, DefaultSustainMicros = 500_000, DefaultMaxSkewMicros = 1_000_000, DefaultMaxPaperQty = 100;
+        public const long DefaultLagBudgetMicros = 50_000, DefaultInversionTripCbp = DefaultThresholdCbp;
+        public const int ReasonNone = 0, ReasonDivergence = 1, ReasonInversion = 2;
+
+        /// <summary>비트 28 3차 입력 뷰 — 레이더 자체(비트 22 래치)와 분리된 전파 지연 래치만 노출.</summary>
+        private sealed class LagGuard : IArmingBlockSource
+        {
+            private readonly SyntheticSpreadRadar _r;
+            public LagGuard(SyntheticSpreadRadar r) => _r = r;
+            public bool ArmingBlocked => _r.LagLatched;
+        }
 
         private struct VenueBook
         {
@@ -48,27 +73,36 @@ namespace StockManager.Engines.Arbitrage
             public VenueBook K, S;
             public long SpreadCbp, CrossCbp, ImbKCbp, ImbSCbp, Comparisons;
             public long DivergeSinceMicros;             // 0 = 괴리 아님
-            public int SinceEpoch, Inverted;
+            public long LagSinceMicros;                 // 0 = L1 일치(전파 지연 없음)
+            public int SinceEpoch, LagEpoch, Inverted;
         }
 
         private readonly Slot[] _slots = new Slot[Capacity];
         private readonly int[] _spark = new int[SparkLength];
         private readonly Func<long> _nowMicros;
-        private readonly long _thresholdCbp, _sustainMicros, _maxSkewMicros, _maxPaperQty;
+        private readonly long _thresholdCbp, _sustainMicros, _maxSkewMicros, _maxPaperQty, _lagBudgetMicros, _inversionTripCbp;
+        private readonly LagGuard _lagGuard;
         private long _sparkHead;                        // 펌프 단일 작성자
         private long _focusPinned, _focusAuto;
-        private int _latched, _epoch;
+        private int _latched, _latchReason, _lagLatched, _epoch;
         private long _latchSymbol, _latchCbp, _trips;
+        private long _lagSymbol, _lagLatchMicros, _lagTrips, _lagViolations, _maxLagMicros;
         private long _books, _invalid, _tsInversions, _staleSkips, _tableFull, _comparisons;
         private long _opportunities, _paperQty, _paperGrossWon, _paperRefusedLatched, _lastOppSymbol;
         private IQuoteGuardHost? _bit22;
+        private IFeedLatencyHost? _bit28;
 
         public SyntheticSpreadRadar(Func<long>? nowMicros = null, long thresholdCbp = DefaultThresholdCbp, long sustainMicros = DefaultSustainMicros,
-                                    long maxSkewMicros = DefaultMaxSkewMicros, long maxPaperQty = DefaultMaxPaperQty)
+                                    long maxSkewMicros = DefaultMaxSkewMicros, long maxPaperQty = DefaultMaxPaperQty,
+                                    long lagBudgetMicros = DefaultLagBudgetMicros, long inversionTripCbp = DefaultInversionTripCbp)
         {
             if (thresholdCbp <= 0 || sustainMicros < 0 || maxSkewMicros <= 0 || maxPaperQty <= 0) throw new ArgumentOutOfRangeException(nameof(thresholdCbp));
+            if (lagBudgetMicros <= 0) throw new ArgumentOutOfRangeException(nameof(lagBudgetMicros));
+            if (inversionTripCbp <= 0) throw new ArgumentOutOfRangeException(nameof(inversionTripCbp));
             _nowMicros = nowMicros ?? StopwatchMicros;
             _thresholdCbp = thresholdCbp; _sustainMicros = sustainMicros; _maxSkewMicros = maxSkewMicros; _maxPaperQty = maxPaperQty;
+            _lagBudgetMicros = lagBudgetMicros; _inversionTripCbp = inversionTripCbp;
+            _lagGuard = new LagGuard(this);
         }
 
         private static long StopwatchMicros() => (long)((Int128)Stopwatch.GetTimestamp() * 1_000_000 / Stopwatch.Frequency);
@@ -81,9 +115,29 @@ namespace StockManager.Engines.Arbitrage
             Volatile.Write(ref _bit22, reconciler);
         }
 
+        /// <summary>[v12.18.33-DEV] 비트 28 3차 입력 결선(콜드 1회) — 지연 인터락 차단 술어에 전파 지연 래치를 OR 한다.</summary>
+        public void BindLatencyInterlock(IFeedLatencyHost interlock)
+        {
+            ArgumentNullException.ThrowIfNull(interlock);
+            interlock.AttachCrossFeedGuard(_lagGuard);
+            Volatile.Write(ref _bit28, interlock);
+        }
+
+        /// <summary>비트 22 래치(괴리 지속 ∨ 깊은 역전).</summary>
         public bool Latched => Volatile.Read(ref _latched) == 1;
         public bool ArmingBlocked => Latched;
+        /// <summary>최초 비트 22 래치 원인(ReasonDivergence · ReasonInversion · 미래치 = ReasonNone).</summary>
+        public int LatchReason => Volatile.Read(ref _latchReason);
         public long Trips => Interlocked.Read(ref _trips);
+        /// <summary>[v12.18.33-DEV] 비트 28 전파 지연 래치.</summary>
+        public bool LagLatched => Volatile.Read(ref _lagLatched) == 1;
+        public long LagTrips => Interlocked.Read(ref _lagTrips);
+        /// <summary>예산 초과 지연 관측 수(래치 중 포함 — 미포착 누락 0).</summary>
+        public long LagViolations => Interlocked.Read(ref _lagViolations);
+        public long LagLatchSymbol => Volatile.Read(ref _lagSymbol);
+        public long LagLatchMicros => Volatile.Read(ref _lagLatchMicros);
+        public long MaxLagMicros => Interlocked.Read(ref _maxLagMicros);
+        public long LagBudgetMicros => _lagBudgetMicros;
         public long Books => Interlocked.Read(ref _books);
         public long InvalidBooks => Interlocked.Read(ref _invalid);
         public long TimestampInversions => Interlocked.Read(ref _tsInversions);
@@ -105,8 +159,9 @@ namespace StockManager.Engines.Arbitrage
             Interlocked.Increment(ref _books);
             long now = _nowMicros();
             ref var x = ref _slots[s];
-            bool compared = false, trip = false, opp = false;
-            long oppQty = 0, oppGross = 0, spreadCbp = 0;
+            bool compared = false, trip = false, opp = false, lagTrip = false;
+            long oppQty = 0, oppGross = 0, tripCbp = 0, lag = 0;
+            int tripReason = ReasonNone;
             BeginWrite(ref x);
             try
             {
@@ -119,31 +174,40 @@ namespace StockManager.Engines.Arbitrage
                 v.Book = b; v.RxMicros = now == 0 ? 1 : now; v.Books++;
                 ref var o = ref (venue == ArbRadar.VenueKiwoom ? ref x.S : ref x.K);
                 if (o.Books == 0) return false;
+                int epoch = Volatile.Read(ref _epoch);
+                if (v.Book.BidPrice[0] == o.Book.BidPrice[0] && v.Book.AskPrice[0] == o.Book.AskPrice[0])
+                {
+                    if (x.LagSinceMicros != 0 && x.LagEpoch == epoch) lag = v.RxMicros - x.LagSinceMicros;   // 뒤처진 피드 도달 = 이번 전파 지연 확정
+                    x.LagSinceMicros = 0;
+                }
+                else if (x.LagSinceMicros == 0 || x.LagEpoch != epoch) { x.LagSinceMicros = v.RxMicros; x.LagEpoch = epoch; }
+                else lag = v.RxMicros - x.LagSinceMicros;                               // 불일치 진행 중 = 경과(피드 정지도 산 피드 틱에서 포착)
+                lagTrip = lag > _lagBudgetMicros;
                 if (Math.Abs(v.RxMicros - o.RxMicros) > _maxSkewMicros)
                 {
                     Interlocked.Increment(ref _staleSkips);                             // 한 피드 노후 = 대조 불가(괴리 타이머 리셋 · 판정 보류)
                     x.DivergeSinceMicros = 0;
-                    return false;
+                    goto Settle;                                                        // 전파 지연 판정은 노후 생략과 무관하게 반영
                 }
                 compared = true;
                 ref readonly var k = ref x.K.Book;
                 ref readonly var q = ref x.S.Book;
                 long kb = k.BidPrice[0], ka = k.AskPrice[0], qb = q.BidPrice[0], qa = q.AskPrice[0];
                 long mk2 = kb + ka, mq2 = qb + qa, sum = mk2 + mq2;
-                spreadCbp = Math.Abs(mk2 - mq2) * 2_000_000 / sum;
+                long spreadCbp = Math.Abs(mk2 - mq2) * 2_000_000 / sum;
                 long hiBid = Math.Max(kb, qb), loAsk = Math.Min(ka, qa);
                 long crossCbp = (hiBid - loAsk) * 4_000_000 / sum;
                 x.SpreadCbp = spreadCbp; x.CrossCbp = crossCbp;
                 x.ImbKCbp = ImbalanceCbp(in k); x.ImbSCbp = ImbalanceCbp(in q);
                 x.Comparisons++;
                 Interlocked.Increment(ref _comparisons);
-                int epoch = Volatile.Read(ref _epoch);
                 if (spreadCbp >= _thresholdCbp)
                 {
                     if (x.DivergeSinceMicros == 0 || x.SinceEpoch != epoch) { x.DivergeSinceMicros = v.RxMicros; x.SinceEpoch = epoch; }
-                    else if (v.RxMicros - x.DivergeSinceMicros >= _sustainMicros) trip = true;
+                    else if (v.RxMicros - x.DivergeSinceMicros >= _sustainMicros) { trip = true; tripCbp = spreadCbp; tripReason = ReasonDivergence; }
                 }
                 else x.DivergeSinceMicros = 0;
+                if (!trip && crossCbp >= _inversionTripCbp) { trip = true; tripCbp = crossCbp; tripReason = ReasonInversion; }   // 깊은 역전 = 그 틱 격발
                 bool inverted = crossCbp > 0;
                 if (inverted && x.Inverted == 0)
                 {
@@ -158,9 +222,13 @@ namespace StockManager.Engines.Arbitrage
             }
             finally { EndWrite(ref x); }
             Volatile.Write(ref _focusAuto, b.SymbolCode);
+        Settle:
+            if (lag > 0) MaxUpdate(ref _maxLagMicros, lag);
+            if (lagTrip) TripLag(b.SymbolCode, lag);
+            if (trip) Trip(b.SymbolCode, tripCbp, tripReason);                         // 래치 판정 먼저 — 래치 틱의 역전 = 모의 기록 거부
             if (opp)
             {
-                if (Latched) Interlocked.Increment(ref _paperRefusedLatched);
+                if (Latched || LagLatched) Interlocked.Increment(ref _paperRefusedLatched);
                 else
                 {
                     Interlocked.Increment(ref _opportunities);
@@ -169,26 +237,50 @@ namespace StockManager.Engines.Arbitrage
                     Volatile.Write(ref _lastOppSymbol, b.SymbolCode);
                 }
             }
-            if (trip) Trip(b.SymbolCode, spreadCbp);
             return compared;
         }
 
-        private void Trip(long symbol, long cbp)
+        private void Trip(long symbol, long cbp, int reason)
         {
             if (Interlocked.CompareExchange(ref _latched, 1, 0) != 0) return;          // 최초 원인만 기록(sticky)
             Volatile.Write(ref _latchSymbol, symbol);
             Volatile.Write(ref _latchCbp, cbp);
+            Volatile.Write(ref _latchReason, reason);
             Interlocked.Increment(ref _trips);
             Volatile.Read(ref _bit22)?.Resync();                                        // ★비트 22 Raise — 무장 차단
         }
 
-        /// <summary>물리 이중키 재무장 — 래치 해제 + 괴리 타이머 전 슬롯 재시작(지속 괴리면 다시 500ms 후 재래치).</summary>
+        private void TripLag(long symbol, long lagMicros)
+        {
+            Interlocked.Increment(ref _lagViolations);
+            if (Interlocked.CompareExchange(ref _lagLatched, 1, 0) != 0) return;       // 최초 원인만 기록(sticky)
+            Volatile.Write(ref _lagSymbol, symbol);
+            Volatile.Write(ref _lagLatchMicros, lagMicros);
+            Interlocked.Increment(ref _lagTrips);
+            Volatile.Read(ref _bit28)?.Resync();                                        // ★비트 28 Raise — 무장 차단
+        }
+
+        private static void MaxUpdate(ref long target, long value)
+        {
+            long cur = Interlocked.Read(ref target);
+            while (value > cur)
+            {
+                long prev = Interlocked.CompareExchange(ref target, value, cur);
+                if (prev == cur) return;
+                cur = prev;
+            }
+        }
+
+        /// <summary>물리 이중키 재무장 — 두 래치(비트 22 · 28) 해제 + 괴리/지연 타이머 전 슬롯 재시작(지속 이상이면 재래치).</summary>
         public bool TryRearm(bool valveWired, bool liveArmingWired)
         {
             if (!(valveWired && liveArmingWired)) return false;
             Interlocked.Increment(ref _epoch);
+            Volatile.Write(ref _latchReason, ReasonNone);
             Volatile.Write(ref _latched, 0);
+            Volatile.Write(ref _lagLatched, 0);
             Volatile.Read(ref _bit22)?.Resync();
+            Volatile.Read(ref _bit28)?.Resync();
             return true;
         }
 

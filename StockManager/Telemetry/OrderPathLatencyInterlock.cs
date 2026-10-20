@@ -17,6 +17,7 @@
 //  [v12.18.16-DEV] 2차 차단 입력(AttachFeedGuard · 1회): KIS 시세 시각 편차 감시(KisTimeSkewGuard)가 같은 비트 28 을 공유한다 — 집계어는 비트당
 //   소스 1개만 결속(교체 금지)하므로 비트를 새로 결속하지 않고 이 소스의 차단 술어에 OR 로 합친다(인터락 30종 정의 · 마스크 불변).
 //   차단 = 자체 Trip ∨ 2차 입력 차단(판독 예외 = 차단). 각 래치는 독립 — 자체 TryRearm 은 2차 래치를 풀지 않는다(비트는 둘 다 풀려야 내려감).
+//  [v12.18.33-DEV] 3차 차단 입력(AttachCrossFeedGuard · 1회 · 별도 슬롯): 합성 스프레드 레이더의 피드 간 L1 전파 지연 래치 — 2차 슬롯 계약(교체 금지)은 그대로.
 // ============================================================================
 using System;
 using System.Threading;
@@ -24,7 +25,7 @@ using MS2E.Core;
 
 namespace StockManager.Telemetry
 {
-    public sealed class OrderPathLatencyInterlock : IArmingBlockSource
+    public sealed class OrderPathLatencyInterlock : IArmingBlockSource, StockManager.Engines.Arbitrage.IFeedLatencyHost
     {
         public const long DefaultBottleneckNanos = 50_000_000;                     // 50ms 병목 허용치
         public const int DefaultConsecutive = 3, DefaultMinSamples = 100;
@@ -39,7 +40,7 @@ namespace StockManager.Telemetry
         private int _streak, _tripped;
         private long _evaluations, _judgements, _overBudget, _trips, _lastP99;
         private ArmingInterlockLink? _link;
-        private IArmingBlockSource? _feed;
+        private IArmingBlockSource? _feed, _crossFeed;
 
         /// <param name="profiler">실발주 경로 계측기(호스트 링 · 디스패처 · 게이트 · 출구 결선).</param>
         /// <param name="budgetNanos">p99 예산(ns). 호스트 = 50ms + 드레인 주기.</param>
@@ -63,16 +64,14 @@ namespace StockManager.Telemetry
         public bool Tripped => Volatile.Read(ref _tripped) == 1;
         public bool ArmingBlocked => Tripped || FeedBlocked;
 
-        /// <summary>[v12.18.16-DEV] 2차 입력(KIS 시세 편차) 차단 여부 — 미결선 = false · 판독 예외 = true(fail-closed).</summary>
-        public bool FeedBlocked
+        /// <summary>[v12.18.16-DEV] 2차 입력(KIS 시세 편차) ∨ [v12.18.33-DEV] 3차 입력(피드 간 전파 지연) 차단 여부 — 미결선 = false · 판독 예외 = true(fail-closed).</summary>
+        public bool FeedBlocked => Blocked(Volatile.Read(ref _feed)) || Blocked(Volatile.Read(ref _crossFeed));
+
+        private static bool Blocked(IArmingBlockSource? f)
         {
-            get
-            {
-                var f = Volatile.Read(ref _feed);
-                if (f is null) return false;
-                try { return f.ArmingBlocked; }
-                catch { return true; }
-            }
+            if (f is null) return false;
+            try { return f.ArmingBlocked; }
+            catch { return true; }
         }
 
         /// <summary>[v12.18.16-DEV] 2차 차단 입력 결선(콜드 1회 · 교체 금지). 2차 입력은 상태 전이 직후 Resync() 를 호출한다.</summary>
@@ -81,6 +80,15 @@ namespace StockManager.Telemetry
             ArgumentNullException.ThrowIfNull(feed);
             if (Interlocked.CompareExchange(ref _feed, feed, null) is not null)
                 throw new InvalidOperationException("비트 28 2차 입력 이미 결선됨 — 교체 금지(fail-closed)");
+            Volatile.Read(ref _link)?.Resync();
+        }
+
+        /// <summary>[v12.18.33-DEV] 3차 차단 입력 결선(합성 스프레드 레이더 전파 지연 래치 · 콜드 1회 · 교체 금지).</summary>
+        public void AttachCrossFeedGuard(IArmingBlockSource guard)
+        {
+            ArgumentNullException.ThrowIfNull(guard);
+            if (Interlocked.CompareExchange(ref _crossFeed, guard, null) is not null)
+                throw new InvalidOperationException("비트 28 3차 입력 이미 결선됨 — 교체 금지(fail-closed)");
             Volatile.Read(ref _link)?.Resync();
         }
 

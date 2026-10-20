@@ -1668,6 +1668,8 @@ namespace StockManager.Blazor
             //   브로커 · 무장 경로 참조 0(실주문 송출 0). KIS 미구성 = 대조 대기(정직 렌더 · 가짜 호가 0). /arbitrage = 값 판독 전용.
             var arbRadar = new StockManager.Engines.Arbitrage.SyntheticSpreadRadar();
             arbRadar.BindDivergenceInterlock(openOrderRecon);
+            // [v12.18.33-DEV] 깊은 역전(≥ 30bp) = 그 틱 비트 22 래치 · 피드 간 L1 전파 지연 > 50ms = 비트 28 3차 입력(AttachCrossFeedGuard · 비트 재결속 0 · 정의 불변).
+            arbRadar.BindLatencyInterlock(orderPathLatency);
             bridge.OrderBookReceived += b => arbRadar.OnBook(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom, in b);
             dashHub.AttachArbitrage(arbRadar);
             // [v12.18.21-DEV] 브로커 레이트 게이트 관제 — KIS 레인 = 호스트 KisProvider 의 실 게이트(구성 시에만).

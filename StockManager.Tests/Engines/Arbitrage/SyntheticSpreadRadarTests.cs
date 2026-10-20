@@ -8,6 +8,9 @@
 //   §4 δ=0: 1M 틱 대조 + 펌프 표본 + 판독 힙 0B · GC 0 / 허브 펌프 투영 0B · 프레임 필드
 //   §5 동시성: 두 피드 작성자 + 판독자 — 찢긴 래더 0(CountdownEvent 조인 후 처분)
 //   §6 Fail-Closed: IL 참조 허용목록(브로커 · 디스패처 · 무장 형식 0) · 포트 표면에 발주/무장 멤버 0 · 헤드리스 화면(미수신 정직 렌더 · 래치 배너)
+//   §7 [v12.18.33-DEV] 인터락 경화: 깊은 역전(≥ 30bp) = 1틱 비트 22(0x00400000) · 얕은 역전 = 관측 유지 · 피드 간 L1 전파 지연 > 50ms = 1틱 비트 28
+//      (0x10000000 · 실 OrderPathLatencyInterlock 3차 입력 · KIS 2차 입력과 공존 · 교체 금지) · 피드 정지 + 노후 생략 경로 격발 · 이중키 재무장 ·
+//      두 비트 결속 상태 1M 틱 격발/재무장 순환 δ=0
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -54,8 +57,12 @@ namespace StockManager.Tests.Engines.Arbitrage
         {
             private IArmingBlockSource? _guard;
             private ArmingInterlockLink? _link;
-            public readonly ArmingInterlockBitmask Mask = new(ArmingInterlockSource.OpenOrderDivergence);
-            public Bit22Host() => _link = Mask.Bind(ArmingInterlockSource.OpenOrderDivergence, this);
+            public readonly ArmingInterlockBitmask Mask;
+            public Bit22Host(ArmingInterlockBitmask? mask = null)
+            {
+                Mask = mask ?? new ArmingInterlockBitmask(ArmingInterlockSource.OpenOrderDivergence);
+                _link = Mask.Bind(ArmingInterlockSource.OpenOrderDivergence, this);
+            }
             public bool ArmingBlocked => _guard?.ArmingBlocked ?? false;
             public void AttachQuoteGuard(IArmingBlockSource guard) { _guard = guard; _link?.Resync(); }
             public void Resync() => _link?.Resync();
@@ -393,7 +400,7 @@ namespace StockManager.Tests.Engines.Arbitrage
         {
             const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
             var bad = new List<string>();
-            var types = typeof(SyntheticSpreadRadar).GetNestedTypes(All).Prepend(typeof(SyntheticSpreadRadar)).Append(typeof(IQuoteGuardHost));
+            var types = typeof(SyntheticSpreadRadar).GetNestedTypes(All).Prepend(typeof(SyntheticSpreadRadar)).Append(typeof(IQuoteGuardHost)).Append(typeof(IFeedLatencyHost));
             foreach (var type in types)
             {
                 foreach (var f in type.GetFields(All)) if (!Allowed(f.FieldType)) bad.Add(type.Name + "." + f.Name + " : " + f.FieldType.FullName);
@@ -405,7 +412,8 @@ namespace StockManager.Tests.Engines.Arbitrage
                     }
             }
             Assert.True(bad.Count == 0, string.Join("\n", bad));
-            foreach (var n in typeof(IArbitrageRadarPort).GetMembers().Select(m => m.Name).Concat(typeof(IQuoteGuardHost).GetMembers().Select(m => m.Name)))
+            foreach (var n in typeof(IArbitrageRadarPort).GetMembers().Select(m => m.Name).Concat(typeof(IQuoteGuardHost).GetMembers().Select(m => m.Name))
+                                                         .Concat(typeof(IFeedLatencyHost).GetMembers().Select(m => m.Name)))
                 foreach (var banned in new[] { "Submit", "Place", "Order", "Cancel", "Arm", "Broker", "Live", "Send" })
                     Assert.DoesNotContain(banned, n, StringComparison.OrdinalIgnoreCase);
         }
@@ -441,6 +449,191 @@ namespace StockManager.Tests.Engines.Arbitrage
 
             string nav = System.IO.File.ReadAllText(System.IO.Path.Combine(RepoRoot(), "MS2E.UI.Portable", "Components", "NavMenu.razor"));
             Assert.Contains("new Item(\"⚡\", \"아비트라지 레이더\", \"/arbitrage\"", nav);
+        }
+
+        // ════════════ §7 [v12.18.33-DEV] 인터락 경화(비트 22 · 28) ════════════
+
+        private const long Bit22Mask = 0x00400000L, Bit28Mask = 0x10000000L;
+
+        /// <summary>비트 22(대역 호스트) + 비트 28(실 OrderPathLatencyInterlock) 를 한 집계 마스크에 결속.</summary>
+        private static (ArmingInterlockBitmask mask, Bit22Host b22, StockManager.Telemetry.OrderPathLatencyInterlock il) TwoBits()
+        {
+            var mask = new ArmingInterlockBitmask(ArmingInterlockSource.OpenOrderDivergence, ArmingInterlockSource.OrderPathLatency);
+            var b22 = new Bit22Host(mask);
+            var il = new StockManager.Telemetry.OrderPathLatencyInterlock(new StockManager.Telemetry.OrderPathStageProfiler());
+            il.BindInterlock(mask, ArmingInterlockSource.OrderPathLatency);
+            Assert.True(mask.Seal(out _));
+            return (mask, b22, il);
+        }
+
+        [Fact]
+        public void Bit_Masks_Match_Thirty_Layer_Definition()
+        {
+            Assert.Equal(Bit22Mask, 1L << (int)ArmingInterlockSource.OpenOrderDivergence);
+            Assert.Equal(Bit28Mask, 1L << (int)ArmingInterlockSource.OrderPathLatency);
+            const long Defined = unchecked((long)0x800000001FFFFFFFUL);
+            Assert.Equal(Bit22Mask | Bit28Mask, Defined & (Bit22Mask | Bit28Mask));               // 30종 정의 마스크 내(정의 불변)
+        }
+
+        [Fact]
+        public void Deep_Inversion_Trips_Bit22_On_The_Same_Tick_And_Refuses_Paper()
+        {
+            var c = new Clock();
+            var (mask, b22, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindDivergenceInterlock(b22);
+            r.BindLatencyInterlock(il);
+            r.OnBook(S, Book(70_000, 70_100));
+            r.OnBook(K, Book(70_150, 70_250));                                                  // 얕은 역전 +7.13bp < 30bp = 관측(모의 1건) · 래치 0
+            Assert.False(r.Latched);
+            Assert.Equal(1, r.Opportunities);
+            Assert.Equal(0, mask.Mask & Bit22Mask);
+
+            r.OnBook(K, Book(70_000, 70_100));                                                  // 해소
+            Assert.True(r.OnBook(K, Book(70_400, 70_500)));                                     // 깊은 역전 (70,400 − 70,100)/Mid = 42.70bp — ★이 1틱에 격발
+            Assert.True(r.Latched);
+            Assert.Equal(SyntheticSpreadRadar.ReasonInversion, r.LatchReason);
+            Assert.Equal(300L * 4_000_000 / 281_000, r.Status.LatchSpreadCbp);
+            Assert.Equal(Bit22Mask, mask.Mask & Bit22Mask);
+            Assert.True(mask.Blocked);
+            Assert.Equal(1, r.Opportunities);                                                   // 래치 틱의 역전 = 기록 거부(래치 판정 먼저)
+            Assert.Equal(1, r.PaperRefusedLatched);
+            Assert.Equal(0, mask.Mask & Bit28Mask);                                             // 같은 시각 = 전파 지연 0 → 비트 28 무관
+
+            Assert.False(r.TryRearm(true, false));
+            Assert.Equal(Bit22Mask, mask.Mask & Bit22Mask);
+            r.OnBook(K, Book(70_000, 70_100));
+            Assert.True(r.TryRearm(true, true));
+            Assert.Equal(0, mask.Mask & Bit22Mask);
+            Assert.Equal(SyntheticSpreadRadar.ReasonNone, r.LatchReason);
+            Assert.Throws<ArgumentOutOfRangeException>(() => new SyntheticSpreadRadar(inversionTripCbp: 0));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new SyntheticSpreadRadar(lagBudgetMicros: 0));
+        }
+
+        [Fact]
+        public void Propagation_Lag_Over_50ms_Trips_Bit28_On_The_Observing_Tick_But_50ms_Does_Not()
+        {
+            var c = new Clock();
+            var (mask, b22, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindDivergenceInterlock(b22);
+            r.BindLatencyInterlock(il);
+            r.OnBook(K, Book(70_000, 70_100));
+            r.OnBook(S, Book(70_000, 70_100));                                                  // L1 일치
+            r.OnBook(K, Book(70_100, 70_200));                                                  // 키움 선도 — 불일치 개시
+            c.Micros += 50_000; r.OnBook(S, Book(70_100, 70_200));                              // KIS 50ms 후 도달 = 예산 경계(미초과)
+            Assert.False(r.LagLatched);
+            Assert.Equal(50_000, r.MaxLagMicros);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+
+            r.OnBook(K, Book(70_200, 70_300));                                                  // 다시 키움 선도
+            c.Micros += 50_001;
+            Assert.True(r.OnBook(S, Book(70_200, 70_300)));                                     // ★뒤처진 피드 도달 틱 = 50.001ms 확정 → 즉시 격발
+            Assert.True(r.LagLatched);
+            Assert.Equal(1, r.LagTrips);
+            Assert.Equal(50_001, r.LagLatchMicros);
+            Assert.Equal(Sym, r.LagLatchSymbol);
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+            Assert.True(il.ArmingBlocked && il.FeedBlocked && !il.Tripped);                     // 3차 입력 OR · 자체 p99 래치와 분리
+            Assert.False(r.Latched);                                                            // 비트 22 무관
+            Assert.Equal(0, mask.Mask & Bit22Mask);
+
+            r.OnBook(K, Book(70_300, 70_400));
+            c.Micros += 80_000; r.OnBook(K, Book(70_300, 70_400));                              // 래치 중 위반도 계수(미포착 0)
+            Assert.Equal(2, r.LagViolations);
+            Assert.Equal(1, r.LagTrips);
+
+            Assert.False(r.TryRearm(false, true));
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+            r.OnBook(S, Book(70_300, 70_400));                                                  // 정합 회복
+            Assert.True(r.TryRearm(true, true));
+            Assert.False(r.LagLatched);
+            Assert.False(il.FeedBlocked);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+        }
+
+        [Fact]
+        public void In_Progress_Lag_Trips_Without_Waiting_For_The_Laggard()
+        {
+            var c = new Clock();
+            var (mask, _, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindLatencyInterlock(il);
+            r.OnBook(K, Book(70_000, 70_100));
+            r.OnBook(S, Book(70_000, 70_100));
+            r.OnBook(K, Book(70_100, 70_200));                                                  // 불일치 개시 · KIS 정체
+            c.Micros += 30_000; r.OnBook(K, Book(70_100, 70_200));
+            Assert.False(r.LagLatched);
+            c.Micros += 20_001; r.OnBook(K, Book(70_100, 70_200));                              // 경과 50.001ms 를 관측한 산 피드 틱 = 격발
+            Assert.True(r.LagLatched);
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+
+            var c2 = new Clock();
+            var r2 = new SyntheticSpreadRadar(c2.Now);
+            r2.OnBook(K, Book(70_000, 70_100));
+            r2.OnBook(S, Book(70_000, 70_100));
+            c2.Micros += 2_000_000;
+            Assert.False(r2.OnBook(K, Book(70_100, 70_200)));                                   // KIS 2초 정지 = 노후 생략(대조 0) · 불일치 개시
+            c2.Micros += 50_001;
+            Assert.False(r2.OnBook(K, Book(70_100, 70_200)));                                   // 노후 생략 경로에서도 지연 판정 = 격발
+            Assert.Equal(2, r2.StaleSkips);
+            Assert.True(r2.LagLatched);
+        }
+
+        [Fact]
+        public void Cross_Feed_Slot_Coexists_With_Kis_Skew_Guard_And_Forbids_Replacement()
+        {
+            var (mask, _, il) = TwoBits();
+            var kis = new StockManager.Adapters.Kis.KisTimeSkewGuard();
+            kis.BindLatencyInterlock(il);                                                       // 2차 슬롯(KIS)
+            var r = new SyntheticSpreadRadar();
+            r.BindLatencyInterlock(il);                                                         // 3차 슬롯(레이더) — 별도
+            Assert.Throws<InvalidOperationException>(() => new SyntheticSpreadRadar().BindLatencyInterlock(il));   // 교체 금지
+            Assert.Throws<InvalidOperationException>(() => new StockManager.Adapters.Kis.KisTimeSkewGuard().BindLatencyInterlock(il));
+            Assert.False(il.FeedBlocked);
+            Assert.Equal(0, mask.Mask & Bit28Mask);
+
+            var il2 = new StockManager.Telemetry.OrderPathLatencyInterlock(new StockManager.Telemetry.OrderPathStageProfiler());
+            il2.AttachCrossFeedGuard(new ThrowingSource());
+            Assert.True(il2.FeedBlocked);                                                       // 판독 예외 = 차단(fail-closed)
+            Assert.True(il2.ArmingBlocked);
+        }
+
+        [Fact]
+        public void OneMillion_Ticks_With_Both_Bits_Bound_Trip_And_Rearm_Allocate_Zero_Bytes()
+        {
+            var c = new Clock();
+            var (mask, b22, il) = TwoBits();
+            var r = new SyntheticSpreadRadar(c.Now);
+            r.BindDivergenceInterlock(b22);
+            r.BindLatencyInterlock(il);
+            var books = new OrderBookPayload[8];
+            for (int i = 0; i < 4; i++)
+            {
+                books[i * 2] = Book(70_000 + i * 100, 70_100 + i * 100, symbol: 200 + i);
+                books[i * 2 + 1] = i switch
+                {
+                    0 => Book(70_000, 70_100, symbol: 200),                                     // 정합
+                    1 => Book(70_110, 70_210, symbol: 201),                                     // 미세 불일치 = 전파 지연 누적 → 비트 28
+                    2 => Book(69_700, 69_800, symbol: 202),                                     // 깊은 역전 = 1틱 비트 22
+                    _ => Book(70_600, 70_700, symbol: 203),                                     // 괴리 지속
+                };
+            }
+            void Run()
+            {
+                for (int i = 0; i < 1_000_000; i++)
+                {
+                    c.Micros += 13;
+                    r.OnBook(i & 1, in books[i & 7]);
+                    if ((i & 65535) == 0) r.TryRearm(true, true);
+                }
+            }
+            Run();                                                                              // 예열(JIT)
+            long alloc = MinAllocated(Run);
+            _out.WriteLine($"[δ] 두 비트 결속 1M 틱 × 3창 최소 = {alloc}B · 비트22 래치 {r.Trips} · 비트28 래치 {r.LagTrips} · 최대 지연 {r.MaxLagMicros}µs");
+            Assert.Equal(0, alloc);
+            Assert.True(r.Trips > 10 && r.LagTrips > 10);
+            Assert.Equal(Bit22Mask | Bit28Mask, mask.Mask & (Bit22Mask | Bit28Mask));
         }
 
         private static string RepoRoot()

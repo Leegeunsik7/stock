@@ -2845,3 +2845,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 체크아웃 재수검(메인 Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 본문 치명 코드 표 실 응답 미관측(EGW00121/123/133 과잉 래치 가능 · §109) · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
   메인 CLI 바이너리는 타 세션 미커밋 BrokerSettingsPage.razor 변경이 포함된 작업 트리 빌드(수검 로직 무관).
+
+## 111. v12.18.33-DEV — 합성 스프레드 레이더 인터락 경화(깊은 역전 = 1틱 비트 22 · 피드 간 L1 전파 지연 > 50ms = 1틱 비트 28) (2026-10-20)
+
+- 전제 검증: 오더가 신규 작성을 요구한 SyntheticSpreadRadar(StockManager/Engines/Arbitrage · v12.18.19-DEV §83)와 비트 22 결속(괴리 ≥ 30bp 500ms 지속 → 대사기 AttachQuoteGuard)은 이미 존재.
+  오더 경로 StockManager/Core/Arbitrage · StockManager.Tests/Core/ 는 부재 → 기존 위치(Engines/Arbitrage · Tests/Engines/Arbitrage)에서 확장. 신규 파일 0.
+  실제 공백 2건: ① 호가 역전은 모의 차익 관측만 하고 인터락 미결속 ② 비트 28 결속 0(레이더 측 지연 판정 없음).
+- SyntheticSpreadRadar:
+  - 깊은 역전: 교차 스프레드 ≥ InversionTripCbp(기본 30bp) = 지속 대기 없이 그 틱에 비트 22 래치(LatchReason = Inversion). 얕은 역전 = 종전대로 모의 차익 관측.
+    래치 판정을 모의 기록보다 먼저 → 래치 틱의 역전도 기록 거부. 괴리 지속 래치(Divergence)는 무변경.
+  - 피드 간 L1 전파 지연: 두 피드 최우선 매수/매도 가격 불일치 지속 시간(슬롯 LagSinceMicros · epoch). 경과 > LagBudget(기본 50ms) 을 관측한 틱 = 비트 28 래치
+    (진행 중 경과 · 뒤처진 피드 도달로 확정된 지연 둘 다). 노후 생략(> MaxSkew) 이전에 판정 → 피드 정지 + 가격 변경 = 산 피드 다음 틱에 격발. 위반은 래치 중에도 계수.
+  - 결선: IFeedLatencyHost(레이더는 지연 인터락 형식 비참조) · BindLatencyInterlock → 내부 LagGuard 뷰(비트 22 래치와 분리된 지연 래치만 노출).
+  - TryRearm(물리 이중키) = 두 래치 해제 + epoch 증가(재무장 전 시작된 괴리/지연 타이머 폐기). 한쪽 키 = 거부.
+- OrderPathLatencyInterlock: 3차 차단 입력 슬롯 AttachCrossFeedGuard(콜드 1회 · 교체 금지) 신설 — 2차 슬롯(KisTimeSkewGuard · 교체 금지 계약 테스트 고정)은 그대로.
+  FeedBlocked = 2차 ∨ 3차(판독 예외 = 차단). 비트 재결속 0 · 인터락 30종 정의(0x800000001FFFFFFF) · Tighten 6 무변경.
+- 호스트(BlazorHomeForm): arbRadar.BindLatencyInterlock(orderPathLatency) 1줄 추가.
+- 테스트(SyntheticSpreadRadarTests §7 · +6): 마스크 위치(0x00400000 · 0x10000000 ⊂ 정의 마스크) · 얕은 역전 무래치/깊은 역전 1틱 비트 22 + 모의 거부 + 이중키 ·
+  지연 50ms 경계 무격발/50.001ms 1틱 비트 28(실 OrderPathLatencyInterlock · 실 집계 마스크 · 자체 p99 래치와 분리) · 래치 중 위반 계수 · 진행 중 지연 격발 ·
+  노후 생략 경로 격발 · KIS 2차 슬롯과 공존 + 3차 교체 금지 + 판독 예외 fail-closed · 두 비트 결속 1M 틱 격발/재무장 순환 δ=0(3창 최솟값 0B). IL 허용목록에 IFeedLatencyHost 포함.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,168 통과 + 1 건너뜀(§99 옵트인) ·
+  infra-scan 0 · 래칫 ≤40(RCL 변경 0).
+- 불변: liveArmed:false(레이더 브로커/디스패처/무장 키 참조 0 — IL 테스트) · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
+- 한계(정직): 오더 목표 '4,170건+' 미달(4,169 = 기존 4,163 + 신규 6 — 건수 맞추기용 테스트 미추가). 피드별 병합(conflation) 시점 차로 급변 구간 L1 불일치가 50ms 를
+  넘으면 실지연이 아니어도 비트 28 래치(안전 방향 · 실 피드 오탐률 미관측). 가격 동일 상태에서 한 피드만 정지 = 변경 전까지 미포착. 30bp 역전 임계는 실 호가 분포 미보정.
