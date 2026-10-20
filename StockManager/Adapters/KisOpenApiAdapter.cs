@@ -321,6 +321,8 @@ namespace StockManager.Adapters
         // [v12.18.16-DEV] 전문 시각 편차 감시(비트 28 2차 입력) · 체결 레코드(체결량 · 매수/매도 구분) 직결 — 아레나 원장/테이프 피드
         private readonly Kis.KisTimeSkewGuard? _skew;
         private readonly Action<KisTick>? _onTrade;
+        // [v12.18.39-DEV] 전역 피드 동시 두절 워치독 — 판독 성공한 시세 전문(호가 · 체결)만 KIS 생존 증거(PINGPONG · 제어 · 이탈 프레임 제외)
+        private readonly StockManager.Engines.Arbitrage.FeedStallWatchdog? _stall;
         // [KIS 호가 경계 방어] 형식 이탈 연속 QuarantineAfter 회 = KIS 호가 피드 격리(전달 0 · 엔진 피드 1 격리 통지) · 정상 연속 ReleaseAfter 회 = 복귀.
         //   이탈 틱은 사유 코드로 블랙박스에 무할당 기록. 예상 호가(HOUR_CLS_CODE ≠ '0')는 정상 판독이되 연속매매 아님 → 무시 계수(형식 이탈 아님).
         public const int BookQuarantineAfter = 5, BookReleaseAfter = 20;
@@ -356,10 +358,11 @@ namespace StockManager.Adapters
                                  Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
                                  KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null,
                                  MmfFlightRecorder? blackbox = null, Action<bool>? onBookQuarantine = null,
-                                 Kis.KisTimeSkewGuard? skewGuard = null, Action<KisTick>? onTrade = null)
+                                 Kis.KisTimeSkewGuard? skewGuard = null, Action<KisTick>? onTrade = null,
+                                 StockManager.Engines.Arbitrage.FeedStallWatchdog? stallWatch = null)
         {
             _onBook = onBook; _blackbox = blackbox; _onBookQuarantine = onBookQuarantine;
-            _skew = skewGuard; _onTrade = onTrade;
+            _skew = skewGuard; _onTrade = onTrade; _stall = stallWatch;
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _validator = validator;
             if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
@@ -417,6 +420,7 @@ namespace StockManager.Adapters
                 if (!Kis.KisWebSocketOrderbookParser.TryDecodeBook(body, _nowTicks(), out var book, out var rej, out byte hourCls, out long bookTime, out _))
                     return BookBad(rej, book.SymbolCode);
                 _skew?.Observe(Kis.KisTimeSkewGuard.StreamBook, bookTime);           // 형식 이탈 시각(0) = 판정 불가 격발(fail-closed)
+                _stall?.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKis);   // [v12.18.39-DEV] KIS 생존(Interlocked 1회 · δ=0)
                 BookGood();
                 if (hourCls != KisOrderBookParser.ContinuousSession) { Interlocked.Increment(ref _bookNonContinuous); return true; }   // 예상 호가 = 피드 제외
                 if (BookQuarantined) return true;                                  // 격리 중 = 전달 0(복귀 판정만)
@@ -429,6 +433,7 @@ namespace StockManager.Adapters
                 if (encrypted) return Bad();
                 int n = Kis.KisWebSocketOrderbookParser.DecodeTrades(body, count, _ticks);
                 if (n == 0) return Bad();
+                _stall?.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKis);   // [v12.18.39-DEV] KIS 생존
                 long ts = _nowTicks();
                 for (int i = 0; i < n; i++)
                 {

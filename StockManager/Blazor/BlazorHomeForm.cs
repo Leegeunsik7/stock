@@ -1676,8 +1676,8 @@ namespace StockManager.Blazor
             //   (AttachStallGuard · 비트 재결속 0 · 정의 불변). 수신 = 호가 · 체결 모두 생존 증거(Interlocked 1회 · δ=0). 미수신 피드 = 비활성(미구성 PC 차단 0).
             var feedStall = new StockManager.Engines.Arbitrage.FeedStallWatchdog(marketHours: StockManager.Engines.OrderbookIlliquidityInterlock.KrxContinuousSessionNow);
             feedStall.BindLatencyInterlock(orderPathLatency);
-            bridge.OrderBookReceived += _ => feedStall.Stamp(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom);
-            bridge.TickReceived += _ => feedStall.Stamp(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom);
+            bridge.OrderBookReceived += _ => feedStall.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKiwoom);
+            bridge.TickReceived += _ => feedStall.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKiwoom);
             feedStall.Start();
             services.AddSingleton(feedStall);
             FormClosed += (_, _) => ShutdownTrace.Step("feedStall", feedStall.Dispose);
@@ -1765,6 +1765,7 @@ namespace StockManager.Blazor
                     },
                     blackbox: blackbox,                                                                       // [KIS 호가] 이탈 틱 포렌식
                     skewGuard: kisSkew,                                                                       // [v12.18.16-DEV] 전문 시각 편차 → 비트 28
+                    stallWatch: feedStall,                                                                    // [v12.18.39-DEV] KIS 시세 전문 = 워치독 생존(듀얼 브로커)
                     onTrade: t =>
                     {
                         arena.OnTradeQty(t.SymbolCode, t.Price, t.TradeVolume, t.Side);                        // 건별 체결량 · 주도 방향(누적 교차 0)

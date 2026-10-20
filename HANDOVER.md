@@ -3062,3 +3062,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 워치독 호스트 결선 = 키움 1 피드(KIS 실시간 Stamp 미결선 · §121) · 실 장중 오탐률 미관측 · 실 손상 런타임/미설치 PC 배포본 실기 미확인 · 실 VTS 재소크 미실시(§99).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 123. v12.18.39-DEV — KIS WebSocket 피드 워치독 결선(듀얼 브로커 동시 두절 감시) (2026-10-21)
+
+- 전제 검증: 오더 명시 KisRealtimeSession.cs 는 수신 루프만 담당 — 실 판독 핫패스 = KisOpenApiAdapter.OnFrame(H0STASP0 호가 · H0STCNT0 체결). 결선 지점을 여기로 확정.
+- KisOpenApiAdapter: 선택 인자 stallWatch(FeedStallWatchdog) — 호가 판독 성공(TryDecodeBook) · 체결 판독 ≥ 1건 직후 Stamp(VenueKis)(Interlocked 1회 · δ=0).
+  생존 증거에서 제외: PINGPONG/구독 응답(서버 keepalive — 시세 정지 피드도 응답 가능) · 형식 이탈 · 암호화 호가 · 판독 0 체결 · 교차 도메인 TR(맹목 은폐 방지).
+  예상 호가(동시호가) · 격리 중 호가도 판독 성공이면 생존(수신 사실 기준 · 전달 여부와 무관).
+- FeedStallWatchdog: VenueKiwoom = 0 · VenueKis = 1(레이더 ArbRadar 와 동일 핀). 판정 = 두 피드 중 가장 최근 수신 기준 — 하나라도 산 피드 = 무격발.
+- 호스트(BlazorHomeForm): KIS 어댑터 생성 인자 stallWatch: feedStall(워치독 생성 이후) · 키움 Stamp 는 워치독 상수 사용. 기존 onBookQuarantine 핀 줄 무변경(인자 순서 조정).
+- 테스트 FeedStallWatchdogTests §6 +6(총 15): venue 핀 · 실 KIS 어댑터 프레임만 10초 생존(키움 정지) = 무격발 → KIS 정지 3,000.001ms 격발(비트 28) ·
+  비시세 프레임 5종 = 생존 0 · 전체 최신 틱 기준 판정(키움 기준 3초 초과여도 KIS 1.2초 뒤 수신이면 무격발 · 최신 + 3,000.001ms 격발) ·
+  두 피드 2.5초씩 교대 단독 생존 40초 위반 0 · KIS 프레임 10만(호가/체결) + Stamp δ=0(3창 최솟값 0B) · 호스트 결선 순서 핀.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,240 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+  중간 1 Red(KisVtsOrderBookParserTests 호스트 소스 핀 — onBookQuarantine 줄 끝 변경) → 핀 완화 없이 인자 순서로 원복 · Green.
+- 한계(정직): KIS 실시간 = Kis.Realtime 구성 시에만 결선(미구성 = 키움 단독 감시) · 실 KIS 장중 수신 간격/오탐률 미관측 · 공휴일 미반영.
+- 불변: liveArmed:false · 워치독/어댑터 발주 경로 무변경 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

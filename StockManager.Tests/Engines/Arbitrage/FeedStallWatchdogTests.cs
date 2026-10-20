@@ -276,5 +276,145 @@ namespace StockManager.Tests.Engines.Arbitrage
                          System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic))
                 Assert.DoesNotContain("Broker", t.FieldType.FullName ?? "", StringComparison.OrdinalIgnoreCase);   // 브로커 · 발주 형식 참조 0
         }
+
+        // ════════════ §6 [v12.18.39-DEV] KIS WebSocket 결선(듀얼 브로커) ════════════
+
+        private static byte[] U8(string s) => System.Text.Encoding.ASCII.GetBytes(s);
+
+        /// <summary>H0STASP0 본문(0 코드 · 1 BSOP_HOUR · 2 HOUR_CLS_CODE · 3~12 매도 · 13~22 매수 · 23~32 매도잔량 · 33~42 매수잔량 · 43/44 총잔량 · 45~62 기타).</summary>
+        private static byte[] KisBookFrame(long bid = 70_000, long ask = 70_100)
+        {
+            var f = new System.Collections.Generic.List<string> { "005930", "093015", "0" };
+            for (int l = 0; l < 10; l++) f.Add((ask + l * 100).ToString());
+            for (int l = 0; l < 10; l++) f.Add((bid - l * 100).ToString());
+            for (int l = 0; l < 20; l++) f.Add((1_000 + l).ToString());
+            f.Add("10045"); f.Add("20045");
+            while (f.Count < 63) f.Add("0");
+            return U8("0|H0STASP0|001|" + string.Join("^", f));
+        }
+
+        private static byte[] KisTradeFrame()
+        {
+            var f = new string[MS2E.Infrastructure.KisProtocol.H0STCNT0FieldCount];
+            Array.Fill(f, "0");
+            f[0] = "005930"; f[1] = "093015"; f[2] = "70100"; f[12] = "37"; f[13] = "1000037"; f[21] = "1";
+            return U8("0|H0STCNT0|001|" + string.Join("^", f));
+        }
+
+        private static StockManager.Adapters.KisOpenApiAdapter KisAdapter(FeedStallWatchdog w)
+            => new(new StockManager.Adapters.KisSessionInterlock(null, 1, () => 1), stallWatch: w);
+
+        [Fact]
+        public void Venue_Ids_Match_Radar_Venues()
+        {
+            Assert.Equal(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKiwoom, FeedStallWatchdog.VenueKiwoom);
+            Assert.Equal(MS2E.UI.Portable.Ports.Trading.ArbRadar.VenueKis, FeedStallWatchdog.VenueKis);
+        }
+
+        [Fact]
+        public void Kis_Market_Data_Frames_Alone_Keep_Watchdog_Alive_Then_Trip_When_Kis_Stops()
+        {
+            var c = new Clock();
+            var (mask, il) = Bit28();
+            var w = new FeedStallWatchdog(c.Now);
+            w.BindLatencyInterlock(il);
+            using var kis = KisAdapter(w);
+            w.Stamp(FeedStallWatchdog.VenueKiwoom);                                             // 키움 1회 수신 후 영구 정지
+            byte[] book = KisBookFrame(), trade = KisTradeFrame();
+            for (int i = 0; i < 100; i++)                                                       // 10초 · KIS 실 어댑터 판독 경로만 생존
+            {
+                c.Micros += 100_000;
+                Assert.True(kis.OnFrame((i & 1) == 0 ? book : trade));
+                Assert.False(w.Poll());
+            }
+            Assert.False(w.Tripped);                                                            // ★KIS 단독 생존 = 정상 시장
+            Assert.Equal(c.Micros, w.LastRxMicros(FeedStallWatchdog.VenueKis));                 // KIS 마지막 수신 = 실 판독 시각
+            Assert.Equal(1_000_000, w.LastRxMicros(FeedStallWatchdog.VenueKiwoom));
+            long kisLast = c.Micros;
+            c.Micros = kisLast + 3_000_000; Assert.False(w.Poll());
+            c.Micros = kisLast + 3_000_001; Assert.True(w.Poll());                              // KIS 도 멈춤 = 동시 두절 격발
+            Assert.Equal(3_000_001, w.LastStallMicros);
+            Assert.Equal(Bit28Mask, mask.Mask & Bit28Mask);
+        }
+
+        [Fact]
+        public void Non_Market_Frames_Never_Count_As_Kis_Liveness()
+        {
+            var c = new Clock();
+            var w = new FeedStallWatchdog(c.Now);
+            using var kis = KisAdapter(w);
+            w.Stamp(FeedStallWatchdog.VenueKiwoom);
+            c.Micros += 500_000;
+            kis.OnFrame(U8("{\"header\":{\"tr_id\":\"PINGPONG\",\"datetime\":\"20261021093015\"}}"));   // 서버 keepalive — 시세 정지 피드도 응답 가능
+            kis.OnFrame(U8("0|H0STASP0|001|005930^093015"));                                    // 형식 이탈 호가
+            kis.OnFrame(U8("1|H0STASP0|001|xx"));                                               // 암호화 호가(규격 외)
+            kis.OnFrame(U8("0|H0STCNT0|001|bad"));                                              // 판독 0 체결
+            kis.OnFrame(U8("garbage"));
+            Assert.Equal(0, w.LastRxMicros(FeedStallWatchdog.VenueKis));                        // 생존 증거 0 — 맹목 은폐 방지
+            c.Micros = 1_000_000 + 3_000_001;
+            Assert.True(w.Poll());
+        }
+
+        [Fact]
+        public void Stall_Is_Measured_From_The_Newest_Tick_Across_Both_Brokers()
+        {
+            var c = new Clock();
+            var w = new FeedStallWatchdog(c.Now);
+            using var kis = KisAdapter(w);
+            byte[] book = KisBookFrame();
+            w.Stamp(FeedStallWatchdog.VenueKiwoom);                                             // t0 키움
+            c.Micros += 1_200_000; Assert.True(kis.OnFrame(book));                              // t0 + 1.2s KIS(더 최신)
+            long newest = c.Micros;
+            c.Micros = 1_000_000 + 3_000_001; Assert.False(w.Poll());                           // 키움 기준이면 3초 초과지만 KIS 기준 1.8초 = 무격발
+            c.Micros = newest + 3_000_000; Assert.False(w.Poll());
+            c.Micros = newest + 3_000_001; Assert.True(w.Poll());                               // 전체 최신 틱 기준 3,000.001ms = 격발
+            Assert.Equal(3_000_001, w.LastStallMicros);
+
+            var c2 = new Clock();
+            var w2 = new FeedStallWatchdog(c2.Now);
+            using var kis2 = KisAdapter(w2);
+            for (int i = 0; i < 400; i++)                                                       // 40초 · 두 피드가 2.5초씩 번갈아 단독 생존
+            {
+                c2.Micros += 100_000;
+                if ((i / 25 & 1) == 0) w2.Stamp(FeedStallWatchdog.VenueKiwoom); else Assert.True(kis2.OnFrame(book));
+                Assert.False(w2.Poll());
+            }
+            Assert.Equal(0, w2.Violations);                                                     // ★어느 한 피드라도 틱 = 정상(교차 수신 오탐 0)
+        }
+
+        [Fact]
+        public void Kis_Frame_Path_With_Stamp_Allocates_Zero_Bytes()
+        {
+            var c = new Clock();
+            var w = new FeedStallWatchdog(c.Now);
+            using var kis = KisAdapter(w);
+            byte[] book = KisBookFrame(), trade = KisTradeFrame();
+            void Run()
+            {
+                for (int i = 0; i < 100_000; i++)
+                {
+                    c.Micros += 10;
+                    kis.OnFrame((i & 1) == 0 ? book : trade);
+                    if ((i & 255) == 0) w.Poll();
+                }
+            }
+            Run();                                                                              // 예열(JIT)
+            long alloc = MinAllocated(Run);
+            _out.WriteLine($"[δ] KIS 프레임 10만(호가/체결) + Stamp × 3창 최소 = {alloc}B · KIS 마지막 {w.LastRxMicros(FeedStallWatchdog.VenueKis)}µs");
+            Assert.Equal(0, alloc);
+            Assert.Equal(c.Micros, w.LastRxMicros(FeedStallWatchdog.VenueKis));
+        }
+
+        [Fact]
+        public void Host_Wires_Kis_Adapter_To_Watchdog()
+        {
+            var d = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+            while (d is not null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "StockManager.sln"))) d = d.Parent;
+            string src = System.IO.File.ReadAllText(System.IO.Path.Combine(d!.FullName, "StockManager", "Blazor", "BlazorHomeForm.cs"));
+            Assert.Contains("stallWatch: feedStall,", src);
+            Assert.Contains("feedStall.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKiwoom)", src);
+            int created = src.IndexOf("var feedStall = new", StringComparison.Ordinal), used = src.IndexOf("stallWatch: feedStall", StringComparison.Ordinal);
+            Assert.True(created > 0 && used > created);                                         // 워치독 생성 후 KIS 어댑터 결선
+        }
     }
 }

@@ -10,6 +10,8 @@
 //   격발 지연 ≤ 예산 + 폴링 주기(100ms). 해제 = TryRearm(물리 이중키) — 두절 지속이면 다음 폴링 즉시 재래치(타이머 재시작 없음 · 안전 방향).
 //  δ=0: Stamp · Poll · ArmingBlocked 힙 0. 타이머 콜백 = 정적 람다 + 상태 인자(this) — 클로저 · 박싱 0.
 //  ★브로커 · 디스패처 · 무장 키 참조 0 — 실주문 송출 경로 없음(liveArmed:false 무관 · 구조적 0).
+//  [v12.18.39-DEV] 듀얼 브로커 결선: 키움 = 브리지 호가/체결 이벤트 · KIS = KisOpenApiAdapter.OnFrame 판독 성공 시세 전문(H0STASP0 · H0STCNT0).
+//   판정 기준 = 두 피드 중 가장 최근 수신 — 어느 한 피드라도 살아 있으면 정상 시장(무격발) · 둘 다 예산 초과 무수신일 때만 격발.
 //  ★한계(정직): 한 번도 수신하지 않은 피드는 '비활성'(감시 대상 아님 — 미구성 개발 PC 상시 차단 방지) · 공휴일 미반영(격발 측 오차) ·
 //   구독 종목이 모두 비유동이면 3초 무변경이 정상일 수 있다(차단 측 오탐 = 안전 방향). 한 피드만 정지 = 레이더 침묵 감시(§119) 담당.
 // ============================================================================
@@ -30,6 +32,8 @@ namespace StockManager.Engines.Arbitrage
     public sealed class FeedStallWatchdog : IArmingBlockSource, IDisposable
     {
         public const int MaxVenues = 4;
+        /// <summary>[v12.18.39-DEV] venue 번호 = 레이더 ArbRadar 와 동일(0 키움 브리지 · 1 KIS WebSocket).</summary>
+        public const int VenueKiwoom = 0, VenueKis = 1;
         public const long DefaultStallMicros = 3_000_000;
         public const int DefaultPollMillis = 100;
 
