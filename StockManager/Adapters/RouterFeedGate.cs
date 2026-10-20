@@ -15,6 +15,9 @@
 //         변환 불가(0) → ProtectionUnavailable. ★비보호 시장가는 이 게이트를 절대 통과하지 못한다(송출 Kind 는 항상 1).
 //    ②-b 호가 깊이(DepthBook · 1~3호가): 시장가(변환분)는 Ok=통과 · Reduced=수량 축소 송출 · Insufficient=거부 ·
 //         Missing/Stale = requireDepthForMarket 이면 거부(기본 · 미분류 fail-closed). 지정가는 깊이 미상/부족이어도 통과(가격이 보호선 · 대기 허용).
+//    ②-a' [v12.18.42-DEV] 지정가 → KRX 호가단위 보호 방향 스냅(매수 내림 · 매도 올림 — KrxTickAligner) — 비격자 지정가는 거래소 거부
+//         → 비트 23 Disarm 이므로 송출 전 정렬. 가격 상한/하한을 넘는 쪽으로는 절대 움직이지 않는다(미체결 = 안전 측). 정렬 불가(≤0) = InvalidPrice 거부.
+//         분할 자식 지정가도 라우팅 전 격자 재검(비격자 = 전 자식 송출 0 · 예약 반환 · InvalidPrice).
 //    ③ 라우터 슬리피지(MaxSlippageBps) 초과 → 대사 로그(SlippageRejected) 사출 후 거부. 보호 offset 은 라우터 한도 이하로 강제(ctor).
 //    ⑤ 체결 피드 원장 추적 확보(OrderExecutionFeedAdapter.TryTrack) — 포화면 라우터 Abort · 미송출(추적 불가 주문 송출 금지)
 //
@@ -110,7 +113,7 @@ namespace StockManager.Adapters
         private readonly StockManager.Engines.PortfolioExposureGate? _exposure;
         private long _exposureRejects;
         private long _admitted, _staleRejects, _feedRejects, _routeRejects, _fractionalRejects, _trackRejects, _notSent;
-        private long _marketConverted, _depthRejects, _depthReduced, _protectionRejects, _slippageRejects;
+        private long _marketConverted, _depthRejects, _depthReduced, _protectionRejects, _slippageRejects, _tickSnapped, _tickRejects;
         private int _lastVerdict;
 
         /// <param name="converter">시장가 보호 변환기(null = offset min(30, 라우터 한도)bps 기본). offset &gt; 라우터 한도면 예외(전 시장가 자가 거부 방지).</param>
@@ -142,6 +145,10 @@ namespace StockManager.Adapters
         public long AccountRejects => Interlocked.Read(ref _accountRejects);
 
         public long MarketConverted => Interlocked.Read(ref _marketConverted);
+        /// <summary>[v12.18.42-DEV] 비격자 지정가를 보호 방향으로 호가단위 스냅한 누계.</summary>
+        public long TickSnapped => Interlocked.Read(ref _tickSnapped);
+        /// <summary>[v12.18.42-DEV] 호가 격자 정렬 불가(≤0 · 분할 자식 비격자)로 거부한 누계.</summary>
+        public long TickRejects => Interlocked.Read(ref _tickRejects);
         public long DepthRejects => Interlocked.Read(ref _depthRejects);
         public long DepthReduced => Interlocked.Read(ref _depthReduced);
         public long ProtectionRejects => Interlocked.Read(ref _protectionRejects);
@@ -235,6 +242,13 @@ namespace StockManager.Adapters
                 limit = _converter.Convert(side, reference, basePx);
                 if (limit <= 0) return Reject(OrderRouteVerdict.ProtectionUnavailable, ref _protectionRejects);
                 Interlocked.Increment(ref _marketConverted);
+            }
+            else
+            {
+                // ②-a' [v12.18.42-DEV] 지정가 호가단위 보호 방향 스냅(매수 내림 · 매도 올림) — 비격자 송출 0(거래소 거부 → 비트 23 Disarm 예방)
+                long aligned = side == OrderSide.Buy ? StockManager.Engines.KrxTickAligner.AlignDown(limit) : StockManager.Engines.KrxTickAligner.AlignUp(limit);
+                if (aligned <= 0) return Reject(OrderRouteVerdict.InvalidPrice, ref _tickRejects);
+                if (aligned != limit) { Interlocked.Increment(ref _tickSnapped); limit = aligned; }
             }
 
             // ②-b 호가 깊이(1~3호가)
@@ -370,6 +384,12 @@ namespace StockManager.Adapters
                 }
                 Interlocked.Increment(ref _splitRejects);
                 return Reject(v == StockManager.Engines.SplitVerdict.NothingFillable ? OrderRouteVerdict.DepthInsufficient : OrderRouteVerdict.TrackingFull, ref _trackRejects);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                if (StockManager.Engines.KrxTickAligner.IsAligned(children[i].LimitRaw)) continue;
+                ReleaseReservations(p.SymbolCode, ctx.ReservedWon, ctx.ExposureWon);         // ★[v12.18.42-DEV] 비격자 자식 = 라우팅 전 전체 거부(송출 0)
+                return Reject(OrderRouteVerdict.InvalidPrice, ref _tickRejects);
             }
             bool isBuy = ctx.Side == OrderSide.Buy;
             for (int i = 0; i < n; i++)

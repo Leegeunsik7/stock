@@ -3159,3 +3159,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 장중 프로브/소크 미실행(실 거부 페이로드 미캡처 · §127 절차로 실행) · 실 손상 런타임/미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 129. v12.18.42-DEV — KRX 호가단위 송출 전 정렬(지정가 보호 방향 스냅 · 분할 자식 재검 · 브로커 최종 빗장) (2026-10-21)
+
+- 전제 정정: 오더의 신규 KrxTickRule.cs(Core/Microstructure)는 중복 — KRX 2023 7구간 엔진이 이미 2벌 실재(MS2E.Infrastructure.KrxTickLadder decimal · StockManager.Engines.KrxTickAligner raw δ=0 ·
+  QKrxTickLadderTests/ProtectiveLimitConverterTests 가 전 구간 대조). 신규 3번째 구현 대신 실 공백을 막음.
+- 실 공백: 시장가는 ProtectiveLimitOrderConverter 가 격자 정렬했으나 알고리즘 '지정가'(Kind=1)는 RouterFeedGate 를 무정렬 통과 → 비격자 가격 거래소 도달 = 거부 →
+  (v12.18.40) 비트 23 Disarm / 동기 거부 ForceFreeze. QAdmissionGate(서브틱 거부)는 호스트 미결선.
+- 교정: ① RouterFeedGate ②-a' 지정가 보호 방향 스냅(매수 AlignDown · 매도 AlignUp — 가격 한도 넘는 쪽 이동 0 · 미체결 = 안전 측) · 정렬 불가(≤0) = InvalidPrice · TickSnapped/TickRejects 계수.
+  ② 분할 자식 지정가 라우팅 전 IsAligned 재검(비격자 = 전 자식 송출 0 · 예약 반환). ③ 최종 빗장 KrxTickLadder.IsOnTick(양의 정수 원 ∧ 구간 틱 배수 · 무할당) —
+  KisLiveBroker.Place(토큰/HTTP 이전) · ExecutionBridgeBroker.Place(프록시 송신 이전) 비격자 지정가 = 송출 거부(상류 우회 방어 · 반환 false → 드레인 ForceFreeze = fail-closed).
+- 테스트 KrxTickPreflightTests 27건(경계 12값 + 구간 내부 스냅 10값 Theory · 구간별 무효 판별 · 0/음수/소수/포화 fail-closed · 매수 내림/매도 올림/격자 무변경 · 정렬 불가 거부 슬롯 0 ·
+  게이트/브로커 소스 순서 핀 · 100만 무작위 가격 δ=0). ChildSlotSplitRoutingTests 드레인 2건 픽스처를 실 KRX 격자로 교정(69,990/70,010 → 69,900/70,100 · 100원 구간 비격자는 실 호가창 불가).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,282 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): ETF/ETN/ELW 호가 규칙 미분리(주식 사다리 적용 — 스냅 결과는 더 거친 격자라 ETF 에도 유효 · 그 역은 브로커 빗장이 거부할 수 있음) · 가격제한폭(±30%)은 시장가 변환에만 적용 · 공휴일/단일가 무관.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

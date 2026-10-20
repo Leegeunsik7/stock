@@ -434,7 +434,7 @@ namespace StockManager.Tests
         public void Drain_DepthLevels_ChildLimitsAtLevelPrices()
         {
             var r = Make(capKiwoom: 100, capKis: 100, depth: true);
-            var d = Asks((69_990, 4), (70_000, 6));
+            var d = Asks((69_900, 4), (70_000, 6));                                            // [v12.18.42] 실 KRX 격자(100원 구간)
             r.Depth.OnDepth(ReferencePriceFeedAdapter.SymbolHashForCode(5930), in d);
             Submit(r, 20, 70_000);
             Assert.Equal(10, r.Kiwoom.Shares + r.Kis.Shares);                     // 1~2호가 잔량 10 만 송출
@@ -446,10 +446,10 @@ namespace StockManager.Tests
         public void Drain_ChildRejected_UnsentSiblingsReclaimed_Disarmed_NoFurtherSends()
         {
             var r = Make(capKiwoom: 100, capKis: 100, depth: true);
-            var d = Asks((69_990, 10), (70_000, 10), (70_010, 10));
+            var d = Asks((69_900, 10), (70_000, 10), (70_100, 10));                             // [v12.18.42] 실 KRX 격자(100원 구간)
             r.Depth.OnDepth(ReferencePriceFeedAdapter.SymbolHashForCode(5930), in d);
             r.Kis.RejectFrom = 1;                                                  // KIS 첫 자식부터 거부
-            Submit(r, 30, 70_010);                                                 // 3단계 × 2브로커 = 자식 6(순서: L0 키움, L0 KIS, …)
+            Submit(r, 30, 70_100);                                                 // 3단계 × 2브로커 = 자식 6(순서: L0 키움, L0 KIS, …)
             Assert.Equal(1, r.Kiwoom.Places);                                      // L0 키움만 송출
             Assert.Equal(1, r.Kis.Places);                                         // L0 KIS 거부 → 이후 4자식 미송출
             Assert.True(r.Mask.IsRaised(ArmingInterlockSource.ChildSlotRejection)); // ★Disarm

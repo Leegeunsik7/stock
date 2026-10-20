@@ -110,6 +110,10 @@ namespace MS2E.Infrastructure
             if (qty <= 0)
                 return (false, "수량은 양수여야 합니다.");
 
+            // [v12.18.42-DEV] KRX 호가단위 최종 빗장 — 비격자 지정가는 프록시 송신 이전 거부(거래소 도달 0)
+            if (kind != PaperKind.Market && !KrxTickLadder.IsOnTick(limitPrice))
+                return (false, $"키움 지정가 {limitPrice} 가 KRX 호가단위 위반 — 송출 거부");
+
             // [키움 실배선] 실 COM 프록시 요구(호스트 운영 결선) — 미연결·미선언·시뮬레이션 프록시면 송출 0(Null API 가 주문을 조용히 삼키는 상태 차단)
             if (RequireProductionProxy && !_bridge.IsProductionProxy)
             {

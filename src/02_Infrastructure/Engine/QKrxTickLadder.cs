@@ -60,6 +60,16 @@ namespace MS2E.Infrastructure
         }
 
         /// <summary>
+        /// [v12.18.42-DEV] 송출 직전 최종 빗장 — 양의 정수 원 · 그 가격대 호가단위의 배수인가(무할당 · 예외 없음 · 비정상 = false).
+        /// 브로커 어댑터(KIS · 키움 브리지)가 지정가 송출 직전 호출 — 상류 게이트(RouterFeedGate 스냅)를 우회한 비격자 가격도 거래소 도달 0.
+        /// </summary>
+        public static bool IsOnTick(decimal priceWon)
+        {
+            if (priceWon <= 0m || priceWon != decimal.Truncate(priceWon)) return false;
+            return priceWon % TickWonFor(priceWon) == 0m;
+        }
+
+        /// <summary>
         /// 가격대 정확 QTickSpec 산출(국내주식·1주 스텝). BuiltInTickSpecs 의 '등록시점 근사' 대신, 현재 가격에서
         /// 정확한 호가단위 격자를 만든다. 핫패스(주문 진입)에서 정렬 tick 을 가격대로 동기화할 때 사용.
         /// </summary>

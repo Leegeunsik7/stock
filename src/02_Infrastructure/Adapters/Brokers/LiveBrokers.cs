@@ -245,6 +245,9 @@ namespace MS2E.Infrastructure
                 return (false, "KIS API 키/계좌가 설정되지 않았습니다.");
             if (qty <= 0 || qty != decimal.Truncate(qty) || qty > int.MaxValue)
                 return (false, $"KIS 주문 수량은 1 이상의 정수여야 합니다(요청 {qty}) — 절단 송출 금지");
+            // [v12.18.42-DEV] KRX 호가단위 최종 빗장 — 비격자 지정가는 토큰/HTTP 이전 거부(거래소 도달 0 · 상류 스냅 우회 방어)
+            if (kind != PaperKind.Market && !KrxTickLadder.IsOnTick(limitPrice))
+                return (false, $"KIS 지정가 {limitPrice} 가 KRX 호가단위({(limitPrice > 0m ? KrxTickLadder.TickWonFor(limitPrice) : 0m)}원) 위반 — 송출 거부");
             try
             {
                 var token = EnsureToken();
