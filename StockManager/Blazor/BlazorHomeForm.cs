@@ -11,7 +11,8 @@ namespace StockManager.Blazor
 {
     public class BlazorHomeForm : Form
     {
-        public BlazorHomeForm(IQuoteProvider provider, LocalDatabase db)
+        // [v12.18.35] webView2UserDataFolder = 사전 탐침이 검증한 프로필 폴더(null = BlazorWebView 기본값)
+        public BlazorHomeForm(IQuoteProvider provider, LocalDatabase db, string? webView2UserDataFolder = null)
         {
             Text = "MS2-E Stock Suite";
             WindowState = FormWindowState.Maximized;
@@ -2006,6 +2007,10 @@ namespace StockManager.Blazor
                 Services = sp
             };
             view.RootComponents.Add<App>("#app");
+            // [v12.18.35] 사전 탐침 통과 프로필 결속 + 바인딩 후 초기화 실패 감시견(빈 화면 방치 대신 안내 후 창 닫기)
+            if (webView2UserDataFolder is not null)
+                view.BlazorWebViewInitializing += (_, e) => e.UserDataFolder = webView2UserDataFolder;
+            WebView2RuntimeGuard.AttachInitializationWatchdog(view.WebView, this, m => Log.Warn(m));
             Controls.Add(view);
         }
 

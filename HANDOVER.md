@@ -2926,3 +2926,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.33-GM 산출물 15건 → release/superseded-v12.18.33-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
 - 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 실 WebView2 미설치 PC 배포본 실기 미확인(§113 주입 탐침으로 대체) · 비트 28 실 피드 오탐률 미관측 · 실 VTS 재소크 미실시(§99).
+
+## 115. v12.18.35-DEV — WebView2 초기화 사전 탐침 · UserDataFolder Temp 폴백 · 손상 결함 주입 (2026-10-20)
+
+- 공백: §113 가드는 버전 문자열만 탐침 → 런타임 손상 · 프로필 폴더(UserDataFolder) 쓰기 거부/잠금 시 BlazorWebView 비동기 초기화만 실패하는 빈 화면 경로 미방어.
+  BlazorWebView 기본 프로필 = %LOCALAPPDATA%\<진입 어셈블리>.WebView2(패키지 DLL 문자열 확인 · 실기동 msedgewebview2 --user-data-dir 실측 일치).
+- WebView2RuntimeGuard(동일 파일 확장 · 신규 파일 0):
+  - EnsureProfile: 후보별 ① 쓰기 탐침(디렉터리 생성 + FileShare.None·DeleteOnClose 프로브 파일) ② CoreWebView2Environment.CreateAsync(userDataFolder) 실 생성 탐침(STA 펌프 · 15초 상한).
+  - 순서 = 기본 프로필 → Temp\StockManager_WV2. 어떤 예외/시간 초과/null 환경 = 후보 거부(fail-safe). 기본 통과 시 대체 미탐침 · 기존 프로필 보존.
+  - 전 후보 실패 = 복구 안내(WebView2 런타임 복구 · 폴더 권한/잠금 확인 · --classic/--headless). 예 = 클래식 런처 전환 · 아니요/대화상자 예외 = 안전 종료(0).
+  - 바인딩 후 감시견: CoreWebView2InitializationCompleted 실패 시 안내 후 호스트 창 닫기(사전 탐침 통과 후 실패도 빈 화면 정체 0).
+  - 결함 주입 MS2E_FORCE_WEBVIEW2_CORRUPT: "1" = 환경 생성 강제 실패(COMException E_FAIL) + 실 복구 대화상자 · "silent" = SilentRecoveryUi(대화상자 0 · 로그) → 안전 종료. 정상 위장 값 0.
+- Program.cs: 런타임 가드 직후 · DB/브로커/뮤텍스 이전에 프로필 탐침. 결과 폴더를 BlazorHomeForm(provider, db, wv2UserDataFolder) 로 전달 · FallbackClassic → classic 플래그.
+  BlazorHomeForm: BlazorWebViewInitializing 에서 UserDataFolder 결속 + 감시견 부착(선택 인자 · 기본 null = 기존 동작).
+- 테스트(WebView2RuntimeGuardTests §6/§7 · +28):
+  - 실 ACL 쓰기 거부(Deny CreateFiles) · 프로브 파일 배타 잠금 · 경로가 파일 → 전부 Temp 대체 실생성 전이 · 프로브 파일 잔존 0.
+  - 환경 탐침 COM 손상/미설치/권한/미분류/false × 양 후보 = 폴더 미선택 · 클래식/종료 분기 · UI 예외 = 종료. 주입 해석 표 · 열거값 우회 0.
+  - 실 환경 탐침(STA) 무예외 · 설치 호스트 = Primary. 진입점 순서/금지 접점(QuantumVault·KisProvider·LocalDatabase·IBroker·LiveArm·ValveWired) 0 · 홈 폼 결선.
+  - §7 실 프로세스(ConcurrencyStress): 손상 silent 주입 기동 → 주 창 미관측 · 30초 내 exit 0.
+- 대조 실측: 주입 없이 Release exe 기동 = 주 창 생성 · WebView2 자식 프로세스 프로필 = 기본 경로(회귀 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,211 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL 무변경).
+- 한계(정직): 실 손상 런타임 PC 미실측(주입 탐침으로 대체). 사전 탐침은 기동 시 환경 1회 추가 생성(정상 PC 수백 ms). 감시견 경로는 단위 실증 없음(소스 결선 검사만).
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

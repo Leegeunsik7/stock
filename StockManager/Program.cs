@@ -49,6 +49,10 @@ namespace StockManager
             // [v12.18.29] WebView2 런타임 사전 비행 가드 — Blazor 경로만(클래식·헤드리스 = WebView 미사용). DB·브로커 구성 '이전'에
             //   탐침 → 미설치 PC 의 빈 화면 원천 차단 · 공식 부트스트래퍼 안내/오프라인 안내 후 안전 종료(0). 실 발주 경로 미접촉.
             //   [v12.18.34] MS2E_FORCE_WEBVIEW2_MISSING 결함 주입 = 미설치 방향만 강제(1 = 실 대화상자 · silent = 무대화 로그).
+            //   [v12.18.35] 초기화 사전 탐침 — 기본 프로필 → Temp 대체 프로필 순 환경 생성 실검증. 전면 실패 = 복구 안내 후
+            //   클래식 전환(예) 또는 안전 종료(0). MS2E_FORCE_WEBVIEW2_CORRUPT = 손상 방향만 강제(1 = 실 대화상자 · silent = 무대화).
+            bool wv2ForceClassic = false;
+            string? wv2UserDataFolder = null;
             if (!Has("--classic") && !Has("--headless"))
             {
                 var wv2Fault = StockManager.Blazor.WebView2RuntimeGuard.ReadFaultInjection();
@@ -68,6 +72,30 @@ namespace StockManager
                     Environment.ExitCode = StockManager.Blazor.WebView2RuntimeGuard.SafeExitCode;
                     return;
                 }
+
+                var wv2Corrupt = StockManager.Blazor.WebView2RuntimeGuard.ReadCorruptInjection();
+                if (wv2Corrupt != StockManager.Blazor.WebView2CorruptInjection.None)
+                    Log.Warn($"[WebView2] 결함 주입 {StockManager.Blazor.WebView2RuntimeGuard.ForceCorruptEnvVar} → {wv2Corrupt} · 환경 생성 손상 강제");
+                var wv2Profile = StockManager.Blazor.WebView2RuntimeGuard.EnsureProfile(
+                    StockManager.Blazor.WebView2RuntimeGuard.DefaultFolderWritableProbe,
+                    wv2Corrupt == StockManager.Blazor.WebView2CorruptInjection.None
+                        ? StockManager.Blazor.WebView2RuntimeGuard.DefaultEnvironmentProbe
+                        : StockManager.Blazor.WebView2RuntimeGuard.ForcedCorruptEnvironmentProbe,
+                    StockManager.Blazor.WebView2RuntimeGuard.DefaultUserDataFolder(),
+                    StockManager.Blazor.WebView2RuntimeGuard.TempFallbackUserDataFolder(),
+                    wv2Corrupt == StockManager.Blazor.WebView2CorruptInjection.ForceCorruptSilent
+                        ? new StockManager.Blazor.WebView2RuntimeGuard.SilentRecoveryUi(m => Log.Warn(m))
+                        : new StockManager.Blazor.WebView2RuntimeGuard.MessageBoxRecoveryUi(),
+                    out wv2UserDataFolder);
+                if (wv2Profile == StockManager.Blazor.WebView2ProfileOutcome.CorruptExit)
+                {
+                    Log.Warn("[WebView2] 초기화 전면 실패 → 안전 종료");
+                    Environment.ExitCode = StockManager.Blazor.WebView2RuntimeGuard.SafeExitCode;
+                    return;
+                }
+                wv2ForceClassic = wv2Profile == StockManager.Blazor.WebView2ProfileOutcome.FallbackClassic;
+                if (wv2Profile != StockManager.Blazor.WebView2ProfileOutcome.Primary)
+                    Log.Warn($"[WebView2] 프로필 결정 → {wv2Profile} · {wv2UserDataFolder ?? "(클래식 전환)"}");
             }
 
             // QuestPDF 라이센스 (Community MIT) - 최초 한 번만
@@ -168,7 +196,7 @@ namespace StockManager
             }
 
             bool Has(string flag) => args is { Length: > 0 } && Array.Exists(args, a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
-            bool classic = Has("--classic");
+            bool classic = Has("--classic") || wv2ForceClassic;
             bool headless = Has("--headless");
 
             // 헤드리스: UI(WebView) 없이 엔진 + LAN 서버만 트레이로 상주 (상시 켜두는 홈 서버)
@@ -189,7 +217,7 @@ namespace StockManager
                         if (a.Level >= AlertLevel.Warning) { try { TrayNotifier.Show(a); } catch { } }
                     };
                     // 새 Blazor Hybrid 대시보드 (WebView2 런타임 필요)
-                    var home = new StockManager.Blazor.BlazorHomeForm(provider, db);
+                    var home = new StockManager.Blazor.BlazorHomeForm(provider, db, wv2UserDataFolder);
                     home.FormClosed += (s, e) => Cleanup();
                     Application.Run(home);
                     return;
