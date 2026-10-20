@@ -3174,3 +3174,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,282 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
 - 한계(정직): ETF/ETN/ELW 호가 규칙 미분리(주식 사다리 적용 — 스냅 결과는 더 거친 격자라 ETF 에도 유효 · 그 역은 브로커 빗장이 거부할 수 있음) · 가격제한폭(±30%)은 시장가 변환에만 적용 · 공휴일/단일가 무관.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 130. v12.18.42-GM — KRX 호가단위 사전 정렬 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- 사전 점검(08:41 KST): MS2E_* 환경 변수 Process/User/Machine 3범위 0(PROBE 미설정) → 패키징이 09:00 을 넘겨도 리얼 와이어 소크/프로브 Skip(자격증명 부재) · QuantumVault 미접근(-NoPeer).
+- v12.18.42-DEV(§129) = bb6ce88. 12.18.41 → 12.18.42(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 68841a4(4파일 · 11/11 줄 · 핀 테스트 83 통과) · 태그 v12.18.42-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,282 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 소스 가드 ·
+  봉인 38 아티팩트 · masterSeal 5C9B6CE10F3365D0… · verify-zip 무추출 일치.
+- 산출물: release-v12.18.42-GM.zip(6EE7DF84…) · StockManager-v12.18.42-Standalone-win-x64.zip(66ECE820…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 44376 · HWND 0x11614 'MS2-E Stock Suite' 실측.
+- 이관: v12.18.41-GM 산출물 15종 → release/superseded-v12.18.41-GM/. 신규 산출물 메인 release/ 복사.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30 · 0x800000001FFFFFFF) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): 장중 VTS 프로브/소크 미실행(§127 절차) · ETF/ETN 호가 규칙 미분리(§129) · 실 손상 런타임/미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
