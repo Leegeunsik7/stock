@@ -2754,3 +2754,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: Offline_1M 단독 5회 연속 통과(20창 전부 0B × 5) · 전체 스위트 Release 4,135 통과 + 1 건너뜀(§99 옵트인) · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E.
 - 불변: liveArmed:false · RCL/래칫 ≤40 무변경(테스트 파일만) · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
 - 한계(정직): 전체 스위트 부하 하 재발 여부는 1회 실행으로만 확인 — 다음 출하 [3/11] 에서 재관측 필요. §99 리얼 와이어 VTS 옵트인 시도(사용자 보고): 접속키 발급 682회 연속 실패 · 연결 0 · 프레임 0 → 자격증명(모의 전용 AppKey · HTS ID) 확인 전까지 MS2E_KIS_VTS_* 미설정 유지(건너뜀). 접속키 실패 시 5초 간격 무한 재발급(1시간 682회 REST)은 백오프 부재 — 후속 검토 후보.
+
+## 106. v12.18.30-GM — Offline_1M δ=0 측정 하드닝 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 106.1 버전 · 태그
+- v12.18.30-DEV(§105) = af69410. 12.18.29 → 12.18.30(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = e0cfa3e(4파일 · 11/11 줄) ·
+  sln Release -warnaserror 0W/0E · 핀/패키징/배포본/가드 테스트 136/136(Release).
+- 태그 v12.18.30-GM(annotated · -f) = e0cfa3e. 패키징 셸 MS2E_KIS_VTS_* 미설정(프로세스 · 사용자 · 시스템 0) · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 106.2 출하 실행(형제 worktree StockManager-gm-12.18.30 · 태그 e0cfa3e · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) · [3] 4,135 통과 + 1 건너뜀(§99 옵트인) ·
+  ★하드닝된 Offline_1M 이 전체 스위트 부하 하에서 원패스 통과 · [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드(이중키 16 · 마스터 플래그 1) ·
+  [7] 아티팩트 38 · manifest.sig · [9] verify-zip Ok · verify-live-armed Ok · [10] handshake Ok @e0cfa3e725 · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) ·
+  [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 48260 · HWND 0x2717D8 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.30-GM.zip SHA-256 `DE76FAADD62D835DFEE21B5C69EA191F2233B380BAC8660B92AE38CC8A4BA11D` · masterSeal `2851B8DC211D425582EE3494CD43D4F025B636AFB67CE566C4AAB044F3CA32A9` · sourceCommit e0cfa3e · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.30-Standalone-win-x64.zip SHA-256 `232822F455AC6462B806FCA8C3F20CEFD9F975F94E477813C9515E2B46B845C5`.
+- v12.18.29-GM 산출물 15건 → release/superseded-v12.18.29-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 체크아웃 재수검(같은 소스 e0cfa3e Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): Offline_1M 부하 하 통과는 이번 1회 관측 · WebView2 미설치 PC 실기 미확인 · KIS 리얼 와이어 소크 미실행(§99 · 접속키 682회 실패 보고 — 자격증명 재확인 대기).
