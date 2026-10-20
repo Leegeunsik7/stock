@@ -2792,3 +2792,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 불변: liveArmed:false(수신 전용 경로 · 주문 송신 0) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
 - 한계(정직): 401/403 분류는 HTTP 상태 기준 — KIS 가 자격증명 오류를 다른 상태(예: 500 + 본문 코드)로 돌려주면 일시 실패(≤ 57회/시간)로 처리된다(실 응답 미관측).
   KisLiveBroker 의 실 HTTP 매핑은 정적 HttpClient 라 단위 테스트 미적용(분류 함수만 검증). 실 VTS 재소크 미실시.
+
+## 108. v12.18.31-GM — KIS 접속키 백오프 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-20)
+
+### 108.1 버전 · 태그
+- v12.18.31-DEV(§107) = 84bdb7d. 12.18.30 → 12.18.31(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 050a344(4파일 · 11/11 줄) ·
+  sln Release -warnaserror 0W/0E · 핀/패키징/배포본/가드 테스트 136/136(Release).
+- 태그 v12.18.31-GM(annotated · -f) = 050a344. 패키징 셸 MS2E_KIS_VTS_* 미설정(프로세스 · 사용자 · 시스템 0) · QuantumVault 미접근(-NoPeer) · 매니페스트 피어 기록 0 · 원격 푸시 없음.
+
+### 108.2 출하 실행(형제 worktree StockManager-gm-12.18.31 · 태그 050a344 · 미커밋 0)
+- release-package.ps1 -NoPeer 1차 실행으로 [0/11]~[11/11] EXIT 0: [1]/[2] 오중 빌드 0W/0E(KiwoomComShim 컴파일 증거 확인) · [3] 4,147 통과 + 1 건너뜀(§99 옵트인 · Offline_1M 원패스) ·
+  [4] infra-scan 0 ≤ 117 · [5] 래칫 ≤40 · [6] liveArmed 소스 가드(이중키 16 · 마스터 플래그 1) · [7] 아티팩트 38 · manifest.sig · [9] verify-zip Ok · verify-live-armed Ok ·
+  [10] handshake Ok @050a344265 · interlocks Ok(30 · 0x800000001FFFFFFF) · tighten Ok(6) · [11] 봉인 오버레이 38 바이트 동일 · 판독 테스트 통과 · 격리 기동 PID 21560 · HWND 0x30B60 · 'MS2-E Stock Suite'.
+- 산출물(release/):
+  - 감사 봉인본 release-v12.18.31-GM.zip SHA-256 `999DEB2E3644EAA15AE47EC5041A09ADD982F66108E0D249737AB74111F8C149` · masterSeal `54779E72E0160359F11E7082AB4C4BEC7322BE5B390381A4FEBE8CB0F98B09E8` · sourceCommit 050a344 · 피어 기록 없음.
+  - 즉시 실행 배포본 StockManager-v12.18.31-Standalone-win-x64.zip SHA-256 `E537CD5E82EE2AF34489156DCCB0CA793FB5AB9AD829AC2B1DF1ABB4CDC3EFF0`.
+- v12.18.30-GM 산출물 15건 → release/superseded-v12.18.30-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
+- 메인 체크아웃 재수검(같은 소스 050a344 Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
+- 한계(정직): 401/403 외 형식의 KIS 자격증명 거부는 일시 실패(≤ 57회/시간)로 처리 · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
