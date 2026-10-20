@@ -42,6 +42,10 @@
 //    ⑭ 청산가치 자산(LiquidationEquity): 지금 전량 청산하면 남는 현금 = 현금 + Σ 롱(수량 × 매수 1호가 − 수수료 − 거래세) − Σ 숏(수량 × 매도 1호가 + 수수료).
 //       하드 리스크(−3%) 판정은 이 값(Net · 퇴출 마찰 포함 — 시가평가 자산보다 엄격). 표시 자산은 종전 시가평가.
 //    ⑮ 체결 품질 포렌식(ArenaExecutionQualityTracker): 호가 갱신(틱)마다 진행 중 trip 의 가격 MAE/MFE · 체결마다 trip 수수료/세금/Net · 청산 시 기록 1건.
+//   [v12.18.36-DEV] ⑯ 잠김/역전 호가 FIFO 가드: 대기 지정가의 앞 잔량 > 0 이고 내 가격 실 대기 잔량이 아직 표시된 스냅샷(= 반대 호가가 내 가격에
+//       닿거나 넘은 잠김/역전)에서는 반대 호가 시장성 순회 0 — 실 거래소는 같은 가격 앞 대기열부터 체결한다(가격 터치 단독 체결 0).
+//       앞 잔량은 종전대로 체결 틱(FIFO 소진) · 취소 감축(⑪) · 표시 상한으로만 줄어든다(스냅샷 추정 소진 = 체결 틱과 이중 차감 위험 → 미적용).
+//       앞 0(맨 앞) · 내 가격 실 대기 소멸 = 종전 시장성 체결. 접수 직후 활성화 순회(테이커)는 무변경.
 //   ★브로커/주문 전송 타입 참조 0(테스트가 IL 로 확증). 스레드 계약: 모든 변경은 거버너 정산 스레드(단일 작성자)에서만.
 // ============================================================================
 using System;
@@ -132,6 +136,8 @@ namespace StockManager.Engines.Arena
         public long ShortOpenFills { get; internal set; }
         public long ShortCoverFills { get; internal set; }
         public long QueueCancelDepletedQty { get; internal set; }
+        /// <summary>[v12.18.36-DEV] ⑯ 잠김/역전 호가에서 앞 잔량이 남아 시장성 순회를 보류한 횟수(대기 지정가 · 스냅샷당 1).</summary>
+        public long QueueLockedHolds { get; internal set; }
 
         /// <summary>예약 · 숏 담보 제외 가용 현금.</summary>
         public long AvailableCashWon => CashWon - ReservedCashWon - ShortLockedWon;
@@ -156,7 +162,7 @@ namespace StockManager.Engines.Arena
             Wins = Losses = LastReject = 0;
             VacuumEvents = VacuumPenaltyWon = IcebergRefills = 0;
             Frozen = false;
-            ShortLockedWon = ShortOpenFills = ShortCoverFills = QueueCancelDepletedQty = 0;
+            ShortLockedWon = ShortOpenFills = ShortCoverFills = QueueCancelDepletedQty = QueueLockedHolds = 0;
         }
 
         /// <summary>보유 수량(없으면 0 · [v12.18.23-DEV] 숏 = 음수).</summary>
@@ -383,7 +389,8 @@ namespace StockManager.Engines.Arena
                     int slot = QuoteIndex(o.Symbol);
                     if (slot < 0 || (_qVer[slot] == o.QuoteVer && !release)) continue;
                     o.QuoteVer = _qVer[slot];
-                    Walk(book, ref o, slot);
+                    if (LockedAhead(in o, slot)) book.QueueLockedHolds++;                // ⑯ 잠김/역전 = 앞 대기열 우선
+                    else Walk(book, ref o, slot);
                     if (!o.Done && o.Kind == ArenaOrderKind.Limit)
                     {
                         if (o.Peak > 0 && o.Visible == 0) Requeue(book, i, slot);       // 반대 호가 하강으로 노출분 소진 = 리필 · 맨 뒤
@@ -772,6 +779,15 @@ namespace StockManager.Engines.Arena
             book.IcebergRefills++;
             o.QueueAhead = InitialQueueAhead(book, index, slot, behindAll: true);
             o.LastShown = ShownAt(slot, o.Dir, o.LimitPx); o.TradedAtPx = 0;
+        }
+
+        // [v12.18.36-DEV] ⑯ 대기 지정가 · 앞 잔량 > 0 · 반대 1호가가 내 가격에 닿거나 넘음 · 내 가격 실 대기 표시 > 0 = 잠김/역전(시장성 순회 보류)
+        private bool LockedAhead(in ArenaWorkingOrder o, int slot)
+        {
+            if (o.Kind != ArenaOrderKind.Limit || o.QueueAhead <= 0) return false;
+            long opp = o.Dir > 0 ? _q[slot].AskPrice[0] : _q[slot].BidPrice[0];
+            if (opp <= 0 || (o.Dir > 0 ? opp > o.LimitPx : opp < o.LimitPx)) return false;
+            return ShownAt(slot, o.Dir, o.LimitPx) > 0;
         }
 
         // [v12.18.23-DEV] 그 가격의 현재 표시 잔량(같은 쪽 · 10호가 밖/없음 = 0 = 미상)

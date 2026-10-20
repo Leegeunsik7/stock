@@ -2967,3 +2967,15 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 운영 주의: CLI 동사 플래그는 args[0] 고정(IsInvocation) — --report 를 앞에 두면 CLI 미인식 → GUI 기동. 재수검 중 이 실수로 뜬 GUI 2개는 즉시 종료(산출물 무영향).
 - 한계(정직): 실 손상 런타임/미설치 PC 배포본 실기 미확인(§113/§115 주입 탐침으로 대체) · 비트 28 실 피드 오탐률 미관측 · 실 VTS 재소크 미실시(§99).
+
+## 117. v12.18.36-DEV — 아레나 대기열 FIFO 잠김/역전 호가 가드(가격 터치 단독 체결 0) (2026-10-20)
+
+- 전제 검증: 오더가 요구한 QueueAhead 추적 · 체결 틱 FIFO 소진 · 무체결 잔량 감소 = 취소 비례 감축은 이미 실재(④ v12.18.13-DEV · ⑪ v12.18.23-DEV · QueueDepletionTests/MicrostructureExecutionTests). 중복 구현 없이 잔여 공백만 보강.
+- 공백: 대기 지정가가 앞 잔량 > 0 인데 반대 1호가가 내 가격에 닿거나 넘은 스냅샷(잠김/역전 — 동시호가 · 피드 비동기)에서 Walk 가 반대 호가를 순회 → 앞 대기열을 건너뛴 체결(FIFO 위반).
+- DualBookSimulator ⑯ LockedAhead: 대기 지정가 · 앞 잔량 > 0 · 반대 1호가 ≤ 매수 지정가(매도 대칭) · 내 가격 실 대기 표시 > 0 = 시장성 순회 보류 · QueueLockedHolds 계수.
+  앞 잔량은 체결 틱 FIFO 소진 · 취소 감축(⑪) · 표시 상한으로만 감소(스냅샷 추정 소진 미적용 = 체결 틱과 이중 차감 방지). 앞 0 · 내 가격 실 대기 소멸 = 종전 시장성 체결. 접수 직후 활성화(테이커) 무변경.
+- 테스트 QueueLockedBookGuardTests 9건: 잠김 · 역전 · 매도 대칭 체결 0 · 실 대기 소멸/앞 0 = 체결 · 활성화 무변경 · 보류 중 체결 틱 소진 후 잔여 체결 · 보류 중 취소 감축 · 100만 회 호가 갱신(잠김/증가/감소 혼합) δ=0(3창 최솟값) · 앞 1 수렴 체결 0.
+  가드 끔 = 6/6 Red(정당 체결 회귀 3건은 Green 유지).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,220 통과 + 1 건너뜀(§99 옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 오더 목표 4,225건 미달(+9 · 수 맞추기용 테스트 추가 안 함) · 실 KRX 동시호가 잠김 스냅샷 실측 미실시 · QueueLockedHolds 는 포트/UI 미노출(엔진 내부 계수).
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
