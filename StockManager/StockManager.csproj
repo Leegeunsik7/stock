@@ -47,9 +47,9 @@
     <!-- [Phase 4] 버전 단일 원천 교정: v10.1.0 이후 v12.14.x-GM 까지 csproj 가 갱신되지 않아 release-package.ps1 이
          "release-v10.1.0-GM.zip" 을 발행했고(실측 아티팩트), manifest version·SystemVersionProvider·ReleasePackager.DefaultVersion
          도 전부 10.1.0 을 보고했다. GoldenMasterFreezeTests.Host_Version_Matches_Golden_Master_Milestone 가 회귀를 차단. -->
-    <Version>12.18.37</Version>
-    <AssemblyVersion>12.18.37.0</AssemblyVersion>
-    <FileVersion>12.18.37.0</FileVersion>
+    <Version>12.18.38</Version>
+    <AssemblyVersion>12.18.38.0</AssemblyVersion>
+    <FileVersion>12.18.38.0</FileVersion>
     <!-- v10.1.0 — Live Flight Certification & Mock Dry-Run Fabric(실전 점화 드라이런 및 최종 인증 패브릭).
          실자본 집행 직전 $0원 비용으로 전체 오더 파이프라인/라우팅을 100% 가상 검증 + 시스템 전역 암호 봉인.
          [Task 1] MockExecutionOrderBookMirror — δ=0 가상 체결 미러. 실전과 '동일한' SealedEmissionInterlock 봉인 경로(exactly-once + 페이로드 동결 + FNV seal) 통과 후 최하위 소켓 전송 직전 미러로 원자 루프백(broker.Place 대체·IBroker/소켓 참조 0). adverse 슬리피지(SplitMix64·매수↑/매도↓)·수량비례 부분 체결·가상 RTT 모사. Reset()=가상 잔량 O(1) 제로화. 전용 SealedEmissionInterlock 로 봉인 재검·exactly-once.
