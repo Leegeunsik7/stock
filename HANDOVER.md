@@ -3144,3 +3144,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   dotnet test StockManager.Tests\StockManager.Tests.csproj -c Release --filter "FullyQualifiedName~LiveWire_Vts_Deliberate_Rejection" --logger "console;verbosity=detailed"
 - 한계(정직): 실 송출 · 실 페이로드 미캡처(개장 전) · KIS 주문 hashkey 헤더 미부착(공개 문서상 선택 — 거부 시 그 응답도 캡처됨) · 토큰 발급 분당 1회 제한.
 - 불변: liveArmed:false · 제품 코드 무변경 · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 128. v12.18.41-GM — VTS 거부 프로브 하네스 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- 사전 점검(07:37 KST · 개장 전): MS2E_* 환경 변수 Process/User/Machine 3범위 0(MS2E_KIS_VTS_PROBE 미설정) → [3/11] 스위트 중 리얼 와이어 소크/프로브 송출 불가 확인 · QuantumVault 미접근(-NoPeer).
+- v12.18.41-DEV(§127) = 7e871d9. 12.18.40 → 12.18.41(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = c4dfd1e(4파일 · 11/11 줄 · 핀 테스트 83 통과) · 태그 v12.18.41-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,254 통과 + 2 건너뜀(소크 · 프로브 옵트인) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 소스 가드 ·
+  봉인 38 아티팩트 · masterSeal 8223CBBE7813A58F… · verify-zip 무추출 일치.
+- 산출물: release-v12.18.41-GM.zip(9C315D3F…) · StockManager-v12.18.41-Standalone-win-x64.zip(9437ED93…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 36852 · HWND 0x830E0C 'MS2-E Stock Suite' 실측. 하네스는 테스트 어셈블리 전용 — 출하 38 아티팩트 무관.
+- 이관: v12.18.40-GM 산출물 15종 → release/superseded-v12.18.40-GM/. 신규 산출물 메인 release/ 복사.
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30 · 0x800000001FFFFFFF) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): 장중 프로브/소크 미실행(실 거부 페이로드 미캡처 · §127 절차로 실행) · 실 손상 런타임/미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

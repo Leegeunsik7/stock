@@ -1,13 +1,14 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.41-DEV — KIS VTS 고의 거부 프로브 하네스 + 도메인 격리 하드 가드(개장 전 사전 구축)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,254 통과 + 2 건너뜀(옵트인 2) · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.41-GM — VTS 거부 프로브 하네스 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,254 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
 - **Updated At**: 2026-10-21
 
 ## Completed Deliverables
-- VtsDomainGuard: 실도메인 · 위장 호스트 · 실 TR · 실 WebSocket = 송출 전 예외(핸들러 도달 0)
-- 고의 거부 주문(005930 매도 1주 999,999 · 접수 시 즉시 취소) + REST 응답 · H0STCNI9 원시/평문 마스킹 덤프
-- 실행 옵트인 2중(자격증명 4종 + MS2E_KIS_VTS_PROBE=1 + 정규장) · 테스트 7건 · HANDOVER §127
+- 버전 12.18.41 승격 · 태그 v12.18.41-GM(c4dfd1e) · 클린 worktree -NoPeer 패키징(QuantumVault 미접근 · MS2E_* 0)
+- 감사 봉인본 release-v12.18.41-GM.zip(9C315D3F) · masterSeal 8223CBBE · 아티팩트 38
+- 즉시 실행 배포본 StockManager-v12.18.41-Standalone-win-x64.zip(9437ED93) · 봉인 38 바이트 동일 · 격리 기동 주 창 실측
+- CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) 메인 복사본 exit 0 · v12.18.40-GM 이관 · HANDOVER §128
 
 ## Next Milestone
-- 장중 프로브 실행 → 실 거부 페이로드 캡처 · 판독기/비트 23 대조 · 필요 시 교정
+- 장중 VTS 프로브 실행(§127 절차) → 실 거부 페이로드 캡처 · 판독기/비트 23 대조 · 소크 재실행
