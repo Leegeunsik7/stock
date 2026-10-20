@@ -2810,3 +2810,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - v12.18.30-GM 산출물 15건 → release/superseded-v12.18.30-GM/. 신규 15건 복사(두 zip SHA-256 = .sha256 기록). worktree 제거 · prune · 격리 기동 임시 폴더/프로세스 잔존 0.
 - 메인 체크아웃 재수검(같은 소스 050a344 Release CLI · 메인 release/ 복사본): --verify-zip · --verify-live-armed(⑪ ⑫ ⑬ 강제) · --verify-interlocks(30) · --verify-tighten(6 · 관제 · IPC 패브릭 강제) 전부 exit 0.
 - 한계(정직): 401/403 외 형식의 KIS 자격증명 거부는 일시 실패(≤ 57회/시간)로 처리 · 실 VTS 재소크 미실시(§99) · WebView2 미설치 PC 실기 미확인.
+
+## 109. v12.18.32-DEV — KIS 접속키 비표준 본문 거부(HTTP 200/500 + error_code/msg_cd) 1회 즉시 sticky 래치 (2026-10-20)
+
+- 배경: §107/§108 한계 — KIS 는 자격증명 오류를 401/403 대신 HTTP 200/500 + JSON 본문 코드로 반환하기도 한다 → 종전엔 일시 실패로 분류돼 백오프 재시도(≤ 57회/시간).
+- KisApprovalRejectedException(LiveBrokers.cs):
+  - FatalBodyCodes = EGW00103(AppKey 무효) · EGW00105(AppSecret 무효) · EGW00121 · EGW00123 · EGW00133 · OPS00001 · ErrorCode 속성(null = HTTP 상태 거부) · (status, code) 생성자.
+  - MatchFatalBodyCode(ReadOnlySpan<byte>): Utf8JsonReader 타입드 판독 · 최상위(깊이 1) error_code/msg_cd 문자열만 · ValueTextEquals(u8) 비교 · catch(JsonException) → −1. δ=0(문자열 할당 0).
+- KisLiveBroker.ParseApprovalResponse(status, body)(public static · 정적 HttpClient 분리 → 단위 테스트 가능): 401/403 → 거부 · 본문 치명 코드 → 상태 무관 거부 ·
+  그 밖 비2xx · approval_key 부재/공백 · 비JSON/절단 = null(일시 실패 → 백오프). 성공 판독도 JsonDocument → Utf8JsonReader 로 교체. RequestApprovalKey 는 본문(바이트)을 상태 무관 판독.
+- 세션/백오프 경로 무변경(기존 catch → NoteRejected(status) sticky). 헤더 주석만 갱신(KisRealtimeSession · KisApprovalBackoff).
+- 테스트(LiveWireKisLongSoakTests §4 · +15): 200/EGW00121 · 500/EGW00123 · 200/EGW00103(msg_cd) · 500/OPS00001 · 200/EGW00133 · 500/EGW00105 = 발급 1회 후 래치(Consecutive 0 · 접속 0 · 인터락 차단) ·
+  비치명 코드 · 비JSON · 빈 본문 · 빈 키 · 중첩 필드 · 비코드 필드 · 절단 본문 = 비래치 + 백오프(≤ 57) · 정상 본문 = 키 판독 + 접속 1회 · 판독기 δ=0(정상/거부 본문 3창 최솟값 0B).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,162 통과 + 1 건너뜀 · Offline_1M 단독 5회 연속 통과 · infra-scan 0 · 래칫 ≤40(RCL 변경 0).
+- 불변: liveArmed:false(수신 전용 · 주문 송신 0) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 4종 미스테이징 · 원격 푸시 없음.
+- 한계(정직): 코드 표는 오더 명세 + 공개 문서 기억 기반(실 응답 미관측). EGW00121/00123 은 토큰 무효/만료, EGW00133 은 토큰 발급 빈도 제한(1분 1회)으로 알려져 있어
+  접속키 경로에서 영구 래치는 과잉(재시작 전까지 실시간 수신 중단)일 수 있음 — 실 VTS 응답 관측 후 표 재검토 필요. 본문 판독 범위 = 최상위 필드만.

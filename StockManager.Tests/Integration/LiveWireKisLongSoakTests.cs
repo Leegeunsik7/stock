@@ -586,5 +586,89 @@ namespace StockManager.Tests.Integration
             }
             Assert.Equal(0, min);                                                              // ★δ=0: 백오프 계산 · 상태 전이 0B(3창 최솟값)
         }
+
+        // ═══ §4 [v12.18.32] KIS 비표준 거부 — HTTP 200/500 + JSON 본문 코드(error_code · msg_cd) = 1회 즉시 sticky ═══
+
+        [Theory]
+        [InlineData(200, "{\"error_description\":\"유효하지 않은 token 입니다.\",\"error_code\":\"EGW00121\"}", "EGW00121")]
+        [InlineData(500, "{\"error_description\":\"기간이 만료된 token 입니다.\",\"error_code\":\"EGW00123\"}", "EGW00123")]
+        [InlineData(200, "{\"rt_cd\":\"1\",\"msg_cd\":\"EGW00103\",\"msg1\":\"유효하지 않은 AppKey입니다.\"}", "EGW00103")]
+        [InlineData(500, "{\"rt_cd\":\"1\",\"msg_cd\":\"OPS00001\",\"msg1\":\"인증 실패\"}", "OPS00001")]
+        [InlineData(200, "{ \"msg_cd\" : \"EGW00133\" }", "EGW00133")]
+        [InlineData(500, "{\"error_code\":\"EGW00105\"}", "EGW00105")]
+        public void ApprovalKey_NonStandardBodyRejection_LatchesStickyAfterOneCall(int status, string body, string code)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+            var ex = Assert.Throws<MS2E.Infrastructure.KisApprovalRejectedException>(() => MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(status, bytes));
+            Assert.Equal(status, ex.StatusCode);
+            Assert.Equal(code, ex.ErrorCode);
+
+            var calls = SimulateApprovalHour(_ => MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(status, bytes), 7, out var rt, out int factory, out var interlock);
+            Assert.Single(calls);                                                              // 본문 거부 1회 = 발급 시도 영구 중단(백오프 재시도 0)
+            Assert.True(rt.ApprovalRejected);
+            Assert.Equal(status, rt.ApprovalBackoff.LastRejectStatus);
+            Assert.Equal(1, rt.ApprovalBackoff.Rejections);
+            Assert.Equal(0, rt.ApprovalBackoff.Consecutive);                                   // 백오프 경로 미진입
+            Assert.Equal(1, rt.ApprovalFailures);
+            Assert.Equal(0, factory);
+            Assert.True(interlock.ArmingBlocked);                                              // 미연결 = 세션 인터락 차단 유지
+        }
+
+        [Theory]
+        [InlineData(500, "{\"error_code\":\"EGW00002\",\"error_description\":\"서버 에러\"}")]   // 비치명 코드 = 일시 실패
+        [InlineData(500, "<html>Internal Server Error</html>")]                                   // 비JSON
+        [InlineData(502, "")]
+        [InlineData(200, "{\"approval_key\":\"\"}")]                                              // 빈 키
+        [InlineData(200, "{\"nested\":{\"error_code\":\"EGW00121\"}}")]                          // 최상위 아님 = 래치 아님
+        [InlineData(200, "{\"error_description\":\"EGW00121\"}")]                                // 코드 필드 아님
+        [InlineData(200, "{\"error_code\":\"EGW0012")]                                            // 절단 본문
+        public void ApprovalKey_TransientBodies_AreNotSticky_AndBackoff(int status, string body)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+            Assert.Null(MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(status, bytes));
+            var calls = SimulateApprovalHour(_ => MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(status, bytes), 7, out var rt, out _, out _);
+            Assert.False(rt.ApprovalRejected);
+            Assert.True(calls.Count > 1 && calls.Count <= 57);                                 // 일시 실패 = 백오프 재시도(상한 유지)
+        }
+
+        [Fact]
+        public void ApprovalKey_SuccessBody_ParsesKey_AndConnects()
+        {
+            var ok = System.Text.Encoding.UTF8.GetBytes("{\"approval_key\":\"a1b2c3d4-vts\",\"rt_cd\":\"0\",\"msg_cd\":\"EGW00000\"}");
+            Assert.Equal("a1b2c3d4-vts", MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(200, ok));
+            Assert.Throws<MS2E.Infrastructure.KisApprovalRejectedException>(() => MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(401, ok));   // 상태 거부 우선
+            var calls = SimulateApprovalHour(_ => MS2E.Infrastructure.KisLiveBroker.ParseApprovalResponse(200, ok), 7, out var rt, out int factory, out _);
+            Assert.Single(calls);
+            Assert.Equal(1, factory);
+            Assert.False(rt.ApprovalRejected);
+        }
+
+        [Fact]
+        public void ApprovalKey_BodyCodeClassifier_ZeroAlloc()
+        {
+            byte[] fatal = System.Text.Encoding.UTF8.GetBytes("{\"rt_cd\":\"1\",\"msg_cd\":\"EGW00123\",\"msg1\":\"기간이 만료된 token 입니다.\",\"output\":{\"x\":[1,2]}}");
+            byte[] ok = System.Text.Encoding.UTF8.GetBytes("{\"approval_key\":\"a1b2c3d4-e5f6-7890-abcd-ef0123456789\",\"rt_cd\":\"0\",\"msg_cd\":\"EGW00000\"}");
+            byte[] junk = System.Text.Encoding.UTF8.GetBytes("<html>500</html>");
+            int acc = 0;
+            void Spin()
+            {
+                for (int i = 0; i < 10_000; i++)
+                    acc += MS2E.Infrastructure.KisApprovalRejectedException.MatchFatalBodyCode(fatal)
+                         + MS2E.Infrastructure.KisApprovalRejectedException.MatchFatalBodyCode(ok);
+            }
+            Assert.Equal(3, MS2E.Infrastructure.KisApprovalRejectedException.MatchFatalBodyCode(fatal));
+            Assert.Equal(-1, MS2E.Infrastructure.KisApprovalRejectedException.MatchFatalBodyCode(ok));
+            Assert.Equal(-1, MS2E.Infrastructure.KisApprovalRejectedException.MatchFatalBodyCode(junk));   // 비JSON = JsonException 흡수(콜드 · 측정 외)
+            Spin();
+            long min = long.MaxValue;
+            for (int w = 0; w < 3; w++)
+            {
+                long a = GC.GetAllocatedBytesForCurrentThread();
+                Spin();
+                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - a);
+            }
+            Assert.Equal(40_000 * 2, acc);                                                      // (3 + −1) × 10,000 × 4 회
+            Assert.Equal(0, min);                                                              // ★δ=0: 본문 거부 코드 판독 0B(정상 · 거부 본문 모두 · 3창 최솟값)
+        }
     }
 }

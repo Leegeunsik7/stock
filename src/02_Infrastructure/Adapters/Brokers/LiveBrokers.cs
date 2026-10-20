@@ -154,14 +154,51 @@ namespace MS2E.Infrastructure
     ///    라우터 게이트(OnBrokerAccepted)가 번호를 못 읽어 추적 슬롯이 TTL 까지 미결 → OrderSlotAge sticky Disarm. → KIS 네임스페이스 번호 반환.
     /// ④ 소수 수량을 (int) 절단해 송출(요청 ≠ 송출) → 거부. Cancel 미구현 → 원 조직번호 보관 후 order-rvsecncl 취소 구현.
     /// 비밀값(AppKey/AppSecret/토큰)은 FinancialPiiMasker·RawCredentialLeakInterlock 에 등록 — 오류 본문도 마스킹 후 반환.</remarks>
-    /// <summary>[v12.18.31] KIS 접속키 자격증명 거부(HTTP 401/403) — 일시 실패(null)와 구분해 재발급 sticky 중단(재시도 폭풍 차단).</summary>
+    /// <summary>[v12.18.31] KIS 접속키 자격증명 거부(HTTP 401/403) — 일시 실패(null)와 구분해 재발급 sticky 중단(재시도 폭풍 차단).
+    /// [v12.18.32] KIS 비표준 거동 — HTTP 200/500 + JSON 본문(error_code · msg_cd)으로 자격증명 거부를 반환 → 본문 코드도 상태 무관 sticky.</summary>
     public sealed class KisApprovalRejectedException : Exception
     {
+        /// <summary>치명 자격증명 거부 코드(본문 error_code / msg_cd) — 정적 표(판독 시 문자열 할당 0).</summary>
+        public static readonly string[] FatalBodyCodes = { "EGW00103", "EGW00105", "EGW00121", "EGW00123", "EGW00133", "OPS00001" };
+
         public int StatusCode { get; }
+        /// <summary>본문 거부 코드(null = HTTP 상태 거부).</summary>
+        public string? ErrorCode { get; }
         public KisApprovalRejectedException(int statusCode) : base("KIS 접속키 자격증명 거부(HTTP " + statusCode + ")") => StatusCode = statusCode;
+        public KisApprovalRejectedException(int statusCode, string errorCode)
+            : base("KIS 접속키 자격증명 거부(HTTP " + statusCode + " · " + errorCode + ")") { StatusCode = statusCode; ErrorCode = errorCode; }
 
         /// <summary>영구 거부 상태인가 — 401(인증 실패) · 403(권한/키 거부). 그 밖(429 · 5xx · 네트워크) = 일시 실패.</summary>
         public static bool IsCredentialRejection(int httpStatus) => httpStatus == 401 || httpStatus == 403;
+
+        /// <summary>
+        /// 본문 최상위 error_code / msg_cd 가 치명 거부 코드인가(HTTP 상태 무관). 반환 = FatalBodyCodes 색인(−1 = 아님).
+        /// δ=0: Utf8JsonReader 타입드 판독 + ValueTextEquals(u8) — 문자열 할당 0. 비JSON/절단 본문 = −1(일시 실패 경로 유지).
+        /// </summary>
+        public static int MatchFatalBodyCode(ReadOnlySpan<byte> utf8Body)
+        {
+            try
+            {
+                var r = new Utf8JsonReader(utf8Body);
+                if (!r.Read() || r.TokenType != JsonTokenType.StartObject) return -1;
+                while (r.Read())
+                {
+                    if (r.TokenType == JsonTokenType.EndObject && r.CurrentDepth == 0) return -1;
+                    if (r.TokenType != JsonTokenType.PropertyName || r.CurrentDepth != 1) continue;
+                    bool codeField = r.ValueTextEquals("error_code"u8) || r.ValueTextEquals("msg_cd"u8);
+                    if (!r.Read()) return -1;
+                    if (!codeField || r.TokenType != JsonTokenType.String) continue;
+                    if (r.ValueTextEquals("EGW00103"u8)) return 0;      // 유효하지 않은 AppKey
+                    if (r.ValueTextEquals("EGW00105"u8)) return 1;      // 유효하지 않은 AppSecret
+                    if (r.ValueTextEquals("EGW00121"u8)) return 2;
+                    if (r.ValueTextEquals("EGW00123"u8)) return 3;
+                    if (r.ValueTextEquals("EGW00133"u8)) return 4;
+                    if (r.ValueTextEquals("OPS00001"u8)) return 5;
+                }
+                return -1;
+            }
+            catch (JsonException) { return -1; }
+        }
     }
 
     public class KisLiveBroker : IBroker
@@ -403,16 +440,43 @@ namespace MS2E.Infrastructure
                 using var res = Http.Send(req);
                 int status = (int)res.StatusCode;
                 if (KisApprovalRejectedException.IsCredentialRejection(status)) throw new KisApprovalRejectedException(status);
-                if (!res.IsSuccessStatusCode) return null;
-                var body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                using var doc = JsonDocument.Parse(body);
-                var key = doc.RootElement.TryGetProperty("approval_key", out var k) ? k.GetString() : null;
-                if (string.IsNullOrWhiteSpace(key)) return null;
+                var key = ParseApprovalResponse(status, res.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult());
+                if (key is null) return null;
                 RegisterSecrets(key);
                 return key;
             }
             catch (KisApprovalRejectedException) { throw; }
             catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// [v12.18.32] 접속키 응답 판정(상태 + 본문). 본문 치명 거부 코드 = 상태(200/500 포함) 무관 KisApprovalRejectedException(1회 즉시 sticky).
+        /// 그 밖 비성공 상태 · approval_key 부재 = null(일시 실패 → 백오프).
+        /// </summary>
+        public static string? ParseApprovalResponse(int httpStatus, ReadOnlySpan<byte> utf8Body)
+        {
+            if (KisApprovalRejectedException.IsCredentialRejection(httpStatus)) throw new KisApprovalRejectedException(httpStatus);
+            int fatal = KisApprovalRejectedException.MatchFatalBodyCode(utf8Body);
+            if (fatal >= 0) throw new KisApprovalRejectedException(httpStatus, KisApprovalRejectedException.FatalBodyCodes[fatal]);
+            if (httpStatus < 200 || httpStatus > 299) return null;
+            try
+            {
+                var r = new Utf8JsonReader(utf8Body);
+                if (!r.Read() || r.TokenType != JsonTokenType.StartObject) return null;
+                while (r.Read())
+                {
+                    if (r.TokenType != JsonTokenType.PropertyName || r.CurrentDepth != 1) continue;
+                    bool isKey = r.ValueTextEquals("approval_key"u8);
+                    if (!r.Read()) return null;
+                    if (isKey && r.TokenType == JsonTokenType.String)
+                    {
+                        var key = r.GetString();
+                        return string.IsNullOrWhiteSpace(key) ? null : key;
+                    }
+                }
+                return null;
+            }
+            catch (JsonException) { return null; }
         }
 
         private HttpRequestMessage NewReq(HttpMethod m, string path, string token, string trId, string? hash)

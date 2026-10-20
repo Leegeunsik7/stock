@@ -4,7 +4,7 @@
 //  문제(실측 · §99 VTS 옵트인 소크 · 사용자 보고): 접속키 발급 실패 시 고정 5초 간격 무한 재요청 → 1시간 682회 REST 호출(재시도 폭풍 · IP 차단 위험).
 //  백오프: n 번째 연속 실패 → 기준 지연 = min(5s × 2^(n−1), 60s) (5 · 10 · 20 · 40 · 60 · 60 …) · 지터 = 기준 × [+12.5%, +25%] 무할당 의사난수
 //          (SplitMix64 · 주입 시드). 지터 하한(+12.5%)이 상한 구간 최소 간격 67.5s 를 보장 → 1시간 발급 시도 ≤ 57회(시드 무관 · 결정론 상한).
-//  래치: 자격증명 거부(KisApprovalRejectedException · HTTP 401/403) = 즉시 sticky 래치 → 발급 시도 0(수신 루프 종료 · 미연결 = 세션 인터락 차단 유지).
+//  래치: 자격증명 거부(KisApprovalRejectedException · HTTP 401/403 · [v12.18.32] HTTP 200/500 본문 error_code/msg_cd 치명 코드) = 즉시 sticky 래치 → 발급 시도 0(수신 루프 종료 · 미연결 = 세션 인터락 차단 유지).
 //        해제 = 프로세스 재시작(자격증명 교체 전제) — 자동 해제 · 재시도 없음(fail-closed).
 //  성공 = 연속 실패 리셋 · 대기 창 해제.
 //  δ=0: NoteFailure · NoteSuccess · RemainingMicros · BaseDelayMicros 는 long 연산 + Interlocked/Volatile 만. 대기(Task.Delay)는 실패당 1회 콜드 경로.
