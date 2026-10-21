@@ -112,11 +112,7 @@ namespace StockManager.Engines
             if (px <= 0) return 0;
             if (basePriceRaw > 0)
             {
-                Int128 upper128 = (Int128)basePriceRaw * (10_000 + PriceBandBps) / 10_000;
-                Int128 lower128 = (Int128)basePriceRaw * (10_000 - PriceBandBps) / 10_000;
-                long upper = upper128 > long.MaxValue ? 0 : KrxTickAligner.AlignDown((long)upper128);   // 상한가: 내림 정렬
-                long lower = KrxTickAligner.AlignUp((long)lower128);                                     // 하한가: 올림 정렬
-                if (upper <= 0 || lower <= 0 || lower > upper) return 0;
+                if (!TryPriceBand(basePriceRaw, out long lower, out long upper)) return 0;
                 // 보호 방향 클램프만 허용: 매수 상한은 상한가로 낮추고, 매도 하한은 하한가로 올린다.
                 // 반대 방향 이탈(매수 상한 < 하한가 · 매도 하한 > 상한가)은 참조가 자체가 가격제한폭 밖 = 이상치 → 변환 거부.
                 if (buy)
@@ -131,6 +127,24 @@ namespace StockManager.Engines
                 }
             }
             return px;
+        }
+
+        /// <summary>
+        /// 가격제한폭(δ=0 · 상태 없음): 상한가 = 기준가×1.3 내림(값·격자 모두) · 하한가 = 기준가×0.7 올림(값·격자 모두).
+        /// 둘 다 격자점이며 기준가 ±30% 를 raw 1 단위도 넘지 않는다. 기준가 ≤0 · 포화 · 역전 = false(fail-closed).
+        /// </summary>
+        public static bool TryPriceBand(long basePriceRaw, out long lowerRaw, out long upperRaw)
+        {
+            lowerRaw = upperRaw = 0;
+            if (basePriceRaw <= 0) return false;
+            Int128 upper128 = (Int128)basePriceRaw * (10_000 + PriceBandBps) / 10_000;
+            Int128 lower128 = ((Int128)basePriceRaw * (10_000 - PriceBandBps) + 9_999) / 10_000;
+            long upper = upper128 > long.MaxValue ? 0 : KrxTickAligner.AlignDown((long)upper128);   // 상한가: 내림 정렬
+            long lower = KrxTickAligner.AlignUp((long)lower128);                                     // 하한가: 올림 정렬
+            if (upper <= 0 || lower <= 0 || lower > upper) return false;
+            lowerRaw = lower;
+            upperRaw = upper;
+            return true;
         }
     }
 }

@@ -11,8 +11,15 @@
 //     다음 회차부터 전 종목 Latched(발주 후보 0). 재무장 = 물리 이중키 + 전 슬롯 링 소거.
 //   · 정렬: 승인 후보의 참조 지정가(raw 10^8)를 KrxTickAligner(KrxTickLadder 2023 7구간과 같은 규칙 · 무할당)로 보호 방향 스냅 —
 //     매수 = 내림(더 비싸게 사지 않음) · 매도 = 올림(더 싸게 팔지 않음). 참조가 ≤0 · 정렬 불가 = 거부(InvalidPrice · 신호 미평가 → 이력 무변경).
+//  [v12.18.46-DEV] 가격제한폭 · 종목별 수량 캡:
+//   · 기준가(raw 10^8) 필수 — 상한가 = ×1.3 내림 · 하한가 = ×0.7 올림(ProtectiveLimitOrderConverter.TryPriceBand · 둘 다 격자점).
+//     기준가 ≤0 · 포화 = 거부(InvalidBasePrice · 신호 미평가 → 슬롯/이력 무변경).
+//   · 보호 방향 이탈은 클램프: 매수 정렬가 > 상한가 → 상한가 · 매도 정렬가 < 하한가 → 하한가(격자점이라 재스냅 불변).
+//     반대 방향 이탈(매수 < 하한가 · 매도 > 상한가)은 참조가 자체가 제한폭 밖 이상치 → 거부(PriceBandBreach · 변환기와 같은 규칙 ·
+//     방향은 평가 후에야 확정되므로 신호 이력은 반영됨 — 신호는 정상, 가격만 이상).
+//   · 수량 = min(사이징 수량, 종목 캡의 로트 내림). 캡 < 로트 = 거부(InvalidQuantityCap · 신호 미평가). 기본 캡 = 무제한(생성 인자만).
 //  ★정직: 호스트 DI 미결속(실 AI 모델 피드 부재 — 가짜 배선 금지). 산출 = '정규 주문 후보'일 뿐 무장/송출 판정은 기존 디스패처 경로
-//   (liveArmed:false 불변 · 이 파일에 브로커 참조 0). 종목별 수량 상한은 공통(생성 인자) — 종목별 한도는 후속.
+//   (liveArmed:false 불변 · 이 파일에 브로커 참조 0).
 //  동시성: 호출자 = 단일(모델 스트림 → 라우터 1개). 방어적 CAS 진입 — 경합 = 그 회차 거부(Contended · fail-closed).
 // ============================================================================
 using System;
@@ -24,6 +31,7 @@ namespace StockManager.Engines.Strategy
     {
         Accepted = 0, Latched = 1, NonFinite = 2, OutOfRange = 3, ClockRegressed = 4, FutureTimestamp = 5, Stale = 6, FlipFlop = 7,
         BelowThreshold = 8, Contended = 9, InvalidSymbol = 10, SlotsExhausted = 11, InvalidPrice = 12,
+        InvalidBasePrice = 13, PriceBandBreach = 14, InvalidQuantityCap = 15,
     }
 
     /// <summary>정규 주문 후보(Side +1 매수 / −1 매도 · LimitRaw = KRX 격자 정렬 지정가 raw 10^8).</summary>
@@ -40,8 +48,10 @@ namespace StockManager.Engines.Strategy
         private readonly long[] _keys;
         private readonly int[] _vals;
         private readonly int _mask, _shift;
+        private readonly long _lot;
         private int _used, _busy;
         private long _routed, _accepted, _crossSymbolRejects, _invalidSymbol, _exhausted, _invalidPrice, _contended, _snappedDown, _snappedUp;
+        private long _invalidBase, _bandBreach, _invalidCap, _bandClamped, _qtyCapped;
 
         /// <param name="anomaly">비트 27 소스(전 슬롯 공유 = 전역 동결).</param>
         /// <param name="slots">동시 운용 종목 수 상한(1 ~ 64).</param>
@@ -57,6 +67,7 @@ namespace StockManager.Engines.Strategy
             for (int i = 0; i < slots; i++)
                 _slots[i] = new AiSignalGovernor(anomaly, maxQuantity, lotSize, flipWindowMicros, maxFlips, maxLatencyMicros, flipExtreme, minConfidenceBp);
             _slotSymbol = new long[slots];
+            _lot = lotSize;
             int bits = 1;
             while ((1 << bits) < slots * 2) bits++;
             _keys = new long[1 << bits];
@@ -77,6 +88,13 @@ namespace StockManager.Engines.Strategy
         /// <summary>매수 내림 / 매도 올림으로 가격이 실제로 바뀐 승인 수.</summary>
         public long SnappedDown => Interlocked.Read(ref _snappedDown);
         public long SnappedUp => Interlocked.Read(ref _snappedUp);
+        public long InvalidBasePriceRejects => Interlocked.Read(ref _invalidBase);
+        public long PriceBandBreaches => Interlocked.Read(ref _bandBreach);
+        public long InvalidQuantityCapRejects => Interlocked.Read(ref _invalidCap);
+        /// <summary>정렬가가 보호 방향으로 제한폭을 넘어 상·하한가로 고정된 승인 수.</summary>
+        public long BandClamped => Interlocked.Read(ref _bandClamped);
+        /// <summary>사이징 수량이 종목 캡으로 절삭된 승인 수.</summary>
+        public long QuantityCapped => Interlocked.Read(ref _qtyCapped);
         /// <summary>래치 중 거부(전역 동결 — 원인 종목과 다른 종목 포함).</summary>
         public long LatchedRejects => Interlocked.Read(ref _crossSymbolRejects);
 
@@ -92,7 +110,10 @@ namespace StockManager.Engines.Strategy
 
         /// <summary>신호 1건 라우팅(δ=0 · O(1) 기대). Accepted 일 때만 order 유효 — 그 외 order = default(수량 0).</summary>
         /// <param name="referenceLimitRaw">후보 지정가 참조(raw 10^8 · 예: 최우선 호가). 보호 방향으로 KRX 격자 스냅.</param>
-        public AiRouteVerdict Route(in AiSignal signal, long referenceLimitRaw, long nowMicros, out AiRoutedOrder order)
+        /// <param name="basePriceRaw">가격제한폭 기준가(raw 10^8 · 전일 종가). ≤0 = 평가 전 거부.</param>
+        /// <param name="maxSymbolQty">종목별 주문 수량 상한(로트 내림 적용 · 기본 = 무제한 → 생성 인자 상한만).</param>
+        public AiRouteVerdict Route(in AiSignal signal, long referenceLimitRaw, long basePriceRaw, long nowMicros, out AiRoutedOrder order,
+                                    long maxSymbolQty = long.MaxValue)
         {
             order = default;
             if (Interlocked.CompareExchange(ref _busy, 1, 0) != 0) { Interlocked.Increment(ref _contended); return AiRouteVerdict.Contended; }
@@ -102,6 +123,9 @@ namespace StockManager.Engines.Strategy
                 long sym = signal.SymbolCode;
                 if (sym < 1 || sym > MaxSymbolCode) { Interlocked.Increment(ref _invalidSymbol); return AiRouteVerdict.InvalidSymbol; }
                 if (_anomaly.Tripped) { Interlocked.Increment(ref _crossSymbolRejects); return AiRouteVerdict.Latched; }   // 전역 동결 — 슬롯 배정/평가 0
+                if (!ProtectiveLimitOrderConverter.TryPriceBand(basePriceRaw, out long lower, out long upper)) { Interlocked.Increment(ref _invalidBase); return AiRouteVerdict.InvalidBasePrice; }
+                long qtyCap = maxSymbolQty - maxSymbolQty % _lot;                               // 로트 내림(음수 캡도 < 로트로 거부)
+                if (qtyCap < _lot) { Interlocked.Increment(ref _invalidCap); return AiRouteVerdict.InvalidQuantityCap; }
                 // 양방향 정렬 가능성을 '평가 전'에 확인 — 정렬 불가 참조가로 신호 이력(반전 링 · 시계)이 오염되지 않게(방향은 평가 후에야 확정)
                 if (KrxTickAligner.TickFor(referenceLimitRaw) == 0 || KrxTickAligner.AlignUp(referenceLimitRaw) <= 0) { Interlocked.Increment(ref _invalidPrice); return AiRouteVerdict.InvalidPrice; }
                 int s = FindOrClaim(sym);
@@ -113,10 +137,16 @@ namespace StockManager.Engines.Strategy
                     if (v == AiSignalVerdict.Latched) Interlocked.Increment(ref _crossSymbolRejects);
                     return (AiRouteVerdict)(byte)v;                                         // 0 ~ 9 동일 서수
                 }
-                long limit = sized.Side > 0 ? KrxTickAligner.AlignDown(referenceLimitRaw) : KrxTickAligner.AlignUp(referenceLimitRaw);
-                if (limit <= 0) { Interlocked.Increment(ref _invalidPrice); return AiRouteVerdict.InvalidPrice; }   // 방어(사전 확인으로 도달 불가)
-                if (limit != referenceLimitRaw) { if (sized.Side > 0) Interlocked.Increment(ref _snappedDown); else Interlocked.Increment(ref _snappedUp); }
-                order = new AiRoutedOrder(sym, sized.Side, sized.Quantity, limit, sized.ConfidenceBp, s);
+                bool buy = sized.Side > 0;
+                long aligned = buy ? KrxTickAligner.AlignDown(referenceLimitRaw) : KrxTickAligner.AlignUp(referenceLimitRaw);
+                if (aligned <= 0) { Interlocked.Increment(ref _invalidPrice); return AiRouteVerdict.InvalidPrice; }   // 방어(사전 확인으로 도달 불가)
+                if (buy ? aligned < lower : aligned > upper) { Interlocked.Increment(ref _bandBreach); return AiRouteVerdict.PriceBandBreach; }
+                long limit = buy ? Math.Min(aligned, upper) : Math.Max(aligned, lower);         // 상·하한가 = 격자점 → 클램프 후에도 격자
+                long qty = Math.Min(sized.Quantity, qtyCap);
+                if (aligned != referenceLimitRaw) { if (buy) Interlocked.Increment(ref _snappedDown); else Interlocked.Increment(ref _snappedUp); }
+                if (limit != aligned) Interlocked.Increment(ref _bandClamped);
+                if (qty != sized.Quantity) Interlocked.Increment(ref _qtyCapped);
+                order = new AiRoutedOrder(sym, sized.Side, qty, limit, sized.ConfidenceBp, s);
                 Interlocked.Increment(ref _accepted);
                 return AiRouteVerdict.Accepted;
             }

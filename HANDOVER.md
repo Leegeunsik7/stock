@@ -3289,3 +3289,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): AiSignalGovernor/MultiSymbolAiSignalRouter 호스트 미결속(실 모델 피드 부재 · §131/§135) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 137. v12.18.46-DEV — AI 발주 후보 가격제한폭(±30%) 클램프 · 종목별 수량 캡 · 기준가 fail-closed (2026-10-21)
+
+- 사각지대(§135 한계): MultiSymbolAiSignalRouter 는 호가 격자 정렬만 수행 — 참조가가 기준가 ±30% 밖이면 제한폭 밖 지정가가 후보로 유출(거래소 거부 → 비트 23 위험) ·
+  종목별 수량 한도 없음(생성 인자 공통 상한뿐).
+- Route 시그니처 변경: Route(in signal, referenceLimitRaw, basePriceRaw, nowMicros, out order, maxSymbolQty = long.MaxValue). 기준가는 필수(기본값 없음 — 0 기본값 = 항상 거부라 무의미)·
+  단위 = raw 10^8 long(참조가/LimitRaw 와 동일 · 오더의 int 는 raw 10^8 에서 21원 초과 시 오버플로라 채택 불가). 호출자 = 테스트뿐(호스트 DI 미결속 유지).
+- 제한폭: ProtectiveLimitOrderConverter.TryPriceBand 신설(변환기 Compute 와 공용) — 상한가 = 기준가×1.3 내림 → AlignDown · 하한가 = ×0.7 '올림'(Int128 천장 나눗셈 —
+  기존 절삭 나눗셈은 1원 미만 기준가에서 하한가가 raw 1 단위 낮아질 수 있었음) → AlignUp. 둘 다 격자점 · 포화/역전 = false.
+- 판정: 기준가 ≤0 · 포화 = InvalidBasePrice(13) · 캡 로트 내림 < 로트 = InvalidQuantityCap(15) — 둘 다 래치 판정 직후 · 평가 '전'(슬롯 생성 · 반전 링 · 시계 무변경).
+  평가 후: 매수 정렬가 > 상한가 → 상한가 · 매도 정렬가 < 하한가 → 하한가(보호 방향 클램프 · 격자점이라 재스냅 불변). 반대 방향 이탈(매수 < 하한가 · 매도 > 상한가) =
+  PriceBandBreach(14) 거부 — 클램프하면 목표가보다 비싸게 사거나 싸게 파는 쪽이라 변환기와 같은 규칙으로 거부(방향 확정이 평가 후라 신호 이력은 반영 · 신호는 정상).
+  수량 = min(사이징, 캡의 로트 내림). 계수 BandClamped · QuantityCapped · PriceBandBreaches · InvalidBasePriceRejects · InvalidQuantityCapRejects.
+- 테스트 MultiSymbolAiSignalRouterTests 41 → 65건: 상한가 클램프 6구간 Theory(×3 참조가 · 구간 경계 교차 5,005→5,000 · 200,001.1→200,000) · 하한가 클램프 5구간 Theory
+  (1,999.9→2,000 · 4,998.7→5,000 · 700,000.7→701,000) · decimal KrxTickLadder 독립 오라클 대조 · 제한폭 내 무클램프 · 반대 방향 이탈 거부 3 · 종목별 캡(455→450 · 1로트 · 독립) ·
+  캡 < 로트 4종 · 기준가 0/−1/−7만원/MinValue/MaxValue 평가 전 거부(슬롯 0 · 기존 종목 반대 방향 5건 반전 0) · 32종목 100만 클램프+캡+사이징+정렬 Release 3창 최소 0B
+  (400만 승인 전량 클램프 · 전량 캡) · 적대 200회 × 400신호(기준가 ±60% 참조 · 기준가 무효 4% · 무작위 캡 25%) = 승인 4,415건 전부 격자 · 보호 방향 · 오라클 제한폭 내 ·
+  수량 ≤ 캡(클램프 1,451 · 캡 517 · 이탈 거부 1,423 · 기준가 거부 374). 사보타주(클램프·캡 제거) → 14건 실패 확인 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,421 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+  ※ 1차 전체 실행에서 KiwoomBridgeTests.PingPong_ProxyPongs_ClientStaysAlive 1건 IPC 하트비트 타이밍 실패(라우터 무관 · 단독 3회 통과) → 2차 전체 실행 0 실패.
+- 한계(정직): 호스트 DI 미결속(실 AI 모델 피드 · 기준가 피드 부재 — 가짜 배선 금지) · 캡은 호출 인자(종목별 저장소 없음) · 산출 = 주문 후보(liveArmed:false).
+- 불변: 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
