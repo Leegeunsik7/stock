@@ -3189,3 +3189,20 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 장중 VTS 프로브/소크 미실행(§127 절차) · ETF/ETN 호가 규칙 미분리(§129) · 실 손상 런타임/미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 131. v12.18.43-DEV — AI 자율 신호 정제 · 플립플롭 가드 · 알파 시효성 · 확신도 비례 사이저(비트 27 StrategyAnomaly 결속) (2026-10-21)
+
+- 사전 검증: 비트 27 = 기존 StrategyAnomalyInterlock(QuantSignalProvider.cs · CAS 최초 원인 각인 · sticky · 재무장 이중키) — 신규 비트 정의 0, 기존 래치에 결속.
+  StrategyAnomalyKind 에 SignalFlipFlop = 9 추가(+ FlipFlops 계수) · 인터락 30(0x800000001FFFFFFF) 정의 무변경.
+- 신규 StockManager/Engines/Strategy/AiSignalGovernor.cs(namespace StockManager.Engines.Strategy) — 판정 순서(앞 단계 거부 = 뒤 단계 미실행 · δ=0 · O(1)):
+  ⓪ 래치 중(원인 무관) = Latched ① Confidence/Position ∈ [−1,+1] · Urgency ∈ [0,1] — NaN/∞ = Trip(NonFinite) · 범위 이탈 = Trip(OutOfRange) 같은 회차 비트 27
+  ② 시계 역행 = ClockRegressed · 추론 시각 > now = FutureTimestamp ③ now − InferenceMicros > 30ms = Stale 폐기(인터락 무관 — 지연 ≠ 모델 고장)
+  ④ |c| ≥ 0.5 극단 신호 방향 반전 → InlineArray 고정 링(최근 MaxFlips=3 반전) · 가장 오래된 반전이 100ms 창 안 = Trip(SignalFlipFlop) 임계 회차 즉시 래치
+  ⑤ confBp = ⌊|c|×10⁴⌋(절단) · < 1,000bp = BelowThreshold · 수량 = ⌊MaxQty×bp/10⁴⌋ lot 내림 · MaxQty ≤ 10⁹(곱 ≤ 10¹³ 오버플로 0) · 0 = 거부.
+  단일 호출자 + 방어 CAS 진입(경합 = Contended 거부) · TryRearm = 이중키 + 링/직전 방향 소거(재무장 직후 재격발 방지).
+- 테스트 StockManager.Tests/Strategy/AiSignalGovernorTests.cs 37건([Collection("ConcurrencyStress")]): NaN/±∞ 3필드 · 범위 ±ε 6경계 · 경계 포함 승인 · 타 원인 래치 차단 ·
+  100ms 내 3반전 = 그 회차 0x08000000 · maxFlips=1 첫 반전 래치 · 창 밖/약한 진동 무래치 · 재무장 이중키+링 소거 · 30ms 경계(=통과 · +1µs 폐기) · 미래/역행 ·
+  사이저 Theory 10 · ctor 검증 · 100만 평가+사이징 Release 3창 최소 0B · 적대 혼합 스트림 200×500(래치 후 승인 0 · 승인 주문 수치 이상 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,319 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 호스트 DI 미결속 — 실 AI 모델 피드 부재(가짜 배선 금지) · 승인 = 주문 후보일 뿐 무장/송출은 기존 디스패처 경로 · 종목별 분리 없음(인스턴스 = 모델 스트림 1개).
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

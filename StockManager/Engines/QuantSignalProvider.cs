@@ -65,7 +65,8 @@ namespace StockManager.Engines
     public enum StrategyAnomalyKind : byte { None = 0, NonFinite = 1, OutOfRange = 2, NonPositiveQty = 3, ComputeStall = 4, CrossFeedCrossed = 5,
                                              ModelBreakdown = 6,    // [v12.18.1-DEV · 방향 B] 1분 승인 시그널 > 하드 한도(SignalChurnCircuitBreaker)
                                              AuditChainBroken = 7,  // [v12.18.2-DEV] 강화 전용 감사 원장 해시 체인 불일치 · 손상 · 열기 실패(MonotonicSettingAuditLog)
-                                             AuditLedgerFull = 8 }  // [v12.18.2-DEV] 감사 원장 가득 참 — 기록 없는 설정 변경 금지 → 동결
+                                             AuditLedgerFull = 8,   // [v12.18.2-DEV] 감사 원장 가득 참 — 기록 없는 설정 변경 금지 → 동결
+                                             SignalFlipFlop = 9 }   // [v12.18.43-DEV] AI 신호 100ms 창 내 극단 방향 급반전 임계 도달(AiSignalGovernor)
 
     /// <summary>종목 시그널 판독본(seqlock 일관 사본).</summary>
     public readonly record struct QuantSignal(long SymbolCode, double Imbalance5, double MicroTrend, double VwapDeviationBp, double VolatilityBp,
@@ -96,6 +97,8 @@ namespace StockManager.Engines
         private long _auditBroken, _auditFull;
         public long AuditChainBreaks => Interlocked.Read(ref _auditBroken);
         public long AuditLedgerFulls => Interlocked.Read(ref _auditFull);
+        private long _flipFlops;
+        public long FlipFlops => Interlocked.Read(ref _flipFlops);
 
         public void BindInterlock(ArmingInterlockBitmask aggregator, ArmingInterlockSource bit)
         {
@@ -117,6 +120,7 @@ namespace StockManager.Engines
                 case StrategyAnomalyKind.ModelBreakdown: Interlocked.Increment(ref _breakdown); break;
                 case StrategyAnomalyKind.AuditChainBroken: Interlocked.Increment(ref _auditBroken); break;
                 case StrategyAnomalyKind.AuditLedgerFull: Interlocked.Increment(ref _auditFull); break;
+                case StrategyAnomalyKind.SignalFlipFlop: Interlocked.Increment(ref _flipFlops); break;
             }
             if (Interlocked.CompareExchange(ref _tripped, 1, 0) != 0) return;
             Volatile.Write(ref _first, (int)kind);
