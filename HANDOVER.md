@@ -3222,3 +3222,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 정직: 오더의 'Offline_1M' 은 별도 테스트가 아님 — 해당 이름은 옵트인 LiveWire 소크(건너뜀 2건 중 1)뿐. 1M δ=0 단언은 스위트 내 각 모듈 테스트(AiSignalGovernor 100만 0B 포함)로 통과.
 - 한계(정직): 장중 VTS 프로브/소크 미실행(§127) · AiSignalGovernor 호스트 미결속(§131) · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 133. v12.18.44-DEV — 공개 규격 기반 거부 파서 구조 내성 · 미분류 체결통보 fail-closed(비트 23) (2026-10-21)
+
+- ★정직: 실 VTS 캡처 부재(%TEMP%\ms2e-vts-probe 없음 · MS2E_* 0) — 계정 발급 후 VtsOrderRejectionProbeTests 실측 대조 예정. 이번 픽스처는 전부 공개 규격 기반 '합성' 변칙이며 실물로 표기하지 않음.
+- 실 공백(교정 전): ① H0STCNI0/9 필드에 공백/CR/LF 패딩 = 형식 오류 → 거부 통보 무음 폐기(Bad · 래치 0) ② 거부여부 2 등 정의 밖 값 = 접수로 오분류(미탐)
+  ③ 판독 불가 체결통보(키 없음 · 복호 실패 · 형식 이탈) = Malformed 계수만 — 거부였을 수 있는 프레임이 비트 23 없이 사라짐 ④ REST 중복 rt_cd = 마지막 값 채택("1" 뒤 "0" = 성공 판정).
+- 교정: KisProtocol.TryParseNotice 필드별 BCL Ascii.Trim(δ=0) · 17번째 이후 미지 필드 무시(기존) · 정정구분 0~2 · 거부여부 0/1 범위 강제.
+  KisOpenApiAdapter onNoticeFault(선택 결선) — 체결통보 TR 판독 불가 = NoticeFaults 계수 + 콜백 · 호스트 BlazorHomeForm = childMatrix.OnUnclassifiedNotice(비트 23 sticky · UnclassifiedNotices).
+  타 계좌 통보(판독 성공) = 기존대로 폐기(래치 아님). TryParseOrderAck 중복 rt_cd = Ok false(모호 = fail-closed).
+- ★위치 규격 한계: H0STCNI0 는 '^' 위치 필드라 순서 비의존 판독은 원리상 불가 — 셔플 레코드는 형식 검증에 걸려 미분류 → 비트 23(추측 분류 0). REST JSON 은 Utf8JsonReader 로 순서 비의존(기존).
+- 테스트 Tracking/RejectionParserToleranceTests 37건([Collection("ConcurrencyStress")]): 판독 가능 변칙 4(공백/탭 · 구분자 공백+CRLF · 미지 후행 12 · 개행 패딩) = 거부 판독 + 프레임 내 래치 ·
+  판독 불가 9(역순 · 필드 교환 2 · 거부 'Y'/2 · 정정 7 · 필드 부족 · 공백만 · 구분자 전환) + 복호 불가/키 없음 = 미분류 래치 · 평문 프레임 · 공백/미지 필드 섞인 접수/체결 = 래치 0(오탐 0) ·
+  타 계좌 = 미분류 아님 · 호스트 결선 핀 · REST 거부 24순열×3 공백형 = 성공 0 · 성공 24순열 = ODNO 판독 · 변칙 13(미지 중첩/배열 · 중복 rt_cd 3 · 숫자형 · 절단 · BOM · HTML) ·
+  퍼즈(변칙 2,000 = 전부 래치 · 임의 바이트 5,000 = 예외 0 + 방출/미분류 정확히 1 · 키움 브리지 임의 바이트 5,000 예외 0) · 변칙 통보 10만 + REST 10만 Release 3창 최소 0B.
+- 사보타주 4종(Trim 제거 · 거부값 범위 제거 · 중복 rt_cd 마지막값 · onNoticeFault 미호출) = 각각 6/3/2/13건 실패로 검출 → 원복 후 재빌드.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,356 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 실 캡처 미대조 · 미분류 래치는 키 장착 전 암호 통보도 Disarm(재무장 = 물리 이중키) — 실망에서 구독 응답보다 통보가 먼저 오는 경우가 잦으면 운용 재검토 필요.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · 비트 23/27 정의 보존 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

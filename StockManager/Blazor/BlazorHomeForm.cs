@@ -1756,6 +1756,7 @@ namespace StockManager.Blazor
                     send: f => Volatile.Read(ref rtRef)?.TrySendFrame(f) ?? false,
                     onFill: f => { execFeed.OnFill(f); childMatrix.OnFill(f); kisBalance.OnKisFill(f); dashHub.OnFill(f, 1); },   // [방향 B] 포지션 원장
                     validator: kisProtocol, accountCano: kisLive!.AccountCano,                               // [KIS VTS] 도메인 · 계좌 핀
+                    onNoticeFault: childMatrix.OnUnclassifiedNotice,                                         // [v12.18.44-DEV] 판독 불가 체결통보 = 비트 23(fail-closed)
                     onBook: b =>
                     {
                         Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis);   // [교차 피드]

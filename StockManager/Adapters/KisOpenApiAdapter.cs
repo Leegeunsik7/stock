@@ -14,6 +14,8 @@
 //       '미확인 노출 건수'만 증거로 남긴다.
 //   · KisOpenApiAdapter — 프레임 1건 처리: 제어(PINGPONG → 받은 바이트 그대로 반송) · H0STCNT0 → TickPayload ·
 //     H0STCNI0(암호문이면 AES 복호) → FillPayload(KIS 네임스페이스 주문번호 · 브로커 잔량 미상 = 대조 생략). 형식 오류 = 폐기 + 계수.
+//     [v12.18.44-DEV] 체결통보 TR 인데 판독 불가(키 없음 · 복호 실패 · 필드 형식/정의 이탈) = 미분류 통보 → onNoticeFault(fail-closed ·
+//     호스트 = 자식 매트릭스 비트 23). 거부 통보일 수 있는 프레임을 무음 폐기하지 않는다. 타 계좌 통보(판독 성공) = 폐기(래치 아님).
 //  δ=0: 프레임 처리·토큰 판정·헤더 작성·세션 판정은 사전 할당 버퍼만 사용(테스트 실측). 토큰 '갱신'(HTTP · 마스커 등록)은 콜드.
 //  ★네트워크 미결선(정직): 실제 WebSocket/HTTP 송수신 루프는 이 파일에 없다 — 전송 계층은 델리게이트로 주입(liveArmed:false ·
 //    이 호스트에 KIS 실 연결 경로 0). 실 연동은 모의(VTS) 도메인 검증 후 운용자 결선.
@@ -317,6 +319,8 @@ namespace StockManager.Adapters
         private readonly Func<ReadOnlyMemory<byte>, bool>? _send;
         private readonly Action<TickPayload>? _onTick;
         private readonly Action<FillPayload>? _onFill;
+        private readonly Action? _onNoticeFault;
+        private long _noticeFaults;
         private readonly Action<OrderBookPayload>? _onBook;                          // [교차 피드] H0STASP0 10호가
         // [v12.18.16-DEV] 전문 시각 편차 감시(비트 28 2차 입력) · 체결 레코드(체결량 · 매수/매도 구분) 직결 — 아레나 원장/테이프 피드
         private readonly Kis.KisTimeSkewGuard? _skew;
@@ -353,20 +357,21 @@ namespace StockManager.Adapters
 
         /// <param name="send">PINGPONG 반송(받은 바이트 그대로 · 전송 계층 주입). 반환 = 송신 성공.</param>
         /// <param name="validator">[KIS VTS] 도메인 핀 — 교차 도메인 TR/구독 응답 = 폐기 + 비트 26 Disarm + KIS 슬롯 격리.</param>
+        /// <param name="onNoticeFault">[v12.18.44-DEV] 판독 불가 체결통보 1건마다 호출(fail-closed — 호스트 = ChildSlotTrackingMatrix.OnUnclassifiedNotice).</param>
         /// <param name="accountCano">[KIS VTS] 체결통보 계좌 핀(종합계좌 앞 8자리). 통보 계좌 필드가 이 값으로 시작하지 않으면 폐기.</param>
         public KisOpenApiAdapter(KisSessionInterlock session, Func<ReadOnlyMemory<byte>, bool>? send = null,
                                  Action<TickPayload>? onTick = null, Action<FillPayload>? onFill = null, Func<long>? nowTicks = null,
                                  KisVtsProtocolValidator? validator = null, string? accountCano = null, Action<OrderBookPayload>? onBook = null,
                                  MmfFlightRecorder? blackbox = null, Action<bool>? onBookQuarantine = null,
                                  Kis.KisTimeSkewGuard? skewGuard = null, Action<KisTick>? onTrade = null,
-                                 StockManager.Engines.Arbitrage.FeedStallWatchdog? stallWatch = null)
+                                 StockManager.Engines.Arbitrage.FeedStallWatchdog? stallWatch = null, Action? onNoticeFault = null)
         {
             _onBook = onBook; _blackbox = blackbox; _onBookQuarantine = onBookQuarantine;
             _skew = skewGuard; _onTrade = onTrade; _stall = stallWatch;
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _validator = validator;
             if (!string.IsNullOrWhiteSpace(accountCano)) _accountPin = System.Text.Encoding.ASCII.GetBytes(accountCano.Trim());
-            _send = send; _onTick = onTick; _onFill = onFill;
+            _send = send; _onTick = onTick; _onFill = onFill; _onNoticeFault = onNoticeFault;
             _nowTicks = nowTicks ?? (static () => DateTime.UtcNow.Ticks);
         }
 
@@ -376,6 +381,8 @@ namespace StockManager.Adapters
         public long Malformed => Interlocked.Read(ref _malformed);
         public long Echoes => Interlocked.Read(ref _echoes);
         public long NoticeWithoutKey => Interlocked.Read(ref _noKey);
+        /// <summary>[v12.18.44-DEV] 판독 불가 체결통보(키 없음 · 복호 실패 · 형식 이탈) 수 — 각각 onNoticeFault 1회.</summary>
+        public long NoticeFaults => Interlocked.Read(ref _noticeFaults);
 
         /// <summary>체결통보 복호 키(구독 응답 output.key 32B · output.iv 16B · 콜드 1회).</summary>
         public void SetNoticeKeys(ReadOnlySpan<byte> key32, ReadOnlySpan<byte> iv16)
@@ -452,12 +459,12 @@ namespace StockManager.Adapters
                 if (encrypted)
                 {
                     var cipher = Volatile.Read(ref _cipherCtx);
-                    if (cipher is null) { Interlocked.Increment(ref _noKey); return Bad(); }
+                    if (cipher is null) { Interlocked.Increment(ref _noKey); return NoticeFault(); }
                     int len = cipher.TryDecrypt(body, _cipher, _plain);
-                    if (len <= 0) return Bad();
+                    if (len <= 0) return NoticeFault();
                     plain = _plain.AsSpan(0, len);
                 }
-                if (!KisProtocol.TryParseNotice(plain, out var n, out var account)) return Bad();
+                if (!KisProtocol.TryParseNotice(plain, out var n, out var account)) return NoticeFault();
                 if (_accountPin is { } pin && !account.StartsWith(pin)) { Interlocked.Increment(ref _foreignAccount); return false; }   // 타 계좌 통보 = 폐기
                 // 취소/정정 확인은 새 주문번호로 오고 원주문번호가 실려 온다 — 추적 슬롯은 원주문 기준
                 long odno = n.Kind is KisNoticeKind.CancelConfirmed or KisNoticeKind.Amended && n.OrigOrderNo > 0 ? n.OrigOrderNo : n.OrderNo;
@@ -475,7 +482,7 @@ namespace StockManager.Adapters
                     Side = n.Side, TimestampTicks = _nowTicks(),
                     Status = BridgeFillStatusCodec.Encode(status, false), RemainingQty = 0,   // KIS 통보엔 미체결 잔량 없음 → 대조 생략
                 };
-                if (f.OrderId == 0) return Bad();
+                if (f.OrderId == 0) return NoticeFault();                             // 주문번호 네임스페이스 이탈 = 해독 불가 번호
                 try { _onFill?.Invoke(f); } catch (Exception) { }
                 Interlocked.Increment(ref _fillsEmitted);
                 return true;
@@ -484,6 +491,14 @@ namespace StockManager.Adapters
         }
 
         private bool Bad() { Interlocked.Increment(ref _malformed); return false; }
+
+        // [v12.18.44-DEV] 판독 불가 체결통보 = 형식 오류 계수 + 미분류 통보 fail-closed 통지(δ=0 · 소비자 예외 격리).
+        private bool NoticeFault()
+        {
+            Interlocked.Increment(ref _noticeFaults);
+            try { _onNoticeFault?.Invoke(); } catch (Exception) { }
+            return Bad();
+        }
 
         // [KIS 호가 경계 방어] 이탈 1틱 = 무시 + 블랙박스(사유 · 종목 · 연속 수) · 연속 5 = 격리
         private bool BookBad(KisBookReject reason, long symbol)

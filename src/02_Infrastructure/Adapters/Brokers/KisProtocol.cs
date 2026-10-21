@@ -225,7 +225,10 @@ namespace MS2E.Infrastructure
 
         /// <summary>복호 평문(^ 구분) → 통보 1건. 공개 문서 필드 순서: 0 고객ID · 1 계좌 · 2 주문번호 · 3 원주문번호 · 4 매도매수(01/02) ·
         /// 5 정정구분(0 정상 · 1 정정 · 2 취소) · 6 주문종류 · 7 주문조건 · 8 종목코드 · 9 체결수량 · 10 체결단가 · 11 체결시간 ·
-        /// 12 거부여부(0/1) · 13 체결여부(1 접수/확인 · 2 체결) · 14 접수여부 · 15 지점 · 16 주문수량.</summary>
+        /// 12 거부여부(0/1) · 13 체결여부(1 접수/확인 · 2 체결) · 14 접수여부 · 15 지점 · 16 주문수량.
+        /// [v12.18.44-DEV] 구조 내성(공개 규격 기반 · 실 캡처 대조 전): 필드 앞뒤 ASCII 공백(SP · TAB · CR · LF)은 BCL Ascii.Trim 으로 제거(δ=0) ·
+        ///   17번째 이후 미지 필드 무시. ★위치 규격이라 '순서 비의존'은 불가 — 순서가 바뀐 레코드는 형식 검증(매도매수 01/02 · 정정 0~2 ·
+        ///   거부 0/1 · 체결 1/2 · 종목 6자리)에 걸려 false → 호출측이 미분류 통보로 fail-closed. 정의 밖 값(거부여부 2 · Y 등) = false(추측 분류 0).</summary>
         public static bool TryParseNotice(ReadOnlySpan<byte> plain, out KisFillNotice n) => TryParseNotice(plain, out n, out _);
 
         /// <summary>[KIS VTS] 계좌 필드(1 · 원문 슬라이스) 동반 판독 — HTS ID 구독은 그 ID 의 '모든 계좌' 통보를 보낸다(계좌 핀 대조는 호출측).</summary>
@@ -238,18 +241,19 @@ namespace MS2E.Infrastructure
             {
                 int caret = plain.IndexOf((byte)'^');
                 var field = caret < 0 ? plain : plain[..caret];
+                field = field[System.Text.Ascii.Trim(field)];                        // [v12.18.44-DEV] 공백 패딩 필드 = 값 동일(수정 전: 형식 오류 → 거부 통보 무음 폐기)
                 switch (f)
                 {
                     case 1: account = field; break;
                     case 2: if (!ParseLong(field, out n.OrderNo) || n.OrderNo <= 0) return false; break;
                     case 3: if (!field.IsEmpty && !ParseLong(field, out n.OrigOrderNo)) return false; break;
                     case 4: if (!ParseLong(field, out side) || side is not (1 or 2)) return false; break;
-                    case 5: if (!ParseLong(field, out rctf)) return false; break;
+                    case 5: if (!ParseLong(field, out rctf) || rctf is not (0 or 1 or 2)) return false; break;
                     case 8: if (!ParseCode(field, out n.SymbolCode)) return false; break;
                     case 9: if (!field.IsEmpty && !ParseLong(field, out n.FillQty)) return false; break;
                     case 10: if (!field.IsEmpty && !ParseLong(field, out n.FillPrice)) return false; break;
                     case 11: if (!field.IsEmpty && !ParseLong(field, out n.TimeHhmmss)) return false; break;
-                    case 12: if (!ParseLong(field, out refuse)) return false; break;
+                    case 12: if (!ParseLong(field, out refuse) || refuse is not (0 or 1)) return false; break;   // 수정 전: 2 등 정의 밖 값 = 접수로 분류(미탐)
                     case 13: if (!ParseLong(field, out cntgYn) || cntgYn is not (1 or 2)) return false; break;
                     case 16: if (!field.IsEmpty && !ParseLong(field, out n.OrderQty)) return false; break;
                 }
@@ -286,7 +290,8 @@ namespace MS2E.Infrastructure
                         case JsonTokenType.PropertyName:
                             if (depth == 1)
                             {
-                                if (r.ValueTextEquals("rt_cd"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String) return false; rtSeen = true; rtOk = r.ValueTextEquals("0"u8); }
+                                // [v12.18.44-DEV] 중복 rt_cd = 모호 → 실패(수정 전: 마지막 값 채택 — "1" 뒤 "0" 이면 거부 본문이 성공 판정)
+                                if (r.ValueTextEquals("rt_cd"u8)) { if (!r.Read() || r.TokenType != JsonTokenType.String) return false; rtOk = !rtSeen && r.ValueTextEquals("0"u8); rtSeen = true; }
                                 else if (r.ValueTextEquals("output"u8)) inOutput = true;
                             }
                             else if (inOutput && depth == 2)

@@ -15,6 +15,8 @@
 //    명시 Rejected 통보(키움 브리지 · KIS H0STCNI0 거부 플래그) = 비트 23 sticky Raise(브로커 · 거부 코드 무관 · 1통보 = 그 호출에서 래치).
 //    동기 거부(REST rt_cd ≠ 0 · SendOrder 반환 < 0)는 OrderDrainWorker 가 이미 ForceFreeze — 이 경로는 송출 후 거부의 공백만 메운다.
 //    Legacy(매직 불일치 · 체결량 0 모호 통보) · 접수 · 취소확인 = 래치 아님(평범한 통보가 전체를 동결하는 freeze-storm 회피 — 명시 거부만).
+//  [v12.18.44-DEV] 미분류 통보(OnUnclassifiedNotice): 체결통보 TR 로 왔지만 판독 불가(키 없음 · 복호 실패 · 필드 형식/정의 이탈)인 프레임 =
+//    거부일 수 있으나 판별 불가 → 비트 23 sticky(미분류 = fail-closed). Legacy 와 달리 '정상 트래픽'이 아니다(판독 성공 통보는 이 경로 0).
 //  ★No Over-Dispatch: Open 시 자식 주수 합 ≤ 부모 수량을 검증(초과 = 거부) · 체결 누적이 자식 주문 수량을 넘으면 Overfill 계수 + 비트 Raise.
 // ============================================================================
 using System;
@@ -90,6 +92,9 @@ namespace StockManager.Engines
         public long UnknownFills => Interlocked.Read(ref _unknownFills);
         /// <summary>[v12.18.40-DEV] 미추적 주문 명시 거부 통보 수(각각 비트 23 래치 — 래치 중 포함).</summary>
         public long UntrackedRejects => Interlocked.Read(ref _untrackedRejects);
+        private long _unclassifiedNotices;
+        /// <summary>[v12.18.44-DEV] 판독 불가 체결통보 수(각각 비트 23 래치 — 래치 중 포함).</summary>
+        public long UnclassifiedNotices => Interlocked.Read(ref _unclassifiedNotices);
         public long ReleasedGroups => Interlocked.Read(ref _released);
         public int Capacity => _groups.Length;
 
@@ -194,6 +199,13 @@ namespace StockManager.Engines
             Interlocked.Add(ref _reclaimed, reclaimed);
             Trip(ref _rejectTrips);                                                   // ★Disarm(sticky)
             return reclaimed;
+        }
+
+        /// <summary>[v12.18.44-DEV] 판독 불가 체결통보 1건(δ=0 · 임의 스레드) — 거부 여부 판별 불가 = 비트 23 sticky(그 호출에서 래치).</summary>
+        public void OnUnclassifiedNotice()
+        {
+            Interlocked.Increment(ref _unclassifiedNotices);
+            Trip(ref _rejectTrips);
         }
 
         // ── 브로커 통보 수렴(브리지 FillPayload 시그니처 그대로 · δ=0) ──
