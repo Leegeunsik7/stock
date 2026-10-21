@@ -3530,3 +3530,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 2027 달력 = KRX 공지 전 법정 산정(임시공휴일 지정 시 표 갱신) · 2027 수능일 미등재 · 2028 이후 = 전면 차단(표 연장 필요) · 연초 첫 거래일 동시호가 시각(09:30~10:00)은 추정(어느 쪽이든 차단) ·
   OrderbookIlliquidityInterlock.KrxContinuousSessionNow(피드 정지 감시 · 라우터)는 여전히 평일 시각만 검사(이번 범위 밖 · 공휴일엔 격발 측 오차) · H0STMKO0 코드 값 VTS 미캡처.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 148. v12.18.51-GM — KRX 휴장일 달력 · 세션 페이즈 상태 머신 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- v12.18.51-DEV(§147) = 13adbfe. 12.18.50 → 12.18.51(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/LF 유지) =
+  fb5f029(4파일 · 11/11 줄 · 잔존 12.18.50 0 · 핀 테스트 48 통과) · 태그 v12.18.51-GM -f.
+- 사전 점검: 빌드 서버 종료 · 패키징 셸 MS2E_* 0 · PROBE 미설정 · 고아 testhost 0. 타 프로젝트 빌드(PromptFlowStudio) 종료 대기 후 시작.
+  ★가용 메모리(정직): 6.1 → 6.2GB — 오더 목표 7GB 미달(잔류 = 사용자 IDE · 브라우저 · LSP · 타 세션 — 미종료). 이 상태에서 [3/11] 포함 전 단계 원패스.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · ★전체 스위트 4,622 통과 + 2 건너뜀(LiveWire 소크 · VTS 프로브 옵트인) · 실패 0 ·
+  infra-scan 0 · 래칫 ≤40(2/2) · liveArmed:false 소스 가드(조회 지점 21 · 마스터 플래그 1 · 위반 0) · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · masterSeal 74B9B686… ·
+  verify-zip 무추출 일치 · verify-seal 38/38(zip 추출 포함) · 인터락 30(0x800000001FFFFFFF) · Tighten 6. Offline_1M 프레임 소크 단독 재실행 통과(태그 빌드 Release).
+- 산출물: release-v12.18.51-GM.zip(85DA0C7E…) · StockManager-v12.18.51-Standalone-win-x64.zip(3F1B7EE4…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 32460 · HWND 0xA70318 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.50-GM 산출물 15종 → release/superseded-v12.18.50-GM/. 신규 산출물 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 출하 바이너리 상태(정직): Kis.MarketStatusEnabled 기본 꺼짐 → 리졸버 미생성 · 전 종목 Unknown · 발주 후보 0(§143/§145). 켜면 내장 KRX 달력이 자동 적용(§147). AI 활성/신호 배선 0.
+- 한계(정직): 2027 달력 = KRX 공지 전 법정 산정 · 2027 수능일 미등재 · 2028 이후 전면 차단 · KrxContinuousSessionNow 달력 미결속 · H0STMKO0 VTS 미캡처 · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
