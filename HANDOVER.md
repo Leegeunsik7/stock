@@ -3444,3 +3444,20 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): VI/정지 실 상태 피드 미결선(키움 FID/TR 사상 · KIS 상태 필드 확인 필요) → 그 전까지 호스트 전 종목 MarketNotTradable · 실 AI 모델 피드 미결선 ·
   활성화 운영 경로(UI/설정) 없음 · 비활성 중 호가 반영은 키움 10호가만(KIS 호가 미연결).
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 144. v12.18.49-GM — AI 파이프라인 호스트 결속 · VI/정지 가드 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- v12.18.49-DEV(§143) = 1d20099. 12.18.48 → 12.18.49(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 86495c4(4파일 · 11/11 줄 · 잔존 12.18.48 0 · 이력 주석 무변경 · 핀 테스트 83 통과) · 태그 v12.18.49-GM -f.
+- 사전 점검: 패키징 셸 MS2E_* 0 · PROBE 미설정 · 빌드 서버 종료 후 착수(가용 메모리 7.3GB).
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,464 통과 + 2 건너뜀(LiveWire 소크 · VTS 프로브 옵트인) · infra-scan 0 · 래칫 ≤40(2/2) ·
+  liveArmed:false 소스 가드(이중키 16 · 마스터 플래그 1) · [7/11] 동결 검증 21/21(ZeroAllocProbe 하 잡음 실패 0) · 봉인 38 아티팩트 · masterSeal 25A198D593711CE1… ·
+  verify-zip 무추출 일치 · 인터락 30(0x800000001FFFFFFF) · Tighten 6. Offline_1M 프레임 소크 단독 재실행 통과(1,000,000프레임 · 1.54s).
+- 산출물: release-v12.18.49-GM.zip(F12EE73E…) · StockManager-v12.18.49-Standalone-win-x64.zip(2E7307CF…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 38720 · HWND 0x4C1DD0 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.48-GM 산출물 15종 → release/superseded-v12.18.48-GM/. 신규 산출물 15종 메인 release/ 복사(SHA-256 재계산 일치).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 출하 바이너리 AI 파이프라인 상태(정직): 호스트 결속됨 · 기본 비활성 · 활성/신호 배선 0 · 키움 호가 상태 Unknown → 전 종목 MarketNotTradable → 발주 후보 0(§143).
+- 한계(정직): VI/정지 실 상태 피드 미결선 · 실 AI 모델 피드 미결선 · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
