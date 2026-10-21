@@ -3240,3 +3240,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,356 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
 - 한계(정직): 실 캡처 미대조 · 미분류 래치는 키 장착 전 암호 통보도 Disarm(재무장 = 물리 이중키) — 실망에서 구독 응답보다 통보가 먼저 오는 경우가 잦으면 운용 재검토 필요.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · 비트 23/27 정의 보존 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 134. v12.18.44-GM — 거부 파서 구조 내성 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- 사전 점검(10:44 KST): MS2E_* · PROBE 환경 변수 Process/User/Machine 3범위 0 → 리얼 와이어 소크/프로브 Skip(자격증명 부재) · QuantumVault 미접근(-NoPeer).
+- v12.18.44-DEV(§133) = 5cae4a4. 12.18.43 → 12.18.44(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 2c08231(4파일 · 11/11 줄 · 핀 테스트 48 통과) · 태그 v12.18.44-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,356 통과 + 2 건너뜀(LiveWire 소크 · VTS 프로브 옵트인) · infra-scan 0 · 래칫 ≤40(2/2) ·
+  liveArmed:false 소스 가드 · 봉인 38 아티팩트 · masterSeal 2458F5EF829AD61B… · verify-zip 무추출 일치 · 인터락 30(0x800000001FFFFFFF) · Tighten 6.
+- 산출물: release-v12.18.44-GM.zip(1E726BEE…) · StockManager-v12.18.44-Standalone-win-x64.zip(0E1C6DE6…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 49444 · HWND 0x818EC 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.43-GM 산출물 15종 → release/superseded-v12.18.43-GM/. 신규 산출물 15종 메인 release/ 복사(SHA-256 재계산 일치).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): 실 VTS 캡처 대조 미결(계정 발급 후 · §133) · AiSignalGovernor 호스트 미결속(§131) · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
