@@ -3326,3 +3326,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): AiSignalGovernor/MultiSymbolAiSignalRouter 호스트 미결속(실 모델 · 기준가 피드 부재 · §131/§135/§137) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 139. v12.18.47-DEV — AI 실행 감독자: L1 호가 · 기준가 컨텍스트 캐시 + 다종목 라우터 + 30대 인터락 → OrderProposal 후보 (2026-10-21)
+
+- 사각지대: MultiSymbolAiSignalRouter(§135 · §137)는 참조가 · 기준가를 인자로만 받음 — 실시간 L1 호가/기준가와의 결합 지점 부재 → AI 신호 → 발주 후보 종단 경로 없음.
+- 오더 전제 대조(정직): `QuantSignal` 은 실재하나 미시구조 시그널 판독본(Imbalance5 · Score · KiwoomBid 등 — QuantSignalProvider)이지 AI 모델 출력이 아님 → 라우터 입력인
+  `AiSignal` 을 그대로 받음(임의 사상 날조 회피). `OrderCandidate` 타입은 부재 → RouterFeedGate.TryAdmit 입력인 기존 `OrderProposal` 로 패킹(신규 타입 0).
+- 신규 StockManager/Engines/Strategy/AiExecutionSupervisor.cs: 컨텍스트 슬롯 64(기준가 · BestBid · BestAsk · 갱신 시각 · 종목 수량 캡 · 개방 주소 해시 · 해제 없음) ·
+  슬롯 seqlock(작성자 = 시세 피드 1 · CAS 방어 / 판독 찢김 재시도 64회 초과 = Contended). UpdateMarketContext(종목 코드 | 티커 "005930"/"A005930") 거부 =
+  범위 이탈 · 기준가/호가 ≤0 · bid ≥ ask(교차/동일) · 종목 시각 역행 · 슬롯 소진(전부 기존 컨텍스트 무변경).
+  ProcessSignal: ① 인터락 마스크 ≠ 0(30대 중 아무 비트 · 미봉인 샌니티 63 포함) = InterlockBlocked(라우터 무접촉) ② 미수신 = NoMarketContext · 미래 시각 · 허용 나이(기본 3초) 초과 = 평가 전 거부
+  ③ 참조가 = 매수 BestAsk × (1 + 슬리피지 bps) 내림 · 매도 BestBid × (1 − bps) 올림(0 · NaN = ask → 라우터 관문이 판정 · 비트 27 래치 — 감독자가 이상 신호를 삼키지 않음)
+  ④ 라우터 Route(±30% 클램프 · 격자 · 컨텍스트 종목 캡) ⑤ 인터락 재판독(평가 중 트립 = 폐기) + 격자 · 상·하한가 · 수량 · 방향 독립 재검(InvariantBreach · 도달 불가 방어)
+  ⑥ OrderProposal(Kind 1 지정가 · QtyRaw = 주 × 10^8 · OrderId 단조 · GenomeId 생성 인자 · TimestampTicks = nowMicros).
+- 테스트 Strategy/AiExecutionSupervisorTests 21건([Collection("ConcurrencyStress")]): 매수 = ask · 매도 = bid 후보 패킹 · 슬리피지 30bps 보호 스냅 · 상한가 위/하한가 아래 호가 = 상·하한가 클램프 ·
+  반대 방향 이탈 = PriceBandBreach · 컨텍스트 캡 · 티커 갱신 · ★실 RouterFeedGate 가 후보 수용(재스냅 0 · 시장가 변환 0 · 지정가 · 900주) · 미수신 · 무효 갱신 6종 · 무효 갱신 시 기존 유지 ·
+  64 슬롯 소진 · 오래됨/미래 · ★30대 인터락 각 비트(0 ~ 28 · 63) 단독 = 차단 + 라우터 도달 0 · Bit 0 상승 100틱 차단 → 해제 다음 틱 복귀 ·
+  AI NaN → 비트 27 → 다음 신호부터 전 종목 차단 · 생성 인자 · 16종목 100만 호가 갱신 + 신호 종단 간 Release 3창 최소 0B(400만 승인 · 전량 캡) ·
+  적대 150회 × 400틱(무효/범위 밖 호가 · 기준가 0 · 인터락 토글 · 독 신호) = 승인 4,745건 전부 격자 · 상·하한가 내 · 호가보다 불리 0 · 캡 이하 · 인터락 선 틱 승인 0.
+  사보타주(① · ⑤ 인터락 검사 · 나이 검사 제거) → 5건 실패 확인 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,442 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 호스트 DI 미결속(실 AI 모델 · L1 호가 · 기준가 피드 부재 — 가짜 배선 금지) · 후보의 링 게시/게이트 송출은 호출자 몫(liveArmed:false) ·
+  인터락 마스크가 라우터 비트 27 소스와 같은 집계기인지 생성 시 검증 불가(호출자 책임) · 컨텍스트 슬롯 해제 없음.
+- 불변: 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
