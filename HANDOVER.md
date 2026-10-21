@@ -3349,3 +3349,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 호스트 DI 미결속(실 AI 모델 · L1 호가 · 기준가 피드 부재 — 가짜 배선 금지) · 후보의 링 게시/게이트 송출은 호출자 몫(liveArmed:false) ·
   인터락 마스크가 라우터 비트 27 소스와 같은 집계기인지 생성 시 검증 불가(호출자 책임) · 컨텍스트 슬롯 해제 없음.
 - 불변: 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 140. v12.18.47-GM — AI 실행 감독자 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- v12.18.47-DEV(§139) = 8e31225. 12.18.46 → 12.18.47(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = e9a22e2(4파일 · 11/11 줄 · 잔존 12.18.46 0 · 핀 테스트 83 통과).
+- 사전 점검: 패키징 셸 MS2E_* 0 · PROBE 미설정.
+- ★1차 패키징 중단(정직): [0/11]~[6/11] 통과 후 [7/11] 동결 검증에서 AssemblyAntiTamperHandshakeTests.Steady_State_Verify_Is_Zero_Alloc 1건 6,264B 실패 → 스크립트가 exit 1 중단
+  (산출물 = manifest.sig · stage 만 · 출하 zip 미생성). 원인 = 단일 측정 창이 타 스레드 GC 와 겹친 측정 잡음(같은 worktree 단독 20회 + [7/11] 필터 묶음 20회 = 전부 0B).
+  교정 d748383: 해당 테스트를 3창 최솟값으로(§ 메모리 규칙 — 다른 δ=0 테스트와 동일). 사보타주(Verify 호출당 new byte[1]) → 1,600B 실패 확인 후 원복 = 판정력 유지.
+  태그 v12.18.47-GM -f 를 d748383 로 이동(1차 태그 e9a22e2 폐기) · worktree 재생성.
+- 2차: 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,442 통과 + 2 건너뜀(LiveWire 소크 · VTS 프로브 옵트인) · infra-scan 0 · 래칫 ≤40(2/2) ·
+  liveArmed:false 소스 가드(이중키 16 · 마스터 플래그 1) · 봉인 38 아티팩트 · masterSeal DE8F9099F137B132… · verify-zip 무추출 일치 · 인터락 30(0x800000001FFFFFFF) · Tighten 6.
+  Offline_1M 프레임 소크(무할당 수신 경로) 단독 재실행 통과(1,000,000프레임 · 1.24s).
+- 산출물: release-v12.18.47-GM.zip(8001EE26…) · StockManager-v12.18.47-Standalone-win-x64.zip(BC6A4C5C…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 2544 · HWND 0x1A1D2A 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.46-GM 산출물 15종 → release/superseded-v12.18.46-GM/. 신규 산출물 15종 메인 release/ 복사(SHA-256 재계산 일치).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): AiExecutionSupervisor/라우터 호스트 미결속(실 모델 · L1 호가 · 기준가 피드 부재 · §139) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인 ·
+  저장소에 단일 창 δ=0 단언이 더 남아 있을 수 있음(이번엔 실패한 1건만 교정).
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
