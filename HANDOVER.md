@@ -3461,3 +3461,31 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 AI 파이프라인 상태(정직): 호스트 결속됨 · 기본 비활성 · 활성/신호 배선 0 · 키움 호가 상태 Unknown → 전 종목 MarketNotTradable → 발주 후보 0(§143).
 - 한계(정직): VI/정지 실 상태 피드 미결선 · 실 AI 모델 피드 미결선 · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 145. v12.18.50-DEV — 시장 상태 피드 리졸버: KIS 장운영정보(H0STMKO0) · 정규장 세션 · VI/정지 래치 · 신호 시점 게이트 (2026-10-21)
+
+- 오더 전제 대조(정직): ① H0STCNI0/9 = 체결통보(VI 아님) — VI/정지는 KIS 실시간 '국내주식 장운영정보(KRX)' H0STMKO0 로 온다(공식 예제
+  koreainvestment/open-trading-api `examples_user/domestic_stock/domestic_stock_functions_ws.py` market_status_krx · 레코드당 11필드 ·
+  "VI 발동 시와 VI 해제 시에 데이터 수신"). ② 코드 '값'(TRHT_YN · VI_CLS_CODE) 공식 정의는 미확인(포털 상세 JS 렌더 · VTS 캡처 없음) →
+  fail-closed 사상: 정지 Y = Halted · N = 미정지 · 그 외 Unknown / VI N = 정상(유일) · 1 정적 · 2 동적 · 3 정적+동적(정적) · 그 외 Unknown.
+  틀리면 '영구 차단' 쪽으로만 틀린다. ③ 키움 VI 실시간 FID 미확인 → 키움 상태 피드는 미구현. ④ 바탕화면 s.txt(평문 자격증명) = 0 덮어쓰기 후 삭제 확인.
+- 신규 StockManager/Adapters/Kis/KisMarketStatusParser.cs(δ=0 · 다건 · 잘림/종목코드 이탈 거부) · KisOpenApiAdapter H0STMKO0 분기(평문만 · 판독 실패 = 리졸버 NoteFeedFault) ·
+  KisRealtimeSession statusSymbols(호가 + 장운영 합산 ≤ 38 · H0STMKO0 구독).
+- 신규 StockManager/Engines/Feeds/MarketStatusFeedResolver.cs(거래 상태 단일 작성자 · 64슬롯 · CAS 직렬화 · 이벤트 유실 경로 0):
+  유효 상태 = ① KST 평일 09:00 ≤ t < 15:20(연속매매 · 휴장일 판정기 주입 · 예외 = 휴장) 밖 = Closed ② 이벤트 래치(VI · 정지 · 미분류) — 해제는 같은 종목 Normal 이벤트만
+  (마지막 이벤트보다 이른 해제 = StaleRelease 거부 · 호가/세션/시간 경과로 해제 0) ③ 피드 비생존 = Unknown ④ 재접속/판독 실패 후 재동기 보류 150초(VI 2분 + 30초) 중
+  그 종목 프레임 미수신 = Unknown ⑤ 그 외 Normal. 바뀐 종목만 파이프라인 OnTradingStatus(단조 시각) · 생존 전이 = 즉시 통지.
+  ★ITradingStatusGate: 감독자 슬롯은 타이머 주기 사이 낡을 수 있어(15:20:00 직후 · 단절 직후) 파이프라인이 신호마다 IsTradable(자체 벽시계 · 무잠금) 을
+  평가 전 + 인계 직전 두 번 판정(StatusGateBlocked). MarketTradingStatus.Closed(5) 추가.
+- 호스트(BlazorHomeForm): `Kis.MarketStatusEnabled`(기본 false · 옵트인) = 호가 구독 종목에 H0STMKO0 구독 + 리졸버 생성 · 등록 · 어댑터 싱크 · 파이프라인 게이트 결속 ·
+  50ms 타이머 = 피드 생존(KIS 세션 연결 ∧ 비트립 ∧ 비침묵) + Evaluate. 꺼짐 = §143 과 동일(전 종목 Unknown · 발주 후보 0). 활성/신호 배선 여전히 0.
+- 테스트 Feeds/MarketStatusFeedResolverTests 32건: 세션 경계 6(09:00 · 08:59:59.999999 · 15:19:59.999999 · 15:20 · 15:30 · 08:00) · 주말/휴장/판정기 예외 ·
+  보류 만료 후 정상 · 동적/정적 VI · 정지 · 미상 래치 = ★호가 Normal · 재평가로 해제 0 · 다른 종목 무영향 · 옛 해제 거부 · 해제 이벤트로만 복귀 ·
+  15:30 = 해제 이벤트 · Normal 호가에도 Closed · 익일 개장 복귀 · 단절 = Unknown · 재접속 보류(프레임 수신 종목만 조기 해제) · 판독 실패 재동기 · 미등록 차단 · 64슬롯 ·
+  사상 11 · 다건/잘림/코드 이탈 · H0STCNI0 ≠ 장운영 · ★실 KisOpenApiAdapter 프레임 → 리졸버(다건 · 잘림 = 재동기 · 암호 플래그 거부) ·
+  ★신호 시점 게이트(15:20:00 타이머 틈 · 슬롯 Normal 인데 차단) · 10만 이벤트+평가+호가+신호 ZeroAllocProbe 0B · 적대 60회 × 600틱(세션 경계 횡단 · 상태 7종 · 생존 토글 · 판독 실패)
+  = 인계 3,734건 전부 장중 · 유효 Normal / 차단 31,953. 사보타주 ① 세션 · 래치 검사 무력화 → 9건 실패 ② 게이트 무력화 → 2건 실패(사보타주 빌드 0E 확인) 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 1차 4,495 통과 + 1 실패(CrossBrokerSignalTests 호스트 결선 소스 핀 — 세션 생성 줄에 statusSymbols 인자 추가로 문자열 불일치 · 핀 갱신 후 해당 클래스 8/8 통과) + 2 건너뜀 · ★교정 후 전체 재실행은 시스템 메모리 부족으로 강제 중단(미완 · 재실행 필요) · infra-scan 0 · 래칫 ≤40(2/2).
+- 한계(정직): H0STMKO0 코드 값 · VTS 제공 여부 · 무VI 종목의 주기 프레임 유무 미확인(실 VTS 캡처 필요 · 옵트인 기본 꺼짐) · 휴장일 달력 없음(평일 개장 가정) ·
+  재접속 공백 중 시작된 정지가 150초 보류 후에도 프레임 없으면 놓칠 수 있음 · 키움 VI 피드 미구현 · 장 시작 동시호가/시간외는 전부 Closed.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

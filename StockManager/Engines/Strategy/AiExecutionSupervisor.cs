@@ -39,7 +39,7 @@ namespace StockManager.Engines.Strategy
     }
 
     /// <summary>KRX 종목 거래 상태. 기본(0) = Unknown = 차단 — Normal 만 발주 후보 허용.</summary>
-    public enum MarketTradingStatus : byte { Unknown = 0, Normal = 1, StaticVi = 2, DynamicVi = 3, Halted = 4 }
+    public enum MarketTradingStatus : byte { Unknown = 0, Normal = 1, StaticVi = 2, DynamicVi = 3, Halted = 4, Closed = 5 }   // Closed = 정규 연속매매 시간 외(v12.18.50)
 
     public enum MarketContextVerdict : byte
     {

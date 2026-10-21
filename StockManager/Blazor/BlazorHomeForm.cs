@@ -1712,6 +1712,11 @@ namespace StockManager.Blazor
             FormClosed += (_, _) => ShutdownTrace.Step("dashHub", () => { dashHub.Dispose(); pumpJitter.Dispose(); });
             // [교차 피드] KIS 10호가(H0STASP0) 구독 종목 — `Kis.BookSymbols`(쉼표 · 비어 있음 = 교차 확인 꺼짐). 정량 엔진은 뒤에서 생성되므로 지연 참조.
             string[] kisBookSymbols = kisRealtimeOn ? cfg.GetString("Kis.BookSymbols", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : Array.Empty<string>();
+            // [v12.18.50-DEV] KIS 장운영정보(H0STMKO0 · VI/정지) 구독 — `Kis.MarketStatusEnabled`(기본 false · 옵트인). 대상 = 호가 구독 종목(세션 등록 상한 합산 내 앞쪽부터).
+            string[] kisStatusSymbols = kisRealtimeOn && cfg.GetBool("Kis.MarketStatusEnabled", false)
+                ? kisBookSymbols.Take(Math.Max(0, StockManager.Adapters.KisRealtimeSession.MaxBookSymbols - kisBookSymbols.Length)).ToArray()
+                : Array.Empty<string>();
+            StockManager.Adapters.KisOpenApiAdapter? kisWsRef = null;
             StockManager.Engines.QuantSignalProvider? quantRef = null;
             StockManager.Adapters.KisRealtimeSession? kisRealtime = null;
             System.Threading.CancellationTokenSource? kisRealtimeCts = null;
@@ -1775,7 +1780,8 @@ namespace StockManager.Blazor
                     onBookQuarantine: q => Volatile.Read(ref quantRef)?.SetFeedQuarantined(StockManager.Engines.QuantSignalProvider.FeedKis, q));
                 kisRealtime = new StockManager.Adapters.KisRealtimeSession(kisWsAdapter, kisSession, () => new StockManager.Adapters.ClientWebSocketTransport(),
                     kisLive!.RequestApprovalKey, kisHtsId!, vts: !kisLive.IsRealDomain, heartbeatSymbol: cfg.GetString("Kis.HeartbeatSymbol", "005930"),
-                    bookSymbols: kisBookSymbols, recovery: kisRecovery);
+                    bookSymbols: kisBookSymbols, recovery: kisRecovery, statusSymbols: kisStatusSymbols);
+                kisWsRef = kisWsAdapter;
                 kisRecovery.BindAbort(kisRealtime.AbortConnection);
                 Volatile.Write(ref rtRef, kisRealtime);
                 kisRealtimeCts = new System.Threading.CancellationTokenSource();
@@ -1892,6 +1898,17 @@ namespace StockManager.Blazor
             services.AddSingleton(aiRouter);
             services.AddSingleton(aiSupervisor);
             services.AddSingleton(aiPipeline);
+            // [v12.18.50-DEV] 시장 상태 리졸버 — 거래 상태 단일 작성자(정규 연속매매 시각 · VI/정지 래치 · 피드 생존 · 재접속 재동기 보류 150초).
+            //   장운영 구독이 켜진 경우에만 결선(꺼짐 = 전 종목 Unknown 유지 = 발주 후보 0 · §143 과 동일). 휴장일 달력 없음(평일 개장 가정).
+            StockManager.Engines.Feeds.MarketStatusFeedResolver? marketStatus = null;
+            if (kisStatusSymbols.Length > 0 && kisWsRef is not null)
+            {
+                marketStatus = new StockManager.Engines.Feeds.MarketStatusFeedResolver(aiPipeline);
+                foreach (var code in kisStatusSymbols) marketStatus.Register(StockManager.Engines.Strategy.MultiSymbolAiSignalRouter.ParseTicker(code));
+                kisWsRef.MarketStatusSink = marketStatus;
+                aiPipeline.AttachStatusGate(marketStatus);                              // 신호 시점 직접 판정(타이머 틈 봉합)
+                services.AddSingleton(marketStatus);
+            }
             // [v12.18.2-DEV] 시그널 게이트 실배선 — ① 드레인 제안 관측(무장 판정 이전 · 항상): 게이트 꺼짐/미무장에서도 수량 ≤ 0 · 승인 폭주 = 비트 27 ·
             //   그림자 판정 계수. ② 강제 = `Strategy.SignalGateEnabled`(기본 false) 런타임 토글 — 1초 콜드 판독 · 켜기 즉시 · 끄기는 물리 키 둘 다 꺼졌을 때만.
             //   Strategy.* 는 순수 UI 기입 허용 목록 밖(호스트 안전 네임스페이스 — 운영자 경로로만 토글).
@@ -1921,6 +1938,11 @@ namespace StockManager.Blazor
                 try { recoveryMonitor.Pump(); } catch { }                              // [Long-Soak · 방향 A] 복구 전이 · 작동 표류 블랙박스
                 try { kiwoomLink.Evaluate(); } catch { }                                // [키움 실배선] 링크(하트비트 단절 포함) 재평가
                 try { orderPathLatency.Evaluate(); } catch { }                          // [v12.17.6 · 방향 B] 실발주 경로 p99 예산 판정(콜드 · δ=0)
+                if (marketStatus is { } ms && kisSession is { } ks)                         // [v12.18.50-DEV] 장운영 피드 생존 · 세션 전이 반영
+                {
+                    long utcMicros = (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10;
+                    try { ms.SetFeedAlive(ks.Connected && !ks.Tripped && !ks.SilentNow(), utcMicros); ms.Evaluate(utcMicros); } catch { }
+                }
             }, null, 50, 50);
             FormClosed += (_, _) => ShutdownTrace.Step("childMatrix", () =>
             {

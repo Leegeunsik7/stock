@@ -1,14 +1,13 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.49-GM — AI 파이프라인 호스트 결속 · VI/정지 가드 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,464 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
+- **Active Milestone**: v12.18.50-DEV — 시장 상태 피드 리졸버(KIS H0STMKO0 · 정규장 세션 · VI/정지 래치 · 신호 시점 게이트)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 1차 4,495 통과 + 1 실패(소스 핀 · 교정 후 해당 클래스 통과) · 교정 후 전체 재실행 메모리 부족 중단(미완) · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-21
 
 ## Completed Deliverables
-- 버전 12.18.49 승격 · 태그 v12.18.49-GM(86495c4) · 클린 worktree -NoPeer 패키징(QuantumVault 미접근 · MS2E_* 0)
-- 감사 봉인본 release-v12.18.49-GM.zip(F12EE73E) · masterSeal 25A198D5 · 아티팩트 38 · [7/11] 잡음 실패 0
-- 즉시 실행 배포본 StockManager-v12.18.49-Standalone-win-x64.zip(2E7307CF) · 봉인 38 바이트 동일 · 격리 기동 주 창 실측
-- CLI 4종 메인 복사본 exit 0 · v12.18.48-GM 이관 · HANDOVER §144
+- KisMarketStatusParser(H0STMKO0 11필드 · fail-closed 코드 사상) · 어댑터 분기 · 세션 장운영 구독(옵트인 Kis.MarketStatusEnabled)
+- MarketStatusFeedResolver: 연속매매 09:00~15:20 · VI/정지 래치(해제 이벤트로만) · 피드 생존 · 재동기 보류 150초 · 신호 시점 게이트
+- 테스트 32건 · 10만 루프 0B · 적대 3,734 인계 전부 장중 Normal · 사보타주 9+2건 포착 · 바탕화면 s.txt 삭제 · HANDOVER §145
 
 ## Next Milestone
-- VI/정지 실 상태 피드 사상(키움/KIS) · 실 AI 모델 피드 · 실 VTS 캡처 대조(계정 발급 후) · 미설치 PC 배포본 실기 확인
+- 전체 스위트 재실행 확인 · H0STMKO0 실 VTS 캡처로 코드 값 확정 · 휴장일 달력 · v12.18.50-GM 출하

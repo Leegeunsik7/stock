@@ -340,6 +340,17 @@ namespace StockManager.Adapters
         public long BookQuarantines => Interlocked.Read(ref _bookQuarantines);
         private long _booksEmitted;
         public long BooksEmitted => Interlocked.Read(ref _booksEmitted);
+
+        // [v12.18.50-DEV] 장운영정보(H0STMKO0 · VI 발동/해제 · 거래정지) → 상태 리졸버. null = 미결선(프레임 계수만).
+        private StockManager.Engines.Feeds.MarketStatusFeedResolver? _marketStatus;
+        private long _statusRecords, _statusRejects;
+        public StockManager.Engines.Feeds.MarketStatusFeedResolver? MarketStatusSink
+        {
+            get => Volatile.Read(ref _marketStatus);
+            set => Volatile.Write(ref _marketStatus, value);
+        }
+        public long MarketStatusRecords => Interlocked.Read(ref _statusRecords);
+        public long MarketStatusRejects => Interlocked.Read(ref _statusRejects);
         private readonly Func<long> _nowTicks;
         private readonly KisTick[] _ticks = new KisTick[KisProtocol.MaxRecordsPerFrame];
         private readonly byte[] _cipher = GC.AllocateArray<byte>(8192, pinned: true), _plain = GC.AllocateArray<byte>(8192, pinned: true);
@@ -433,6 +444,22 @@ namespace StockManager.Adapters
                 if (BookQuarantined) return true;                                  // 격리 중 = 전달 0(복귀 판정만)
                 try { _onBook?.Invoke(book); } catch (Exception) { }
                 Interlocked.Increment(ref _booksEmitted);
+                return true;
+            }
+            if (Kis.KisMarketStatusParser.IsMarketStatusTr(trId))
+            {
+                // [v12.18.50-DEV] 장운영정보 — 평문 · 다건 가능. 형식 이탈 레코드 = 그 프레임 이후 판독 중단(앞선 레코드는 반영).
+                if (encrypted || count < 1) { Interlocked.Increment(ref _statusRejects); try { Volatile.Read(ref _marketStatus)?.NoteFeedFault((DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10); } catch (Exception) { } return Bad(); }
+                _stall?.Stamp(StockManager.Engines.Arbitrage.FeedStallWatchdog.VenueKis);
+                var sink = Volatile.Read(ref _marketStatus);
+                long nowUtc = (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10;
+                var rest = body;
+                for (int i = 0; i < count; i++)
+                {
+                    if (!Kis.KisMarketStatusParser.TryReadRecord(ref rest, out long sym, out var st, out _)) { Interlocked.Increment(ref _statusRejects); try { sink?.NoteFeedFault(nowUtc); } catch (Exception) { } return Bad(); }
+                    Interlocked.Increment(ref _statusRecords);
+                    try { sink?.OnStatusEvent(sym, st, nowUtc, nowUtc); } catch (Exception) { }
+                }
                 return true;
             }
             if (KisProtocol.IsTickTr(trId))

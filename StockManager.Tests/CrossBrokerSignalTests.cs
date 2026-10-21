@@ -254,7 +254,7 @@ namespace StockManager.Tests
             Assert.Contains("Volatile.Read(ref quantRef)?.OnBook(in b, StockManager.Engines.QuantSignalProvider.FeedKis);   // [교차 피드]", form);
             Assert.Contains("arena.OnQuote(in b);", form);
             Assert.Contains("arenaTape.OnBook(in b);", form);
-            Assert.Contains("bookSymbols: kisBookSymbols, recovery: kisRecovery);", form);   // [세션 복구] 재접속마다 같은 호가 구독 재송신
+            Assert.Contains("bookSymbols: kisBookSymbols, recovery: kisRecovery, statusSymbols: kisStatusSymbols);", form);   // [세션 복구] 재접속마다 같은 호가 구독 재송신(+ v12.18.50 장운영 옵트인)
             Assert.Contains("crossConfirm: kisBookSymbols.Length > 0,", form);
             Assert.Contains("Volatile.Write(ref quantRef, quantSignals);", form);
             Assert.Contains("cfg.GetString(\"Kis.BookSymbols\", \"\")", form);

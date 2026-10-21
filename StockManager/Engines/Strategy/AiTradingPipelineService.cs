@@ -29,7 +29,13 @@ namespace StockManager.Engines.Strategy
         bool TrySubmit(in OrderProposal proposal);
     }
 
-    public enum AiPipelineVerdict : byte { Submitted = 0, Inactive = 1, SupervisorRejected = 2, SinkRejected = 3, SinkFault = 4 }
+    public enum AiPipelineVerdict : byte { Submitted = 0, Inactive = 1, SupervisorRejected = 2, SinkRejected = 3, SinkFault = 4, StatusGateBlocked = 5 }
+
+    /// <summary>[v12.18.50-DEV] 신호 시점 거래 가능 판정(자체 벽시계 · δ=0 · 비throw 권장). false = 차단.</summary>
+    public interface ITradingStatusGate
+    {
+        bool IsTradable(long symbolCode);
+    }
 
     /// <summary>거래 상태 플래그 → MarketTradingStatus(순수 · δ=0). 우선순위 = 정지 > 정적 VI > 동적 VI > 정상.</summary>
     public static class MarketTradingStatusCodec
@@ -49,6 +55,8 @@ namespace StockManager.Engines.Strategy
         private readonly AiExecutionSupervisor _supervisor;
         private readonly IAiProposalSink _sink;
         private int _active;
+        private ITradingStatusGate? _statusGate;
+        private long _gateBlocked;
         private long _signals, _submitted, _inactive, _supervisorRejected, _sinkRejected, _sinkFaults, _quotes, _statusEvents;
 
         public AiTradingPipelineService(AiExecutionSupervisor supervisor, IAiProposalSink sink)
@@ -68,6 +76,17 @@ namespace StockManager.Engines.Strategy
         public long SinkFaults => Interlocked.Read(ref _sinkFaults);
         public long Quotes => Interlocked.Read(ref _quotes);
         public long StatusEvents => Interlocked.Read(ref _statusEvents);
+        public long StatusGateBlocks => Interlocked.Read(ref _gateBlocked);
+
+        /// <summary>
+        /// [v12.18.50-DEV] 신호 시점 상태 게이트 결속(1회 · 교체 금지). 감독자 슬롯 상태는 리졸버 통지 주기(타이머) 사이에 낡을 수 있다 —
+        /// 게이트는 그 순간의 세션 · 래치 · 피드 생존을 직접 판정해 평가 전 + 인계 직전 두 번 막는다. 게이트 예외 = 차단.
+        /// </summary>
+        public void AttachStatusGate(ITradingStatusGate gate)
+        {
+            ArgumentNullException.ThrowIfNull(gate);
+            if (Interlocked.CompareExchange(ref _statusGate, gate, null) is not null) throw new InvalidOperationException("상태 게이트 이미 결속됨");
+        }
 
         /// <summary>자율 매매 활성 — 물리 이중키 둘 다 확인될 때만(하나라도 false = 거부 · 상태 무변경).</summary>
         public bool TryActivate(bool valveWired, bool liveArmingWired)
@@ -102,10 +121,12 @@ namespace StockManager.Engines.Strategy
             supervisorVerdict = AiSupervisorVerdict.InterlockBlocked;
             Interlocked.Increment(ref _signals);
             if (Volatile.Read(ref _active) == 0) { Interlocked.Increment(ref _inactive); return AiPipelineVerdict.Inactive; }   // 평가 전(라우터 무접촉)
+            if (!GateOpen(signal.SymbolCode)) { Interlocked.Increment(ref _gateBlocked); return AiPipelineVerdict.StatusGateBlocked; }
 
             supervisorVerdict = _supervisor.ProcessSignal(in signal, nowMicros, out var candidate);
             if (supervisorVerdict != AiSupervisorVerdict.Accepted) { Interlocked.Increment(ref _supervisorRejected); return AiPipelineVerdict.SupervisorRejected; }
             if (Volatile.Read(ref _active) == 0) { Interlocked.Increment(ref _inactive); return AiPipelineVerdict.Inactive; }   // 평가 중 비활성화 = 폐기
+            if (!GateOpen(signal.SymbolCode)) { Interlocked.Increment(ref _gateBlocked); return AiPipelineVerdict.StatusGateBlocked; }   // 평가 중 마감/VI = 폐기
 
             bool ok;
             try { ok = _sink.TrySubmit(in candidate); }
@@ -114,6 +135,12 @@ namespace StockManager.Engines.Strategy
             submitted = candidate;
             Interlocked.Increment(ref _submitted);
             return AiPipelineVerdict.Submitted;
+        }
+
+        private bool GateOpen(long symbolCode)
+        {
+            if (Volatile.Read(ref _statusGate) is not { } g) return true;
+            try { return g.IsTradable(symbolCode); } catch (Exception) { return false; }
         }
 
         /// <summary>편의 오버로드.</summary>
