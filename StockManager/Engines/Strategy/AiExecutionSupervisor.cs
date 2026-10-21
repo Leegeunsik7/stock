@@ -16,6 +16,11 @@
 //   ④ 라우터 Route(참조가 · 기준가 · 종목 캡) = 래치 · 관문 · ±30% 클램프 · 호가 격자 · 수량 캡.
 //   ⑤ 사후 재검: 인터락 재판독(평가 중 트립 = 후보 폐기) · 격자 · 상·하한가 · 수량 독립 재확인(이탈 = InvariantBreach · 도달 불가 방어).
 //   ⑥ OrderProposal 패킹(Kind = 1 지정가 · PriceRaw = 격자 지정가 · QtyRaw = 주 × 10^8 · OrderId 단조 · TimestampTicks = nowMicros).
+//  [v12.18.49-DEV] 거래 상태(VI · 거래정지) — 슬롯 seqlock 안에 호가와 함께 원자 보관. 정상(Normal) 이 아니면 평가 전 거부(MarketNotTradable ·
+//   라우터 무접촉) + 라우터 승인 후 재판독(그 사이 VI/정지 = 후보 폐기). 기본 = Unknown(차단) — 명시적 Normal 만 통과.
+//   두 경로: 호가(UpdateMarketContext · Unknown = 이 피드는 상태를 모름 → 기존 유지) / 상태 피드(UpdateTradingStatus · 제한 = 고정 pin).
+//   ★고정된 VI/정지는 호가의 Normal 로 풀리지 않는다(상태 미제공 피드가 정지를 덮어쓰는 사고 차단) — 상태 피드의 Normal 만 해제.
+//   제한 상태 통지는 호가 무효(0 · 교차 = 단일가/정지 중 흔함) · 시각 역행이어도 상태만은 반영(정지 통지 유실 0).
 //  ★정직: 호스트 DI 미결속(실 AI 모델 · L1 호가 · 기준가 피드 부재 — 가짜 배선 금지). 산출 = '후보' — 링 게시/게이트 송출은 호출자 몫이며
 //   무장/송출 판정은 기존 디스패처 경로(liveArmed:false 불변 · 이 파일에 브로커 참조 0). 인터락 마스크는 라우터 비트 27 소스가 결속된
 //   같은 집계기를 넘겨야 전역 동결이 감독자 차단으로 이어진다(호출자 책임 · 생성 시 검증 불가).
@@ -30,16 +35,21 @@ namespace StockManager.Engines.Strategy
     public enum AiSupervisorVerdict : byte
     {
         Accepted = 0, InterlockBlocked = 1, NoMarketContext = 2, StaleMarketContext = 3, FutureMarketContext = 4,
-        RouterRejected = 5, Contended = 6, InvariantBreach = 7,
+        RouterRejected = 5, Contended = 6, InvariantBreach = 7, MarketNotTradable = 8,
     }
+
+    /// <summary>KRX 종목 거래 상태. 기본(0) = Unknown = 차단 — Normal 만 발주 후보 허용.</summary>
+    public enum MarketTradingStatus : byte { Unknown = 0, Normal = 1, StaticVi = 2, DynamicVi = 3, Halted = 4 }
 
     public enum MarketContextVerdict : byte
     {
         Ok = 0, InvalidSymbol = 1, InvalidPrice = 2, Crossed = 3, ClockRegressed = 4, SlotsExhausted = 5, Contended = 6,
+        StatusOnly = 7,   // 호가는 무효/역행이라 기존 유지 · 제한 상태만 반영
     }
 
     /// <summary>슬롯 시장 컨텍스트 판독본(seqlock 일관 사본 · raw 10^8).</summary>
-    public readonly record struct MarketContextSnapshot(long SymbolCode, long BasePriceRaw, long BestBidRaw, long BestAskRaw, long UpdatedMicros, long MaxSymbolQty);
+    public readonly record struct MarketContextSnapshot(long SymbolCode, long BasePriceRaw, long BestBidRaw, long BestAskRaw, long UpdatedMicros, long MaxSymbolQty,
+                                                        MarketTradingStatus Status = MarketTradingStatus.Unknown, bool StatusPinned = false);
 
     public sealed class AiExecutionSupervisor
     {
@@ -55,7 +65,7 @@ namespace StockManager.Engines.Strategy
         private readonly int _slippageBps;
 
         // 슬롯 컨텍스트(seqlock: 홀수 = 쓰는 중)
-        private readonly long[] _seq, _sym, _base, _bid, _ask, _ts, _cap;
+        private readonly long[] _seq, _sym, _base, _bid, _ask, _ts, _cap, _status, _pinned, _statusTs;
         private readonly long[] _keys;
         private readonly int[] _vals;
         private readonly int _mask, _shift;
@@ -63,7 +73,7 @@ namespace StockManager.Engines.Strategy
 
         private long _nextOrderId;
         private long _processed, _accepted, _interlockBlocked, _noContext, _stale, _future, _routerRejected, _contended, _invariant;
-        private long _updates, _updateRejects;
+        private long _updates, _updateRejects, _notTradable, _statusUpdates;
 
         /// <param name="router">다종목 AI 라우터(관문 · 클램프 · 격자 · 캡).</param>
         /// <param name="interlocks">30대 인터락 집계기 — 라우터 비트 27 소스가 결속된 같은 인스턴스여야 전역 동결이 이어진다.</param>
@@ -79,6 +89,7 @@ namespace StockManager.Engines.Strategy
             _maxAge = maxContextAgeMicros; _slippageBps = slippageBps; _genomeId = genomeId;
             _seq = new long[MaxSlots]; _sym = new long[MaxSlots]; _base = new long[MaxSlots]; _bid = new long[MaxSlots];
             _ask = new long[MaxSlots]; _ts = new long[MaxSlots]; _cap = new long[MaxSlots];
+            _status = new long[MaxSlots]; _pinned = new long[MaxSlots]; _statusTs = new long[MaxSlots];
             const int bits = 7;                                                             // 128 ≥ 2 × 64
             _keys = new long[1 << bits];
             _vals = new int[1 << bits];
@@ -100,37 +111,86 @@ namespace StockManager.Engines.Strategy
         public long InvariantBreaches => Interlocked.Read(ref _invariant);
         public long ContextUpdates => Interlocked.Read(ref _updates);
         public long ContextUpdateRejects => Interlocked.Read(ref _updateRejects);
+        public long NotTradableRejects => Interlocked.Read(ref _notTradable);
+        public long StatusUpdates => Interlocked.Read(ref _statusUpdates);
 
         /// <summary>시장 컨텍스트 갱신(티커 "005930" · "A005930"). δ=0.</summary>
-        public MarketContextVerdict UpdateMarketContext(ReadOnlySpan<char> ticker, long basePriceRaw, long bestBidRaw, long bestAskRaw, long timestampMicros,
-                                                        long maxSymbolQty = long.MaxValue)
-            => UpdateMarketContext(MultiSymbolAiSignalRouter.ParseTicker(ticker), basePriceRaw, bestBidRaw, bestAskRaw, timestampMicros, maxSymbolQty);
+        public MarketContextVerdict UpdateMarketContext(ReadOnlySpan<char> ticker, long basePriceRaw, long bestBidRaw, long bestAskRaw, MarketTradingStatus status,
+                                                        long timestampMicros, long maxSymbolQty = long.MaxValue)
+            => UpdateMarketContext(MultiSymbolAiSignalRouter.ParseTicker(ticker), basePriceRaw, bestBidRaw, bestAskRaw, status, timestampMicros, maxSymbolQty);
 
-        /// <summary>시장 컨텍스트 갱신(δ=0 · 단일 작성자 = 시세 피드). Ok 외 = 기존 컨텍스트 무변경.</summary>
-        public MarketContextVerdict UpdateMarketContext(long symbolCode, long basePriceRaw, long bestBidRaw, long bestAskRaw, long timestampMicros,
-                                                        long maxSymbolQty = long.MaxValue)
+        /// <summary>
+        /// 시장 컨텍스트 갱신(δ=0 · 단일 작성자 = 시세 피드). status = 이 호가가 실어 온 거래 상태(Unknown = 피드가 상태를 모름 → 기존 유지).
+        /// Ok = 호가+상태 반영 · StatusOnly = 호가 무효/역행이지만 제한 상태만 반영 · 그 외 = 무변경.
+        /// </summary>
+        public MarketContextVerdict UpdateMarketContext(long symbolCode, long basePriceRaw, long bestBidRaw, long bestAskRaw, MarketTradingStatus status,
+                                                        long timestampMicros, long maxSymbolQty = long.MaxValue)
         {
             if (symbolCode < 1 || symbolCode > MultiSymbolAiSignalRouter.MaxSymbolCode) return RejectUpdate(MarketContextVerdict.InvalidSymbol);
-            if (basePriceRaw <= 0 || bestBidRaw <= 0 || bestAskRaw <= 0) return RejectUpdate(MarketContextVerdict.InvalidPrice);
-            if (bestBidRaw >= bestAskRaw) return RejectUpdate(MarketContextVerdict.Crossed);
+            bool restrictive = status != MarketTradingStatus.Unknown && status != MarketTradingStatus.Normal;   // 미정의 값도 제한(fail-closed)
+            var priceVerdict = basePriceRaw <= 0 || bestBidRaw <= 0 || bestAskRaw <= 0 ? MarketContextVerdict.InvalidPrice
+                             : bestBidRaw >= bestAskRaw ? MarketContextVerdict.Crossed : MarketContextVerdict.Ok;
+            if (priceVerdict != MarketContextVerdict.Ok && !restrictive) return RejectUpdate(priceVerdict);
             if (Interlocked.CompareExchange(ref _writer, 1, 0) != 0) return RejectUpdate(MarketContextVerdict.Contended);
             try
             {
                 int s = Find(symbolCode);
-                if (s >= 0)
+                if (s < 0)
                 {
-                    if (timestampMicros < Volatile.Read(ref _ts[s])) return RejectUpdate(MarketContextVerdict.ClockRegressed);
-                    Interlocked.Increment(ref _seq[s]);                                    // 홀수 = 쓰는 중(전체 펜스)
-                    Write(s, basePriceRaw, bestBidRaw, bestAskRaw, timestampMicros, maxSymbolQty);
-                    Volatile.Write(ref _seq[s], _seq[s] + 1);                               // 짝수 = 공개(해제)
+                    if (priceVerdict != MarketContextVerdict.Ok) { s = Claim(symbolCode, 0, 0, 0, 0, 0, status, 0, timestampMicros); priceVerdict = MarketContextVerdict.StatusOnly; }
+                    else s = Claim(symbolCode, basePriceRaw, bestBidRaw, bestAskRaw, timestampMicros, maxSymbolQty, status, 0, timestampMicros);
+                    if (s < 0) return RejectUpdate(MarketContextVerdict.SlotsExhausted);
+                    Interlocked.Increment(ref _updates);
+                    return priceVerdict;
+                }
+                bool regressed = timestampMicros < Volatile.Read(ref _ts[s]);
+                if (regressed && !restrictive) return RejectUpdate(MarketContextVerdict.ClockRegressed);
+                long cur = Volatile.Read(ref _status[s]);
+                bool pinned = Volatile.Read(ref _pinned[s]) != 0;
+                long next = status == MarketTradingStatus.Unknown ? cur                                       // 상태 모름 = 유지
+                          : status == MarketTradingStatus.Normal ? (pinned ? cur : (long)MarketTradingStatus.Normal)   // 고정 제한은 호가로 해제 불가
+                          : (long)status;                                                                     // 제한 = 즉시 반영
+                bool pricesOk = priceVerdict == MarketContextVerdict.Ok && !regressed;
+                Interlocked.Increment(ref _seq[s]);                                        // 홀수 = 쓰는 중(전체 펜스)
+                if (pricesOk) Write(s, basePriceRaw, bestBidRaw, bestAskRaw, timestampMicros, maxSymbolQty);
+                Volatile.Write(ref _status[s], next);
+                Volatile.Write(ref _seq[s], _seq[s] + 1);                                   // 짝수 = 공개(해제)
+                Interlocked.Increment(ref _updates);
+                return pricesOk ? MarketContextVerdict.Ok : MarketContextVerdict.StatusOnly;
+            }
+            finally { Volatile.Write(ref _writer, 0); }
+        }
+
+        /// <summary>
+        /// 거래 상태 전용 통지(VI 발동/해제 · 거래정지/재개 · δ=0). 제한(VI · 정지 · Unknown · 미정의) = 즉시 반영 + 고정(pin · 시각 무관).
+        /// Normal = 고정 해제 — 마지막 상태 통지보다 이른 시각이면 거부(늦게 도착한 옛 해제가 새 정지를 푸는 것 차단).
+        /// 미수신 종목 = 호가 없는 슬롯 생성(호가 0 → NoMarketContext · 단독으로는 통과 0).
+        /// </summary>
+        public MarketContextVerdict UpdateTradingStatus(long symbolCode, MarketTradingStatus status, long timestampMicros)
+        {
+            if (symbolCode < 1 || symbolCode > MultiSymbolAiSignalRouter.MaxSymbolCode) return RejectUpdate(MarketContextVerdict.InvalidSymbol);
+            bool lift = status == MarketTradingStatus.Normal;
+            if (Interlocked.CompareExchange(ref _writer, 1, 0) != 0) return RejectUpdate(MarketContextVerdict.Contended);
+            try
+            {
+                int s = Find(symbolCode);
+                if (s < 0)
+                {
+                    s = Claim(symbolCode, 0, 0, 0, 0, 0, status, lift ? 0 : 1, timestampMicros);
+                    if (s < 0) return RejectUpdate(MarketContextVerdict.SlotsExhausted);
                 }
                 else
                 {
-                    s = Claim(symbolCode, basePriceRaw, bestBidRaw, bestAskRaw, timestampMicros, maxSymbolQty);
-                    if (s < 0) return RejectUpdate(MarketContextVerdict.SlotsExhausted);
+                    long last = Volatile.Read(ref _statusTs[s]);
+                    if (lift && timestampMicros < last) return RejectUpdate(MarketContextVerdict.ClockRegressed);
+                    Interlocked.Increment(ref _seq[s]);
+                    Volatile.Write(ref _status[s], (long)status);
+                    Volatile.Write(ref _pinned[s], lift ? 0 : 1);
+                    Volatile.Write(ref _statusTs[s], Math.Max(last, timestampMicros));
+                    Volatile.Write(ref _seq[s], _seq[s] + 1);
                 }
-                Interlocked.Increment(ref _updates);
-                return MarketContextVerdict.Ok;
+                Interlocked.Increment(ref _statusUpdates);
+                return MarketContextVerdict.StatusOnly;
             }
             finally { Volatile.Write(ref _writer, 0); }
         }
@@ -158,6 +218,8 @@ namespace StockManager.Engines.Strategy
             if (s < 0) return Count(AiSupervisorVerdict.NoMarketContext, ref _noContext);
             if (!TryRead(s, out var ctx)) return Count(AiSupervisorVerdict.Contended, ref _contended);
             if (ctx.UpdatedMicros > nowMicros) return Count(AiSupervisorVerdict.FutureMarketContext, ref _future);
+            if (ctx.BasePriceRaw <= 0 || ctx.BestBidRaw <= 0 || ctx.BestAskRaw <= 0) return Count(AiSupervisorVerdict.NoMarketContext, ref _noContext);   // 상태 통지만 있고 호가 없음
+            if (ctx.Status != MarketTradingStatus.Normal) return Count(AiSupervisorVerdict.MarketNotTradable, ref _notTradable);   // VI · 정지 · 미상 = 평가 전
             if (nowMicros - ctx.UpdatedMicros > _maxAge) return Count(AiSupervisorVerdict.StaleMarketContext, ref _stale);
 
             bool sell = signal.Confidence < 0.0;                                            // ③ 참조가(0 · NaN = ask → 라우터 관문이 판정)
@@ -167,6 +229,8 @@ namespace StockManager.Engines.Strategy
             if (routeVerdict != AiRouteVerdict.Accepted) return Count(AiSupervisorVerdict.RouterRejected, ref _routerRejected);
 
             if (_interlocks.Mask != 0) return Count(AiSupervisorVerdict.InterlockBlocked, ref _interlockBlocked);   // ⑤ 평가 중 트립 = 폐기
+            if (!TryRead(s, out var after) || after.Status != MarketTradingStatus.Normal)                  // ⑤' 평가 중 VI/정지 = 폐기
+                return Count(AiSupervisorVerdict.MarketNotTradable, ref _notTradable);
             if (!ProtectiveLimitOrderConverter.TryPriceBand(ctx.BasePriceRaw, out long lower, out long upper)
                 || !KrxTickAligner.IsAligned(o.LimitRaw) || o.LimitRaw < lower || o.LimitRaw > upper
                 || o.Quantity <= 0 || o.Quantity > ctx.MaxSymbolQty || o.Quantity > long.MaxValue / QtyScale
@@ -219,8 +283,9 @@ namespace StockManager.Engines.Strategy
                 if ((q & 1) != 0) { Thread.SpinWait(4); continue; }
                 long sym = Volatile.Read(ref _sym[s]), basePx = Volatile.Read(ref _base[s]), bid = Volatile.Read(ref _bid[s]);
                 long ask = Volatile.Read(ref _ask[s]), ts = Volatile.Read(ref _ts[s]), cap = Volatile.Read(ref _cap[s]);
+                long st = Volatile.Read(ref _status[s]), pin = Volatile.Read(ref _pinned[s]);
                 if (Volatile.Read(ref _seq[s]) != q) continue;
-                snapshot = new MarketContextSnapshot(sym, basePx, bid, ask, ts, cap);
+                snapshot = new MarketContextSnapshot(sym, basePx, bid, ask, ts, cap, (MarketTradingStatus)(byte)st, pin != 0);
                 return true;
             }
             snapshot = default;
@@ -242,7 +307,7 @@ namespace StockManager.Engines.Strategy
         }
 
         // 단일 작성자(_writer 보유) — 슬롯 값 먼저 기록 후 키 공개(판독자는 키가 보이면 컨텍스트도 유효).
-        private int Claim(long sym, long basePx, long bid, long ask, long ts, long cap)
+        private int Claim(long sym, long basePx, long bid, long ask, long ts, long cap, MarketTradingStatus status, long pinned, long statusTs)
         {
             for (int h = Home(sym), n = 0; n <= _mask; h = (h + 1) & _mask, n++)
             {
@@ -251,6 +316,9 @@ namespace StockManager.Engines.Strategy
                 int s = _used;
                 Volatile.Write(ref _sym[s], sym);
                 Write(s, basePx, bid, ask, ts, cap);
+                Volatile.Write(ref _status[s], (long)status);
+                Volatile.Write(ref _pinned[s], pinned);
+                Volatile.Write(ref _statusTs[s], statusTs);
                 _vals[h] = s;
                 Volatile.Write(ref _keys[h], sym);
                 Volatile.Write(ref _used, s + 1);

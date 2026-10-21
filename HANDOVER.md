@@ -3415,3 +3415,32 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): AiExecutionSupervisor/라우터 호스트 미결속(실 피드 부재 · §139) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인 · δ=0 다중 창은 확률적 잡음 내성(§141).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 143. v12.18.49-DEV — AI 매매 파이프라인 호스트 결속 · VI/거래정지 상태 방어 · 무장 게이트 하류 큐리스 인계 (2026-10-21)
+
+- 오더 전제 대조(정직): `StockManager/ServiceRegistration.cs` 부재 — 호스트 DI 조성 지점은 StockManager/Blazor/BlazorHomeForm.cs(`services.AddSingleton` 331곳 ·
+  UI 파일 아님 · 타 세션 5종 아님)라 여기에만 결속. UI(.razor) 수정 0. 기존 VI/정지 상태 타입 · 상태 피드 없음 → 신규 정의.
+  ★`RouterFeedGate.TryAdmit` 직결은 호스트에 결속하지 않음: TryAdmit = 라우터 슬롯 확보 + 추적 등록까지이고 실제 송출은 OrderDrainWorker 몫 —
+  직결하면 무장 게이트(GatedOrderDispatcher · liveArmed)를 우회하고 송출되지 않은 추적 주문이 남는다. 호스트 싱크 = OrderDispatchRing 게시(기존 무장 게이트 하류).
+- AiExecutionSupervisor 확장: MarketTradingStatus(Unknown 0 = 기본 차단 · Normal · StaticVi · DynamicVi · Halted) 를 슬롯 seqlock 안에 호가와 원자 보관.
+  ProcessSignal: 호가 없음 = NoMarketContext · 상태 ≠ Normal = MarketNotTradable(라우터 무접촉 · 평가 전) + 라우터 승인 후 재판독(평가 중 VI/정지 = 후보 폐기).
+  UpdateMarketContext(…, status, …): Unknown = 피드가 상태 모름 → 기존 유지 · 제한 상태는 호가 무효(0 · 교차) · 시각 역행이어도 반영(StatusOnly · 정지 통지 유실 0) ·
+  미정의 값 = 제한. UpdateTradingStatus: 제한 = 즉시 + 고정(pin) — 호가의 Normal 로 해제 불가 · 상태 피드 Normal 만 해제 · 마지막 통지보다 이른 해제 = ClockRegressed 거부.
+- 신규 StockManager/Engines/Strategy/AiTradingPipelineService.cs: OnQuote · OnTradingStatus · OnSignal(비활성 = Inactive · 감독자 무접촉 → 감독자 → 비활성 재판독 →
+  싱크 TrySubmit · 거부 = SinkRejected · 예외 = SinkFault) · IsAutonomousTradingActive 기본 false · TryActivate = 물리 이중키 둘 다 · Deactivate 즉시 ·
+  MarketTradingStatusCodec(정지 > 정적 VI > 동적 VI > 정상 · 발주 = Normal 단 하나).
+  신규 StockManager/Adapters/AiProposalSinks.cs: DispatchRingAiProposalSink(호스트 · 링 OrderId 재발급 · 단일 생산자 경합 = 미인계) ·
+  RouterFeedGateAiProposalSink(시뮬레이션/테스트 전용 직결).
+- 호스트 결속(BlazorHomeForm): 라우터(비트 27 = strategyAnomaly 공유 · Ai.Slots 32 · Ai.MaxQuantity 1) → 감독자(같은 interlockMask · Ai.SlippageBps 0) →
+  파이프라인(링 싱크) · 키움 10호가 → OnQuote(기준가 = MarketDataSpikeInterlock 참조 · 상태 Unknown — 키움 호가는 상태 미적재) · AddSingleton 3종.
+  활성 코드 경로 0 · OnSignal 호출자 0(실 AI 모델 피드 미결선 — 가짜 배선 금지) → 운영 중 발주 후보 0. 소스 핀 테스트가 직결 싱크 · 활성 · 신호 배선 부재를 고정.
+- 테스트 Strategy/AiTradingPipelineServiceTests 22건: VI(정적/동적) · 정지 · Unknown · 미정의(77) = 라우터/게이트 도달 0 · 상태 피드 VI 고정(호가 Normal 무력) ·
+  옛 해제 거부 · 정지 통지 호가 무효/교차/역행에도 반영 · 상태만 수신 종목 단독 통과 0 · 라우터 평가 중 VI 진입(타 스레드) 후 인계 0 · 코덱 우선순위 5 ·
+  기본 비활성 = 감독자 무접촉 · 이중키 3조합 거부 · 즉시 비활성 · ★실 RouterFeedGate 원스톱 수용(지정가 70,000 · 900주) → 정지 후 게이트 도달 0 ·
+  링 싱크 = 링 게시 · OrderId 재발급 · 싱크 거부/예외 fail-closed · 호스트 결속 소스 핀 · 100만 호가+상태+신호 → 싱크 ZeroAllocProbe 0B(인계 1,998,046 · 상태 차단 1,954) ·
+  적대 100회 × 500틱(상태 8종 · 활성 토글) = 인계 4,804건 전부 Normal · 활성 틱 / 비정상 상태 차단 37,639. 기존 감독자 테스트 13곳 = 상태 Normal 인자 추가.
+  사보타주(평가 전 · 사후 상태 검사 + 비활성 검사 무력화) → 12건 실패 확인 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,464 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(2/2).
+- 한계(정직): VI/정지 실 상태 피드 미결선(키움 FID/TR 사상 · KIS 상태 필드 확인 필요) → 그 전까지 호스트 전 종목 MarketNotTradable · 실 AI 모델 피드 미결선 ·
+  활성화 운영 경로(UI/설정) 없음 · 비활성 중 호가 반영은 키움 10호가만(KIS 호가 미연결).
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

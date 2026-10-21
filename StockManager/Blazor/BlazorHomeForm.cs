@@ -1870,6 +1870,28 @@ namespace StockManager.Blazor
             bridge.OrderBookReceived += b => quantSignals.OnBook(in b);
             bridge.TickReceived += t => quantSignals.OnTrade(t.SymbolCode, (long)Math.Round(t.Price), t.Volume);
             services.AddSingleton(quantSignals);
+            // [v12.18.49-DEV] AI 자율 매매 파이프라인 — 다종목 라우터(비트 27 = strategyAnomaly 공유) → 감독자(같은 interlockMask · 상태 Normal 만) →
+            //   dispatchRing(기존 무장 게이트 하류 · liveArmed:false 면 송출 0). ★기본 비활성(IsAutonomousTradingActive = false · 활성 코드 경로 없음) ·
+            //   실 AI 모델 피드 미결선(OnSignal 호출자 0). 키움 10호가는 거래 상태를 싣지 않으므로 Unknown 반영 → VI/정지 상태 피드 결선 전까지 전 종목 차단.
+            var aiRouter = new StockManager.Engines.Strategy.MultiSymbolAiSignalRouter(strategyAnomaly,
+                slots: cfg.GetInt("Ai.Slots", 32, 1, StockManager.Engines.Strategy.MultiSymbolAiSignalRouter.MaxSlots),
+                maxQuantity: cfg.GetInt("Ai.MaxQuantity", 1, 1, 1_000_000));
+            var aiSupervisor = new StockManager.Engines.Strategy.AiExecutionSupervisor(aiRouter, interlockMask,
+                slippageBps: cfg.GetInt("Ai.SlippageBps", 0, 0, StockManager.Engines.Strategy.AiExecutionSupervisor.MaxSlippageBps));
+            var aiPipeline = new StockManager.Engines.Strategy.AiTradingPipelineService(aiSupervisor,
+                new StockManager.Adapters.DispatchRingAiProposalSink(dispatchRing));
+            bridge.OrderBookReceived += b =>
+            {
+                long ask = b.AskPrice[0], bid = b.BidPrice[0];
+                if (ask <= 0 || bid <= 0 || ask > long.MaxValue / 100_000_000L || bid > long.MaxValue / 100_000_000L) return;
+                long symHash = StockManager.Adapters.ReferencePriceFeedAdapter.SymbolHashForCode(b.SymbolCode);
+                long basePx = spikeRef is { } sp && sp.TryGetReference(symHash, out long bw) && bw > 0 && bw < long.MaxValue / 100_000_000L ? bw * 100_000_000L : 0L;
+                aiPipeline.OnQuote(b.SymbolCode, basePx, bid * 100_000_000L, ask * 100_000_000L, StockManager.Engines.Strategy.MarketTradingStatus.Unknown,
+                                   StockManager.Adapters.ReferencePriceFeedAdapter.MonotonicMicros());
+            };
+            services.AddSingleton(aiRouter);
+            services.AddSingleton(aiSupervisor);
+            services.AddSingleton(aiPipeline);
             // [v12.18.2-DEV] 시그널 게이트 실배선 — ① 드레인 제안 관측(무장 판정 이전 · 항상): 게이트 꺼짐/미무장에서도 수량 ≤ 0 · 승인 폭주 = 비트 27 ·
             //   그림자 판정 계수. ② 강제 = `Strategy.SignalGateEnabled`(기본 false) 런타임 토글 — 1초 콜드 판독 · 켜기 즉시 · 끄기는 물리 키 둘 다 꺼졌을 때만.
             //   Strategy.* 는 순수 UI 기입 허용 목록 밖(호스트 안전 네임스페이스 — 운영자 경로로만 토글).

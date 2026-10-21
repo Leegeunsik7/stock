@@ -57,7 +57,7 @@ namespace StockManager.Tests.Strategy
         private static AiSignal Sig(long sym, double c, long t) => new(sym, c, 0.5, 0.5, t);
 
         private static void Quote(Rig r, long sym, long bidWon, long askWon, long t, long baseRaw = 0, long cap = long.MaxValue)
-            => Assert.Equal(MarketContextVerdict.Ok, r.Sup.UpdateMarketContext(sym, baseRaw == 0 ? Base : baseRaw, bidWon * S, askWon * S, t, cap));
+            => Assert.Equal(MarketContextVerdict.Ok, r.Sup.UpdateMarketContext(sym, baseRaw == 0 ? Base : baseRaw, bidWon * S, askWon * S, MarketTradingStatus.Normal, t, cap));
 
         // ════════════ §1 종단 간 ════════════
 
@@ -111,12 +111,12 @@ namespace StockManager.Tests.Strategy
         public void Per_Symbol_Cap_From_Context_And_Ticker_Update()
         {
             var r = Make();
-            Assert.Equal(MarketContextVerdict.Ok, r.Sup.UpdateMarketContext("A005930", Base, 69_900 * S, 70_000 * S, 0, maxSymbolQty: 255));
+            Assert.Equal(MarketContextVerdict.Ok, r.Sup.UpdateMarketContext("A005930", Base, 69_900 * S, 70_000 * S, MarketTradingStatus.Normal, 0, maxSymbolQty: 255));
             Assert.Equal(AiSupervisorVerdict.Accepted, r.Sup.ProcessSignal(Sig(A, 0.9, 0), 0, out var p));
             Assert.Equal(250 * S, p.QtyRaw);                                                     // 900 → 캡 255 의 로트 내림
             Assert.True(r.Sup.TryGetMarketContext(A, out var ctx));
             Assert.Equal((A, Base, 69_900 * S, 70_000 * S, 255L), (ctx.SymbolCode, ctx.BasePriceRaw, ctx.BestBidRaw, ctx.BestAskRaw, ctx.MaxSymbolQty));
-            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext("00593X", Base, 69_900 * S, 70_000 * S, 0));
+            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext("00593X", Base, 69_900 * S, 70_000 * S, MarketTradingStatus.Normal, 0));
         }
 
         [Fact]
@@ -165,7 +165,7 @@ namespace StockManager.Tests.Strategy
         public void Invalid_Update_Is_Rejected_And_Leaves_No_Context(long baseWon, long bidWon, long askWon, MarketContextVerdict expect)
         {
             var r = Make();
-            Assert.Equal(expect, r.Sup.UpdateMarketContext(A, baseWon * S, bidWon * S, askWon * S, 0));
+            Assert.Equal(expect, r.Sup.UpdateMarketContext(A, baseWon * S, bidWon * S, askWon * S, MarketTradingStatus.Normal, 0));
             Assert.Equal(0, r.Sup.SymbolsWithContext);
             Assert.Equal(AiSupervisorVerdict.NoMarketContext, r.Sup.ProcessSignal(Sig(A, 0.9, 0), 0, out var p));
             Assert.Equal(0, p.QtyRaw);
@@ -176,14 +176,14 @@ namespace StockManager.Tests.Strategy
         {
             var r = Make();
             Quote(r, A, 69_900, 70_000, 5_000);
-            Assert.Equal(MarketContextVerdict.ClockRegressed, r.Sup.UpdateMarketContext(A, Base, 60_000 * S, 60_100 * S, 4_999));
-            Assert.Equal(MarketContextVerdict.Crossed, r.Sup.UpdateMarketContext(A, Base, 60_100 * S, 60_000 * S, 6_000));
-            Assert.Equal(MarketContextVerdict.InvalidPrice, r.Sup.UpdateMarketContext(A, 0, 60_000 * S, 60_100 * S, 6_000));
+            Assert.Equal(MarketContextVerdict.ClockRegressed, r.Sup.UpdateMarketContext(A, Base, 60_000 * S, 60_100 * S, MarketTradingStatus.Normal, 4_999));
+            Assert.Equal(MarketContextVerdict.Crossed, r.Sup.UpdateMarketContext(A, Base, 60_100 * S, 60_000 * S, MarketTradingStatus.Normal, 6_000));
+            Assert.Equal(MarketContextVerdict.InvalidPrice, r.Sup.UpdateMarketContext(A, 0, 60_000 * S, 60_100 * S, MarketTradingStatus.Normal, 6_000));
             Assert.True(r.Sup.TryGetMarketContext(A, out var ctx));
             Assert.Equal((69_900 * S, 70_000 * S, 5_000L), (ctx.BestBidRaw, ctx.BestAskRaw, ctx.UpdatedMicros));
             Assert.Equal(3, r.Sup.ContextUpdateRejects);
-            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext(0, Base, 1 * S, 2 * S, 0));
-            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext(1_000_000, Base, 1 * S, 2 * S, 0));
+            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext(0, Base, 1 * S, 2 * S, MarketTradingStatus.Normal, 0));
+            Assert.Equal(MarketContextVerdict.InvalidSymbol, r.Sup.UpdateMarketContext(1_000_000, Base, 1 * S, 2 * S, MarketTradingStatus.Normal, 0));
         }
 
         [Fact]
@@ -191,7 +191,7 @@ namespace StockManager.Tests.Strategy
         {
             var r = Make();
             for (int i = 0; i < AiExecutionSupervisor.MaxSlots; i++) Quote(r, 100_000 + i, 69_900, 70_000, 0);
-            Assert.Equal(MarketContextVerdict.SlotsExhausted, r.Sup.UpdateMarketContext(999_999, Base, 69_900 * S, 70_000 * S, 0));
+            Assert.Equal(MarketContextVerdict.SlotsExhausted, r.Sup.UpdateMarketContext(999_999, Base, 69_900 * S, 70_000 * S, MarketTradingStatus.Normal, 0));
             Quote(r, 100_000, 69_800, 69_900, 1);                                                // 기존 종목 갱신은 계속
             Assert.Equal(64, r.Sup.SymbolsWithContext);
         }
@@ -221,7 +221,7 @@ namespace StockManager.Tests.Strategy
                 if (bit != ArmingInterlockSource.StartupSanity) mask.Bind(bit, src);              // 63 = 미봉인 샌니티 그 자체
                 else Assert.True(mask.IsRaised(ArmingInterlockSource.StartupSanity));
                 var sup = new AiExecutionSupervisor(r.Router, mask);
-                Assert.Equal(MarketContextVerdict.Ok, sup.UpdateMarketContext(A, Base, 69_900 * S, 70_000 * S, 0));
+                Assert.Equal(MarketContextVerdict.Ok, sup.UpdateMarketContext(A, Base, 69_900 * S, 70_000 * S, MarketTradingStatus.Normal, 0));
                 Assert.Equal(AiSupervisorVerdict.InterlockBlocked, sup.ProcessSignal(Sig(A, 0.9, 0), 0, out var p));
                 Assert.Equal(0, p.QtyRaw);
                 Assert.Equal(0, r.Router.Routed);                                                 // 라우터 무접촉
@@ -293,7 +293,7 @@ namespace StockManager.Tests.Strategy
                     int k = i & 15;
                     t += 40;
                     long b = bases[k], wob = (i & 63) * (b / 1_000);                            // 호가 = 기준가 ±(0 ~ 6.3%) 진동
-                    r.Sup.UpdateMarketContext(syms[k], b, b - b / 200 - wob, b + b / 200 + wob, t, 500 + k);
+                    r.Sup.UpdateMarketContext(syms[k], b, b - b / 200 - wob, b + b / 200 + wob, MarketTradingStatus.Normal, t, 500 + k);
                     double c = (k & 1) == 0 ? 0.2 + (i & 1023) / 1280.0 : -(0.2 + (i & 511) / 640.0);
                     if (r.Sup.ProcessSignal(new AiSignal(syms[k], c, 0.5, 0.5, t - 200), t, out var p) == AiSupervisorVerdict.Accepted)
                         sink += p.QtyRaw / S + (p.PriceRaw & 0xFF) + p.OrderId;
@@ -336,7 +336,7 @@ namespace StockManager.Tests.Strategy
                         long mid = (long)(bw * (0.5 + rng.NextDouble())) * S;
                         long spread = rng.Next(-2, 50) * S / 10;
                         long baseRaw = rng.Next(30) == 0 ? 0 : bw * S;
-                        r.Sup.UpdateMarketContext(sym, baseRaw, mid - spread, mid + spread, t - rng.Next(0, 2_000), rng.Next(4) == 0 ? rng.Next(0, 900) : long.MaxValue);
+                        r.Sup.UpdateMarketContext(sym, baseRaw, mid - spread, mid + spread, MarketTradingStatus.Normal, t - rng.Next(0, 2_000), rng.Next(4) == 0 ? rng.Next(0, 900) : long.MaxValue);
                     }
                     if (rng.Next(50) == 0) { r.Boot.On = !r.Boot.On; r.BootLink.Resync(); }
                     bool maskUp = r.Mask.Blocked;
