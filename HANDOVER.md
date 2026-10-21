@@ -3507,3 +3507,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): Kis.MarketStatusEnabled 기본 꺼짐 → 리졸버 미생성 · 전 종목 Unknown · 발주 후보 0(§143/§145). AI 활성/신호 배선 0.
 - 한계(정직): H0STMKO0 코드 값 · VTS 제공 여부 실 캡처 미확인 · 휴장일 달력 없음 · 키움 VI 피드 미구현 · 실 AI 모델 피드 미결선 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 147. v12.18.51-DEV — KRX 휴장일 달력(2024~2027) · 세션 페이즈 상태 머신 · 리졸버 결속(연속매매 외 전면 차단) (2026-10-21)
+
+- 오더 전제 대조(정직): ① 리졸버(§145)는 평일 09:00~15:20 만 검사 — 평일 공휴일 · 연말 폐장일 · 수능 순연 · 연초 지연 개장 미반영 확인. 동시호가(08:30~09:00 · 15:20~15:30)는 이미 Closed 였음(정상).
+  ② 휴장일 출처: 공휴일법 · 관공서 공휴일 규정(2026-04-30 개정 — 제헌절 · 노동절 공휴일 + 대체공휴일 적용) · KRX 2026 지방선거/제헌절 휴장 공지 · 2026 노동절 휴장 안내.
+  ③ 2027 = KRX 연간 공지 전(통상 12월) → 법정 산정(노동절 대체 5/3 · 제헌절 대체 7/19 포함) · ④ 2027(2028학년도) 수능일 미공시 → 미등재. ⑤ 30대 인터락 비트 정의 미접촉.
+- 신규 StockManager/Engines/Feeds/KrxTradingCalendar.cs: 평일 휴장일 70일 오름차순 int YYYYMMDD 정적 배열 · Array.BinarySearch(δ=0) · 수능일 3건(2024-11-14 · 2025-11-13 · 2026-11-19) ·
+  연초 첫 거래일 = 규칙 산정(1월 1일부터 전진 탐색) · ★표 범위 밖(2023 이전 · 2028 이후) = IsHoliday true(fail-closed).
+- 신규 StockManager/Engines/Feeds/KrxSessionStateMachine.cs: KrxSessionPhase = HolidayOrWeekend · Closed · PreMarketAuction(08:30~09:00) · ContinuousTrading(09:00~15:20) ·
+  ClosingAuction(15:20~15:30) · PostMarket(15:30~18:00) · CalendarUncovered. 수능일 전 경계 +1시간 · 연초 첫 거래일 장 시작 측만 +1시간(10:00 개장 · 마감 15:30 그대로).
+  GetSessionPhase(DateTime KST) · GetSessionPhaseUtcMicros(범위 밖 = DateTime 생성 전 차단 · 오버플로/예외 0).
+- MarketStatusFeedResolver: InContinuousSession = 페이즈 ContinuousTrading ∧ 주입 판정기 false(내장 달력에 OR) · SessionPhase(utcMicros) 노출 · 하드코딩 평일/시각 상수 제거.
+  호스트 결선 변경 0(BlazorHomeForm 생성자 그대로 = 내장 달력 자동 적용).
+- 테스트 Feeds/KrxTradingCalendarTests 126건: 표 = 검토 목록 양방향 전수 일치(4년 매일 · 매매일 975) · 오름차순 · 주말 등재 0 · 설/추석/노동절/연말 폐장일/선거/제헌절 31일 × 6시각 휴장 ·
+  범위 밖(MinValue/MaxValue/long 극값 포함) fail-closed · 평일 경계 13(08:29:59.999 · 08:30 · 08:45 · 09:00 · 15:19:59.999 · 15:20 · ★15:20:00.001 · 15:25 · 15:30 · 18:00 …) ·
+  수능 3일(09:30 차단 · 10:15 허용 · 15:25 연속 · 16:20 동시호가) · 연초 첫 거래일 4년 · ★전 휴장일 70일 AI 후보 인계 0 + 직후 매매일 대조군 인계 · 동시호가/15:20:00.001(Evaluate 없이 신호 시점 게이트)/시간외/수능/범위 밖 인계 0 ·
+  적대 4년 무작위 스트림 = 인계 453 전부 ContinuousTrading · 매매일 · 차단 2,248 · 10만 회 세션 판정(페이즈×2 · 휴장 · 리졸버 게이트 · 평가) ZeroAllocProbe 0B.
+  기존 MarketStatusFeedResolverTests δ 테스트 = 게이트 벽시계 미설정(0 = 1970 = 범위 밖 차단)으로 인계 0 → 신호 시각 설정 교정(인계 100,000 · 0B).
+  사보타주(연속 구간을 15:30 까지 확장 + 휴장 표 무시 · 빌드 0E 확인) → 116건 실패 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,622 통과 + 2 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40.
+- 한계(정직): 2027 달력 = KRX 공지 전 법정 산정(임시공휴일 지정 시 표 갱신) · 2027 수능일 미등재 · 2028 이후 = 전면 차단(표 연장 필요) · 연초 첫 거래일 동시호가 시각(09:30~10:00)은 추정(어느 쪽이든 차단) ·
+  OrderbookIlliquidityInterlock.KrxContinuousSessionNow(피드 정지 감시 · 라우터)는 여전히 평일 시각만 검사(이번 범위 밖 · 공휴일엔 격발 측 오차) · H0STMKO0 코드 값 VTS 미캡처.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

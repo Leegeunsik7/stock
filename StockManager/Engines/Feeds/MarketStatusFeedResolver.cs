@@ -4,7 +4,8 @@
 //  왜: 호가 피드(키움 10호가)는 거래 상태를 싣지 않아 감독자 슬롯이 Unknown(차단)에 머문다(§143). 상태 피드(KIS H0STMKO0)는 VI 발동/해제
 //   시에만 프레임이 온다 — '프레임 없음 = 정상' 을 안전하게 쓰려면 세션 시각 · 피드 생존 · 재접속 공백을 함께 따져야 한다.
 //  유효 상태(종목별 · 우선순위 위→아래 · Normal 은 맨 마지막 하나뿐):
-//   ① 정규 연속매매 시간 외(KST 평일 09:00 ≤ t < 15:20 아님 · 휴장일 판정기 true) = Closed
+//   ① 세션 페이즈 ≠ ContinuousTrading(KrxSessionStateMachine §v12.18.51: 휴장일 달력 · 수능 순연 · 연초 지연 개장 · 장 시작/마감 동시호가 ·
+//      시간외 · 달력 범위 밖) 또는 주입 휴장 판정기 true = Closed
 //   ② 이벤트 래치 ≠ Normal(VI · 정지 · 미분류 코드 = Unknown) = 그 상태 — ★해제는 같은 종목의 Normal 이벤트로만(호가 · 세션 · 시간 경과로 풀리지 않음)
 //   ③ 상태 피드 비생존(미연결 · 트립 · 침묵) = Unknown
 //   ④ 재접속 직후 재동기 보류(기본 150초 = VI 2분 + 종료 무작위 30초) 중이고 그 종목 프레임을 아직 못 받음 = Unknown
@@ -17,7 +18,8 @@
 //   (임계 구역 = 배열 갱신 + 감독자 상태 통지뿐 · 대기 짧음) — 이벤트를 버리는 경합 경로 없음(제한 · 해제 모두 반드시 반영).
 //  ★신호 시점 게이트(ITradingStatusGate): 감독자 슬롯 통지는 타이머 주기(호스트 50ms) 사이에 낡을 수 있다(15:20:00 직후 · 단절 직후) —
 //   파이프라인이 신호마다 IsTradable(자체 벽시계)을 평가 전 + 인계 직전에 직접 물어 그 틈을 닫는다(무잠금 Volatile 판독 · δ=0).
-//  ★정직: 휴장일 달력 없음(판정기 주입 · 기본 = 평일 전부 개장 가정) · 상태 코드 값 사상은 KisMarketStatusParser 머리말 참조(fail-closed).
+//  ★정직: 휴장일 달력 = KrxTradingCalendar 2024~2027 내장(범위 밖 = 전면 차단 · 임시공휴일은 표 갱신 필요 · 주입 판정기는 추가 휴장 OR) ·
+//   상태 코드 값 사상은 KisMarketStatusParser 머리말 참조(fail-closed).
 // ============================================================================
 using System;
 using System.Threading;
@@ -32,7 +34,6 @@ namespace StockManager.Engines.Feeds
         public const int MaxSlots = AiExecutionSupervisor.MaxSlots;
         public const long DefaultResyncHoldMicros = 150_000_000;                       // VI 2분 + 무작위 종료 30초
         private const long MicrosPerDay = 86_400_000_000L, MicrosPerMinute = 60_000_000L;
-        private const long SessionOpen = 9 * 60 * MicrosPerMinute, SessionClose = (15 * 60 + 20) * MicrosPerMinute;
         private const long KstOffset = 9 * 60 * MicrosPerMinute;
 
         private readonly AiTradingPipelineService _pipeline;
@@ -48,7 +49,7 @@ namespace StockManager.Engines.Feeds
         private long _events, _applied, _staleReleases, _invalid, _exhausted, _pushes, _evaluations, _faults;
 
         /// <param name="pipeline">거래 상태 반영 대상(감독자 슬롯).</param>
-        /// <param name="isKrxHoliday">KST 일 번호(1970-01-01 = 0) → 휴장일 여부(null = 평일 전부 개장 가정).</param>
+        /// <param name="isKrxHoliday">KST 일 번호(1970-01-01 = 0) → 추가 휴장일 여부(내장 달력에 OR · null = 내장 달력만).</param>
         /// <param name="utcNowMicros">신호 시점 게이트용 벽시계(유닉스 UTC 마이크로초 · null = DateTime.UtcNow).</param>
         public MarketStatusFeedResolver(AiTradingPipelineService pipeline, Func<long, bool>? isKrxHoliday = null, long resyncHoldMicros = DefaultResyncHoldMicros,
                                         Func<long>? utcNowMicros = null)
@@ -74,16 +75,16 @@ namespace StockManager.Engines.Feeds
         public long Evaluations => Interlocked.Read(ref _evaluations);
         public long FeedFaults => Interlocked.Read(ref _faults);
 
-        /// <summary>KRX 정규 연속매매(평일 KST 09:00 ≤ t &lt; 15:20 · 휴장일 제외) 판정(순수 · δ=0). utcMicros = 유닉스 에포크 UTC 마이크로초.</summary>
+        /// <summary>KRX 세션 페이즈(KrxSessionStateMachine · 휴장일 달력 · 수능 순연 · 동시호가 구분 · δ=0). utcMicros = 유닉스 에포크 UTC 마이크로초.</summary>
+        public KrxSessionPhase SessionPhase(long utcMicros) => KrxSessionStateMachine.GetSessionPhaseUtcMicros(utcMicros);
+
+        /// <summary>KRX 정규 연속매매(ContinuousTrading 페이즈 ∧ 주입 휴장 판정기 false) 판정(순수 · δ=0). utcMicros = 유닉스 에포크 UTC 마이크로초.</summary>
         public bool InContinuousSession(long utcMicros)
         {
-            long kst = utcMicros + KstOffset;
-            if (kst < 0) return false;
-            long day = kst / MicrosPerDay, tod = kst % MicrosPerDay;
-            long dow = (day + 4) % 7;                                                   // 1970-01-01 = 목(4) · 0 = 일 · 6 = 토
-            if (dow == 0 || dow == 6) return false;
+            if (KrxSessionStateMachine.GetSessionPhaseUtcMicros(utcMicros) != KrxSessionPhase.ContinuousTrading) return false;   // 동시호가 · 시간외 · 휴장 · 표 범위 밖 = 차단
+            long day = (utcMicros + KstOffset) / MicrosPerDay;
             if (_isHoliday is { } h) { bool hol; try { hol = h(day); } catch (Exception) { hol = true; } if (hol) return false; }   // 판정 예외 = 휴장(fail-closed)
-            return tod >= SessionOpen && tod < SessionClose;
+            return true;
         }
 
         /// <summary>상태 피드 구독 종목 등록(콜드). 등록 종목만 '프레임 없음 = 정상' 판정 대상.</summary>

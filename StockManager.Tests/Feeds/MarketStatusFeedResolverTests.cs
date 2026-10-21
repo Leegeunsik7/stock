@@ -1,7 +1,7 @@
 // ============================================================================
 // MarketStatusFeedResolverTests — [v12.18.50-DEV] 장운영 세션 · VI/정지 이벤트 → AI 파이프라인 거래 상태(δ=0) · H0STMKO0 판독
 //
-//   §1 세션: KST 평일 09:00 ≤ t < 15:20 경계 · 15:30 장외 · 주말 · 휴장일 판정기 · 판정기 예외 = 휴장
+//   §1 세션: KST 평일 09:00 ≤ t < 15:20 경계 · 15:30 장외 · 주말 · 휴장일 판정기 · 판정기 예외 = 휴장(내장 달력 · 동시호가 = KrxTradingCalendarTests)
 //   §2 전이: 피드 생존 + 재동기 보류 만료 → Normal → 인계 · 동적/정적 VI · 정지 = 즉시 차단 · ★VI 중 호가 Normal 무력 · 옛 해제 거부 ·
 //      해제 이벤트로만 복귀 · 장외(15:30) = 이벤트 해제 · 호가와 무관하게 Closed · 피드 단절 = Unknown · 재접속 보류(프레임 수신 종목만 조기 해제) ·
 //      판독 실패 = 전 종목 재동기 · 미등록 종목 = 차단 유지
@@ -305,6 +305,7 @@ namespace StockManager.Tests.Feeds
                 {
                     int k = i & 15;
                     t += 10;
+                    g.Now = t;                                                                // 게이트 벽시계 = 신호 시각(미설정 0 = 1970 = 달력 범위 밖 차단)
                     g.R.OnStatusEvent(syms[k], cycle[(i >> 4) % cycle.Length], t, t);
                     if ((i & 255) == 0) g.R.Evaluate(t);
                     g.P.OnQuote(syms[k], Base, 69_900 * S, 70_000 * S, MarketTradingStatus.Unknown, t);
