@@ -1,14 +1,13 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.53-GM 출하 완료 — 미국 증시 달력 · 세션 상태 머신 · $0.01 호가 정렬 · KIS 해외 모의 점검 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,744 통과 4 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
+- **Active Milestone**: v12.18.54-DEV — 미국 증시 달력 2028 연장(NYSE 공지 대조 · 휴장 9일 · 조기 폐장 2일 · 신정 토요일 무대체)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,756 통과 4 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-22
 
 ## Completed Deliverables
-- 버전 12.18.53 승격(69c0d50) · 태그 v12.18.53-GM · 클린 worktree -NoPeer 패키징 exit 0
-- release-v12.18.53-GM.zip(5D324AEE) · StockManager-v12.18.53-Standalone-win-x64.zip(13453975) · masterSeal C16F42F0 · 봉인 38 아티팩트
-- 배포본 봉인 오버레이 38 바이너리 바이트 동일 · 격리 기동 HWND 실측 · CLI 4종(verify-zip/live-armed/interlocks 30/tighten 6) exit 0
-- v12.18.52-GM 산출물 superseded 이관 · HANDOVER §153
+- UsTradingCalendar 범위 2024~2028(LastYear 2028 · 세션 머신 범위 자동 파생)
+- UsTradingCalendarTests 94건(2028 표 양방향 · DST 5년 OS DB 대조 · 범위 경계 2029) · 사보타주 4건 실패 확인 후 원복
+- 최근 출하: v12.18.53-GM(release-v12.18.53-GM.zip 5D324AEE · masterSeal C16F42F0) · HANDOVER §154
 
 ## Next Milestone
-- 미국 세션 머신 소비자 결속(해외 시세 피드) · NYSE/AMEX 잔고 조회 · 장중 VTS 고의 거부 캡처 · H0STMKO0 VTS 캡처 · 달력 2028+ 연장 · 미설치 PC 배포본 실기 확인
+- 미국 세션 머신 소비자 결속(해외 시세 피드) · NYSE/AMEX 잔고 조회 · 장중 VTS 고의 거부 캡처 · H0STMKO0 VTS 캡처 · KRX 달력 2028 연장(공지 후) · 미설치 PC 배포본 실기 확인

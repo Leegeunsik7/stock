@@ -3,9 +3,9 @@
 //
 //   §1 달력: 표 = 검토 목록 전수 일치(양방향) · 오름차순 · 전부 평일 · Good Friday/추수감사절 휴장 · Columbus/Veterans Day 개장 ·
 //      조기 폐장일 표 · 표 범위 밖 = fail-closed
-//   §2 서머타임: 연도별 시작/종료(3월 둘째 일요일 07:00 UTC · 11월 첫째 일요일 06:00 UTC) · 경계 1틱 · OS 시간대 DB 전수 대조(30분 격자 4년)
+//   §2 서머타임: 연도별 시작/종료(3월 둘째 일요일 07:00 UTC · 11월 첫째 일요일 06:00 UTC) · 경계 1틱 · OS 시간대 DB 전수 대조(30분 격자 5년)
 //   §3 페이즈: EDT(KST 17:00 · 22:30 · 05:00 · 09:00) / EST(18:00 · 23:30 · 06:00 · 10:00) 경계 · 22:30 KST 정규장 전이 · 매매일 = 미 동부 날짜 ·
-//      공휴일 · 조기 폐장(13:00/17:00 ET) · 서머타임 전환 주간 · 범위 밖 · KST/UTC 진입점 일치(7분 격자 4년)
+//      공휴일 · 조기 폐장(13:00/17:00 ET) · 서머타임 전환 주간 · 범위 밖 · KST/UTC 진입점 일치(7분 격자 5년)
 //   §4 호가: $1 이상 $0.01 · 미만 $0.0001 · 보호 방향 내림/올림 · 경계 · ≤0/오버플로 = 0 · 정렬 결과 = 유효 격자점
 //   §5 δ=0: 10만 회 세션 판정 + 호가 정렬 ZeroAllocProbe 0B
 // ============================================================================
@@ -25,16 +25,17 @@ namespace StockManager.Tests.Feeds
         private readonly ITestOutputHelper _out;
         public UsTradingCalendarTests(ITestOutputHelper o) => _out = o;
 
-        // 검토 목록(NYSE Holidays & Trading Hours 2024~2027) — 평일 휴장일만 · 미 동부 날짜
+        // 검토 목록(NYSE Holidays & Trading Hours 2024~2028) — 평일 휴장일만 · 미 동부 날짜
         private static readonly int[] Expected =
         {
             20240101, 20240115, 20240219, 20240329, 20240527, 20240619, 20240704, 20240902, 20241128, 20241225,
             20250101, 20250109, 20250120, 20250217, 20250418, 20250526, 20250619, 20250704, 20250901, 20251127, 20251225,
             20260101, 20260119, 20260216, 20260403, 20260525, 20260619, 20260703, 20260907, 20261126, 20261225,
             20270101, 20270118, 20270215, 20270326, 20270531, 20270618, 20270705, 20270906, 20271125, 20271224,
+            20280117, 20280221, 20280414, 20280529, 20280619, 20280704, 20280904, 20281123, 20281225,
         };
 
-        private static readonly int[] ExpectedEarly = { 20240703, 20241129, 20241224, 20250703, 20251128, 20251224, 20261127, 20261224, 20271126 };
+        private static readonly int[] ExpectedEarly = { 20240703, 20241129, 20241224, 20250703, 20251128, 20251224, 20261127, 20261224, 20271126, 20280703, 20281124 };
 
         public static IEnumerable<object[]> AllHolidays()
         {
@@ -68,7 +69,7 @@ namespace StockManager.Tests.Feeds
             }
             // 역방향: 표 범위 전 평일 중 비매매일 = 검토 목록 정확히
             var set = new HashSet<int>(Expected);
-            for (var d = new DateTime(2024, 1, 1); d.Year <= 2027; d = d.AddDays(1))
+            for (var d = new DateTime(2024, 1, 1); d.Year <= 2028; d = d.AddDays(1))
             {
                 if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) { Assert.False(UsTradingCalendar.IsTradingDay(d)); continue; }
                 Assert.Equal(set.Contains(UsTradingCalendar.ToKey(d)), UsTradingCalendar.IsHoliday(d));
@@ -86,20 +87,24 @@ namespace StockManager.Tests.Feeds
         [Fact]
         public void Good_Friday_Thanksgiving_Closed_Federal_Only_Holidays_Open_Year_End_Rule()
         {
-            foreach (int k in new[] { 20240329, 20250418, 20260403, 20270326 }) Assert.False(UsTradingCalendar.IsTradingDay(Day(k)), "Good Friday " + k);
-            foreach (int k in new[] { 20241128, 20251127, 20261126, 20271125 }) Assert.False(UsTradingCalendar.IsTradingDay(Day(k)), "Thanksgiving " + k);
+            foreach (int k in new[] { 20240329, 20250418, 20260403, 20270326, 20280414 }) Assert.False(UsTradingCalendar.IsTradingDay(Day(k)), "Good Friday " + k);
+            foreach (int k in new[] { 20241128, 20251127, 20261126, 20271125, 20281123 }) Assert.False(UsTradingCalendar.IsTradingDay(Day(k)), "Thanksgiving " + k);
             // Columbus Day · Veterans Day = 연방 공휴일이지만 NYSE 개장
-            foreach (int k in new[] { 20241014, 20241111, 20251013, 20251111, 20261012, 20261111, 20271011, 20271111 })
+            foreach (int k in new[] { 20241014, 20241111, 20251013, 20251111, 20261012, 20261111, 20271011, 20271111, 20281009, 20281110 })
                 Assert.True(UsTradingCalendar.IsTradingDay(Day(k)), "NYSE 개장 " + k);
             Assert.True(UsTradingCalendar.IsTradingDay(Day(20271231)));                                 // 2028 신정(토) = 12/31 대체 없음
             Assert.True(UsTradingCalendar.IsTradingDay(Day(20260702)));                                 // 7/3 대체 휴장 전일 = 정상(조기 폐장 아님)
             Assert.False(UsTradingCalendar.IsEarlyClose(Day(20260702)));
+            // 2028: 12/24 = 일요일 → 크리스마스 이브 조기 폐장 없음 · 12/22(금) = 정상 장 · 7/3(월) = 독립기념일 전일 조기 폐장
+            Assert.True(UsTradingCalendar.IsTradingDay(Day(20281222)));
+            Assert.False(UsTradingCalendar.IsEarlyClose(Day(20281222)));
+            Assert.True(UsTradingCalendar.IsEarlyClose(Day(20280703)));
         }
 
         [Fact]
         public void Out_Of_Range_Years_Fail_Closed()
         {
-            foreach (var d in new[] { new DateTime(2023, 12, 29), new DateTime(2028, 1, 3), DateTime.MinValue, DateTime.MaxValue.Date })
+            foreach (var d in new[] { new DateTime(2023, 12, 29), new DateTime(2029, 1, 2), DateTime.MinValue, DateTime.MaxValue.Date })
             {
                 Assert.False(UsTradingCalendar.IsCovered(d));
                 Assert.True(UsTradingCalendar.IsHoliday(d));
@@ -114,6 +119,7 @@ namespace StockManager.Tests.Feeds
         [InlineData(2025, 3, 9, 11, 2)]
         [InlineData(2026, 3, 8, 11, 1)]
         [InlineData(2027, 3, 14, 11, 7)]
+        [InlineData(2028, 3, 12, 11, 5)]
         public void Dst_Boundaries_Second_Sunday_March_First_Sunday_November(int y, int sm, int sd, int em, int ed)
         {
             var start = UsTradingCalendar.DstStartUtc(y);
@@ -132,7 +138,7 @@ namespace StockManager.Tests.Feeds
         }
 
         [Fact]
-        public void Dst_Rule_Matches_Os_Time_Zone_Database_Every_30_Minutes_2024_2027()
+        public void Dst_Rule_Matches_Os_Time_Zone_Database_Every_30_Minutes_2024_2028()
         {
             TimeZoneInfo? tz = null;
             foreach (var id in new[] { "America/New_York", "Eastern Standard Time" })
@@ -142,7 +148,7 @@ namespace StockManager.Tests.Feeds
             }
             Assert.NotNull(tz);
             int n = 0;
-            for (var u = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc); u.Year <= 2027; u = u.AddMinutes(30), n++)
+            for (var u = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc); u.Year <= 2028; u = u.AddMinutes(30), n++)
             {
                 var os = TimeZoneInfo.ConvertTimeFromUtc(u, tz!);
                 var mine = UsTradingCalendar.ToEastern(u);
@@ -213,6 +219,8 @@ namespace StockManager.Tests.Feeds
         [InlineData(20260703, 22, 30)]   // Independence Day 대체(7/3 금)
         [InlineData(20250109, 23, 30)]   // 카터 국장 특별 휴장
         [InlineData(20270618, 22, 30)]   // Juneteenth 대체(6/18 금)
+        [InlineData(20280414, 22, 30)]   // Good Friday 2028
+        [InlineData(20281225, 23, 30)]   // Christmas 2028(월)
         public void Us_Holidays_Are_Closed_All_Day(int key, int h, int m)
         {
             Assert.Equal(UsSessionPhase.HolidayOrWeekend, UsSessionStateMachine.GetSessionPhase(Kst(key, h, m)));
@@ -260,27 +268,27 @@ namespace StockManager.Tests.Feeds
         [Fact]
         public void Out_Of_Range_And_Extreme_Inputs_Are_Calendar_Uncovered_Without_Exceptions()
         {
-            Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhase(Kst(20280103, 23, 30)));
+            Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhase(Kst(20290102, 23, 30)));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhase(Kst(20231229, 23, 30)));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhase(DateTime.MinValue));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhase(DateTime.MaxValue));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhaseUtcMicros(long.MinValue));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhaseUtcMicros(long.MaxValue));
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhaseUtcMicros(0));
-            // 경계: 2024-01-01 00:00 EST 직전 = 범위 밖 · 2027-12-31 23:59 EST = 범위 안(장외)
+            // 경계: 2024-01-01 00:00 EST 직전 = 범위 밖 · 2028-12-31 23:59 EST = 범위 안(주말)
             long from = (new DateTime(2024, 1, 1, 5, 0, 0).Ticks - DateTime.UnixEpoch.Ticks) / 10;
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhaseUtcMicros(from - 1));
             Assert.Equal(UsSessionPhase.HolidayOrWeekend, UsSessionStateMachine.GetSessionPhaseUtcMicros(from));            // 신정
-            long until = (new DateTime(2028, 1, 1, 5, 0, 0).Ticks - DateTime.UnixEpoch.Ticks) / 10;
-            Assert.Equal(UsSessionPhase.Closed, UsSessionStateMachine.GetSessionPhaseUtcMicros(until - 1));
+            long until = (new DateTime(2029, 1, 1, 5, 0, 0).Ticks - DateTime.UnixEpoch.Ticks) / 10;
+            Assert.Equal(UsSessionPhase.HolidayOrWeekend, UsSessionStateMachine.GetSessionPhaseUtcMicros(until - 1));        // 2028-12-31 일
             Assert.Equal(UsSessionPhase.CalendarUncovered, UsSessionStateMachine.GetSessionPhaseUtcMicros(until));
         }
 
         [Fact]
-        public void Kst_And_Utc_Entry_Points_Agree_And_Regular_Session_Matches_Calendar_Across_Four_Years()
+        public void Kst_And_Utc_Entry_Points_Agree_And_Regular_Session_Matches_Calendar_Across_Five_Years()
         {
             int cont = 0;
-            for (var k = new DateTime(2024, 1, 1, 14, 0, 0); k < new DateTime(2028, 1, 1, 14, 0, 0); k = k.AddMinutes(7))
+            for (var k = new DateTime(2024, 1, 1, 14, 0, 0); k < new DateTime(2029, 1, 1, 14, 0, 0); k = k.AddMinutes(7))
             {
                 var p = UsSessionStateMachine.GetSessionPhase(k);
                 Assert.Equal(p, UsSessionStateMachine.GetSessionPhaseUtcMicros(UtcMicrosFromKst(k)));
@@ -362,7 +370,7 @@ namespace StockManager.Tests.Feeds
                 UtcMicrosFromKst(Kst(20261021, 17, 0)), UtcMicrosFromKst(Kst(20261021, 22, 30)), UtcMicrosFromKst(Kst(20261022, 5, 0)),
                 UtcMicrosFromKst(Kst(20261022, 9, 0)), UtcMicrosFromKst(Kst(20261104, 23, 30)), UtcMicrosFromKst(Kst(20261105, 6, 0)),
                 UtcMicrosFromKst(Kst(20260403, 22, 30)), UtcMicrosFromKst(Kst(20261128, 3, 0)), UtcMicrosFromKst(Kst(20261026, 3, 0)),
-                UtcMicrosFromKst(Kst(20260309, 22, 30)), UtcMicrosFromKst(Kst(20280103, 23, 30)), long.MaxValue,
+                UtcMicrosFromKst(Kst(20260309, 22, 30)), UtcMicrosFromKst(Kst(20290102, 23, 30)), long.MaxValue,
             };
             long[] prices = { 187 * S + 45_678_901, 12_345_678, S - 1, S, 0, -5, long.MaxValue, 4_321 * S + 1 };
             long sink = 0;

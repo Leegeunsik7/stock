@@ -1,18 +1,18 @@
 // ============================================================================
-// UsTradingCalendar — [v12.18.53-DEV] 미국 증시(NYSE · NASDAQ) 휴장일(2024~2027) · 조기 폐장일 · 서머타임(EDT/EST) 정적 달력(δ=0)
+// UsTradingCalendar — [v12.18.53-DEV] 미국 증시(NYSE · NASDAQ) 휴장일(2024~2028) · 조기 폐장일 · 서머타임(EDT/EST) 정적 달력(δ=0)
 //
 //  왜: 세션 판정이 KRX(KrxTradingCalendar) 전용이라 해외주식(KIS 해외 모의투자) 장중/휴장을 판정할 근거가 없었다.
 //  표: NYSE 지정 휴장일 중 평일만(주말은 요일로 판정) · 오름차순 int YYYYMMDD(★미 동부 날짜 기준) · 무할당 이진 탐색.
 //   휴장: 신정 · MLK Day · Presidents' Day · Good Friday(연방 공휴일 아님 · NYSE 휴장) · Memorial Day · Juneteenth · Independence Day ·
 //         Labor Day · Thanksgiving · Christmas. 토요일 공휴일 = 직전 금요일 · 일요일 공휴일 = 다음 월요일 대체.
-//         예외(NYSE Rule 7.2): 신정이 토요일이면 직전 12/31 대체 없음(회계 연말 · 2027-12-31 정상 개장).
+//         예외(NYSE Rule 7.2): 신정이 토요일이면 직전 12/31 대체 없음(회계 연말 · 2027-12-31 정상 개장 · 2028 신정 휴장 없음).
 //         Columbus Day · Veterans Day = 연방 공휴일이지만 NYSE 개장(표 미등재).
 //         특별 휴장: 2025-01-09 카터 전 대통령 국장(National Day of Mourning).
 //   조기 폐장(정규장 13:00 ET · 시간외 17:00 ET): 독립기념일 전일(평일 개장일일 때만) · 추수감사절 다음 날 · 크리스마스 이브(평일 개장일일 때만).
-//   출처: NYSE Holidays & Trading Hours(2024~2027 공지). 2027 = NYSE 공지 기준 · 임시 휴장(국장 등) 지정 시 표 갱신 필요.
+//   출처: NYSE Holidays & Trading Hours(2024~2028 공지 · [v12.18.54-DEV] 2028 연장 = 2026-10-22 공지 대조). 임시 휴장(국장 등) 지정 시 표 갱신 필요.
 //  서머타임(DST · 미 연방 규칙 2007~): 3월 둘째 일요일 02:00 EST(= 07:00 UTC) ~ 11월 첫째 일요일 02:00 EDT(= 06:00 UTC).
 //   EDT = UTC−4(KST − 13h) · EST = UTC−5(KST − 14h). TimeZoneInfo 미사용(OS tz DB 의존 0 · 규칙 산정 · 무할당).
-//  ★표 범위 밖(2023 이전 · 2028 이후) = 판정 불가 → IsHoliday true(fail-closed) · IsCovered false — 표 연장 전까지 거래 차단.
+//  ★표 범위 밖(2023 이전 · 2029 이후) = 판정 불가 → IsHoliday true(fail-closed) · IsCovered false — 표 연장 전까지 거래 차단.
 // ============================================================================
 using System;
 
@@ -20,7 +20,7 @@ namespace StockManager.Engines.Feeds
 {
     public static class UsTradingCalendar
     {
-        public const int FirstYear = 2024, LastYear = 2027;
+        public const int FirstYear = 2024, LastYear = 2028;
 
         // NYSE 평일 휴장일(오름차순 · 주말 제외 · 미 동부 날짜)
         private static readonly int[] Holidays =
@@ -70,6 +70,16 @@ namespace StockManager.Engines.Feeds
             20270906,                                   // Labor Day
             20271125,                                   // Thanksgiving
             20271224,                                   // Christmas 대체(12/25 토)
+            // 2028(1/1 토 = 신정 휴장 없음 · 12/31 대체 없음)
+            20280117,                                   // Martin Luther King Jr. Day
+            20280221,                                   // Presidents' Day
+            20280414,                                   // Good Friday
+            20280529,                                   // Memorial Day
+            20280619,                                   // Juneteenth
+            20280704,                                   // Independence Day
+            20280904,                                   // Labor Day
+            20281123,                                   // Thanksgiving
+            20281225,                                   // Christmas
         };
 
         // NYSE 조기 폐장일(정규장 13:00 ET 종료 · 시간외 17:00 ET 종료 · 오름차순 · 미 동부 날짜)
@@ -79,6 +89,7 @@ namespace StockManager.Engines.Feeds
             20250703, 20251128, 20251224,               // 2025
             20261127, 20261224,                         // 2026: 7/3 = 휴장(대체) → 7/2 조기 폐장 없음
             20271126,                                   // 2027: 7/2 · 12/23 조기 폐장 없음(대체 휴장 연접)
+            20280703, 20281124,                         // 2028: 12/24 = 일요일 → 크리스마스 이브 조기 폐장 없음
         };
 
         private const long DstStartUtcHour = 7, DstEndUtcHour = 6;

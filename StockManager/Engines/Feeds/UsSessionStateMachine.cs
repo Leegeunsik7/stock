@@ -3,7 +3,7 @@
 //
 //  페이즈(미 동부 벽시계 · 매매일 = 미 동부 날짜 · 경계 = 하한 포함 / 상한 제외):
 //   HolidayOrWeekend   주말 · NYSE 휴장일(UsTradingCalendar)
-//   CalendarUncovered  달력 표 범위 밖(2024~2027 외) — 판정 불가 = 휴장 취급(fail-closed)
+//   CalendarUncovered  달력 표 범위 밖(2024~2028 외) — 판정 불가 = 휴장 취급(fail-closed)
 //   Closed             04:00 ET 이전 · 시간외 종료 20:00 ET 이후
 //   PreMarket          04:00 ≤ t < 09:30 ET   프리마켓
 //   ContinuousTrading  09:30 ≤ t < 16:00 ET   정규 연속매매 — ★주문 후보가 허용되는 유일한 페이즈

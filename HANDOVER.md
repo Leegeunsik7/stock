@@ -3651,3 +3651,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   Kis.MarketStatusEnabled 기본 꺼짐(§143/§145) · AI 활성/신호 배선 0.
 - 한계(정직): 미국 달력 2024~2027 한정(2028+ fail-closed) · KRX 달력 2028+ 미등재 · H0STMKO0 VTS 미캡처 · NYSE/AMEX 잔고 미조회 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 154. v12.18.54-DEV — 미국 증시 달력 2028 연장(NYSE 공지 대조 · 휴장 9일 · 조기 폐장 2일) (2026-10-22)
+
+- 오더 전제 대조(정직): Next Milestone '달력 2028+ 연장' 중 미국 달력만 착수. NYSE Holidays & Trading Hours 페이지(2026-10-22 조회)가 2028 휴장/조기 폐장을 공지 → 규칙 산정과 전수 일치 확인 후 등재.
+  KRX 2028 = 거래소 연간 공지 전 · 음력(설/추석/부처님오신날) 산정 필요 → 본 마일스톤 범위 밖(미착수 · fail-closed 유지).
+- Engines/Feeds/UsTradingCalendar.cs: LastYear 2027 → 2028. 휴장 9일(MLK 1/17 · Presidents' 2/21 · Good Friday 4/14 · Memorial 5/29 · Juneteenth 6/19 · Independence 7/4(화) · Labor 9/4 · Thanksgiving 11/23 · Christmas 12/25) —
+  ★2028-01-01 토 = 신정 휴장 없음(NYSE Rule 7.2 · 2027-12-31 정상 개장 유지). 조기 폐장 2일(7/3 월 독립기념일 전일 · 11/24 추수감사절 다음 날) · 12/24 = 일요일 → 크리스마스 이브 조기 폐장 없음.
+  서머타임 2028 = 3/12 ~ 11/5(규칙 산정 그대로). UsSessionStateMachine 범위 상수는 FirstYear/LastYear 파생 → 코드 변경 0(머리말 범위 표기만).
+- 테스트 UsTradingCalendarTests 82 → 94건: 표 양방향 전수 2024~2028 · Good Friday/추수감사절/Columbus/Veterans 2028 · 2028-12-22 정상 장 · 7/3 조기 폐장 · DST 2028 경계 1틱 ·
+  OS 시간대 DB 30분 격자 5년 · 2028 Good Friday/Christmas 종일 휴장 · 범위 경계 2029-01-01 05:00 UTC(직전 = 2028-12-31 일 = HolidayOrWeekend) · KST/UTC 7분 격자 5년 · δ=0 프로브 범위 밖 입력 2029 로 이동.
+  사보타주(2028 Good Friday 삭제 · 빌드 0E 확인) → 4건 실패 후 원복 · 94/94 복귀.
+- 검증(격리 worktree · 타 세션 미커밋 파일 배제): WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 ·
+  전체 스위트 4,756 통과 + 4 건너뜀(옵트인) · 실패 0 · 5분 28초.
+- 한계(정직): 2028 = NYSE 현 공지 기준 · 임시 휴장(국장 등) 시 표 갱신 필요 · 2029+ 미등재(fail-closed). KRX 2028 미등재. 세션 머신 제품 경로 미배선(§152 동일).
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일(크립토 · Upbit · BrokerSettings · InstallerBuildPanel · LiveWire 소크) 미스테이징 · 원격 푸시 없음.
