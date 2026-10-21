@@ -3206,3 +3206,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,319 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
 - 한계(정직): 호스트 DI 미결속 — 실 AI 모델 피드 부재(가짜 배선 금지) · 승인 = 주문 후보일 뿐 무장/송출은 기존 디스패처 경로 · 종목별 분리 없음(인스턴스 = 모델 스트림 1개).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 132. v12.18.43-GM — AI 신호 관문 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- 사전 점검(09:55 KST): MS2E_* · PROBE 환경 변수 Process/User/Machine 3범위 0 → 리얼 와이어 소크/프로브 Skip(자격증명 부재) · QuantumVault 미접근(-NoPeer · 피어 경로 문자열만 생성 · 열람 0).
+- v12.18.43-DEV(§131) = 19fb4e8. 12.18.42 → 12.18.43(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 95b0fa5(4파일 · 11/11 줄 · 핀 테스트 48 통과) · 태그 v12.18.43-GM -f.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,319 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40 · liveArmed:false 소스 가드 ·
+  봉인 38 아티팩트 · masterSeal 0ABBA9C73DC058D3… · verify-zip 무추출 일치 · 인터락 30(0x800000001FFFFFFF) · Tighten 6.
+- 산출물: release-v12.18.43-GM.zip(BC2FDFBD…) · StockManager-v12.18.43-Standalone-win-x64.zip(49BA943E…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 36288 · HWND 0x1C8184A 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로 확인).
+- 이관: v12.18.42-GM 산출물 15종 → release/superseded-v12.18.42-GM/. 신규 산출물 메인 release/ 복사(SHA-256 재계산 일치).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 정직: 오더의 'Offline_1M' 은 별도 테스트가 아님 — 해당 이름은 옵트인 LiveWire 소크(건너뜀 2건 중 1)뿐. 1M δ=0 단언은 스위트 내 각 모듈 테스트(AiSignalGovernor 100만 0B 포함)로 통과.
+- 한계(정직): 장중 VTS 프로브/소크 미실행(§127) · AiSignalGovernor 호스트 미결속(§131) · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
