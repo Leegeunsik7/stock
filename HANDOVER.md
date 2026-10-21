@@ -3255,3 +3255,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
 - 한계(정직): 실 VTS 캡처 대조 미결(계정 발급 후 · §133) · AiSignalGovernor 호스트 미결속(§131) · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 135. v12.18.45-DEV — 다종목 AI 신호 격리 라우터 · 전역 비트 27 동결 · KRX 호가 보호 정렬 (2026-10-21)
+
+- 실 결함(§131 단일 관문): 인스턴스 1개에 여러 종목을 넣으면 A 매수 ↔ B 매도 교대가 '반전'으로 세어져 정상 다종목 운용이 플립플롭 오탐 래치 ·
+  시계 역행/시효 판정도 종목 사이에서 섞임(테스트가 단일 관문 대조군으로 오탐 재현).
+- 신규 StockManager/Engines/Strategy/MultiSymbolAiSignalRouter.cs: 미리 만든 AiSignalGovernor N개(1 ~ 64) + 개방 주소 해시(long[] 키 · int[] 값 · 2의 거듭제곱 ≥ 2N ·
+  선형 탐사 · 피보나치 해시) — 처음 보는 종목 = 빈 슬롯 배정(해제 없음) · 소진 = SlotsExhausted(기존 종목 무영향) · 종목 코드 1 ~ 999,999 · ParseTicker("005930"/"A005930").
+  격리 = 슬롯별 반전 링 · 직전 방향 · 시계 · 계수. ★전역 동결 = 전 슬롯이 같은 StrategyAnomalyInterlock 공유 → 어느 종목 NaN/∞ · 범위 이탈 · 플립플롭이든 비트 27 →
+  다음 회차 전 종목(미배정 신규 포함) Latched · 래치 중 슬롯 배정 0. TryRearm = 이중키 + 전 슬롯 링 소거(배정 유지).
+  정렬 = 승인 후보 참조 지정가(raw 10^8)를 KrxTickAligner(KrxTickLadder 2023 7구간 동일 규칙 · 무할당)로 매수 내림 / 매도 올림.
+  참조가 ≤0 · 올림 포화 = 평가 '전' InvalidPrice(신호 이력 오염 0 · 방향 미확정이라 양방향 정렬 가능성 사전 확인). 판정 서수 0~9 = AiSignalVerdict 동일(핀 테스트).
+- 테스트 Strategy/MultiSymbolAiSignalRouterTests 41건([Collection("ConcurrencyStress")]): 교차 종목 반대 방향 = 단일 관문 FlipFlop vs 라우터 0 · 종목별 반전 비합산(2+2) ·
+  종목별 시효 독립 · 64종목 + 소진 · A 플립플롭 → B/C/신규 Latched · NaN/∞/1.5 전역 동결 · 이중키 재무장 + 링 소거 · 정렬 13구간 Theory(KrxTickLadder.IsOnTick 교차) ·
+  1원 미만 참조 스냅 · 무효 참조가 이력 무오염 · 종목 범위 · 티커 10 · 서수 핀 · 생성 인자 · 32종목 100만 라우팅+사이징+정렬 Release 3창 최소 0B ·
+  적대 200회 × 400신호(20종목/슬롯 16 · 독 3종 · 무효 참조가 10%) = 래치 후 승인 0 · 래치 전 승인 6,177건 전부 격자 · 보호 방향.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,397 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(RCL · 포트 무변경).
+- 한계(정직): 호스트 DI 미결속(실 AI 모델 피드 부재 — 가짜 배선 금지) · 산출 = 주문 후보(무장/송출 = 기존 디스패처 · liveArmed:false) · 종목별 수량 한도 없음(공통) ·
+  슬롯 해제 없음(운용 종목 > N 이면 신규 거부) · 가격제한폭(±30%) 클램프 미적용(참조가 책임 · ProtectiveLimitOrderConverter 결속은 후속).
+- 불변: 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · 비트 27 정의 보존 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
