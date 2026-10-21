@@ -221,14 +221,12 @@ namespace StockManager.Adapters
         private readonly Func<bool>? _marketHours;
         private readonly long _marketSilenceMicros;
 
-        /// <summary>KST 정규장(09:00~15:20 · 월~금) 판정 — 공휴일 미반영(정직: 휴장일엔 접속 자체가 없어야 정상).</summary>
+        /// <summary>
+        /// KRX 연속매매 감시 창(utcNow = UTC 벽시계) — [v12.18.52-DEV] KrxSessionStateMachine 단일 진실 공급원 위임(휴장일 · 수능 순연 · 연초 지연 개장 ·
+        /// 동시호가/시간외 = 장외 침묵 임계 · 달력 범위 밖 = 장중 취급(엄격 측)).
+        /// </summary>
         public static bool IsKrxRegularSession(DateTime utcNow)
-        {
-            var kst = utcNow.AddHours(9);
-            if (kst.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
-            int m = kst.Hour * 60 + kst.Minute;
-            return m >= 9 * 60 && m < 15 * 60 + 20;
-        }
+            => StockManager.Engines.Feeds.KrxSessionStateMachine.InContinuousWatchWindow((utcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10);
 
         public bool Tripped => Volatile.Read(ref _tripped) == 1;
         public bool Connected => Volatile.Read(ref _connected) == 1;

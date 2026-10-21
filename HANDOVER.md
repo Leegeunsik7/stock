@@ -3549,3 +3549,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): Kis.MarketStatusEnabled 기본 꺼짐 → 리졸버 미생성 · 전 종목 Unknown · 발주 후보 0(§143/§145). 켜면 내장 KRX 달력이 자동 적용(§147). AI 활성/신호 배선 0.
 - 한계(정직): 2027 달력 = KRX 공지 전 법정 산정 · 2027 수능일 미등재 · 2028 이후 전면 차단 · KrxContinuousSessionNow 달력 미결속 · H0STMKO0 VTS 미캡처 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 149. v12.18.52-DEV — 피드 정지 워치독 · 세션 침묵 판정 KRX 달력 일원화(휴장 · 동시호가 · 시간외 감시 동결 · 수능 순연) (2026-10-21)
+
+- 오더 전제 대조(정직): ① FeedStallWatchdog 위치 = StockManager/Engines/Arbitrage/(Feeds 아님) · 워치독 자체는 술어 주입식(marketHours) — 구형 평일/시각 판정은
+  OrderbookIlliquidityInterlock.KrxContinuousSessionNow(워치독 · 호가 이상 인터락 공용) 와 KisSessionInterlock.IsKrxRegularSession(KIS 세션 침묵 3초/60초 임계) 두 곳에 있었다.
+  ② 종전에도 동시호가(08:30~09:00 · 15:20~15:30)는 장외였다(오탐 없음) — 실제 오탐 경로는 평일 공휴일 · 연말 폐장일 · 수능일 09:00~10:00 · 연초 첫 거래일 09:00~10:00.
+  ③ 테스트 파일 위치 = StockManager.Tests/Engines/Arbitrage/FeedStallWatchdogTests.cs(오더의 Feeds/ 아님 · 기존 파일 확장).
+- 신규 KrxSessionStateMachine.InContinuousWatchWindow(utcMicros) / InContinuousWatchWindowNow(): 감시 측 술어 = ContinuousTrading ∨ CalendarUncovered.
+  ★방향 정리: 감시 측(워치독 · 침묵 · 호가 이상) = 달력 범위 밖 장중 취급(감시 유지 · 엄격) / 발주 측(리졸버 게이트 · VTS 프로브 송출) = 범위 밖 차단 — 둘 다 fail-closed.
+- KrxContinuousSessionNow · IsKrxRegularSession = 감시 창 위임 1줄(DayOfWeek · 시각 상수 0) · FeedStallWatchdog 머리말 갱신. 호스트 결선 변경 0(같은 메서드 참조 그대로).
+  워치독 개장 예산 재기산(장외 → 장중 전환 관측 시각부터) 기존 로직이 수능 10:00 · 연초 10:00 진입에도 그대로 적용.
+- VTS 프로브 하네스 SkipReason(테스트 전용 · 송출 측) = 엄격 ContinuousTrading 판정으로 교체(범위 밖 · 폐장일 = 미송출).
+- 테스트: FeedStallWatchdogTests §7 +10(휴장 70일 × 24h 1초 폴링 6,047,930회 오탐 0 · 08:30→09:00(08:45) 동결 → 개장 3,000.001ms 격발 · 15:19:58 이후 마감 동시호가/15:25/시간외/장외 무격발 ·
+  평일 09:30 · 수능 10:30 · 수능 16:00 · 연초 10:30 = 정확히 3,000.001ms 격발 · 수능 09:00~10:00 동결 · 평일 16:00 동결 · KIS 세션 침묵 휴장/동시호가 = 60초 임계 · 연속 = 3초 임계 ·
+  구형 DayOfWeek 판정 0 소스 핀 · 수능일 페이즈 횡단 10만 폴링 ZeroAllocProbe 0B). VtsOrderRejectionProbeTests +2 단언(폐장일 · 범위 밖 미송출).
+  기존 KisLivePipelineWiringTests 경계 단언 1건 교정: 기준일 2026-10-05 = 개천절 대체공휴일(달력 일원화로 휴장) → 2026-10-12(월) 로 이동 + 10-05 휴장 단언 추가.
+  사보타주(감시 술어 상시 true · 빌드 0E 확인) → 6건 실패 후 원복.
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,632 통과 + 2 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40.
+- 한계(정직): 달력 2024~2027 한정(2028+ 감시 측 = 장중 취급 · 휴장일 오탐 재발 가능 → 표 연장 필요) · 2027 수능일 미등재 · 임시공휴일 표 갱신 필요 · 구독 종목 전부 비유동 시 3초 무변경 = 차단 측 오탐(기존).
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

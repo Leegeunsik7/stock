@@ -167,14 +167,11 @@ namespace StockManager.Engines
             return true;
         }
 
-        /// <summary>KRX 연속매매 시간(평일 09:00:00 ≤ KST &lt; 15:20:00) — 동시호가/장전/장후 제외. 공휴일 미반영(정직: 격발 측으로만 오차).</summary>
-        public static bool KrxContinuousSessionNow()
-        {
-            var kst = DateTime.UtcNow.AddHours(9);
-            if (kst.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
-            var t = kst.TimeOfDay;
-            return t >= new TimeSpan(9, 0, 0) && t < new TimeSpan(15, 20, 0);
-        }
+        /// <summary>
+        /// KRX 연속매매 감시 창(현재 벽시계) — [v12.18.52-DEV] KrxSessionStateMachine 단일 진실 공급원 위임(휴장일 달력 · 수능 순연 · 연초 지연 개장 ·
+        /// 동시호가/장전/장후 제외 · 달력 범위 밖 = 장중 취급(엄격 측)). 피드 정지 워치독 · 호가 이상 인터락 공용.
+        /// </summary>
+        public static bool KrxContinuousSessionNow() => StockManager.Engines.Feeds.KrxSessionStateMachine.InContinuousWatchWindowNow();
     }
 
     /// <summary>[방향 B] 체결가가 판정 참조가에서 극한 괴리 → 전체 발주 회로 sticky Disarm(물리 이중키 재무장).</summary>

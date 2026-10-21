@@ -139,6 +139,8 @@ namespace StockManager.Tests.Integration
             Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = null, open));    // 소크 자격증명만 = 주문 0
             Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = "true", open));
             Assert.Contains("정규장", Reason(_ => { }, closed));
+            Assert.Contains("정규장", Reason(_ => { }, new DateTime(2026, 12, 31, 1, 0, 0, DateTimeKind.Utc)));    // [v12.18.52] 연말 폐장일 10:00 = 미송출
+            Assert.Contains("정규장", Reason(_ => { }, new DateTime(2028, 1, 4, 1, 0, 0, DateTimeKind.Utc)));     // 달력 범위 밖 = 미송출(감시 측과 반대 방향)
         }
 
         [Fact]

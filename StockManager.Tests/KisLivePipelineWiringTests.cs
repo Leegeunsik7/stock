@@ -275,12 +275,13 @@ namespace StockManager.Tests
             clk.Now += 3_100_000; thrower.Evaluate();
             Assert.True(thrower.Tripped);                                          // 판정 불가 = 장중 취급(엄격)
 
-            // KST = UTC+9 · 월요일 2026-10-05
-            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 4, 23, 59, 0, DateTimeKind.Utc)));   // 08:59
-            Assert.True(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc)));      // 09:00
-            Assert.True(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 5, 6, 19, 0, DateTimeKind.Utc)));     // 15:19
-            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 5, 6, 20, 0, DateTimeKind.Utc)));    // 15:20
-            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 3, 1, 0, 0, DateTimeKind.Utc)));     // 토요일 10:00
+            // KST = UTC+9 · 월요일 2026-10-12([v12.18.52] 10-05 = 개천절 대체공휴일 → 달력 일원화 후 휴장)
+            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 11, 23, 59, 0, DateTimeKind.Utc)));  // 08:59
+            Assert.True(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 12, 0, 0, 0, DateTimeKind.Utc)));     // 09:00
+            Assert.True(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 12, 6, 19, 0, DateTimeKind.Utc)));    // 15:19
+            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 12, 6, 20, 0, DateTimeKind.Utc)));   // 15:20
+            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 10, 1, 0, 0, DateTimeKind.Utc)));    // 토요일 10:00
+            Assert.False(KisSessionInterlock.IsKrxRegularSession(new DateTime(2026, 10, 5, 1, 0, 0, DateTimeKind.Utc)));     // 개천절 대체공휴일 10:00
         }
 
         // ════════════ §6 호스트 결선 ════════════

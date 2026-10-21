@@ -63,5 +63,16 @@ namespace StockManager.Engines.Feeds
         }
 
         public static bool IsContinuousTrading(DateTime kstNow) => GetSessionPhase(kstNow) == KrxSessionPhase.ContinuousTrading;
+
+        /// <summary>
+        /// [v12.18.52-DEV] 감시 측(피드 정지 · 세션 침묵 워치독 · 호가 이상 인터락) 장중 판정(δ=0): ContinuousTrading = true ·
+        /// CalendarUncovered = true(판정 불가 = 엄격 측 · 감시 유지) · 휴장/주말 · 동시호가 · 시간외 · 장외 = false(감시 동결 · 오탐 0).
+        /// ★발주 측(리졸버 게이트)은 범위 밖 = 차단 — 두 방향 모두 fail-closed.
+        /// </summary>
+        public static bool InContinuousWatchWindow(long utcMicros)
+            => GetSessionPhaseUtcMicros(utcMicros) is KrxSessionPhase.ContinuousTrading or KrxSessionPhase.CalendarUncovered;
+
+        /// <summary>[v12.18.52-DEV] 감시 측 장중 판정 — 현재 벽시계(DateTime.UtcNow).</summary>
+        public static bool InContinuousWatchWindowNow() => InContinuousWatchWindow((DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10);
     }
 }

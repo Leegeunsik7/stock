@@ -79,7 +79,10 @@ namespace StockManager.Tests.Integration
                 if (string.IsNullOrWhiteSpace(env(v))) return "KIS VTS 프로브 자격증명 미설정(" + v + ") — 고의 거부 주문 미송출";
             if (!TryParseAccount(env(AccountVar)!, out _, out _)) return "MS2E_KIS_VTS_ACCOUNT 형식 오류(8자리-2자리) — 미송출";
             if (env(OptInVar) != "1") return "MS2E_KIS_VTS_PROBE ≠ 1(주문 송출 옵트인 없음) — 미송출";
-            if (!KisSessionInterlock.IsKrxRegularSession(utcNow)) return "KRX 정규장(평일 09:00 ~ 15:20 KST) 밖 — 미송출";
+            // [v12.18.52] 송출 측 = 엄격 연속매매 판정(달력 범위 밖 = 미송출) — IsKrxRegularSession 은 감시 측 술어(범위 밖 = 장중 취급)라 쓰지 않는다
+            if (StockManager.Engines.Feeds.KrxSessionStateMachine.GetSessionPhaseUtcMicros((utcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10)
+                != StockManager.Engines.Feeds.KrxSessionPhase.ContinuousTrading)
+                return "KRX 정규장 연속매매(휴장일 · 동시호가 · 시간외 · 달력 범위 밖 제외) 밖 — 미송출";
             return null;
         }
 
