@@ -3311,3 +3311,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   ※ 1차 전체 실행에서 KiwoomBridgeTests.PingPong_ProxyPongs_ClientStaysAlive 1건 IPC 하트비트 타이밍 실패(라우터 무관 · 단독 3회 통과) → 2차 전체 실행 0 실패.
 - 한계(정직): 호스트 DI 미결속(실 AI 모델 피드 · 기준가 피드 부재 — 가짜 배선 금지) · 캡은 호출 인자(종목별 저장소 없음) · 산출 = 주문 후보(liveArmed:false).
 - 불변: 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 138. v12.18.46-GM — AI 가격제한폭 클램프 · 종목별 수량 캡 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-21)
+
+- v12.18.46-DEV(§137) = f9af6b8. 12.18.45 → 12.18.46(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) = 6344468(4파일 · 11/11 줄 · 잔존 12.18.45 0 · 핀 테스트 83 통과) · 태그 v12.18.46-GM -f.
+- 사전 점검: 패키징 셸 MS2E_* 0 · PROBE 미설정. 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E · 전체 스위트 4,421 통과 + 2 건너뜀(LiveWire 소크 · VTS 프로브 옵트인) · infra-scan 0 · 래칫 ≤40(2/2) ·
+  liveArmed:false 소스 가드(이중키 16 · 마스터 플래그 1) · 봉인 38 아티팩트 · masterSeal 5849920CE4DBC092… · verify-zip 무추출 일치 · 인터락 30(0x800000001FFFFFFF) · Tighten 6.
+  Offline_1M 프레임 소크(무할당 수신 경로) 단독 재실행 통과(1,000,000프레임 · 0.93s).
+- 산출물: release-v12.18.46-GM.zip(CBF383D0…) · StockManager-v12.18.46-Standalone-win-x64.zip(FEC02CA8…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 43696 · HWND 0x401CFA 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.45-GM 산출물 15종 → release/superseded-v12.18.45-GM/. 신규 산출물 15종 메인 release/ 복사(SHA-256 재계산 일치).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전 · 동사 플래그 args[0]): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더/잔류 프로세스 0.
+- 한계(정직): AiSignalGovernor/MultiSymbolAiSignalRouter 호스트 미결속(실 모델 · 기준가 피드 부재 · §131/§135/§137) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
