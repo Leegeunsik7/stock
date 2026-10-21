@@ -3589,3 +3589,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): Kis.MarketStatusEnabled 기본 꺼짐 → 리졸버 미생성 · 전 종목 Unknown · 발주 후보 0(§143/§145). 워치독 · KIS 세션 침묵 판정은 내장 KRX 달력 감시 창 사용(§149). AI 활성/신호 배선 0.
 - 한계(정직): 달력 2024~2027 한정(2028+ 감시 측 장중 취급 · 휴장일 오탐 재발 가능) · 2027 수능일 미등재 · 임시공휴일 표 갱신 필요 · H0STMKO0 VTS 미캡처 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer · 로그 참조 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 151. v12.18.53-DEV — KIS 모의투자(VTS) REST 사전 통신 점검 프로브(토큰 발급 · VTTC8434R 잔고 · 주문 0 · 마스킹) (2026-10-21)
+
+- 오더 전제 대조(정직): ① StockManager/Engines/Brokers/Kis/ · StockManager.Tests/Brokers/Kis/ 디렉터리 부재 → 기존 VTS 프로브 도구 위치(StockManager.Tests/Integration/)에 테스트 전용 하네스로 배치(제품 바이너리 변경 0 · 출하 표면 무변경).
+  ② VtsDomainGuard · VtsPayloadMask · VtsRestClient.TokenAsync 는 v12.18.41 하네스에 기존재(재사용) · 잔고 조회(VTTC8434R)만 부재였다. ③ DB 키 = KIS.Profile.PaperDomestic.{AppKey · AppSecret · Account} 전부 enc:v1:(DPAPI) · 계좌 = 8자리(상품코드 01 가정).
+- 신규 Integration/VtsPreFlightConnectivityProbe.cs: VtsPreFlightCredentials(portfolio.db 읽기 전용 연결 · 프로필 키 3종만 · 평문 저장/미등록/복호 실패/계좌 형식 이탈 = 거부 · ToString 마스킹) ·
+  VtsPreFlightGuard(송출 허용 목록 = POST /oauth2/tokenP[tr_id 없음] · GET inquire-balance[tr_id 정확히 VTTC8434R 1개] — 그 외 · 실도메인 · 위장 호스트 · http · 주문 TR · 실 TR = SendAsync 전 예외 · 자동 리다이렉트 꺼짐) ·
+  PreFlightRedactor(키 · 시크릿 · 토큰 · 계좌 앞 2자리 외 '*' · 긴 값 우선) · VtsBalanceSummary(rt_cd/msg_cd/msg1 · 보유 행 · 예수금/총평가/순자산 · 형식 이탈 fail-closed) ·
+  토큰 파싱 = 제품 KisProtocol.TryParseToken(Utf8JsonReader) 재사용. 옵트인 = MS2E_KIS_VTS_PREFLIGHT=1(주문 프로브 MS2E_KIS_VTS_PROBE 와 분리 · 장 시간 무관).
+- 테스트 VtsPreFlightConnectivityProbeTests 16건(오프라인 15 + 옵트인 1): 허용 목록 18 거부 사례 · 차단 요청 핸들러 도달 0 · 요청 생성기 핀 · 리다이렉트 꺼짐 · 임시 DB 판독(타 프로필/활성 키 미판독 · 파일 바이트 불변) ·
+  평문/미등록/계좌 형식 5 사례 거부 · 옵트인 Skip · 마스킹 포맷 · 가짜 VTS 왕복 출력 원문 0(접두 10자 포함) · 토큰 실패 = 잔고 미송출 + 에코된 키 마스킹 · 잔고 판독 fail-closed.
+  사보타주(허용 목록의 도메인 검사 제거 · 빌드 0E 확인) → 2건 실패 후 원복.
+- ★실측(2026-10-21 21:00 KST · 옵트인 1회 · 장외): 토큰 발급 성공 HTTP 200 · 346자 · expires_in 86400s · 만료 2026-10-22 16:56:39 KST · 지연 319.6ms /
+  잔고 조회 성공 HTTP 200 · rt_cd 0 · msg_cd 20310000 '모의투자 조회가 완료되었습니다.' · 보유 0행 · 예수금 100,000,000원 · 총평가/순자산 100,000,000원 · 지연 57.9ms.
+  덤프 %TEMP%\ms2e-vts-probe\preflight-20261021-210035.txt · 출력/덤프 원문 스캔 = 키 · 토큰 · 계좌 0건(8자리 숫자는 msg_cd 뿐). 송출 = VTS 2요청뿐(주문 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,647 통과 + 3 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40.
+  ★1차 전체 실행 1건 실패(LongSoakMemoryProfileTests.Soak24h · ThreadPoolStall 헬스 오작동 · 제외 GC 정지 91ms — 호스트 부하 타이밍 · 이번 변경과 무관 경로) → 단독 7/7 · 2차 전체 0 실패.
+- 한계(정직): 토큰 1일 발급 횟수 제한(KIS 정책) 고려 — 내일 거부 프로브는 별도 토큰 재발급. 계좌 상품코드 01 가정(DB 8자리). 실도메인 미접속(검증 대상 아님). H0STMKO0 · 체결통보 WebSocket 은 이번 범위 밖.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · 제품 코드 변경 0 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

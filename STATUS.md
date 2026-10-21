@@ -1,14 +1,13 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.52-GM 출하 완료 — 피드 정지 워치독 · 세션 침묵 판정 KRX 달력 일원화 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,632 통과 2 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40 · [0/11]~[11/11] 원패스
+- **Active Milestone**: v12.18.53-DEV — KIS 모의투자(VTS) REST 사전 통신 점검 프로브(토큰 발급 · VTTC8434R 잔고 · 주문 0 · 마스킹)
+- **Build Status**: 오중 빌드 Release -warnaserror 0/0 · 전체 스위트 4,647 통과 3 건너뜀(옵트인) · 실패 0 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-21
 
 ## Completed Deliverables
-- 버전 12.18.52 승격(9f8bae4) · 태그 v12.18.52-GM · 클린 worktree -NoPeer 패키징 exit 0
-- release-v12.18.52-GM.zip(BAB216BB) · StockManager-v12.18.52-Standalone-win-x64.zip(5848EE20) · masterSeal 217354F4 · 봉인 38 아티팩트
-- 배포본 봉인 오버레이 38 바이너리 바이트 동일 · 격리 기동 HWND 실측 · CLI 4종(verify-zip/live-armed/interlocks 30/tighten 6) exit 0
-- v12.18.51-GM 산출물 superseded 이관 · HANDOVER §150
+- VtsPreFlightConnectivityProbe(테스트 전용): portfolio.db PaperDomestic DPAPI 자격증명 읽기 전용 판독 · 송출 허용 목록(토큰 POST · VTTC8434R GET만) · 마스킹
+- 실측: 토큰 발급 성공(HTTP 200 · 86,400s · 319.6ms) · 잔고 조회 성공(rt_cd 0 · 예수금 1억 원 · 57.9ms) · 출력 원문 노출 0
+- 오프라인 테스트 15건 + 옵트인 1건 · 사보타주 2건 실패 확인 · HANDOVER §151
 
 ## Next Milestone
-- 2027 KRX 공지/2028학년도 수능일 대조 · 달력 2028+ 연장 · H0STMKO0 VTS 캡처 · 미설치 PC 배포본 실기 확인
+- 장중 VTS 고의 거부 캡처(MS2E_KIS_VTS_PROBE=1) · H0STMKO0 VTS 캡처 · 2027 KRX 공지 대조 · 달력 2028+ 연장 · 미설치 PC 배포본 실기 확인
