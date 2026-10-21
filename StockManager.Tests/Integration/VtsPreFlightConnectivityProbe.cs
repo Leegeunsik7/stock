@@ -4,6 +4,7 @@
 //  목적: 장중 VTS 고의 거부 캡처(VtsOrderRejectionProbeHarness) 전에 portfolio.db 에 DPAPI 로 봉인된 PaperDomestic 자격증명이
 //   실제 VTS 서버에서 통하는지 확인한다 — POST /oauth2/tokenP(access_token · 수명) → GET inquire-balance(VTTC8434R · 예수금).
 //  ★자격증명: %LOCALAPPDATA%\StockManager\portfolio.db Settings 의 KIS.Profile.PaperDomestic.{AppKey · AppSecret · Account} 만(다른 프로필 키 판독 0).
+//   [v12.18.53] 해외 모의(KisOverseasPaperProbe)는 Load(db, "PaperOverseas") — 허용 프로필 = 모의 2종뿐(Real · PaperFutures = 거부 · DB 미접속).
 //   읽기 전용 연결(Mode=ReadOnly · LocalDatabase 미사용 = 스키마 초기화/WAL 전환 쓰기 0). 값이 enc:v1:(DPAPI) 가 아니면 거부(평문 저장 = 미실행).
 //  ★송출 허용 목록(그 외 = 예외 · HttpMessageInvoker.SendAsync 이전이라 패킷 0):
 //   ① POST https://openapivts.koreainvestment.com:29443/oauth2/tokenP · tr_id 헤더 없음
@@ -27,10 +28,11 @@ using Xunit;
 
 namespace StockManager.Tests.Integration
 {
-    /// <summary>portfolio.db PaperDomestic 프로필 자격증명(복호 평문 — 출력 금지 · ToString 마스킹).</summary>
+    /// <summary>portfolio.db 모의투자 프로필 자격증명(PaperDomestic · [v12.18.53] PaperOverseas — 복호 평문 · 출력 금지 · ToString 마스킹).</summary>
     public sealed class VtsPreFlightCredentials
     {
         public const string Profile = "PaperDomestic";
+        public const string OverseasProfile = "PaperOverseas";
         public const string KeyPrefix = "KIS.Profile." + Profile + ".";
         public const string AppKeyKey = KeyPrefix + "AppKey", SecretKey = KeyPrefix + "AppSecret", AccountKey = KeyPrefix + "Account";
         public const string OptInVar = "MS2E_KIS_VTS_PREFLIGHT";
@@ -39,10 +41,15 @@ namespace StockManager.Tests.Integration
         public string Secret { get; }
         public string Cano { get; }
         public string Prdt { get; }
+        public string ProfileName { get; }
 
-        public VtsPreFlightCredentials(string appKey, string secret, string cano, string prdt) => (AppKey, Secret, Cano, Prdt) = (appKey, secret, cano, prdt);
+        public VtsPreFlightCredentials(string appKey, string secret, string cano, string prdt, string profile = Profile)
+            => (AppKey, Secret, Cano, Prdt, ProfileName) = (appKey, secret, cano, prdt, profile);
 
-        public override string ToString() => "PaperDomestic(appkey=" + VtsPayloadMask.Mask(AppKey) + " · cano=" + VtsPayloadMask.Mask(Cano) + ")";
+        public override string ToString() => ProfileName + "(appkey=" + VtsPayloadMask.Mask(AppKey) + " · cano=" + VtsPayloadMask.Mask(Cano) + ")";
+
+        /// <summary>판독 허용 프로필 — 모의 2종만(Real · PaperFutures · 활성 키 = 거부 · 판독 0).</summary>
+        public static bool IsAllowedProfile(string profile) => profile is Profile or OverseasProfile;
 
         public static string DefaultDbPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "StockManager", "portfolio.db");
 
@@ -64,15 +71,21 @@ namespace StockManager.Tests.Integration
         }
 
         /// <summary>읽기 전용 판독 → DPAPI 복호. 키 부재 · 비암호화(평문 저장) · 복호 실패 · 계좌 형식 이탈 = 사유 문자열과 함께 null.</summary>
-        public static VtsPreFlightCredentials? Load(string dbPath, out string? failure)
+        public static VtsPreFlightCredentials? Load(string dbPath, out string? failure) => Load(dbPath, Profile, out failure);
+
+        /// <summary>프로필 지정 판독(허용 프로필 밖 = DB 미접속 · 거부).</summary>
+        public static VtsPreFlightCredentials? Load(string dbPath, string profile, out string? failure)
         {
             failure = null;
+            if (!IsAllowedProfile(profile)) { failure = "프로필 " + profile + " 판독 거부(모의 PaperDomestic · PaperOverseas 만)"; return null; }
+            string prefix = "KIS.Profile." + profile + ".";
+            string appKeyKey = prefix + "AppKey", secretKey = prefix + "AppSecret", accountKey = prefix + "Account";
             var raw = new Dictionary<string, string?>(StringComparer.Ordinal);
             var csb = new SqliteConnectionStringBuilder { DataSource = dbPath, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
             using (var conn = new SqliteConnection(csb.ToString()))
             {
                 conn.Open();
-                foreach (var k in new[] { AppKeyKey, SecretKey, AccountKey })
+                foreach (var k in new[] { appKeyKey, secretKey, accountKey })
                 {
                     using var cmd = conn.CreateCommand();
                     cmd.CommandText = "SELECT Value FROM Settings WHERE [Key]=@k";
@@ -89,8 +102,8 @@ namespace StockManager.Tests.Integration
                 if (string.IsNullOrWhiteSpace(p)) { failure = k + " DPAPI 복호 실패(다른 사용자/PC 봉인)"; return null; }
                 plain[k] = p.Trim();
             }
-            if (!TryParseAccount(plain[AccountKey], out var cano, out var prdt)) { failure = AccountKey + " 형식 이탈(8자리 또는 8-2자리)"; return null; }
-            return new VtsPreFlightCredentials(plain[AppKeyKey], plain[SecretKey], cano, prdt);
+            if (!TryParseAccount(plain[accountKey], out var cano, out var prdt)) { failure = accountKey + " 형식 이탈(8자리 또는 8-2자리)"; return null; }
+            return new VtsPreFlightCredentials(plain[appKeyKey], plain[secretKey], cano, prdt, profile);
         }
     }
 

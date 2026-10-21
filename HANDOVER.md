@@ -3608,3 +3608,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   ★1차 전체 실행 1건 실패(LongSoakMemoryProfileTests.Soak24h · ThreadPoolStall 헬스 오작동 · 제외 GC 정지 91ms — 호스트 부하 타이밍 · 이번 변경과 무관 경로) → 단독 7/7 · 2차 전체 0 실패.
 - 한계(정직): 토큰 1일 발급 횟수 제한(KIS 정책) 고려 — 내일 거부 프로브는 별도 토큰 재발급. 계좌 상품코드 01 가정(DB 8자리). 실도메인 미접속(검증 대상 아님). H0STMKO0 · 체결통보 WebSocket 은 이번 범위 밖.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · 제품 코드 변경 0 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 152. v12.18.53-DEV — 미국 증시 달력(NYSE 휴장 · 조기 폐장 · 서머타임) · 세션 상태 머신 · $0.01 호가 정렬 · KIS 해외 모의(VTTS3012R) 통신 점검 (2026-10-21)
+
+- 오더 전제 대조(정직): ① StockManager/Engines/Pricing/ 디렉터리 부재 → 신규 생성(UsTickAligner 1파일). Engines/Feeds/ 는 기존재(KRX 달력 · 세션 머신 옆에 배치).
+  ② portfolio.db Settings 에 KIS.Profile.PaperOverseas.{AppKey · AppSecret · Account} 3종 전부 enc:v1:(DPAPI) 실재 확인(값 미출력). ③ 오더의 '연방 공휴일' 목록 중 Good Friday 는 연방 공휴일이 아닌 NYSE 휴장일 · Columbus/Veterans Day 는 연방 공휴일이지만 NYSE 개장 → NYSE 기준으로 산정.
+- 신규 Engines/Feeds/UsTradingCalendar.cs: NYSE 평일 휴장일 2024~2027(41일 · 2025-01-09 카터 국장 특별 휴장 포함 · 토/일 대체 규칙 · 신정 토요일 = 12/31 대체 없음) · 조기 폐장일 9일(13:00 ET) ·
+  서머타임 규칙 산정(3월 둘째 일요일 07:00 UTC ~ 11월 첫째 일요일 06:00 UTC · TimeZoneInfo 미사용 = OS tz DB 의존 0) · 표 범위 밖 = 휴장(fail-closed) · 무할당 이진 탐색.
+- 신규 Engines/Feeds/UsSessionStateMachine.cs: 페이즈 Closed/PreMarket(04:00)/ContinuousTrading(09:30~16:00)/AfterHours(~20:00 ET)/HolidayOrWeekend/CalendarUncovered · 조기 폐장 13:00/17:00 ET ·
+  ★매매일 = 미 동부 날짜(KST 자정 넘는 정규장 = 개장 측 세션). KST 환산 EDT 17:00/22:30/05:00/09:00 · EST 18:00/23:30/06:00/10:00. 진입점 KST · UTC 마이크로초 · 미 동부(범위 밖 = DateTime 생성 전 차단 · 예외 0).
+- 신규 Engines/Pricing/UsTickAligner.cs: QPrice raw 10^8 · $1 이상 $0.01 · 미만 $0.0001(Reg NMS 612) · 보호 방향 내림/올림 · 반올림 · ≤0 · 올림 오버플로 = 0(무효). 제품 배선 0(신규 정적 엔진만 · 소비자 미결속).
+- 신규 테스트 도구 Integration/KisOverseasPaperProbe.cs: 송출 허용 목록 = POST /oauth2/tokenP[tr_id 없음] · GET /uapi/overseas-stock/v1/trading/inquire-balance[tr_id 정확히 VTTS3012R 1개 · 본문 0] —
+  실도메인 · 위장 호스트 · http · 해외 주문 TR(VTTT1002U/1001U) · 실 TR(TTTS3012R) · 국내 경로/TR = SendAsync 전 예외 · 자동 리다이렉트 꺼짐. 자격증명 = VtsPreFlightCredentials.Load(db, "PaperOverseas")
+  (§151 로더를 프로필 허용 목록화 — 모의 2종만 · Real/PaperFutures/대소문자 변형/인젝션 문자열 = DB 미접속 거부 · 국내 기본 오버로드 동작 불변). 국내 프로필로 해외 점검 = 송출 전 거부. USD 금액 decimal → raw 10^8(오버플로 = Missing). 옵트인 MS2E_KIS_VTS_OVERSEAS=1(국내 사전 점검 · 주문 프로브 옵트인과 분리).
+- 테스트: UsTradingCalendarTests 82건(표 양방향 전수 · Good Friday/추수감사절 휴장 · Columbus/Veterans 개장 · DST 4년 경계 1틱 · ★OS 시간대 DB 30분 격자 70,128점 전수 일치 · EDT/EST KST 경계 17종 ·
+  22:30 KST 정규장 전이 · 미 동부 날짜 기준 매매일 · 조기 폐장 · 전환 주간 · 범위 밖 · KST/UTC 진입점 7분 격자 4년 일치 · 호가 20만 난수 격자 · ★10만 회 세션 판정+호가 정렬 ZeroAllocProbe 0B) ·
+  KisOverseasPaperProbeTests 16건(오프라인 15 + 옵트인 1). 사보타주(개장 09:00 · 조기 폐장 무시 · DST 06:00 UTC · Good Friday 삭제 · 빌드 0E 확인) → 15건 실패 후 원복 · 82/82 복귀.
+- ★실측(2026-10-21 22:07 KST · 옵트인 1회 · 미 프리마켓 중): 토큰 발급 HTTP 200 · 346자 · expires_in 86400s · 지연 257.4ms /
+  해외 잔고 VTTS3012R HTTP 200 · rt_cd 0 · msg_cd 70070000 '모의투자 조회할 내역(자료)이 없습니다.' · 보유 0행 · 외화매입/평가손익/총손익 $0.00 · 지연 30.0ms.
+  덤프 %TEMP%\ms2e-vts-probe\overseas-20261021-220739.txt · 패턴 스캔 = 8자리 이상 숫자는 msg_cd 뿐 · 12자 이상 영숫자 연속 0 · 'eyJ' 0. 송출 = VTS 2요청뿐(주문 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 전체 스위트 결과 = STATUS.md 참조.
+- 한계(정직): 2027 휴장/조기 폐장 = NYSE 공지 기준 · 임시 휴장(국장 등) 시 표 갱신 필요 · 2028+ 미등재(fail-closed). 해외 잔고는 NASD 단일 거래소 조회(모의 = 거래소별) · NYSE/AMEX 미조회.
+  세션 머신 · 호가 정렬기는 제품 경로 미배선(해외 주문 경로 자체가 없음 · liveArmed:false) — 소비자 결속은 별도 마일스톤. 예수금(외화 주문가능) 조회 TR 은 범위 밖.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
