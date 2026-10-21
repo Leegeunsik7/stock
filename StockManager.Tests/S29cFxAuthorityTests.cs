@@ -92,10 +92,11 @@ namespace StockManager.Tests
             var gate = new ShadowCutoverGate(true, Reg(), new OrderAttestationService(), ClearingAuthority.QFixedPrimary);
             var fx = Fx(); var b = Bounds();
             for (int i = 0; i < 10_000; i++) gate.ClearBase("AAPL", 100.00m, 1m, OrderSide.Buy, fx, b);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) gate.ClearBase("AAPL", 100.00m, 1m, OrderSide.Buy, fx, b);
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.True(delta < 50_000, $"통과 경로 per-call 힙 0(JIT 노이즈만) — delta={delta}");
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) gate.ClearBase("AAPL", 100.00m, 1m, OrderSide.Buy, fx, b);
+            });
+            Assert.Equal(0, delta);   // [v12.18.48-DEV] 예전 완화 임계(< 50,000B)를 0 으로 복원 — 다중 창 최솟값이 잡음을 걸러낸다
         }
 
         // ═══════════════════ v4.60.0 Path Alpha 컷오버 배선 핀포인트 박제 ═══════════════════

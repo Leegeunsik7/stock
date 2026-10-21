@@ -174,9 +174,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { il.Note(TelemetrySource.Latency, 10_000); _ = il.CanEmit; }   // 미초과 경로(워밍업)
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { il.Note(TelemetrySource.Latency, 10_000); if (!il.CanEmit) throw new Exception("x"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { il.Note(TelemetrySource.Latency, 10_000); if (!il.CanEmit) throw new Exception("x"); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

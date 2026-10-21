@@ -145,7 +145,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();                        // OSR/tier-up 흡수
-            Assert.Equal(0L, Measure());          // ★VaR 스캔 힙 0바이트
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));          // ★VaR 스캔 힙 0바이트
         }
 
         // ── 8) Monte Carlo VaR: 결정론(동일 시드 동일 결과) + 핫패스 δ=0 ──
@@ -170,7 +170,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());          // ★MC 시뮬 힙 0(사전할당 _mc/_z/_chol 재사용)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));          // ★MC 시뮬 힙 0(사전할당 _mc/_z/_chol 재사용)
         }
 
         // ── 9) 리스크 밸브: VaR/스트레스 한도 초과 시 LimitBreached, 여유 시 해제 ──

@@ -19,6 +19,7 @@ using MS2E.Core;
 using MS2E.Infrastructure;
 using StockManager.Tools;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -58,18 +59,6 @@ namespace StockManager.Tests
             char c = hex[^1];
             char f = c == '0' ? '1' : '0';
             return hex[..^1] + f;
-        }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
         }
 
         // ════════════ §1 앵커 교착(실결함) ════════════

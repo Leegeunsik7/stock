@@ -19,6 +19,7 @@ using StockManager.Adapters;
 using StockManager.Blazor.Services;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Adapters
 {
@@ -43,18 +44,6 @@ namespace StockManager.Tests.Adapters
             r.M = new SessionRecoveryManager(broker, on => { if (on) r.Isolations++; }, requestReconcile: () => r.Confirmed = false,
                                              reconciled: () => r.Confirmed, maxFailures: maxFailures, nowTicks: () => r.Now);
             return r;
-        }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
         }
 
         private static string RepoRoot()

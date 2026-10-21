@@ -86,9 +86,10 @@ namespace StockManager.Tests
             var src = new byte[64];
             var dst = new byte[256];
             for (int i = 0; i < 10_000; i++) { ring.Publish(src, 1000 + i); ring.TryReadNext(dst, out _, out _, out _, out _); }  // 워밍업
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) { ring.Publish(src, 1000 + i); ring.TryReadNext(dst, out _, out _, out _, out _); }
-            Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);   // 발행+독출 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) { ring.Publish(src, 1000 + i); ring.TryReadNext(dst, out _, out _, out _, out _); }
+            })); // 발행+독출 힙 0
         }
 
         // ── 2) 오버런: newest-wins 회수를 '증명 가능'하게 계수(커널 크래시·조용한 드롭 0) ──
@@ -173,10 +174,11 @@ namespace StockManager.Tests
             sim.LoadLogBytes(file, out _); sim.RunToEnd(noop);   // 워밍업(tiered 안정화)
             sim.LoadLogBytes(file, out _); sim.RunToEnd(noop);
 
-            sim.LoadLogBytes(file, out _);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            long n = sim.RunToEnd(noop);
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long n = 0;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                n = sim.RunToEnd(noop);
+            }, reset: () => sim.LoadLogBytes(file, out _));   // 재생은 로그 소모 — 창마다 콜드 재적재(측정 밖)
             Assert.Equal(2000L, n);
             Assert.Equal(0L, delta);   // 디코드+2000 프레임 사출 힙 0
         }
@@ -192,10 +194,11 @@ namespace StockManager.Tests
             sim.LoadLogBytes(file, out _); sim.RunToEnd(noop);     // 워밍업(tiered JIT 안정화)
             sim.LoadLogBytes(file, out _); sim.RunToEnd(noop);
 
-            sim.LoadLogBytes(file, out _);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            long n = sim.RunToEnd(noop);
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long n = 0;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                n = sim.RunToEnd(noop);
+            }, reset: () => sim.LoadLogBytes(file, out _));   // 재생은 로그 소모 — 창마다 콜드 재적재(측정 밖)
             Assert.Equal(2000L, n);
             Assert.Equal(0L, delta);   // ★Brotli 프레임도 핫패스 힙 0(SafeBrotliDecoderHandle 할당은 콜드 Load 로 이관)
         }

@@ -150,9 +150,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) RoundtripHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) RoundtripHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) RoundtripHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

@@ -221,9 +221,14 @@ namespace StockManager.Tests
                     buf[5] = new(OnboardingCheckId.MigratedPortBindings,  OnboardingSeverity.Blocking, true);
 
                     for (int i = 0; i < 300_000; i++) { var r = OnboardingHealthSentinel.Evaluate(buf); if (r.Total < 0) throw new Exception("warm"); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { var r = OnboardingHealthSentinel.Evaluate(buf); if (r.Total < 0) throw new Exception("hot"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+                    {
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 100_000; i++) { var r = OnboardingHealthSentinel.Evaluate(buf); if (r.Total < 0) throw new Exception("hot"); }
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+                    }
+                    alloc = minAlloc;
                 }
                 catch (Exception e) { err = e; }
             });
@@ -244,9 +249,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { var r = OnboardingHealthSentinel.Diagnose(probe); if (r.Total < 0) throw new Exception("warm"); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { var r = OnboardingHealthSentinel.Diagnose(probe); if (r.Total < 0) throw new Exception("hot"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { var r = OnboardingHealthSentinel.Diagnose(probe); if (r.Total < 0) throw new Exception("hot"); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

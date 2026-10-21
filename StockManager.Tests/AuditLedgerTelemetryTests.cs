@@ -26,6 +26,7 @@ using StockManager.Engines;
 using StockManager.Security;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -34,18 +35,6 @@ namespace StockManager.Tests
     {
         private readonly ITestOutputHelper _out;
         public AuditLedgerTelemetryTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private sealed class Clock { public long T = new DateTime(2026, 10, 13, 0, 0, 0, DateTimeKind.Utc).Ticks; public long Next() => T += TimeSpan.TicksPerSecond; }
 

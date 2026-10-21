@@ -16,6 +16,7 @@ using System.Text.RegularExpressions;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -91,18 +92,6 @@ namespace StockManager.Tests
         }
 
         // ═══ §1 δ=0 ═══
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - before);
-            }
-            return min;
-        }
 
         [Fact]
         public void MaskInPlace_Is_Zero_Alloc_On_Mixed_Trading_Log()

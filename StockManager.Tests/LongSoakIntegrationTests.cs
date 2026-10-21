@@ -385,19 +385,25 @@ namespace StockManager.Tests
             var planted = new long[10];
             for (int k = 0; k < 10; k++) planted[k] = 600_000 + k * 1_000;
             j.Record(1, 0, 0, 0);
-            long a = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 1_000_000; i++)
+            var allocWindows = new long[10];                                                       // 기록형 창 10개(같은 시퀀스 · 재실행 없음)
+            for (int w = 0; w < allocWindows.Length; w++)
             {
-                int p = i % 100_000 == 50_000 ? i / 100_000 : -1;
-                if (p >= 0) j.Record(planted[p], p < 3 ? 1 : 0, 9, i);
-                else j.Record(Next(), 0, 0, i);
+                long a = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = w * 100_000; i < (w + 1) * 100_000; i++)
+                {
+                    int p = i % 100_000 == 50_000 ? i / 100_000 : -1;
+                    if (p >= 0) j.Record(planted[p], p < 3 ? 1 : 0, 9, i);
+                    else j.Record(Next(), 0, 0, i);
+                }
+                allocWindows[w] = GC.GetAllocatedBytesForCurrentThread() - a;
             }
-            long alloc = GC.GetAllocatedBytesForCurrentThread() - a;
+            long alloc = 0;
+            foreach (long x in allocWindows) alloc += x;
             Span<JitterSpike> tail = stackalloc JitterSpike[16];
             Span<JitterSpike> ring = stackalloc JitterSpike[16];
             int tn = j.CopyTail(tail), rn = j.CopySpikes(ring);
             _out.WriteLine($"[지터 센티널] 표본 {j.Samples:N0} · 스파이크 {j.Spikes}(GC {j.GcSpikes} · 덮어씀 {j.Overwritten}) · 꼬리 {tn} · 1M 기록 할당 {alloc}B · p99.9 {j.Percentile(999) / 1000.0:F1}µs");
-            Assert.Equal(0, alloc);
+            Assert.True(ZeroAllocProbe.PassesRecorded(allocWindows), "1M 기록 창별 할당(B): " + string.Join(",", allocWindows));
             Assert.Equal(1_000_001L, j.Samples);
             Assert.Equal((10L, 3L, 2L), (j.Spikes, j.GcSpikes, j.Overwritten));                    // 링 8 → 오래된 2개 덮어씀
             Assert.Equal(16, tn);

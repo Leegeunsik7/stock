@@ -82,9 +82,10 @@ namespace StockManager.Tests
             {
                 using var pump = new JournalFlushPump(new CrashRecoveryJournaler(path, 16), new FakeProvider(), 16);
                 pump.RequestFlush();   // 워밍업
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                for (int k = 0; k < 500; k++) pump.RequestFlush();
-                Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);   // 핫패스 할당 0
+                Assert.Equal(0L, ZeroAllocProbe.MinAllocated(() =>
+                {
+                    for (int k = 0; k < 500; k++) pump.RequestFlush();
+                })); // 핫패스 할당 0
             }
             finally { TryDelete(path); }
         }

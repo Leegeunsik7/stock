@@ -19,6 +19,7 @@ using MS2E.Infrastructure;
 using StockManager.Adapters;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -30,18 +31,6 @@ namespace StockManager.Tests
 
         private const long Code = 5930, Limit = 70_000;
         private static readonly long Sec = TimeSpan.TicksPerSecond;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string RowJson(long odno, long qty, long rmn, long price = Limit, string side = "02", long org = 91252, string cncl = "N")
             => "{\"odno\":\"" + odno.ToString("D10") + "\",\"orgn_odno\":\"\",\"pdno\":\"005930\",\"ord_qty\":\"" + qty + "\",\"rmn_qty\":\"" + rmn

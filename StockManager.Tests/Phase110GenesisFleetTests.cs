@@ -69,7 +69,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★veto 경로 핫패스 힙 0(ledger begin/abort·Emit veto·캐시 델리게이트)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★veto 경로 핫패스 힙 0(ledger begin/abort·Emit veto·캐시 델리게이트)
         }
 
         // ══ 🧾 InFlightOrderReconciliationLedger (Think-Beyond) ════════════
@@ -118,7 +118,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★begin/reconcile 핫패스 힙 0(lock+고정 배열)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★begin/reconcile 핫패스 힙 0(lock+고정 배열)
         }
 
         // ══ ⚡ ExecutionTokenZeroizationGuard ══════════════════════════════
@@ -155,7 +155,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★토큰 주입/소멸 핫패스 힙 0(string 미생성)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★토큰 주입/소멸 핫패스 힙 0(string 미생성)
         }
 
         // ══ 📡 LiveExecutionTelemetryBridge ════════════════════════════════
@@ -188,7 +188,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★체결 통보 파싱 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★체결 통보 파싱 핫패스 힙 0
         }
     }
 }

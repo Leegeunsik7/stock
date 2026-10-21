@@ -18,6 +18,7 @@ using MS2E.Core;
 using MS2E.Infrastructure;
 using StockManager.Adapters;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -57,18 +58,6 @@ namespace StockManager.Tests
     [Collection("ConcurrencyStress")]
     public sealed class KiwoomComLiveIntegrationTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private sealed class Rig
         {
             public long Now = 1_000_000_000;

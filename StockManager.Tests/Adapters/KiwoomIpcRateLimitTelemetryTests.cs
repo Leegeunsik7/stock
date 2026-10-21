@@ -21,6 +21,7 @@ using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Blazor.Services;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Adapters
 {
@@ -36,18 +37,6 @@ namespace StockManager.Tests.Adapters
             public long T;
             public long Now() => Volatile.Read(ref T);
             public void Advance(long micros) => Interlocked.Add(ref T, micros);
-        }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
         }
 
         private sealed class Rig : IDisposable

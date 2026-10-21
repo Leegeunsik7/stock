@@ -92,7 +92,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★피처 추출 + ZMM/YMM 점적 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★피처 추출 + ZMM/YMM 점적 핫패스 힙 0
         }
 
         // ══ ⚡ SimdAlignedRingVectorizer: 정렬 로드 등가·δ=0 ═════════════════
@@ -119,7 +119,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Push + 정렬 로드 점적 힙 0(네이티브·스택 Vector)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Push + 정렬 로드 점적 힙 0(네이티브·스택 Vector)
         }
 
         // ══ ⚡ AlphaSignalNoiseQuantizer: SNR 스푸핑 억제·δ=0 ════════════════
@@ -155,7 +155,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★SIMD SNR 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★SIMD SNR 핫패스 힙 0
         }
 
         // ══ 🧠 AvxExecutionWidthAutotuner: 지연 최소 폭 선택 ═════════════════

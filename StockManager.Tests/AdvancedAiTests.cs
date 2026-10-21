@@ -276,9 +276,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 20_000; i++) MultiFactorConvictionSynthesizer.ComputeConviction(_t, _f, _m, _s, 0.25f, 0.25f, 0.25f, 0.25f, _outArr);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 10_000; i++) MultiFactorConvictionSynthesizer.ComputeConviction(_t, _f, _m, _s, 0.25f, 0.25f, 0.25f, 0.25f, _outArr);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 10_000; i++) MultiFactorConvictionSynthesizer.ComputeConviction(_t, _f, _m, _s, 0.25f, 0.25f, 0.25f, 0.25f, _outArr);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -299,9 +300,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) MultiLlmConsensusVoter.Consensus(_votes);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) MultiLlmConsensusVoter.Consensus(_votes);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) MultiLlmConsensusVoter.Consensus(_votes);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -327,9 +329,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 20_000; i++) RecordResolveHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 10_000; i++) RecordResolveHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 10_000; i++) RecordResolveHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -357,9 +360,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) RegimeHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) RegimeHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) RegimeHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

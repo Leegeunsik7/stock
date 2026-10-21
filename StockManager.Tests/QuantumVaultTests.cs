@@ -47,7 +47,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★제로화+판독 검증 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★제로화+판독 검증 힙 0
         }
 
         // ══ 🛡️ QuantumVaultSentinel (주입 탐지·테스트 안전) ═════════════════
@@ -105,7 +105,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★탐지 술어 false 경로 힙 0(브리치 경로만 할당)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★탐지 술어 false 경로 힙 0(브리치 경로만 할당)
         }
 
         [Fact]
@@ -154,7 +154,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 🪝 AntiHookingCodeIntegrityGuard (주입 판독기) ═══════════════════
@@ -205,7 +205,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★핫패스 스냅샷 읽기 힙 0(Volatile.Read)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★핫패스 스냅샷 읽기 힙 0(Volatile.Read)
         }
 
         [Fact]

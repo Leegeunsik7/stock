@@ -89,9 +89,10 @@ namespace StockManager.Tests
             var ch = new RingTelemetryChannel();
             var t = R(7);
             for (int i = 0; i < 10_000; i++) { ch.Publish(t); ch.TryRead(out _); }   // 워밍업(tiered 안정화)
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) { ch.Publish(t); ch.TryRead(out _); }
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // 값타입 in/out — 박싱·힙 0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) { ch.Publish(t); ch.TryRead(out _); }
+            })); // 값타입 in/out — 박싱·힙 0
         }
 
         [Fact]

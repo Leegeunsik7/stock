@@ -20,6 +20,7 @@ using MS2E.Infrastructure;
 using StockManager.Adapters;
 using StockManager.Services;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -30,18 +31,6 @@ namespace StockManager.Tests
         private const string Account = "8012345611";
         private const long Limit = 70_000;
         private static readonly long TickSec = TimeSpan.TicksPerSecond;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         // ── 원장 리그 ──
         private sealed class Exec

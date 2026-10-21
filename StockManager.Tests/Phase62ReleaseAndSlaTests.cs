@@ -72,7 +72,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // 기록 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // 기록 핫패스 힙 0
         }
 
         // ══ 📦 ReleasePackager ═══════════════════════════════════════════════

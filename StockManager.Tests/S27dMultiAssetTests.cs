@@ -46,14 +46,15 @@ namespace StockManager.Tests
             // ★실 사용 진입점(string 경로)의 무할당 실측 — HashId 순회 + 심볼 검증(string.Equals) 모두 힙 0.
             var reg = Reg();
             for (int i = 0; i < 10_000; i++) { reg.TryGet("AAPL", out _); }
-            long before = GC.GetAllocatedBytesForCurrentThread();
             int hits = 0;
-            for (int i = 0; i < 50_000; i++) if (reg.TryGet("AAPL", out _)) hits++;
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                hits = 0;
+                for (int i = 0; i < 50_000; i++) if (reg.TryGet("AAPL", out _)) hits++;
+            });
             Assert.Equal(50_000, hits);
-            // per-call 힙 할당 0 입증 — per-call 할당이 있었다면 50k×(최소객체 24B) ≥ 1.2MB. 측정 δ 는 그 1/300 미만
-            //   (string 경로의 더 복잡한 코드가 측정 윈도우 중 tiered-JIT 재컴파일되며 남기는 일회성 ~수백B 노이즈만).
-            Assert.True(delta < 50_000, $"per-call 할당 0(일회성 JIT 노이즈만) — delta={delta}");
+            // [v12.18.48-DEV] 예전 완화 임계(< 50,000B · 일회성 tiered-JIT 잡음 흡수)를 0 으로 복원 — 다중 창 최솟값이 잡음을 걸러낸다.
+            Assert.Equal(0, delta);
         }
 
         [Fact]
@@ -62,10 +63,12 @@ namespace StockManager.Tests
             var reg = Reg();
             long key = QTickRegistry.Key("AAPL");
             for (int i = 0; i < 10_000; i++) { reg.TryGet(key, out _); }
-            long before = GC.GetAllocatedBytesForCurrentThread();
             int hits = 0;
-            for (int i = 0; i < 50_000; i++) if (reg.TryGet(key, out _)) hits++;
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                hits = 0;
+                for (int i = 0; i < 50_000; i++) if (reg.TryGet(key, out _)) hits++;
+            });
             Assert.Equal(50_000, hits);
             Assert.Equal(0, delta);   // FrozenDictionary long 키·struct out — 박싱·힙 0
         }
@@ -141,9 +144,10 @@ namespace StockManager.Tests
             var quote = new QFxQuote(QFxRate.Of(1330m), QFxRate.Of(1331m));
             var bounds = KrwUsdBounds(); var att = new OrderAttestationService();
             for (int i = 0; i < 10_000; i++) { QFxGuard.TryConvertOrFreeze(QMoney.Of(100m), quote, OrderSide.Buy, bounds, att, out _); }
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) { QFxGuard.TryConvertOrFreeze(QMoney.Of(100m), quote, OrderSide.Buy, bounds, att, out _); }
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // 정상 환산 핫패스 δ=0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) { QFxGuard.TryConvertOrFreeze(QMoney.Of(100m), quote, OrderSide.Buy, bounds, att, out _); }
+            })); // 정상 환산 핫패스 δ=0
         }
 
         // ═══════════════════ §3 멀티-자산 카오스 ═══════════════════

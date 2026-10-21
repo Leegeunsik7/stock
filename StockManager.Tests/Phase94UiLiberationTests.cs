@@ -58,7 +58,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★타입키 조회 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★타입키 조회 핫패스 힙 0
         }
 
         // ══ 🎛️ StateAwareRenderGovernor ════════════════════════════════════
@@ -109,7 +109,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★렌더 판정 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★렌더 판정 핫패스 힙 0
         }
 
         // ══ 🧵 UiEventBoundaryBroker (Think-Beyond) ═════════════════════════
@@ -179,7 +179,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★발행/배수 핫패스 힙 0(값타입 struct 링·델리게이트 0)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★발행/배수 핫패스 힙 0(값타입 struct 링·델리게이트 0)
         }
 
         // ══ 🧱 UI 어셈블리 순수성 — 0 Engine Ref 아크 불변식 ═══════════════

@@ -22,6 +22,7 @@ using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Adapters;
 using StockManager.Blazor;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Services
 {
@@ -86,18 +87,6 @@ namespace StockManager.Tests.Services
             var t = pf.ProbeAsync();
             clock.Advance(pf.Timeout);
             return await t.WaitAsync(Liveness);
-        }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - before);
-            }
-            return min;
         }
 
         private static string RepoRoot()

@@ -111,9 +111,14 @@ namespace StockManager.Tests
             FillValid(bp, bq, ap, aq);
             var lim = SimdRiskLimits.Default;
             for (int i = 0; i < 10_000; i++) SimdRiskInterlock.ValidateCore(bp, bq, ap, aq, lim);   // 워밍업
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 200_000; i++) SimdRiskInterlock.ValidateCore(bp, bq, ap, aq, lim);
-            Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);   // SIMD 핫패스 힙 0
+            long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+            for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+            {
+                long zb = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 200_000; i++) SimdRiskInterlock.ValidateCore(bp, bq, ap, aq, lim);
+                minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+            }
+            Assert.Equal(0L, minAlloc); // SIMD 핫패스 힙 0
         }
 
         // ══ 🔮 Task 2: SpeculativeOrderBook ══════════════════════════════════
@@ -184,9 +189,14 @@ namespace StockManager.Tests
             var spec = new SpeculativeOrderBook();
             long fp = SpeculativeOrderBook.FingerprintLadder(bp, bq, ap, aq);
             for (int i = 0; i < 10_000; i++) { spec.Prime(0, bp, bq, ap, aq); spec.TryResolve(fp, out _); }   // 워밍업
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 200_000; i++) { spec.Prime(0, bp, bq, ap, aq); spec.TryResolve(fp, out _); }
-            Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);   // 사전연산+적중 힙 0
+            long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+            for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+            {
+                long zb = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 200_000; i++) { spec.Prime(0, bp, bq, ap, aq); spec.TryResolve(fp, out _); }
+                minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+            }
+            Assert.Equal(0L, minAlloc); // 사전연산+적중 힙 0
         }
 
         // ══ 🦅 Task 3: ClaudeBlackSwanEngine (선지 캐시-예열 격자) ══════════════
@@ -252,7 +262,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();                          // 웜업 런(OSR/tier-up 흡수)
-            Assert.Equal(0L, Measure());   // 선지 관통 힙 0(포인터 접근) — 안정 측정
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // 선지 관통 힙 0(포인터 접근) — 안정 측정
         }
 
         [Fact]

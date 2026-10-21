@@ -39,9 +39,10 @@ namespace StockManager.Tests
             var inj  = new CausalChaosInjector(ring);
             inj.MicroBurst(100_000);                     // 워밍업(tiered JIT 안정화)
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            inj.MicroBurst(2_000_000);
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                inj.MicroBurst(2_000_000);
+            });
 
             Assert.Equal(0L, delta);                     // 주입 루프 힙 0(사전할당 스크래치 재사용)
         }

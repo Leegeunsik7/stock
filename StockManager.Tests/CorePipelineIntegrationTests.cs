@@ -290,9 +290,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) PubDrainHot();   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) PubDrainHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) PubDrainHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -321,9 +322,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) CacheHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) CacheHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) CacheHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

@@ -26,6 +26,7 @@ using StockManager.Simulation;
 using StockManager.Telemetry;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -36,18 +37,6 @@ namespace StockManager.Tests
         private const long Ms = 10_000;                                          // 허브 시계(100ns 틱) 1ms
         private readonly ITestOutputHelper _out;
         public DashboardLatencyVisualizerTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string RepoRoot()
         {
@@ -408,7 +397,8 @@ namespace StockManager.Tests
             var p = new OrderPathStageProfiler(1024);
             var hub = new DashboardSnapshotHub(orderPath: p);
             const int Orders = 200_000;
-            long drainAlloc = -1, over1ms = 0, maxTicks = 0, torn = 0, reads = 0;
+            long drainAlloc = 0, over1ms = 0, maxTicks = 0, torn = 0, reads = 0;
+            var drainWindows = new long[8];                                                       // Orders 는 8 의 배수
             int stop = 0;
             var pump = new Thread(() => { while (Volatile.Read(ref stop) == 0) { hub.Pump(); var f = hub.Acquire(); if (f is not null) hub.Release(f); } }) { IsBackground = true };
             var reader = new Thread(() =>
@@ -425,23 +415,27 @@ namespace StockManager.Tests
             {
                 long oneMs = System.Diagnostics.Stopwatch.Frequency / 1000;
                 for (int i = 0; i < 2_000; i++) Step(p, i + 1);                                       // 워밍업(JIT)
-                long a0 = GC.GetAllocatedBytesForCurrentThread();
-                for (int i = 0; i < Orders; i++)
+                for (int w = 0; w < drainWindows.Length; w++)                                         // 기록형 창 8개(같은 시퀀스 · 재실행 없음)
                 {
-                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                    Step(p, 10_000 + i);
-                    long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
-                    if (dt > oneMs) over1ms++;
-                    if (dt > maxTicks) maxTicks = dt;
+                    long a0 = GC.GetAllocatedBytesForCurrentThread();
+                    for (int i = w * (Orders / 8); i < (w + 1) * (Orders / 8); i++)
+                    {
+                        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        Step(p, 10_000 + i);
+                        long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                        if (dt > oneMs) over1ms++;
+                        if (dt > maxTicks) maxTicks = dt;
+                    }
+                    drainWindows[w] = GC.GetAllocatedBytesForCurrentThread() - a0;
                 }
-                drainAlloc = GC.GetAllocatedBytesForCurrentThread() - a0;
+                foreach (long x in drainWindows) drainAlloc += x;
             });
             pump.Start(); reader.Start(); drain.Start();
             drain.Join();
             Volatile.Write(ref stop, 1);
             pump.Join(); reader.Join();
             _out.WriteLine($"[무간섭] 드레인 {Orders:N0}건 · 1ms 초과 {over1ms} · 최대 {maxTicks * 1_000_000 / System.Diagnostics.Stopwatch.Frequency}µs · 펌프 {hub.Pumps:N0} · 게시 {hub.Published:N0} · 판독 {reads:N0} · 찢김 {torn}");
-            Assert.Equal(0, drainAlloc);
+            Assert.True(ZeroAllocProbe.PassesRecorded(drainWindows), "드레인 창별 할당(B): " + string.Join(",", drainWindows));   // 창 1개 GC 잡음만 허용
             Assert.True(over1ms <= Orders / 1000, "1ms 초과 " + over1ms);
             Assert.Equal(0, torn);
             Assert.True(hub.Pumps >= 10 && hub.Published >= 2 && reads >= 10, "동시성 비공허성");

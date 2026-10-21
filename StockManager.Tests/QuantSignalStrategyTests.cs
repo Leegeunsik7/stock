@@ -22,6 +22,7 @@ using StockManager.Blazor.Services;
 using StockManager.Engines;
 using StockManager.Simulation;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -29,18 +30,6 @@ namespace StockManager.Tests
     public sealed class QuantSignalStrategyTests
     {
         private const long Px = 70_000, Tick = 100, Sym = 5930;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private sealed class Clock { public long Now = 1_000_000; public long Step; public long Read() { long n = Now; Now += Step; return n; } }
 

@@ -14,24 +14,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using MS2E.Core;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed class BrokerRouterResilienceTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private static (LockFreeBrokerSwitchboard Board, BrokerFailoverSentinel Sentinel, PendingOrderCascadeCanceller Pending, ResilientOrderRouter Router)
             Rig(int brokers = 2, Action? onDual = null, BrokerHeartbeatBitmaskMonitor? hb = null, long maxSlipBps = 50)
         {

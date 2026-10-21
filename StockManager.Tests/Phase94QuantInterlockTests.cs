@@ -127,7 +127,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★가드(Volatile/Interlocked 읽기 + 캐시 델리게이트 invoke) 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★가드(Volatile/Interlocked 읽기 + 캐시 델리게이트 invoke) 힙 0
             il.Dispose();
         }
     }

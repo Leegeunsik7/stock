@@ -18,6 +18,7 @@ using System.Threading;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -35,18 +36,6 @@ namespace StockManager.Tests
 
         private static bool Consistent(in FlightRecordEvent r)
             => r.Sequence > 0 && r.TimestampTicks == r.Sequence * 10 && r.Arg0 == r.Sequence * 7 && r.Arg1 == ~r.Sequence && r.Arg2 == (r.Sequence ^ 0x5A5A);
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         // ═══ §1 블랙박스 헤더 검증 · 복구 ═══
 

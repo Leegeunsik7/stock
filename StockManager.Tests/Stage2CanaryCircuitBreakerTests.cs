@@ -218,9 +218,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) acc.TryReserve(1L);       // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) acc.TryReserve(1L);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) acc.TryReserve(1L);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -241,9 +242,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { if (!z.Validate(token)) throw new Exception("warm"); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { if (!z.Validate(token)) throw new Exception("hot"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { if (!z.Validate(token)) throw new Exception("hot"); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

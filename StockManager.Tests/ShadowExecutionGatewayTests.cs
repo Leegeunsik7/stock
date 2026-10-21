@@ -333,9 +333,10 @@ namespace StockManager.Tests
                 {
                     var o = Buy();
                     for (int i = 0; i < 300_000; i++) gw.TryRoute(o, true, IgnitionStage.MasterIgnited);   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) gw.TryRoute(o, true, IgnitionStage.MasterIgnited);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) gw.TryRoute(o, true, IgnitionStage.MasterIgnited);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

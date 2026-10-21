@@ -167,9 +167,14 @@ namespace StockManager.Tests
                     Span<Row> dst = stackalloc Row[64];
                     var cur = new NumCur(64);
                     for (int i = 0; i < 300_000; i++) { cur.Reset(); ZeroAllocRowStreamMapper.Project(cur, dst, Proj); }   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { cur.Reset(); ZeroAllocRowStreamMapper.Project(cur, dst, Proj); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+                    {
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 100_000; i++) { cur.Reset(); ZeroAllocRowStreamMapper.Project(cur, dst, Proj); }
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+                    }
+                    alloc = minAlloc;
                 }
                 catch (Exception e) { err = e; }
             });
@@ -191,10 +196,16 @@ namespace StockManager.Tests
                     Span<GoldenMasterCheck> chk = stackalloc GoldenMasterCheck[5];
                     for (int i = 0; i < 5; i++) chk[i] = new GoldenMasterCheck((GmCheckId)(byte)i, true);
                     for (int i = 0; i < 300_000; i++) GoldenMasterBootSentinel.Evaluate(chk);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
                     bool sink = false;
-                    for (int i = 0; i < 100_000; i++) sink ^= GoldenMasterBootSentinel.Evaluate(chk).AllPassed;
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+                    {
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        sink = false;
+                        for (int i = 0; i < 100_000; i++) sink ^= GoldenMasterBootSentinel.Evaluate(chk).AllPassed;
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+                    }
+                    alloc = minAlloc;
                     if (sink && alloc < 0) err = new Exception("unreachable");
                 }
                 catch (Exception e) { err = e; }

@@ -119,13 +119,14 @@ namespace StockManager.Tests
                 gate.SetAuthority((i & 1) == 0 ? ClearingAuthority.QFixedPrimary : ClearingAuthority.LegacyPrimary);
                 gate.Clear(100.00m, 1m, OrderSide.Buy);
             }
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++)
+            long delta = ZeroAllocProbe.MinAllocated(() =>
             {
-                gate.SetAuthority((i & 1) == 0 ? ClearingAuthority.QFixedPrimary : ClearingAuthority.LegacyPrimary);
-                gate.Clear(100.00m, 1m, OrderSide.Buy);
-            }
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+                for (int i = 0; i < 50_000; i++)
+                {
+                    gate.SetAuthority((i & 1) == 0 ? ClearingAuthority.QFixedPrimary : ClearingAuthority.LegacyPrimary);
+                    gate.Clear(100.00m, 1m, OrderSide.Buy);
+                }
+            });
             Assert.Equal(0, delta);   // 권위 스왑+청산 핫패스 무할당
         }
 

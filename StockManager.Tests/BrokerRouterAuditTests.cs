@@ -216,9 +216,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) OrderParameterValidator.Validate(70_000, 10, 100, 0, 0);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) OrderParameterValidator.Validate(70_000, 10, 100, 0, 0);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) OrderParameterValidator.Validate(70_000, 10, 100, 0, 0);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -247,9 +248,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 20_000; i++) RegisterCancelHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 10_000; i++) RegisterCancelHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 10_000; i++) RegisterCancelHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

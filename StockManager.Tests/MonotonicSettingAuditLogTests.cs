@@ -26,6 +26,7 @@ using StockManager.Security;
 using StockManager.Tools;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -34,18 +35,6 @@ namespace StockManager.Tests
     {
         private readonly ITestOutputHelper _out;
         public MonotonicSettingAuditLogTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string TempFile() => Path.Combine(Path.GetTempPath(), "ms2e_audit_" + Guid.NewGuid().ToString("N"), "tighten-audit.mmf");
         private static void Cleanup(string f) { try { Directory.Delete(Path.GetDirectoryName(f)!, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }

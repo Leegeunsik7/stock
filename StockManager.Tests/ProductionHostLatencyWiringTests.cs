@@ -27,6 +27,7 @@ using StockManager.Telemetry;
 using StockManager.Tools;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -37,18 +38,6 @@ namespace StockManager.Tests
         private const long Ms = 1_000_000;                                       // ns
         private readonly ITestOutputHelper _out;
         public ProductionHostLatencyWiringTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string RepoRoot()
         {

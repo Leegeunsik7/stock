@@ -198,13 +198,14 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) demux.Signal(KillTransport.UsbButton);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++)
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
                     {
-                        demux.Signal(KillTransport.ComButton);   // 원자 OR + 분기(할당 0)
-                        if (demux.Fired(KillTransport.ComButton) && demux.FiredCount < 0) err = new Exception("unreachable");
-                    }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                        for (int i = 0; i < 100_000; i++)
+                        {
+                            demux.Signal(KillTransport.ComButton);   // 원자 OR + 분기(할당 0)
+                            if (demux.Fired(KillTransport.ComButton) && demux.FiredCount < 0) err = new Exception("unreachable");
+                        }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

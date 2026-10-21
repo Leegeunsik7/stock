@@ -152,14 +152,16 @@ namespace StockManager.Tests
         {
             var gate = new QAdmissionGate(Reg());
             for (int i = 0; i < 10_000; i++) gate.TryAdmit("AAPL", 213.92m, 3m, OrderSide.Buy, out _, out _, out _);
-            long before = GC.GetAllocatedBytesForCurrentThread();
             int ok = 0;
-            for (int i = 0; i < 50_000; i++)
-                if (gate.TryAdmit("AAPL", 213.92m, 3m, OrderSide.Buy, out _, out _, out _) == AdmitResult.Admitted) ok++;
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                ok = 0;
+                for (int i = 0; i < 50_000; i++)
+                    if (gate.TryAdmit("AAPL", 213.92m, 3m, OrderSide.Buy, out _, out _, out _) == AdmitResult.Admitted) ok++;
+            });
             Assert.Equal(50_000, ok);
-            // 통과 경로 per-call 힙 0 — TryGet(string) 경로의 일회성 JIT 노이즈만(있다면). per-call 할당 시 ≥1.2MB.
-            Assert.True(delta < 50_000, $"per-call 할당 0(JIT 노이즈만) — delta={delta}");
+            // [v12.18.48-DEV] 예전 완화 임계(< 50,000B · 일회성 JIT 잡음 흡수)를 0 으로 복원 — 다중 창 최솟값이 잡음을 걸러낸다.
+            Assert.Equal(0, delta);
         }
 
         // ═══════════════════ §6 카운터 ═══════════════════

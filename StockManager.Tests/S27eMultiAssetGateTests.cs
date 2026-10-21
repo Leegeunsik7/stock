@@ -173,11 +173,13 @@ namespace StockManager.Tests
         {
             var gate = new ShadowCutoverGate(true, Registry(), new OrderAttestationService());
             for (int i = 0; i < 10_000; i++) gate.Clear("005930", 70000m, 10m, OrderSide.Buy);   // 워밍업(tiered 안정화)
-            long before = GC.GetAllocatedBytesForCurrentThread();
             decimal sink = 0m;
-            for (int i = 0; i < 50_000; i++) sink = gate.Clear("005930", 70000m, 10m, OrderSide.Buy);
-            Assert.True(sink > 0m);
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // 심볼조회 + 청산 핫패스 δ=0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                sink = 0m;
+                for (int i = 0; i < 50_000; i++) sink = gate.Clear("005930", 70000m, 10m, OrderSide.Buy);
+                Assert.True(sink > 0m);
+            })); // 심볼조회 + 청산 핫패스 δ=0
         }
 
         [Fact]
@@ -186,11 +188,13 @@ namespace StockManager.Tests
             var gate = new ShadowCutoverGate(true, Registry(), new OrderAttestationService());
             var fx = UsdKrw(); var b = Bounds();
             for (int i = 0; i < 10_000; i++) gate.Clear("AAPL", 100.00m, 2m, OrderSide.Buy, fx, b);
-            long before = GC.GetAllocatedBytesForCurrentThread();
             decimal sink = 0m;
-            for (int i = 0; i < 50_000; i++) sink = gate.Clear("AAPL", 100.00m, 2m, OrderSide.Buy, fx, b);
-            Assert.True(sink > 0m);
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // FX 환산 + 수렴 펜스 핫패스 δ=0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                sink = 0m;
+                for (int i = 0; i < 50_000; i++) sink = gate.Clear("AAPL", 100.00m, 2m, OrderSide.Buy, fx, b);
+                Assert.True(sink > 0m);
+            })); // FX 환산 + 수렴 펜스 핫패스 δ=0
         }
 
         [Fact]

@@ -386,13 +386,14 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) mesh.ProcessTick(5930, 1 * Scale, 0, i);   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++)
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
                     {
-                        long res = mesh.ProcessTick(5930, 1 * Scale, 0, i);
-                        if (res == long.MinValue) throw new Exception("sink");
-                    }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                        for (int i = 0; i < 100_000; i++)
+                        {
+                            long res = mesh.ProcessTick(5930, 1 * Scale, 0, i);
+                            if (res == long.MinValue) throw new Exception("sink");
+                        }
+                    });
                 }
                 catch (Exception e) when (e.Message != "sink") { err = e; }
             });
@@ -417,9 +418,14 @@ namespace StockManager.Tests
                     its[2] = new StrategyIntent(2, 2, 5930, -20 * Scale, 100 * Scale);
                     its[3] = new StrategyIntent(3, 3, 5930, +10 * Scale, 100 * Scale);
                     for (int i = 0; i < 300_000; i++) { var r = netter.Net(its, 100 * Scale); if (r.CrossedQtyRaw < 0) throw new Exception("sink"); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { var r = netter.Net(its, 100 * Scale); if (r.CrossedQtyRaw < 0) throw new Exception("sink"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+                    {
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 100_000; i++) { var r = netter.Net(its, 100 * Scale); if (r.CrossedQtyRaw < 0) throw new Exception("sink"); }
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+                    }
+                    alloc = minAlloc;
                 }
                 catch (Exception e) when (e.Message != "sink") { err = e; }
             });

@@ -14,6 +14,7 @@ using System.Threading;
 using MS2E.Infrastructure;
 using MS2E.UI.Portable.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -40,18 +41,6 @@ namespace StockManager.Tests
     [Collection("ConcurrencyStress")]
     public sealed class MarketDataStreamGovernanceTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private static byte[] Pkt(long seq, string sym, long price, long qty, long ts = 0)
             => Encoding.UTF8.GetBytes($"{{\"seq\":{seq},\"symbol\":\"{sym}\",\"price\":{price},\"qty\":{qty},\"ts\":{ts}}}");
 

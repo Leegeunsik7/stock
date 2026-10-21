@@ -97,9 +97,10 @@ namespace StockManager.Tests
             var ch = new ForensicTelemetryChannel();
             var t = T(7);
             for (int i = 0; i < 10_000; i++) { ch.Publish(t); ch.TryRead(out _); }   // 워밍업(tiered 안정화)
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) { ch.Publish(t); ch.TryRead(out _); }
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) { ch.Publish(t); ch.TryRead(out _); }
+            });
             Assert.Equal(0, delta);   // 값 타입 in/out — 박싱·힙 0
         }
 

@@ -64,7 +64,7 @@ namespace StockManager.Tests
             var m = new MockExecutionOrderBookMirror();
             for (int i = 0; i < 10_000; i++) m.SealAndVirtualFill(i + 1, 5930, 0, 1, 100L * Scale, Scale);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) m.SealAndVirtualFill(i + 100_000, 5930, 0, 1, 100L * Scale, Scale); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★가상 체결 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★가상 체결 핫패스 힙 0
         }
 
         // ══ 🛡️ LiveFlightCertificationSealer ═══════════════════════════════
@@ -107,7 +107,7 @@ namespace StockManager.Tests
             var f = HealthyFrame();
             for (int i = 0; i < 10_000; i++) sealer.Certify(in f);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) sealer.Certify(in f); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★인증 채점 핫패스 힙 0(로컬 함수 무할당)
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★인증 채점 핫패스 힙 0(로컬 함수 무할당)
         }
 
         [Fact]

@@ -145,9 +145,10 @@ namespace StockManager.Tests
                 {
                     Volatile.Write(ref _seq, 0); _hot.Reset();
                     for (int i = 0; i < 300_000; i++) PulseHot();   // 워밍업(JIT+단조 전진)
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) PulseHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) PulseHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -167,10 +168,12 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { var s = ZeroAllocMemoryProfiler.Capture(); GC.KeepAlive(s.ThreadAllocBytes); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
                     long sink = 0;
-                    for (int i = 0; i < 100_000; i++) sink += ZeroAllocMemoryProfiler.Capture().Gen0;
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        sink = 0;
+                        for (int i = 0; i < 100_000; i++) sink += ZeroAllocMemoryProfiler.Capture().Gen0;
+                    });
                     if (sink < 0) err = new Exception("unreachable");
                 }
                 catch (Exception e) { err = e; }

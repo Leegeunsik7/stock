@@ -19,24 +19,13 @@ using StockManager.Buffers;
 using StockManager.Engines;
 using StockManager.Telemetry;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed class LatencyProfilerAndBufferTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private static OrderBookPayload Book(long code, long baseVal)
         {
             var b = new OrderBookPayload { SymbolCode = code, TimestampTicks = baseVal };

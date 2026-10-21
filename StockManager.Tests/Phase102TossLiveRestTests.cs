@@ -70,7 +70,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★실통신 응답 δ=0 파싱 — 1바이트 GC 유출 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★실통신 응답 δ=0 파싱 — 1바이트 GC 유출 0
         }
 
         // ══ 🛡 TossLiveApiGovernor (Think-Beyond) ════════════════════════════
@@ -161,7 +161,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★거버너 핫패스 힙 0(정수·Int128·lock 무할당)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★거버너 핫패스 힙 0(정수·Int128·lock 무할당)
         }
 
         // ══ 🔒 TossOpenApiLiveAdapter — fail-closed(네트워크 미발생) ═══════════

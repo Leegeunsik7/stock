@@ -23,6 +23,7 @@ using System.Threading.Tasks;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Adapters
 {
@@ -36,18 +37,6 @@ namespace StockManager.Tests.Adapters
             public long T;
             public long Now() => Volatile.Read(ref T);
             public void Advance(long micros) => Interlocked.Add(ref T, micros);
-        }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
         }
 
         // 정렬된 허가 시각에서 임의 반개구간 [a, a + w) 의 최대 허가 수(두 포인터).
@@ -178,14 +167,14 @@ namespace StockManager.Tests.Adapters
                 {
                     try
                     {
-                        long mine = 0;
+                        long mine = 0;                                            // 0 이 아닌 단계 창 수(기록형 판정 — 단계는 재실행 불가)
                         for (int s = 0; s < Steps; s++)
                         {
                             barrier.SignalAndWait();                              // 단계 시작(시각 고정)
                             long before = GC.GetAllocatedBytesForCurrentThread();
                             int got = 0;
                             for (int k = 0; k < Attempts; k++) if (b.TryAcquire()) got++;
-                            mine += GC.GetAllocatedBytesForCurrentThread() - before;
+                            if (GC.GetAllocatedBytesForCurrentThread() - before != 0) mine++;
                             if (got > 0) Interlocked.Add(ref perStep[s], got);
                             barrier.SignalAndWait();                              // 단계 끝
                         }
@@ -211,7 +200,7 @@ namespace StockManager.Tests.Adapters
             Assert.True(times.Count <= 125);                                      // 이론 최대: 0~19초 100 + 60~64초 25
             Assert.True(times.Count >= 112, $"활성 저하 — 허가 {times.Count}/125 · 경합 거부 {b.Contended} · 미발행 거부 {b.Unpublished}");
             Assert.Equal(times.Count, b.Granted);
-            Assert.All(alloc, a => Assert.Equal(0L, a));                          // 경합 핫패스 스레드별 0B
+            Assert.All(alloc, a => Assert.True(ZeroAllocProbe.PassesRecorded(Steps, a), $"0B 아닌 단계 창 {a}/{Steps}"));   // 경합 핫패스 스레드별 0B(창 1개 GC 잡음만 허용)
         }
 
         [Fact]
@@ -220,7 +209,8 @@ namespace StockManager.Tests.Adapters
             const int Threads = 16;
             var b = new LockFreeTokenBucket(5, LockFreeTokenBucket.SecondMicros);
             long granted = 0;
-            var alloc = new long[Threads];
+            var alloc = new long[Threads];                                        // 스레드별 0B 아닌 창 수(1,024회 연속 창 · 기록형 판정)
+            var windows = new long[Threads];
             using var stop = new ManualResetEventSlim(false);
             using var done = new CountdownEvent(Threads);
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -231,9 +221,17 @@ namespace StockManager.Tests.Adapters
                 {
                     try
                     {
-                        long a = GC.GetAllocatedBytesForCurrentThread(), mine = 0;
-                        while (!stop.IsSet) { if (b.TryAcquire()) mine++; Thread.SpinWait(16); }
-                        alloc[id] = GC.GetAllocatedBytesForCurrentThread() - a;
+                        long mine = 0, n = 0, wins = 0, noisy = 0;
+                        long a = GC.GetAllocatedBytesForCurrentThread();
+                        while (!stop.IsSet)
+                        {
+                            if (b.TryAcquire()) mine++;
+                            Thread.SpinWait(16);
+                            if ((++n & 1_023) == 0) { long c = GC.GetAllocatedBytesForCurrentThread(); if (c != a) noisy++; wins++; a = c; }
+                        }
+                        if (GC.GetAllocatedBytesForCurrentThread() != a) noisy++;
+                        alloc[id] = noisy;
+                        windows[id] = wins + 1;
                         Interlocked.Add(ref granted, mine);
                     }
                     finally { done.Signal(); }
@@ -246,7 +244,8 @@ namespace StockManager.Tests.Adapters
             long bound = 5 * (long)Math.Ceiling(elapsedSec);                      // 허가 시각 ⊂ [t0, 끝] → ⌈경과/W⌉ 개 창으로 분할
             Assert.True(granted <= bound, $"허가 {granted} > 상한 {bound}(경과 {elapsedSec:F3}s)");
             Assert.True(granted >= 10, $"활성 저하 — 허가 {granted}");
-            Assert.All(alloc, a => Assert.Equal(0L, a));
+            for (int t = 0; t < Threads; t++)
+                Assert.True(ZeroAllocProbe.PassesRecorded(windows[t], alloc[t]), $"스레드 {t}: 0B 아닌 창 {alloc[t]}/{windows[t]}");
         }
 
         // ════════════ §3 δ=0 ════════════

@@ -21,6 +21,7 @@ using StockManager.Simulation;
 using StockManager.Telemetry;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Telemetry
 {
@@ -31,18 +32,6 @@ namespace StockManager.Tests.Telemetry
         private const long Sec = 10_000_000;                                     // 허브 시계(100ns 틱) 1초
         private readonly ITestOutputHelper _out;
         public JitterTelemetryBindingTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string RepoRoot()
         {

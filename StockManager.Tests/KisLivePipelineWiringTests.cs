@@ -23,6 +23,7 @@ using MS2E.Infrastructure;
 using StockManager.Adapters;
 using StockManager.Engines;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -30,17 +31,6 @@ namespace StockManager.Tests
     public sealed class KisLivePipelineWiringTests
     {
         private const long S = 100_000_000L;
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static byte[] U8(string s) => Encoding.UTF8.GetBytes(s);
         private const string Buyable = "{\"rt_cd\":\"0\",\"msg_cd\":\"KIOK0000\",\"output\":{\"ord_psbl_cash\":\"1400000\",\"max_buy_amt\":\"1400000\",\"max_buy_qty\":\"20\"}}";

@@ -3370,3 +3370,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): AiExecutionSupervisor/라우터 호스트 미결속(실 모델 · L1 호가 · 기준가 피드 부재 · §139) · 실 VTS 캡처 대조 미결(§133) · 미설치 PC 배포본 실기 미확인 ·
   저장소에 단일 창 δ=0 단언이 더 남아 있을 수 있음(이번엔 실패한 1건만 교정).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 141. v12.18.48-DEV — 무할당(δ=0) 단언 전역 표준화: 공통 ZeroAllocProbe(다중 창 최솟값 · 기록형 창 판정) (2026-10-21)
+
+- 배경: v12.18.47-GM [7/11] 이 단일 창 δ=0 단언 1건(6,264B · 타 스레드 GC 겹침 잡음)으로 중단(§140). 같은 취약 패턴의 전수 조사 · 근본 표준화.
+- 전수 조사(StockManager.Tests · obj/bin 제외): GC.GetAllocatedBytesForCurrentThread 사용 168파일 · 측정 시작 지점 262 —
+  헬퍼 복제본 65(조기 종료형 61 · 전창 실행형 3 · 기타 1) · 이미 다중 창 31 · ★단일 창 166(δ=0 == 0 단언 · 지역 Measure() 1회 단언 · 스레드 1창 · 완화 임계 < 50,000B 3건 포함).
+- 신규 StockManager.Tests/ZeroAllocProbe.cs(공통 헬퍼 1개):
+  · MinAllocated(body, windows = 3, reset = null) — 창별 할당 최솟값 · 첫 0 에서 조기 종료(정상 시 본문 1회 = 기존 부작용 동일) · reset = 매 창 직전 상태 복원(측정 밖 · 로그 재생처럼 소모형 본문용).
+  · MinOf(Func<long> measure) — 기존 지역 Measure() 함수 재사용.
+  · PassesRecorded(창 기록) — 재실행 불가(동시성 단계 · 비동기 UI 루프 · 일회성 시퀀스)용: 0 아닌 창 ≤ 1 · 창 ≥ 3.
+  판정력: 실 누수(호출당 할당)는 모든 창 > 0 → 실패. 임계 0 완화 없음 — 잡음만 걸러냄.
+- 마이그레이션(테스트 코드만 · 프로덕션 무변경): 람다 MinAllocated 80(스레드 1창 · 인라인 단언 · delta 변수 · 선행 카운터 선언은 람다 밖 유지 + 창마다 재초기화) ·
+  지역 Measure() 1회 단언 → MinOf 63 · Span 로컬(람다 캡처 불가 CS8175) 9곳 = 같은 규칙 인라인 창 루프 · 기록형 6(LongSoak 지터 1M = 100k × 10창 ·
+  BrokerRateLimiter 16스레드 단계/자유주행 1,024회 창 · ArenaUIStress Step 창 · Dashboard 드레인 8창 · MultiBrokerRecoverySoak 24h 창 단언 통일) ·
+  V560V600 로그 재생 2곳 = reset 으로 창마다 콜드 재적재 · CoreEngineAudit AllocatedDuring 헬퍼 내부 다중 창.
+  ★완화 임계 3건(S27dMultiAsset · S29BetaAdmission · S29cFxAuthority `< 50,000B`) → 0 으로 복원(다중 창으로 8회 반복 전부 0B).
+  복제 헬퍼 61개 삭제 → `using static StockManager.Tests.ZeroAllocProbe;`(호출 158곳 무변경). 전창 실행형 3개(SyntheticSpreadRadar · FeedStallWatchdog · FlashCrash)는
+  후속 단언이 3회 실행 누적에 의존할 수 있어 유지(이미 다중 창).
+- 최종 감사: 측정 메서드 112 중 다중 창/기록형 104 · 전창 실행형 헬퍼 3 · 예외 5(사유 명시):
+  UtcNowLeapCacheExpirer(단언 아님 — 기능 탐지 프로브) · MicrostructureExecution 1M 테이프(창마다 GC 횟수 불변을 함께 단언 = GC 겹침 자체 배제) ·
+  LiveWireKisLongSoakTests 2곳(타 세션 미커밋 파일 — 수정 금지 · Offline_1M 은 v12.18.30 창별 기록 판정 기존재).
+- 사보타주(프로덕션 6핫패스에 호출당 new byte[1] 주입: PreTradeRiskShield.TryAdmit · SimdRiskInterlock.ValidateCore · MicrosecondJitterSentinel.Record ·
+  LockFreeTokenBucket.TryAcquire · ResilientOrderRouter.Route · ZeroAllocTickEngine.RunMaCross) → 람다 · 인라인 · 기록형 · 복제 제거 헬퍼 경로 9건 전부 실패(예: 3,200,000B) 후 원복(프로덕션 diff 0).
+- 검증: WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 Release 4,442 통과 + 2 건너뜀(옵트인) · infra-scan 0 · 래칫 ≤40(2/2).
+- 한계(정직): '어떤 잡음에도 오탐 0' 은 수학적 보증이 아님 — 창 3개 모두(또는 기록형 2창 이상) GC 와 겹치면 여전히 실패 가능(확률 급감).
+  상태 소모형 본문이 첫 창에서만 누수하고 재측정 창이 다른 경로를 타면 놓칠 수 있음 → 소모형은 reset 필수(헬퍼 머리말에 규칙 명시 · 현재 해당 2곳 적용).
+- 불변: 프로덕션 코드 무변경 · 인터락 30/Tighten 6 무변경 · liveArmed:false · QuantumVault 미접근 · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

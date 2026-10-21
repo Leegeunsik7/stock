@@ -47,7 +47,7 @@ namespace StockManager.Tests
             q.Place(1_000_000, 0);
             for (int i = 0; i < 10_000; i++) { q.OnTrade(1); _ = q.FillImminencePermille; }
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) { q.OnTrade(1); _ = q.FillImminencePermille; _ = q.RemainingAheadRaw; } return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 🧊 Iceberg reload + hunter ══════════════════════════════════════
@@ -86,7 +86,7 @@ namespace StockManager.Tests
             var hunter = new IcebergHunterSentinel(tickFrequency: Freq);
             for (int i = 0; i < 10_000; i++) { t += 100; hunter.ObserveBid(100, 1, t); }
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); long tt = t; for (int i = 0; i < 200_000; i++) { tt += 100; hunter.ObserveBid(100, 1, tt); } return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 🔥 LiquidityAuthenticityVerifier (Think Beyond) ═════════════════
@@ -118,7 +118,7 @@ namespace StockManager.Tests
             var v = new LiquidityAuthenticityVerifier(tickFrequency: Freq);
             for (int i = 0; i < 10_000; i++) { t += 100; v.RecordAsk(100, 10, t); }
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); long tt = t; for (int i = 0; i < 200_000; i++) { tt += 100; v.RecordAsk(100, 10, tt); _ = v.AllowRoute(true); } return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 🎯 SmartOrderRouterEngine ═══════════════════════════════════════
@@ -177,7 +177,7 @@ namespace StockManager.Tests
             long[] bp = BidPx(), bq = Qty(100), ap = AskPx(), aq = Qty(100);
             for (int i = 0; i < 10_000; i++) sor.ComputeRoute(0.8f, bp, bq, ap, aq, 1000);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) sor.ComputeRoute(0.8f, bp, bq, ap, aq, 1000); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★라우팅 계산 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★라우팅 계산 핫패스 힙 0
         }
 
         // ══ 🔒 liveArmed:false 아키텍처 격리 ════════════════════════════════

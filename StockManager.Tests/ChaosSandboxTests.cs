@@ -103,7 +103,7 @@ namespace StockManager.Tests
                 }
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★결함 주입 질의 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★결함 주입 질의 핫패스 힙 0
         }
 
         // ══ ♻️ DeterministicChaosReplayer ═══════════════════════════════════
@@ -151,7 +151,7 @@ namespace StockManager.Tests
             var r = new DeterministicChaosReplayer(seed: 1);
             for (int i = 0; i < 10_000; i++) _ = r.Next();
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) _ = r.Next(); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 🚦 ChaosRecoveryRateLimiter ═════════════════════════════════════
@@ -492,7 +492,7 @@ namespace StockManager.Tests
                 }
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★커밋/독출/펜스 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★커밋/독출/펜스 핫패스 힙 0
         }
 
         // ══ 🔒 liveArmed:false 아키텍처 격리 ════════════════════════════════

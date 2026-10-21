@@ -339,14 +339,15 @@ namespace StockManager.Tests
                 {
                     long sink = 0;
                     for (int i = 0; i < 300_000; i++) { sink += gate.OnQuote(5930, 100, 10); if (shield.AcceptEvent(1)) sink++; }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++)
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
                     {
-                        sink += gate.OnQuote(5930, 100, 10);
-                        if (shield.AcceptEvent(1)) sink++;
-                        if (sink == long.MinValue) throw new Exception("sink");
-                    }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                        for (int i = 0; i < 100_000; i++)
+                        {
+                            sink += gate.OnQuote(5930, 100, 10);
+                            if (shield.AcceptEvent(1)) sink++;
+                            if (sink == long.MinValue) throw new Exception("sink");
+                        }
+                    });
                 }
                 catch (Exception e) when (e.Message != "sink") { err = e; }
             });

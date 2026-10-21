@@ -18,6 +18,7 @@ using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Blazor.Services;
 using StockManager.Engines.Arena;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Simulation
 {
@@ -218,18 +219,6 @@ namespace StockManager.Tests.Simulation
         }
 
         // ═══ §3 δ=0 ═══
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - before);
-            }
-            return min;
-        }
 
         [Fact]
         public void HotPath_Quote_Orders_Step_And_Snapshot_Read_Are_Zero_Alloc()

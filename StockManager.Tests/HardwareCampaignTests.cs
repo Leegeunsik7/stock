@@ -46,7 +46,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★코어 폴 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★코어 폴 힙 0
         }
 
         [Fact]
@@ -104,7 +104,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★유효주파수 실측 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★유효주파수 실측 핫패스 힙 0
         }
 
         // ══ 🧠 CacheLineCoherenceSentinel ═══════════════════════════════════
@@ -164,7 +164,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Record+AttestArena 힙 0(네이티브 포인터·Interlocked)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Record+AttestArena 힙 0(네이티브 포인터·Interlocked)
         }
     }
 }

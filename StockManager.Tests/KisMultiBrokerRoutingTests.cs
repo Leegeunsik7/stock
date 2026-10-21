@@ -22,24 +22,13 @@ using MS2E.Core;
 using MS2E.Infrastructure;
 using StockManager.Adapters;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed class KisMultiBrokerRoutingTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         // H0STCNT0 레코드 1건(46필드) — 0 코드 · 1 시간 · 2 현재가 · 12 체결량 · 13 누적량 · 나머지 0
         private static string TickRecord(string code, long time, long price, long vol, long acc)
         {

@@ -16,6 +16,7 @@ using System.Threading;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -50,18 +51,6 @@ namespace StockManager.Tests
         private readonly string _root = Path.Combine(Path.GetTempPath(), "gm_wire_" + Guid.NewGuid().ToString("N"));
 
         public void Dispose() { try { Directory.Delete(_root, true); } catch { /* 무관 */ } }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static (ArmingInterlockBitmask Mask, WiringFlagSource[] Sources) HealthySealed()
         {

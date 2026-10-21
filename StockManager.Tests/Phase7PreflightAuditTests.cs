@@ -59,9 +59,10 @@ namespace StockManager.Tests
         {
             var v = new CausalAuditVault(400_000);
             for (int i = 0; i < 20_000; i++) v.TryAppend(i, i, i);    // 워밍업
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 100_000; i++) v.TryAppend(i, i, i);
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 100_000; i++) v.TryAppend(i, i, i);
+            });
             Assert.Equal(0L, delta);   // SHA256.HashData 무할당 정적 + 사전할당 스팬 재사용
         }
 

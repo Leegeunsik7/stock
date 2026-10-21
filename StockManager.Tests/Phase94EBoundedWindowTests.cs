@@ -98,7 +98,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Push+제자리 Compact 힙 0(고정 버퍼·in 구조체)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Push+제자리 Compact 힙 0(고정 버퍼·in 구조체)
         }
 
         // ══ Snapshot 경계·시간순 ══════════════════════════════════════════════

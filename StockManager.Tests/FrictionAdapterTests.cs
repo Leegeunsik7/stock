@@ -130,10 +130,10 @@ namespace StockManager.Tests
             var th = new Thread(() =>
             {
                 for (int w = 0; w < 300_000; w++) sink += bridge.GetSnapshot().SampleCount;   // OSR/tier-1 settle
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                for (int i = 0; i < 100_000; i++) sink += bridge.GetSnapshot().SampleCount;     // 측정(이미 최적화됨)
-                long after  = GC.GetAllocatedBytesForCurrentThread();
-                delta = after - before;
+                delta = ZeroAllocProbe.MinAllocated(() =>
+                {
+                    for (int i = 0; i < 100_000; i++) sink += bridge.GetSnapshot().SampleCount;     // 측정(이미 최적화됨)
+                });   // 다중 창 최솟값(타 스레드 GC 겹침 잡음 제거 · 임계 0 유지)
             }) { IsBackground = true };
             th.Start();
             Assert.True(th.Join(TimeSpan.FromSeconds(30)), "제로-할당 측정 스레드 타임아웃");

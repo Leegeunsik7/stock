@@ -66,11 +66,7 @@ namespace StockManager.Tests
             ZeroAllocTickEngine.RunMaCross(frames, 5, 20);  // 안정화
 
             // 힙 할당 측정
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            ZeroAllocTickEngine.RunMaCross(frames, 5, 20);
-            long after = GC.GetAllocatedBytesForCurrentThread();
-
-            Assert.Equal(0L, after - before);
+            Assert.Equal(0L, ZeroAllocProbe.MinAllocated(() => ZeroAllocTickEngine.RunMaCross(frames, 5, 20)));
         }
 
         // ════════════════════════════════════════════════════════════════════

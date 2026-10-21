@@ -27,6 +27,7 @@ using StockManager.Engines;
 using StockManager.Simulation;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -39,18 +40,6 @@ namespace StockManager.Tests
         private const string Key = "abcdefghijklmnopqrstuvwxyz012345", Iv = "ABCDEFGHIJKLMNOP";
         private const string Cano = "50000000";                                         // 합성 모의 계좌(실 자격증명 아님)
         private static byte[] U8(string s) => Encoding.UTF8.GetBytes(s);
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private sealed class Clock { public long Now = 1_000_000; }
 

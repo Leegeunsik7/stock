@@ -73,11 +73,13 @@ namespace StockManager.Tests
         {
             var gate = new ShadowCutoverGate(enabled: false, Spec(), null);
             for (int i = 0; i < 10_000; i++) { var _ = gate.Clear(100.10m, 1.0559m, OrderSide.Buy); }
-            long before = GC.GetAllocatedBytesForCurrentThread();
             decimal sink = 0m;
-            for (int i = 0; i < 50_000; i++) sink = gate.Clear(100.10m, 1.0559m, OrderSide.Buy);
-            Assert.True(sink > 0m);
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                sink = 0m;
+                for (int i = 0; i < 50_000; i++) sink = gate.Clear(100.10m, 1.0559m, OrderSide.Buy);
+                Assert.True(sink > 0m);
+            }));
         }
 
         [Fact]
@@ -85,11 +87,13 @@ namespace StockManager.Tests
         {
             var gate = new ShadowCutoverGate(enabled: true, Spec(), new OrderAttestationService());
             for (int i = 0; i < 10_000; i++) { var _ = gate.Clear(100.10m, 1.0559m, OrderSide.Sell); }   // 워밍업
-            long before = GC.GetAllocatedBytesForCurrentThread();
             decimal sink = 0m;
-            for (int i = 0; i < 50_000; i++) sink = gate.Clear(100.10m, 1.0559m, OrderSide.Sell);
-            Assert.True(sink > 0m);
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // 신·구 병렬 대조 핫패스 δ=0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                sink = 0m;
+                for (int i = 0; i < 50_000; i++) sink = gate.Clear(100.10m, 1.0559m, OrderSide.Sell);
+                Assert.True(sink > 0m);
+            })); // 신·구 병렬 대조 핫패스 δ=0
         }
 
         // DI 기본 spec(BlazorHomeForm) — KRW 정수단가 전용 격자.

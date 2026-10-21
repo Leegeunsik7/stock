@@ -270,9 +270,10 @@ namespace StockManager.Tests
                 {
                     long priceRaw = QPrice.Of(100m).Raw, qtyRaw = QQty.Of(1m).Raw;
                     for (int i = 0; i < 300_000; i++) m.OnFill(5930, OrderSide.Buy, AssetKind.Domestic, priceRaw, qtyRaw, i);   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) m.OnFill(5930, OrderSide.Buy, AssetKind.Domestic, priceRaw, qtyRaw, i);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) m.OnFill(5930, OrderSide.Buy, AssetKind.Domestic, priceRaw, qtyRaw, i);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

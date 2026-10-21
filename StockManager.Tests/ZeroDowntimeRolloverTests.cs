@@ -22,24 +22,13 @@ using StockManager.Adapters;
 using StockManager.Services;
 using StockManager.Telemetry;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed class ZeroDowntimeRolloverTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private static string MapName() => "Local\\MS2E_TEST_ROLL_" + Guid.NewGuid().ToString("N");
 
         private sealed class Exec

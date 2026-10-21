@@ -120,9 +120,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { if (!v.Verify(token)) throw new Exception("w"); s.Register(); s.Release(); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { if (!v.Verify(token)) throw new Exception("h"); s.Register(); s.Release(); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { if (!v.Verify(token)) throw new Exception("h"); s.Register(); s.Release(); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

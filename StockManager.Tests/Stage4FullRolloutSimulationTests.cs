@@ -228,9 +228,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { g.TryStepUp(4); _ = p.ValidAuthority(0, 1); }   // Full-초과 경로(무동작)+검증
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { g.TryStepUp(4); _ = p.ValidAuthority(0, 1); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { g.TryStepUp(4); _ = p.ValidAuthority(0, 1); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

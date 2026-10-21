@@ -177,9 +177,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) spin.PollOnce();   // 대기 없음 경로(δ=0)
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) spin.PollOnce();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) spin.PollOnce();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

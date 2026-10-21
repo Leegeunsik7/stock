@@ -17,6 +17,7 @@ using MS2E.Core;
 using MS2E.Infrastructure;
 using StockManager.Adapters;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -24,18 +25,6 @@ namespace StockManager.Tests
     public sealed class KiwoomProtocolReconciliationTests
     {
         private const long Code = 5930;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static FillPayload Notice(long brokerOrder, BridgeFillStatus st, long qty = 0, double px = 0, long remaining = -1)
             => new()

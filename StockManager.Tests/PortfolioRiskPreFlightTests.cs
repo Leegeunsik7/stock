@@ -23,6 +23,7 @@ using StockManager.Adapters;
 using StockManager.Engines;
 using StockManager.Security;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -32,18 +33,6 @@ namespace StockManager.Tests
         private readonly string _tmp = Path.Combine(Path.GetTempPath(), "pfrisk_" + Guid.NewGuid().ToString("N"));
         public PortfolioRiskPreFlightTests() => Directory.CreateDirectory(_tmp);
         public void Dispose() { try { Directory.Delete(_tmp, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static readonly long Min = TimeSpan.TicksPerMinute;
 

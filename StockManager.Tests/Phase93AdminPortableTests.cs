@@ -84,7 +84,7 @@ namespace StockManager.Tests
             long acc = 0;
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 500_000; i++) { long s = g.IssueSeal(in intent, i); if (g.VerifySeal(in intent, i, s)) acc++; } return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★봉인 발급/검증 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★봉인 발급/검증 핫패스 힙 0
             Assert.True(acc > 0);
         }
 
@@ -120,7 +120,7 @@ namespace StockManager.Tests
             for (int i = 0; i < 50_000; i++) disp.Dispatch(AdminCommandKind.QuantumVaultArm, i, i);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 500_000; i++) disp.Dispatch(AdminCommandKind.QuantumVaultArm, i, i); return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Intent 포맷+봉인+전송 핫패스 힙 0(record struct 값타입)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Intent 포맷+봉인+전송 핫패스 힙 0(record struct 값타입)
         }
 
         // ══ 🕶️ SecureAdminViewPresenter ═══════════════════════════════════
@@ -166,7 +166,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★마스킹 렌더 핫패스 힙 0(string 미생성·dest span 직기입)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★마스킹 렌더 핫패스 힙 0(string 미생성·dest span 직기입)
         }
 
         // ══ 🧩 AdminCommandPortAdapter ════════════════════════════════════

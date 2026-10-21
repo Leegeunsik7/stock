@@ -117,7 +117,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★히트 EnsureWindow + TryGet 힙 0(정수 산술·배열 참조)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★히트 EnsureWindow + TryGet 힙 0(정수 산술·배열 참조)
         }
     }
 }

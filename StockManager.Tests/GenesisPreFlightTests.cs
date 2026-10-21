@@ -88,7 +88,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★순수 함수 채점 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★순수 함수 채점 핫패스 힙 0
         }
 
         // ══ ⏳ AtomicArmingLease ════════════════════════════════════════════
@@ -138,7 +138,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));
         }
 
         // ══ 💀 DeadMansSwitchWatchdog ══════════════════════════════════════
@@ -194,7 +194,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★심박/판정 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★심박/판정 핫패스 힙 0
         }
 
         [Fact]
@@ -286,7 +286,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b0;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Admit(링 기록+윈도 스캔) 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Admit(링 기록+윈도 스캔) 핫패스 힙 0
             Assert.False(il.Frozen);
 
             // Frozen 래치 — 1회 veto 후 전량 차단.

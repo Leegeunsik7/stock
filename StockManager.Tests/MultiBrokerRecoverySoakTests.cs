@@ -19,6 +19,7 @@ using StockManager.Adapters;
 using StockManager.Simulation;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -27,18 +28,6 @@ namespace StockManager.Tests
     {
         private readonly ITestOutputHelper _out;
         public MultiBrokerRecoverySoakTests(ITestOutputHelper output) => _out = output;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static bool KisDispatchable(MultiBrokerRecoverySoakHarness h)
         {
@@ -92,7 +81,7 @@ namespace StockManager.Tests
             Assert.True(seq, "백오프 1·2·4·8 수열 미관측");
             Assert.True(gaps.All(g => g is 1 or 2 or 4 or 8 or 16));
             // δ=0: 24 시간 창 중 0B 아닌 창 ≤ 1(타 스레드 GC 겹침 허용 — 호출당 할당이면 사건이 있는 거의 모든 창이 양수)
-            Assert.True(windows.Count(x => x != 0) <= 1, "할당 창: " + string.Join(",", windows));
+            Assert.True(ZeroAllocProbe.PassesRecorded(windows), "할당 창: " + string.Join(",", windows));
         }
 
         // ════════════ §2 복구 전 구간 추적 ════════════

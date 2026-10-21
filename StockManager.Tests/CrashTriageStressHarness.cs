@@ -16,24 +16,13 @@ using System.Threading;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed unsafe class CrashTriageStressHarness
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         // ════════════ §1 수명 게이트 ════════════
 
         [Fact]

@@ -127,13 +127,14 @@ namespace StockManager.Tests
             JournalCodec.Encode(recs, buf);            // 워밍업(JIT)
             JournalCodec.Decode(buf, dest, out _);
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int k = 0; k < 200; k++)
+            long delta = ZeroAllocProbe.MinAllocated(() =>
             {
-                JournalCodec.Encode(recs, buf);
-                JournalCodec.Decode(buf, dest, out _);
-            }
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+                for (int k = 0; k < 200; k++)
+                {
+                    JournalCodec.Encode(recs, buf);
+                    JournalCodec.Decode(buf, dest, out _);
+                }
+            });
             Assert.Equal(0L, delta);                   // 단 1바이트 할당 없음
         }
 

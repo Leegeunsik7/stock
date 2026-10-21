@@ -164,9 +164,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) rec.Record(FlightEventKind.MmfPublish, i, i, i);   // 워밍업(wrap 포함)
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) rec.Record(FlightEventKind.RiskAdmit, i, i, i);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) rec.Record(FlightEventKind.RiskAdmit, i, i, i);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -189,10 +190,12 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) if (shield.TryAdmit(buy, out var w)) shield.Release(w.ReservedNotionalRaw);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
                     long sink = 0;
-                    for (int i = 0; i < 100_000; i++) if (shield.TryAdmit(buy, out var d)) { sink += d.ReservedNotionalRaw; shield.Release(d.ReservedNotionalRaw); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        sink = 0;
+                        for (int i = 0; i < 100_000; i++) if (shield.TryAdmit(buy, out var d)) { sink += d.ReservedNotionalRaw; shield.Release(d.ReservedNotionalRaw); }
+                    });
                     GC.KeepAlive(sink);
                 }
                 catch (Exception e) { err = e; }

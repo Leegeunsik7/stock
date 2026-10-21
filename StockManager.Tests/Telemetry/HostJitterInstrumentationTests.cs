@@ -16,6 +16,7 @@ using StockManager.Blazor.Services;
 using StockManager.Telemetry;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Telemetry
 {
@@ -26,18 +27,6 @@ namespace StockManager.Tests.Telemetry
         private const long Sec = 10_000_000;                                     // 허브 시계(100ns 틱) 1초
         private readonly ITestOutputHelper _out;
         public HostJitterInstrumentationTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static void BusyWait(long nanos)
         {
@@ -80,11 +69,13 @@ namespace StockManager.Tests.Telemetry
             using var probe = new MicrosecondJitterSentinel();
             const int N = 1_000_000;
             for (int i = 0; i < 10_000; i++) probe.End(MicrosecondJitterSentinel.Begin(out int g), g, 1, 0);
-            long a = GC.GetAllocatedBytesForCurrentThread();
-            long t = Stopwatch.GetTimestamp();
-            for (int i = 0; i < N; i++) probe.End(MicrosecondJitterSentinel.Begin(out int g), g, 1, 0);
-            double perOpNs = (Stopwatch.GetTimestamp() - t) * 1e9 / Stopwatch.Frequency / N;
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - a);
+            double perOpNs = 0;
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                long t = Stopwatch.GetTimestamp();
+                for (int i = 0; i < N; i++) probe.End(MicrosecondJitterSentinel.Begin(out int g), g, 1, 0);
+                perOpNs = (Stopwatch.GetTimestamp() - t) * 1e9 / Stopwatch.Frequency / N;
+            }));
             _out.WriteLine($"[§1] 계측 단가 {perOpNs:F1}ns/회차 (Begin+End · 주기 50ms 대비 {perOpNs / 50_000_000 * 100:E2}%)");
             Assert.True(perOpNs < 1_000, $"계측 단가 {perOpNs:F1}ns");
         }

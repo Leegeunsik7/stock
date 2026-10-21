@@ -262,13 +262,13 @@ namespace StockManager.Tests
                 {
                     for (int i = 0; i < 300_000; i++)   // 워밍업(tier-JIT/OSR settle)
                         if (s.TryAdmit(buy, out var w)) s.Release(w.ReservedNotionalRaw);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
                     long sink = 0;
-                    for (int i = 0; i < 100_000; i++)
-                        if (s.TryAdmit(buy, out var d)) { sink += d.ReservedNotionalRaw; s.Release(d.ReservedNotionalRaw); }
-                    long after = GC.GetAllocatedBytesForCurrentThread();
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++)
+                            if (s.TryAdmit(buy, out var d)) { sink += d.ReservedNotionalRaw; s.Release(d.ReservedNotionalRaw); }
+                    });
                     GC.KeepAlive(sink);
-                    alloc = after - before;
                 }
                 catch (Exception e) { err = e; }
             });

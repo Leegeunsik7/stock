@@ -44,10 +44,12 @@ namespace StockManager.Tests
         {
             decimal pv = 98_370_000m, qv = 2.555m;
             for (int i = 0; i < 10_000; i++) { QAcl.TryImportPrice(pv, null, out var p); QAcl.TryImportQty(qv, null, out var q); var _ = QAcl.ExportMoney(p * q); }
-            long before = GC.GetAllocatedBytesForCurrentThread();
             decimal sink = 0m;
-            for (int i = 0; i < 50_000; i++) { QAcl.TryImportPrice(pv, null, out var p); QAcl.TryImportQty(qv, null, out var q); sink = QAcl.ExportMoney(p * q); }
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+            long delta = ZeroAllocProbe.MinAllocated(() =>
+            {
+                sink = 0m;
+                for (int i = 0; i < 50_000; i++) { QAcl.TryImportPrice(pv, null, out var p); QAcl.TryImportQty(qv, null, out var q); sink = QAcl.ExportMoney(p * q); }
+            });
             Assert.True(sink > 0m);
             Assert.Equal(0, delta);   // Try 패턴(정상 경로)·값 변환 — 박싱·힙 0
         }

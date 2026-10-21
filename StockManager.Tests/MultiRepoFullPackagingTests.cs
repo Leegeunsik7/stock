@@ -21,6 +21,7 @@ using MS2E.Infrastructure;
 using StockManager.Tools;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -28,18 +29,6 @@ namespace StockManager.Tests
     {
         private readonly ITestOutputHelper _out;
         public MultiRepoFullPackagingTests(ITestOutputHelper o) => _out = o;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         private static string RepoRoot()
         {

@@ -268,9 +268,10 @@ namespace StockManager.Tests
             // ★#1 회귀: 적대 숫자 버스트도 예외 힙 할당 없이 거부 — δ=0 인입 불변식 유지(현재 스레드 측정).
             var bad = Utf8("{\"code\":99999999999999999999,\"sent\":1e400,\"shock\":1.5}");
             NewsIntelParser.TryParse(bad, out _);                                     // 워밍업(JIT)
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 2000; i++) Assert.False(NewsIntelParser.TryParse(bad, out _));
-            Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);        // ★무할당 거부(예외 미발생)
+            Assert.Equal(0L, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 2000; i++) Assert.False(NewsIntelParser.TryParse(bad, out _));
+            })); // ★무할당 거부(예외 미발생)
         }
 
         [Fact]

@@ -78,7 +78,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★REST JSON 파싱 핫패스 힙 0(string 미생성·Utf8JsonReader)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★REST JSON 파싱 핫패스 힙 0(string 미생성·Utf8JsonReader)
         }
 
         // ══ 💳 TossPortfolioSyncAdapter (read-only fail-closed) ════════════
@@ -144,7 +144,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★WS 패킷 인제스트 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★WS 패킷 인제스트 핫패스 힙 0
         }
 
         // ══ 🧵 SequenceContinuityGuardian (Think-Beyond) ═══════════════════
@@ -191,7 +191,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★시퀀스 관측 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★시퀀스 관측 핫패스 힙 0
             Assert.True(acc > 0);
         }
     }

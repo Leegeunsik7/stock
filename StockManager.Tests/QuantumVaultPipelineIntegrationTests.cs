@@ -24,6 +24,7 @@ using System.Text.RegularExpressions;
 using MS2E.Infrastructure;
 using StockManager.Tools;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -53,18 +54,6 @@ namespace StockManager.Tests
         }
 
         private static string Read(params string[] parts) => File.ReadAllText(Path.Combine(new[] { RepoRoot() }.Concat(parts).ToArray()));
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         // ════════════ §1 COM 쉼 CI 게이트 ════════════
 

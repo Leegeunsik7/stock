@@ -183,9 +183,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) RiskThresholdMatrixEvaluator.Evaluate(100, 500, 100, 500, 100, 500, 5, 50);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) RiskThresholdMatrixEvaluator.Evaluate(100, 500, 100, 500, 100, 500, 5, 50);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) RiskThresholdMatrixEvaluator.Evaluate(100, 500, 100, 500, 100, 500, 5, 50);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

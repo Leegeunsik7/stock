@@ -605,12 +605,12 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 200_000; i++) { w.TryPublish(frame); r.TryConsume(dst, out _); }   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
                     long sink = 0;
-                    for (int i = 0; i < 100_000; i++) { w.TryPublish(frame); if (r.TryConsume(dst, out int len)) sink += len; }
-                    long after = GC.GetAllocatedBytesForCurrentThread();
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { w.TryPublish(frame); if (r.TryConsume(dst, out int len)) sink += len; }
+                    });
                     GC.KeepAlive(sink);
-                    alloc = after - before;
                 }
                 catch (Exception e) { err = e; }
             });

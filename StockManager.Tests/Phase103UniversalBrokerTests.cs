@@ -68,7 +68,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★스키마 독립 매핑 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★스키마 독립 매핑 핫패스 힙 0
         }
 
         // ══ 🧩 OpenApiPortfolioAdapter ═════════════════════════════════════
@@ -163,7 +163,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★건강 갱신/스위치 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★건강 갱신/스위치 핫패스 힙 0
         }
 
         // ══ ⏱️ CrossBrokerMonotonicTimeFence (Think-Beyond) ════════════════
@@ -201,7 +201,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★타임펜스 핫패스 힙 0(부동소수 0)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★타임펜스 핫패스 힙 0(부동소수 0)
             // 엄격 단조: 연속 발행이 절대 역행 안 함(recv 역행에도)
             long a = f.Fence(BrokerId.Toss, 0L, 5L);
             long b2 = f.Fence(BrokerId.Kis, 0L, 3L);

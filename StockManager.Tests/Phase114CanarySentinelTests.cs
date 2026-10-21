@@ -100,7 +100,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★인가 게이트 핫패스 힙 0(Interlocked/CAS)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★인가 게이트 핫패스 힙 0(Interlocked/CAS)
         }
 
         // ══ Kill 후 Disarm 재무장 필요 ═══════════════════════════════════════

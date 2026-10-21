@@ -151,7 +151,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★마크/헬스/배수 핫패스 힙 0(Interlocked/Volatile·스팬 배수)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★마크/헬스/배수 핫패스 힙 0(Interlocked/Volatile·스팬 배수)
         }
     }
 }

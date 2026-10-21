@@ -209,9 +209,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { wd.Observe(i & 63); fo.TryClaimDispatch(i); fo.ResolveChannel(); }   // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { wd.Observe(i & 63); fo.TryClaimDispatch(i); fo.ResolveChannel(); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { wd.Observe(i & 63); fo.TryClaimDispatch(i); fo.ResolveChannel(); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

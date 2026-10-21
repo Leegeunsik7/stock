@@ -88,7 +88,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★런타임 상태 조회 핫패스 힙 0(콜드 산출 결과 캐시 읽기)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★런타임 상태 조회 핫패스 힙 0(콜드 산출 결과 캐시 읽기)
             Assert.True(acc >= long.MinValue);   // keep-alive(JIT 제거 방지)·오버플로 무관(SealHex64 누적이 랩해도 항상 참)
         }
 
@@ -170,7 +170,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Admit 핫패스 힙 0(Int128 값타입·CAS·Interlocked)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Admit 핫패스 힙 0(Int128 값타입·CAS·Interlocked)
         }
 
         // ══ ⏱️ LatencySlaGatekeeper 융합 교정 검증 ══════════════════════════

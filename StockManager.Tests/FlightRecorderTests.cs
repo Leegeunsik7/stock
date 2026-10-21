@@ -176,9 +176,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 20_000; i++) w.Append(ev);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 10_000; i++) w.Append(ev);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 10_000; i++) w.Append(ev);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

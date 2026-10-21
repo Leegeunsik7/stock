@@ -89,7 +89,7 @@ namespace StockManager.Tests
                 return GC.GetAllocatedBytesForCurrentThread() - b;
             }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★해시 핫패스 힙 0(FNV·DoubleToInt64Bits·순회, string/배열 미생성)
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★해시 핫패스 힙 0(FNV·DoubleToInt64Bits·순회, string/배열 미생성)
         }
     }
 }

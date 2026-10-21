@@ -23,6 +23,7 @@ using StockManager.Adapters.Kis;
 using StockManager.Telemetry;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Adapters.Kis
 {
@@ -137,18 +138,6 @@ namespace StockManager.Tests.Adapters.Kis
         }
 
         // ═══ §2 δ=0 ═══
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - before);
-            }
-            return min;
-        }
 
         [Fact]
         public void Hundred_Thousand_Decodes_And_Skew_Judgements_Are_Zero_Alloc_With_No_Gc()

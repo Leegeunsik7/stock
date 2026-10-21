@@ -328,9 +328,10 @@ namespace StockManager.Tests
             var mut = ShadowMutation.ScaleClass(AssetClass.Crypto, 1.10m);
             for (int i = 0; i < 10_000; i++) pub.Recompute(in mut);   // 워밍업(tiered JIT 안정화)
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 50_000; i++) pub.Recompute(in mut);
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);   // 섀도우 스왑+산출 핫패스 δ=0
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int i = 0; i < 50_000; i++) pub.Recompute(in mut);
+            })); // 섀도우 스왑+산출 핫패스 δ=0
         }
 
         [Fact]

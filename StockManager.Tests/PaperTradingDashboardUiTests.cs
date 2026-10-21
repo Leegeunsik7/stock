@@ -28,24 +28,13 @@ using StockManager.Engines;
 using StockManager.Simulation;
 using StockManager.Telemetry;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
     [Collection("ConcurrencyStress")]
     public sealed class PaperTradingDashboardUiTests
     {
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
-
         private sealed class Clock { public long Now = 638_000_000_000_000_000; }
 
         private static FillPayload Fill(long sym, int side, long qty, double px) => new() { OrderId = 1, SymbolCode = sym, Side = side, FillQty = qty, FillPrice = px };

@@ -257,9 +257,7 @@ namespace StockManager.Tests
         private static long AllocatedDuring(Action action, int warmup = 2_000, int iterations = 10_000)
         {
             for (int i = 0; i < warmup; i++) action();
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < iterations; i++) action();
-            return GC.GetAllocatedBytesForCurrentThread() - before;
+            return ZeroAllocProbe.MinAllocated(() => { for (int i = 0; i < iterations; i++) action(); });
         }
 
         [Fact] // [실발생] ForensicAuditViewAdapter 가 UI 갱신마다 호출 — "δ=0 재계산" 주석과 달리 호출당 32B 할당

@@ -71,14 +71,16 @@ namespace StockManager.Tests
             var tick = QPrice.Of(1000m); var step = QQty.Of(0.001m);
             for (int i = 0; i < 10_000; i++) { var _ = p.ConservativeAlign(tick, OrderSide.Buy) * q.AlignDown(step); }
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
             long sink = 0;
-            for (int i = 0; i < 50_000; i++)
+            long delta = ZeroAllocProbe.MinAllocated(() =>
             {
-                var m = p.ConservativeAlign(tick, OrderSide.Sell) * q.AlignDown(step);
-                sink ^= m.Raw;
-            }
-            long delta = GC.GetAllocatedBytesForCurrentThread() - before;
+                sink = 0;
+                for (int i = 0; i < 50_000; i++)
+                {
+                    var m = p.ConservativeAlign(tick, OrderSide.Sell) * q.AlignDown(step);
+                    sink ^= m.Raw;
+                }
+            });
             Assert.True(sink != unchecked((long)0xDEADBEEF));   // 사용(JIT dead-code 제거 방지)
             Assert.Equal(0, delta);
         }

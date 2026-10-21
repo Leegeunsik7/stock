@@ -208,15 +208,20 @@ namespace StockManager.Tests
                         MicroLiquiditySlicer.SliceInto(slices, 50 * Scale, fill, 8);
                         _ = imb;
                     }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++)
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
                     {
-                        long imb = MicroLiquiditySlicer.ComputeImbalance(in d);
-                        long fill = MicroLiquiditySlicer.ComputeFillableQty(in d, OrderSide.Buy, (101L + 4) * Scale);
-                        int n = MicroLiquiditySlicer.SliceInto(slices, 50 * Scale, fill, 8);
-                        if (imb == long.MinValue || n < 0) throw new Exception("sink");   // JIT 제거 방지
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        for (int i = 0; i < 100_000; i++)
+                        {
+                            long imb = MicroLiquiditySlicer.ComputeImbalance(in d);
+                            long fill = MicroLiquiditySlicer.ComputeFillableQty(in d, OrderSide.Buy, (101L + 4) * Scale);
+                            int n = MicroLiquiditySlicer.SliceInto(slices, 50 * Scale, fill, 8);
+                            if (imb == long.MinValue || n < 0) throw new Exception("sink");   // JIT 제거 방지
+                        }
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
                     }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = minAlloc;
                 }
                 catch (Exception e) when (e.Message != "sink") { err = e; }
             });

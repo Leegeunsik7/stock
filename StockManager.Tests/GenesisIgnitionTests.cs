@@ -91,7 +91,7 @@ namespace StockManager.Tests
             SealedSend noop = (in SealedOrderToken t) => { };
             for (int i = 0; i < 10_000; i++) s.TrySealAndEmit(i + 1, 5930, 0, 0, 1000, 100, noop);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) s.TrySealAndEmit(i + 100_000, 5930, 0, 0, 1000, 100, noop); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★봉인 사출 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★봉인 사출 핫패스 힙 0
         }
 
         // ══ 📜 IgnitionAuditTrailRecorder ═══════════════════════════════════
@@ -128,7 +128,7 @@ namespace StockManager.Tests
             var rec = new IgnitionAuditTrailRecorder(capacity: 4096, nowTicks: () => clock, tickFrequency: Freq);
             for (int i = 0; i < 10_000; i++) rec.Record(IgnitionEventKind.IgnitionAttempt, i);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) rec.Record(IgnitionEventKind.IgnitionAttempt, i); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★감사 기록 핫패스 힙 0
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★감사 기록 핫패스 힙 0
         }
 
         // ══ 💓 HardwareKeyPulseHeartbeatSentinel ════════════════════════════
@@ -269,7 +269,7 @@ namespace StockManager.Tests
             SealedSend noop = (in SealedOrderToken t) => { };
             for (int i = 0; i < 10_000; i++) gw.Emit(i + 1, 5930, 0, 0, 1000, 100, noop);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) gw.Emit(i + 100_000, 5930, 0, 0, 1000, 100, noop); return GC.GetAllocatedBytesForCurrentThread() - b; }
-            _ = Measure(); Assert.Equal(0L, Measure());   // ★점화 사출 핫패스 힙 0(감사·봉인 포함)
+            _ = Measure(); Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★점화 사출 핫패스 힙 0(감사·봉인 포함)
         }
 
         // ══ 🔗 실전 사출 경로 end-to-end(프로덕션 Dispatch→PlaceSealed→broker) ══════

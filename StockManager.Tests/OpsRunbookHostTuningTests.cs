@@ -70,7 +70,7 @@ namespace StockManager.Tests
             for (int i = 0; i < 10_000; i++) sv.Certify(in f);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 200_000; i++) sv.Certify(in f); return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★서명 채점 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★서명 채점 핫패스 힙 0
         }
 
         // ══ 🐤 MicroCapitalCanaryGovernor ═══════════════════════════════════
@@ -107,7 +107,7 @@ namespace StockManager.Tests
             for (int i = 0; i < 50_000; i++) { g.TryAdmitOrder(1L); g.RecordSlippage(10L); }
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 500_000; i++) { g.TryAdmitOrder(1L); g.RecordSlippage(10L); } return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★TryAdmit/RecordSlippage 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★TryAdmit/RecordSlippage 핫패스 힙 0
         }
 
         [Fact]
@@ -194,7 +194,7 @@ namespace StockManager.Tests
             for (int i = 0; i < 50_000; i++) d.Probe(520_000L, 12L);
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 500_000; i++) d.Probe(520_000L + (i & 1023), 12L); return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★Probe 판정 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★Probe 판정 핫패스 힙 0
         }
 
         // ══ 🟣 OperatorDuressPanicSwitch ════════════════════════════════════
@@ -222,7 +222,7 @@ namespace StockManager.Tests
             long acc = 0;
             long Measure() { long b = GC.GetAllocatedBytesForCurrentThread(); for (int i = 0; i < 500_000; i++) { if (p.Tripped) acc++; acc += p.Trips; if (p.PanicBlocking) acc++; } return GC.GetAllocatedBytesForCurrentThread() - b; }
             _ = Measure();
-            Assert.Equal(0L, Measure());   // ★상태 조회 핫패스 힙 0
+            Assert.Equal(0L, ZeroAllocProbe.MinOf(Measure));   // ★상태 조회 핫패스 힙 0
             Assert.True(acc >= 0);
         }
     }

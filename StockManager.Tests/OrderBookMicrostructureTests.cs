@@ -166,9 +166,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) PublishHot();
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) PublishHot();
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) PublishHot();
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -189,9 +190,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 50_000; i++) _hotBook.TryProjectLatest(a, b, c, d, out _, out _);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 20_000; i++) _hotBook.TryProjectLatest(a, b, c, d, out _, out _);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 20_000; i++) _hotBook.TryProjectLatest(a, b, c, d, out _, out _);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

@@ -113,9 +113,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 20_000; i++) PortfolioValuationMatrixCalculator.Compute(_qty, _avg, _cur, _val, _pnl, _ret, _wt);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 10_000; i++) PortfolioValuationMatrixCalculator.Compute(_qty, _avg, _cur, _val, _pnl, _ret, _wt);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 10_000; i++) PortfolioValuationMatrixCalculator.Compute(_qty, _avg, _cur, _val, _pnl, _ret, _wt);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

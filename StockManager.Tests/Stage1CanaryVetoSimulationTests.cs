@@ -199,9 +199,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) interlock.TryAdmit(10_000L, out _);          // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) interlock.TryAdmit(10_000L, out _);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) interlock.TryAdmit(10_000L, out _);
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -222,9 +223,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) g.Record(10_000 + (i & 1023));               // 워밍업
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) g.Record(10_000 + (i & 1023));
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) g.Record(10_000 + (i & 1023));
+                    });
                 }
                 catch (Exception e) { err = e; }
             });
@@ -245,9 +247,10 @@ namespace StockManager.Tests
                 try
                 {
                     for (int i = 0; i < 300_000; i++) { var s = g.Snapshot(); if (s.Count < 0) throw new Exception("warm"); }
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 100_000; i++) { var s = g.Snapshot(); if (s.Count < 0) throw new Exception("hot"); }
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) { var s = g.Snapshot(); if (s.Count < 0) throw new Exception("hot"); }
+                    });
                 }
                 catch (Exception e) { err = e; }
             });

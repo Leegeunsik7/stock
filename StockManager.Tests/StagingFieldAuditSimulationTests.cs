@@ -137,9 +137,14 @@ namespace StockManager.Tests
                     Span<BrokerTick> buf = stackalloc BrokerTick[128];
                     for (int i = 0; i < 400_000; i++) { coalescer.Publish(i & 1, i, i, 1); if ((i & 127) == 0) coalescer.Drain(buf); }   // 워밍업
                     for (int i = 0; i < 4096; i++) coalescer.Publish(0, i, i, 1);
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int k = 0; k < 200; k++) coalescer.Drain(buf);
-                    alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+                    long minAlloc = long.MaxValue;   // 람다 캡처 불가(Span 로컬) — ZeroAllocProbe 와 같은 다중 창 최솟값을 인라인으로
+                    for (int zw = 0; zw < ZeroAllocProbe.DefaultWindows && minAlloc != 0; zw++)
+                    {
+                        long zb = GC.GetAllocatedBytesForCurrentThread();
+                        for (int k = 0; k < 200; k++) coalescer.Drain(buf);
+                        minAlloc = Math.Min(minAlloc, GC.GetAllocatedBytesForCurrentThread() - zb);
+                    }
+                    alloc = minAlloc;
                 }
                 catch (Exception e) { err = e; }
             });

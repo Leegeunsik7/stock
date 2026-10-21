@@ -19,6 +19,7 @@ using MS2E.Infrastructure;
 using StockManager.Adapters;
 using StockManager.Engines;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -26,18 +27,6 @@ namespace StockManager.Tests
     public sealed class KisVtsOrderBookParserTests
     {
         private const long Px = 70_000, Tick = 100, Sym = 5930;
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         /// <summary>KIS 공식 예제 컬럼 정의(H0STASP0 · 63필드 · 2026-10-08 조회).</summary>
         private static readonly string[] OfficialColumns =

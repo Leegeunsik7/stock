@@ -139,9 +139,10 @@ namespace StockManager.Tests
             var f = new Fake { Ts = 1, Ws = 600L << 20 };
             var a = Agent(f);
             for (int m = 0; m < 200; m++) { a.Scan(); Minute(f); }
-            long b = GC.GetAllocatedBytesForCurrentThread();
-            for (int m = 0; m < 2_000; m++) { a.Scan(); Minute(f); f.Ws ^= 1 << 12; }
-            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - b);
+            Assert.Equal(0, ZeroAllocProbe.MinAllocated(() =>
+            {
+                for (int m = 0; m < 2_000; m++) { a.Scan(); Minute(f); f.Ws ^= 1 << 12; }
+            }));
         }
 
         // ════════════ §4 세션 VWAP ════════════

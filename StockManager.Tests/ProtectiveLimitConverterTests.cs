@@ -18,6 +18,7 @@ using MS2E.Infrastructure;
 using StockManager.Adapters;
 using StockManager.Engines;
 using Xunit;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests
 {
@@ -42,18 +43,6 @@ namespace StockManager.Tests
         private const long S = 100_000_000L;
         private const long Code = 5930;
         private static readonly long Sym = ReferencePriceFeedAdapter.SymbolHashForCode(Code);
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long b = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - b);
-            }
-            return min;
-        }
 
         // ════════════ §1 KrxTickAligner ════════════
 

@@ -17,6 +17,7 @@ using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena;
 using Xunit;
 using Xunit.Abstractions;
+using static StockManager.Tests.ZeroAllocProbe;
 
 namespace StockManager.Tests.Engines.Arena
 {
@@ -531,18 +532,6 @@ namespace StockManager.Tests.Engines.Arena
         }
 
         // ═══ §6 δ=0 · GC 0 ═══
-
-        private static long MinAllocated(Action body, int windows = 3)
-        {
-            long min = long.MaxValue;
-            for (int w = 0; w < windows && min != 0; w++)
-            {
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                body();
-                min = Math.Min(min, GC.GetAllocatedBytesForCurrentThread() - before);
-            }
-            return min;
-        }
 
         private static (int, int, int) GcCounts() => (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
 
