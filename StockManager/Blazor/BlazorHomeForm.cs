@@ -1727,11 +1727,32 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IUsArenaPort>(new StockManager.Adapters.UsArenaPortAdapter(usArena, usArenaFeeder));
             // [v12.18.63-DEV] 플루토 브레인 1단계 — 뉴스/공시 촉매 분석기(비동기 워커 · 콜드) → seqlock 버퍼 → 양 아레나 정산 핫패스 판독(δ=0).
             //   실시간 뉴스 소스(DART · SEC · 통신사) 미결선 — 주입 API(TryEnqueue · Ingest)만. 버퍼 공백 = 아레나 기존 동작 그대로.
+            // [v12.18.64-DEV] 플루토 브레인 2단계 — 가상 시계(합성 틱 동기 · 실시세 = 벽시계) · 수집 피더 결선.
+            //   피더(기본 전부 꺼짐 · 네트워크 호출 0): `Pluto.LiveFeedsEnabled` = DART(환경 변수 MS2E_DART_API_KEY · 설정 파일에 키 미기록) + SEC EDGAR(`Pluto.SecUserAgent` 연락처 필수) ·
+            //   `Pluto.ScenarioFeedEnabled` = 골든 시나리오 '[합성]' 뉴스(합성 시세 선택 시에만 진행). 피더 장애 = 피더 내부 계수 · 백오프(트레이딩/정산 스레드 무간섭).
+            var plutoClock = new StockManager.Engines.Cognitive.News.TickSyncedVirtualClock();
             var plutoBuffer = new StockManager.Engines.Cognitive.News.PlutoSentimentBuffer();
-            var plutoAnalyzer = new StockManager.Engines.Cognitive.News.PlutoCatalystAnalyzer(plutoBuffer);
+            var plutoAnalyzer = new StockManager.Engines.Cognitive.News.PlutoCatalystAnalyzer(plutoBuffer, plutoClock);
             krxArena.AttachPluto(plutoBuffer);
             usArena.AttachPluto(plutoBuffer);
+            krxArenaFeeder.AttachClock(plutoClock);
+            usArenaFeeder.AttachClock(plutoClock);
             plutoAnalyzer.Start();
+            var plutoFeeders = new List<StockManager.Engines.Cognitive.News.IPlutoNewsFeeder>();
+            if (cfg.GetBool("Pluto.LiveFeedsEnabled", false))
+            {
+                string dartKey = Environment.GetEnvironmentVariable("MS2E_DART_API_KEY") ?? "";
+                if (!string.IsNullOrWhiteSpace(dartKey))
+                    plutoFeeders.Add(new StockManager.Engines.Cognitive.News.DartDisclosureFeeder(dartKey, plutoAnalyzer.TryEnqueue, StockManager.Engines.Cognitive.News.SystemVirtualClock.Instance));
+                string secUserAgent = cfg.GetString("Pluto.SecUserAgent", "");
+                if (!string.IsNullOrWhiteSpace(secUserAgent))
+                    plutoFeeders.Add(new StockManager.Engines.Cognitive.News.SecEdgarFeeder(secUserAgent, plutoAnalyzer.TryEnqueue, StockManager.Engines.Cognitive.News.SystemVirtualClock.Instance));
+            }
+            if (cfg.GetBool("Pluto.ScenarioFeedEnabled", false))
+                plutoFeeders.Add(new StockManager.Engines.Cognitive.News.ScenarioNewsFeeder(plutoAnalyzer.TryEnqueue, plutoClock, requireSynthetic: true));
+            foreach (var feeder in plutoFeeders) feeder.Start();
+            FormClosed += (_, _) => ShutdownTrace.Step("pluto", () => { foreach (var feeder in plutoFeeders) feeder.Dispose(); plutoAnalyzer.Dispose(); });
+            services.AddSingleton(plutoClock);
             services.AddSingleton(plutoBuffer);
             services.AddSingleton(plutoAnalyzer);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.

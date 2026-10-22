@@ -474,7 +474,7 @@ namespace StockManager.Tests.Cognitive
             const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
             var targets = new (Type t, string[] names)[]
             {
-                (typeof(PlutoSentimentBuffer), new[] { "Publish", "TryRead", "Dominates", "Lock", "Home", "Claim", "Find" }),
+                (typeof(PlutoSentimentBuffer), new[] { "Publish", "TryRead", "TryReadTag", "Dominates", "Lock", "Home", "Claim", "Find" }),
                 (typeof(PlutoSentimentFactor), new[] { "DecayedScore", "EffectiveScore", "CopyDigest", "WithSeq", "get_IsWellFormed" }),
                 (typeof(PlutoNewsTag), new[] { "get_IsShock", "get_HasCatalyst", "get_NewsBp", "get_IsWellFormed" }),
                 (typeof(CatalystText), new[] { "Band", "InBand", "HalfLifeMinutes", "HalfLifeTicks" }),
@@ -482,10 +482,14 @@ namespace StockManager.Tests.Cognitive
             foreach (var (t, names) in targets)
                 foreach (var name in names)
                 {
-                    var m = t.GetMethod(name, all);
-                    Assert.True(m is not null, $"{t.Name}.{name}");
-                    var sites = ZeroAllocIlInspector.Inspect(m!);
-                    Assert.True(sites.Count == 0, $"{t.Name}.{name}\n" + string.Join("\n", sites));
+                    // [v12.18.64-DEV] 가상 시계 오버로드(Publish(in, IVirtualClock)) 추가 → 같은 이름의 전 오버로드를 검사
+                    var overloads = t.GetMethods(all).Where(x => x.Name == name).ToArray();
+                    Assert.True(overloads.Length > 0, $"{t.Name}.{name}");
+                    foreach (var m in overloads)
+                    {
+                        var sites = ZeroAllocIlInspector.Inspect(m);
+                        Assert.True(sites.Count == 0, $"{t.Name}.{name}\n" + string.Join("\n", sites));
+                    }
                 }
             foreach (var ctor in typeof(PlutoNewsTag).GetConstructors().Concat<MethodBase>(typeof(PlutoSentimentFactor).GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)))
                 Assert.Empty(ZeroAllocIlInspector.Inspect(ctor));

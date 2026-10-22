@@ -5,6 +5,7 @@
 //   ★liveArmed:false — 주문 경로 = 엔진 휴먼 가상 원장 큐(SubmitHuman)뿐. ★Fed=false(정산 0회) = 피드 미결선 정직 렌더.
 //   [v12.18.60-DEV] 시세 주입기(KrxArenaQuoteFeeder) 결속: 출처 선택 · 공급 상태 · 수신 호가 · 진영 보유 투영.
 //     주입기 미결속(null) = 출처 선택 거부 · Pumped=false(정직 렌더).
+//   [v12.18.64-DEV] Catalyst(symbol) = 엔진 결속 플루토 버퍼 → ArenaCatalystMapper(마지막 정산 KST 기준 감쇄) — UI 뉴스 촉매 배지.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -90,6 +91,9 @@ namespace StockManager.Adapters
         }
 
         public int SubmitHuman(long symbol, int side, long qty) => _engine.SubmitHuman(symbol, side, qty);
+
+        public ArenaCatalystView? Catalyst(long symbol)
+            => _engine.TryReadSnapshot(out var s) ? ArenaCatalystMapper.Project(_engine.PlutoBuffer, symbol, s.LastKstTicks) : null;
 
         private static KrxArenaBookView Map(in DuelBookStats b) => new(
             b.CapitalWon, b.CashWon, b.EquityWon, b.RealizedWon, b.UnrealizedWon, b.FeesWon, b.TaxWon,

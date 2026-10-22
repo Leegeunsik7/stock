@@ -6,7 +6,10 @@
    ★liveArmed:false — 이 페이지의 주문 목적지는 IKrxArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
    [v12.18.62-DEV] 상단 모드 탭 [국내 대형주(KRW ₩) | 미국 빅테크(USD $)] — 미국 모드 = IUsArenaPort(빅테크 5종 · USD 센트 → $0.01 표기 ·
      세션 뱃지 프리마켓/정규장/장외 · 스코어보드 · 휴먼 USD 티켓 · AI USD 근거 카드). 모드별 원장 · 티켓 · 메시지 상태 분리(교차 오염 0) ·
-     렌더 펌프는 활성 모드 포트의 게시 버전만 폴링. 미국 모드 주문 목적지 = IUsArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐. *@
+     렌더 펌프는 활성 모드 포트의 게시 버전만 폴링. 미국 모드 주문 목적지 = IUsArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
+   [v12.18.64-DEV] 플루토 뉴스 촉매 배지(포트 Catalyst · 아레나 정산 시각 기준 감쇄): 수신 종목 촉매 띠 · 보유 표 종목 칸 · AI 근거 카드 머리에
+     호재 = 녹색 [호재 +점수] + 반감기 진행 막대 · 치명적 악재 = 점멸 적색 [긴급 악재 −점수](진입 금지/청산 경고) · 그 밖 악재 = 적색 테두리 · 노이즈/중립 = 생략.
+     호버 툴팁 = 64B 헤드라인 + 출처 + 경과/반감기. 판독 전용(주문 경로 무변경). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -95,7 +98,7 @@
                             @foreach (var p in upos)
                             {
                                 <tr>
-                                    <td>@p.Ticker</td><td>@p.Qty.ToString("N0")</td><td>@Usd(p.AvgPriceCents)</td><td>@Usd(p.MarkCents)</td>
+                                    <td>@p.Ticker @Cat(UsPort.Catalyst(p.Ticker))</td><td>@p.Qty.ToString("N0")</td><td>@Usd(p.AvgPriceCents)</td><td>@Usd(p.MarkCents)</td>
                                     <td class="@Css(p.PnlCents)">@SignedUsd(p.PnlCents)</td>
                                     @if (side == ArenaSide.Ai) { <td>@Usd(p.TargetPriceCents) / @Usd(p.StopLossPriceCents)</td> }
                                 </tr>
@@ -109,6 +112,16 @@
         <div class="ar-card ar-ticket da-ticket">
             <h3>🧑 휴먼 USD 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 정규장(연속매매)만 · 다음 정산 회차 가상 체결</small></h3>
             @{ var uq = UsPort.Quotes(); }
+            @{
+                var ucats = new List<(string Label, ArenaCatalystView View)>();
+                foreach (var q in uq) if (UsPort.Catalyst(q.Ticker) is { } uc) ucats.Add((q.Ticker, uc));
+            }
+            @if (ucats.Count > 0)
+            {
+                <div class="da-cats"><span class="ar-sub">📰 뉴스 촉매</span>
+                    @foreach (var (label, cv) in ucats) { <span class="da-cat-item">@label @Cat(cv)</span> }
+                </div>
+            }
             <div class="ar-ctl">
                 <select class="da-tkr" @bind="_ticker">
                     @foreach (var q in uq)
@@ -137,7 +150,7 @@
             <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
                 <div class="da-card-head">
                     <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
-                    <b>@r.Ticker</b> @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
+                    <b>@r.Ticker</b> @Cat(UsPort.Catalyst(r.Ticker)) @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
                     <span class="da-trigger">@r.Trigger</span>
                     <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
                 </div>
@@ -231,7 +244,7 @@ else
                         @foreach (var p in pos)
                         {
                             <tr>
-                                <td>@p.Symbol.ToString("D6")</td><td>@p.Qty.ToString("N0")</td><td>@p.AvgPriceWon.ToString("N0")</td><td>@p.MarkWon.ToString("N0")</td>
+                                <td>@p.Symbol.ToString("D6") @Cat(Port.Catalyst(p.Symbol))</td><td>@p.Qty.ToString("N0")</td><td>@p.AvgPriceWon.ToString("N0")</td><td>@p.MarkWon.ToString("N0")</td>
                                 <td class="@Css(p.PnlWon)">@Signed(p.PnlWon)</td>
                                 @if (side == ArenaSide.Ai) { <td>@p.TargetPriceWon.ToString("N0") / @p.StopLossPriceWon.ToString("N0")</td> }
                             </tr>
@@ -245,6 +258,16 @@ else
     <div class="ar-card ar-ticket da-ticket">
         <h3>🧑 휴먼 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 다음 정산 회차 가상 체결</small></h3>
         @{ var quotes = Port.Quotes(); }
+        @{
+            var kcats = new List<(string Label, ArenaCatalystView View)>();
+            foreach (var q in quotes) if (Port.Catalyst(q.Symbol) is { } kc) kcats.Add((q.Symbol.ToString("D6"), kc));
+        }
+        @if (kcats.Count > 0)
+        {
+            <div class="da-cats"><span class="ar-sub">📰 뉴스 촉매</span>
+                @foreach (var (label, cv) in kcats) { <span class="da-cat-item">@label @Cat(cv)</span> }
+            </div>
+        }
         <div class="ar-ctl">
             <select class="da-sym" @bind="_symbol">
                 @foreach (var q in quotes)
@@ -273,7 +296,7 @@ else
         <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
             <div class="da-card-head">
                 <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
-                <b>@r.Symbol.ToString("D6")</b> @r.Qty.ToString("N0")주 @@ @r.PriceWon.ToString("N0")원
+                <b>@r.Symbol.ToString("D6")</b> @Cat(Port.Catalyst(r.Symbol)) @r.Qty.ToString("N0")주 @@ @r.PriceWon.ToString("N0")원
                 <span class="da-trigger">@r.Trigger</span>
                 <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss")</span>
             </div>
@@ -393,6 +416,22 @@ else
         => !f.Pumped ? "bad" : f.Switching ? "wait" : f.Applied == KrxArenaFeed.Synthetic ? "syn" : v.Ticks > 0 ? "ok" : "wait";
 
     private static string Css(long x) => x > 0 ? "ar-up" : x < 0 ? "ar-down" : "";
+
+    // [v12.18.64-DEV] 뉴스 촉매 배지(null = 생략 · 호재 = 반감기 진행 막대 · 긴급 악재 = 점멸).
+    private static RenderFragment Cat(ArenaCatalystView? c) => @<text>@if (c is not null)
+    {
+        <span class="da-cat @CatCss(c)" data-kind="@c.Kind" title="@c.Tooltip">@c.BadgeText@if (c.IsPositive)
+            {
+                <i class="da-hl" title="반감기 진행 @(c.HalfLifeProgressPct)%"><i style="width:@(c.HalfLifeProgressPct)%"></i></i>
+            }</span>
+    }</text>;
+
+    private static string CatCss(ArenaCatalystView c) => c.Kind switch
+    {
+        ArenaCatalystKind.Positive => "pos",
+        ArenaCatalystKind.Shock => "shock",
+        _ => "neg",
+    };
     private static string Won(long w) => w.ToString("N0") + "원";
     private static string Signed(long w) => (w > 0 ? "+" : "") + w.ToString("N0");
     private static string Bp(long bp) => (bp > 0 ? "+" : "") + (bp / 100.0).ToString("F2") + "%";
@@ -444,4 +483,14 @@ else
     .da-conf .bar { display: inline-block; width: 90px; height: 7px; border-radius: 4px; background: #2a3040; overflow: hidden; }
     .da-conf .bar i { display: block; height: 100%; background: #4dd0e1; }
     .da-summary { font-size: 12px; color: var(--sub); line-height: 1.5; }
+    .da-cats { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 2px 0 8px; font-size: 12px; }
+    .da-cat-item { display: inline-flex; align-items: center; gap: 4px; }
+    .da-cat { display: inline-flex; align-items: center; gap: 5px; margin-left: 4px; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: help; }
+    .da-cat.pos { background: #2e7d32; color: #fff; }
+    .da-cat.neg { background: transparent; color: #ef9a9a; border: 1px solid #E53935; }
+    .da-cat.shock { background: #E53935; color: #fff; animation: da-blink 1s ease-in-out infinite; }
+    .da-hl { display: inline-block; width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; }
+    .da-hl i { display: block; height: 100%; background: #fff; }
+    @@keyframes da-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+    @@media (prefers-reduced-motion: reduce) { .da-cat.shock { animation: none; outline: 2px solid #ff8a80; } }
 </style>

@@ -125,6 +125,9 @@ namespace StockManager.Engines.Arena.Domestic
 
         public bool PlutoAttached => Volatile.Read(ref _pluto) is not null;
 
+        /// <summary>[v12.18.64-DEV] 결속된 플루토 버퍼(UI 촉매 배지 투영 · 미결속 = null).</summary>
+        public PlutoSentimentBuffer? PlutoBuffer => Volatile.Read(ref _pluto);
+
         public static bool IsRegularSession(DateTime kst)
         {
             if (kst.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;

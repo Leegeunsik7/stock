@@ -7,6 +7,8 @@
 //     기존이 충격 수준 구조적 악재(실효 ≤ −60)인 동안 호재로는 교체 불가(악재 고착 · fail-closed). 노이즈/무결성 위반 = 거부.
 //   판독(TryRead · 아레나 정산 스레드): 버전 브래킷(홀수 = 기록 중 재시도 · 전후 불일치 = 재시도) · 상한 MaxReadSpins 초과 = false(경합 계수).
 //   ★δ=0: Publish/TryRead 힙 할당 0(고정 배열 · 값 타입 복사). ★슬롯 포화 = 폐기(BufferFull · 재시도 큐잉 0).
+//   [v12.18.64-DEV] 가상 시계 오버로드: Publish(in f, IVirtualClock) · TryReadTag(symbol, IVirtualClock, out PlutoNewsTag) —
+//     합성/리플레이 틱 도메인에서도 우세 비교 · 감쇄가 같은 '지금'으로 재현된다(시계 판독 = 인터페이스 정수 게터 · 할당 0).
 // ============================================================================
 using System;
 using System.Threading;
@@ -82,6 +84,22 @@ namespace StockManager.Engines.Cognitive.News
             Volatile.Write(ref s.Ver, v + 2);
             Interlocked.Increment(ref r == PlutoPublishResult.Published ? ref _published : ref _superseded);
             return r;
+        }
+
+        /// <summary>[v12.18.64-DEV] 가상 시계 기준 게시.</summary>
+        public PlutoPublishResult Publish(in PlutoSentimentFactor factor, IVirtualClock clock)
+        {
+            ArgumentNullException.ThrowIfNull(clock);
+            return Publish(in factor, clock.UtcNowTicks);
+        }
+
+        /// <summary>[v12.18.64-DEV] 종목 판정 판독 + 가상 시계 기준 감쇄 태그(δ=0). 미기록 · 경합 = false(tag = default).</summary>
+        public bool TryReadTag(long symbol, IVirtualClock clock, out PlutoNewsTag tag)
+        {
+            ArgumentNullException.ThrowIfNull(clock);
+            if (!TryRead(symbol, out var f)) { tag = default; return false; }
+            tag = new PlutoNewsTag(in f, clock.UtcNowTicks);
+            return true;
         }
 
         /// <summary>종목 최신 판정 판독(δ=0). 미기록 · 경합 상한 초과 = false.</summary>

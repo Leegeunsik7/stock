@@ -11,6 +11,8 @@
 //   ④ 출처 전환 = 다음 펌프에서 엔진 원장 · 종목 표 초기화(SetCapital) 후 적용 — 출처 간 가격/EWMA 오염 0. 브리지 복귀 시 기존 슬롯은 '본 것'으로 표시(재주입 0).
 //
 //   ★δ=0: OnBook/OnTrade/Pump 힙 할당 0(고정 배열 · 값 타입). ★liveArmed:false — 시세 수신 · 가상 원장 주입뿐(주문 송출 수단 0).
+//   [v12.18.64-DEV] 플루토 가상 시계(AttachClock · 선택): 합성 틱마다 가상 KST − 9h(UTC)를 TickSyncedVirtualClock.Observe(단조) —
+//     뉴스 분석기 미래/과거 필터 · 버퍼 우세 · 시나리오 피더가 합성 세션 시각으로 돈다. 출처 전환(브리지 ↔ 합성) = Reset(실시세 = 벽시계 복귀).
 // ============================================================================
 using System;
 using System.Threading;
@@ -47,6 +49,7 @@ namespace StockManager.Engines.Arena.Domestic
         private readonly int[] _synDrift = new int[5], _synRegimeLeft = new int[5];
         private ulong _rng;
         private long _virtKstTicks;
+        private StockManager.Engines.Cognitive.News.TickSyncedVirtualClock? _clock;
 
         public KrxArenaQuoteFeeder(KrxArenaEngine engine, ulong seed = 0x5EED_A12E_0060UL)
         {
@@ -64,6 +67,9 @@ namespace StockManager.Engines.Arena.Domestic
         public long DroppedBooks => Interlocked.Read(ref _droppedBooks);
         /// <summary>합성 가상 세션 시각(KST · 합성 미적용 = 0).</summary>
         public long SyntheticKstTicks => Interlocked.Read(ref _virtKstTicks);
+
+        /// <summary>[v12.18.64-DEV] 플루토 가상 시계 결속(합성 틱 시각 동기 · 출처 전환 시 Reset).</summary>
+        public void AttachClock(StockManager.Engines.Cognitive.News.TickSyncedVirtualClock clock) => Volatile.Write(ref _clock, clock ?? throw new ArgumentNullException(nameof(clock)));
 
         /// <summary>출처 선택(Bridge · Synthetic). 범위 밖 = false. 적용 = 다음 펌프(원장 초기화 동반).</summary>
         public bool SelectSource(int source)
@@ -135,6 +141,7 @@ namespace StockManager.Engines.Arena.Domestic
             if (req != _applied)
             {
                 _engine.SetCapital(_engine.CapitalWon);
+                Volatile.Read(ref _clock)?.Reset();
                 if (req == KrxArenaFeed.Synthetic) InitSynthetic(utcTicks + KstOffsetTicks);
                 else { MarkAllSeen(); Interlocked.Exchange(ref _virtKstTicks, 0); }
                 Volatile.Write(ref _applied, req);
@@ -214,6 +221,7 @@ namespace StockManager.Engines.Arena.Domestic
                 kst = NextSessionOpen(kst.Date.AddDays(1));
                 _engine.SetOvernightMacro(NextInt(-4000, 4001));   // 새 가상 일자 = 야간 글로벌 재추첨
             }
+            Volatile.Read(ref _clock)?.Observe(kst.Ticks - KstOffsetTicks);
             for (int k = 0; k < _synPx.Length; k++)
             {
                 if (_synRegimeLeft[k]-- <= 0) { _synDrift[k] = NextInt(-1, 2); _synRegimeLeft[k] = NextInt(40, 160); }

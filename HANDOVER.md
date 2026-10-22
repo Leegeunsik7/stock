@@ -3960,3 +3960,29 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 실시간 뉴스/공시 소스(DART OpenAPI · SEC EDGAR · 통신사) 미결선 → 운영 버퍼 공백 = 아레나 동작 불변 · 키워드 규칙 기반(형태소 분석 · 문맥 이해 없음 — 오탐/미탐 가능) ·
   엔티티 표 20종 한정 · 합성 시세 모드는 가상 시계라 실시간 뉴스 시각과 도메인 불일치 → 미래(>5분) = 0 · 과거 = 감쇄로 자연 무시 · 판독 경합 상한 초과 시 해당 정산 뉴스 미반영(경합 계수 · 실측 0).
 - 불변: liveArmed:false(뉴스 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(Razor/포트 변경 0) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 170. v12.18.64-DEV — 플루토 브레인 2단계: DART/SEC 공시 수집 피더 · 가상 시계(IVirtualClock) 동기화 · 아레나 촉매 UI 배지 결선 (2026-10-23)
+
+- 가상 시계(신규 Engines/Cognitive/News/PlutoVirtualClock.cs): IVirtualClock(UtcNowTicks · IsSynthetic) · SystemVirtualClock(실거래 = 벽시계 싱글턴) ·
+  TickSyncedVirtualClock(합성/리플레이 = 틱 UTC 단조 래치 CAS · 역행/무효 무시 계수 · 미동기/Reset = 대체 시계) · ManualVirtualClock(백테스트/시험 Set·Advance · 역행 금지).
+  분석기: (buffer, IVirtualClock) 생성자 추가 · 미래(>5분)/과거(>24h) 필터 = 주입 시계(1단계 Func<long> 생성자 = DelegateVirtualClock 호환).
+  버퍼: Publish(in, IVirtualClock) · TryReadTag(symbol, IVirtualClock, out PlutoNewsTag) 오버로드(δ=0). 아레나 정산 판독은 기존대로 정산 틱 KST−9h(이미 틱 동기).
+  시세 주입기(KRX/US): AttachClock → 합성 틱마다 Observe(가상 UTC) · 출처 전환 = Reset(실시세 = 벽시계 복귀).
+- 피더(신규 PlutoNewsFeeder.cs · DartDisclosureFeeder · SecEdgarFeeder · ScenarioNewsFeeder): IPlutoNewsFeeder(PollOnceAsync 무예외 · Start/Stop · Health) ·
+  PollingNewsFeeder 기반 = 백그라운드 폴링 · 요청별 타임아웃(기본 8s) · 응답 상한 2MB · 접수번호 중복 제거(4096 FIFO) · 장애 분류(HttpStatus/Timeout/Network/Malformed/Oversize/ApiError/Unexpected) ·
+  지수 백오프(주기×2^n · 상한 10분) · 싱크 = 분석기 TryEnqueue(비차단 DropOldest). DART = list.json Utf8JsonReader(000 정상 · 013 무자료 · 그 밖 ApiError) · 최초 성공 회차 기준선(전달 0 — 접수 '일자'만 주므로 신선도 위장 차단) · 발생 시각 = 최초 발견 시각.
+  SEC = getcurrent 8-K Atom · XmlReader(DTD 금지 · 리졸버 0) · CIK→티커 5종 · Item 1.03/3.01/4.02 → bankruptcy/delisting/restatement 번역(그 밖 = 원문 · 키워드 없으면 노이즈) · 발생 시각 = updated.
+  시나리오 = 골든 6단계(공급계약 +85 · 유상증자 −80 · 시황 노이즈 · 감사의견 거절 긴급 악재 · 사상 최대 매출 +80 · 리콜 −45) · 헤드라인 접두 "[합성] " · requireSynthetic · 시계 역행 = 재무장.
+- UI: 신규 포트 DTO ArenaCatalystView/ArenaCatalystKind(MS2E.UI.Portable/Ports/Trading/ArenaCatalystPort.cs) · IKrxArenaPort.Catalyst(long) · IUsArenaPort.Catalyst(string)(기본 구현 null) ·
+  어댑터 = ArenaCatalystMapper(엔진 PlutoBuffer · 마지막 정산 KST 기준 감쇄). DualArenaPage: 수신 종목 '📰 뉴스 촉매' 띠 · 보유 표 종목 칸 · AI 근거 카드 머리 배지 —
+  호재 녹색 [호재 +N] + 반감기 진행 막대 · 긴급 악재 점멸 적색 [긴급 악재 −N](prefers-reduced-motion = 점멸 대신 외곽선) · 그 밖 악재 적색 테두리 · 노이즈/중립 생략 · title 툴팁 = 64B 헤드라인 + 출처 + 경과/반감기.
+- 호스트: TickSyncedVirtualClock 생성 → 분석기 · 양 주입기 결속. 피더 기본 전부 꺼짐(네트워크 0): `Pluto.LiveFeedsEnabled` + 환경 변수 MS2E_DART_API_KEY(설정 파일 키 미기록) · `Pluto.SecUserAgent`(연락처 필수) ·
+  `Pluto.ScenarioFeedEnabled`(합성 시세 선택 시에만 진행). 종료 시 피더 · 분석기 Dispose.
+- 테스트 StockManager.Tests/Cognitive/PlutoNewsFeederTests 40건: 시간 가속 감쇄(모멘텀/구조적± × 10/30/60분 공식 · 정확값) · 틱 동기 래치 · 시계 도메인 필터 · 주입기→시계 동기/Reset ·
+  리플레이 결정론 · 시계+태그 판독 10만 회 0B · DART 기준선→신규 2건→버퍼(중복 4) · 013/ApiError · SEC Item 4.02 → NVDA −90 · 골든 시나리오 시간 순 · 연결 실패/타임아웃/500/회복/백오프 상한 ·
+  비정상 JSON 10종 · 비정상 XML/DTD 4종 · 과대/싱크 예외 · 실패 피더 백그라운드 중 엔진 2만 틱 · 포트 투영 · bUnit 배지 렌더. 기존 IL 할당 검사 = 같은 이름 전 오버로드 검사로 보강(+TryReadTag).
+  결함 주입 확인: 주입기 Observe 제거 · 분석기 시계 → DateTime.UtcNow · 요청 타임아웃 제거 → 6건 실패 검출 후 원복.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 전체 스위트 5,133 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 2초.
+- 한계(정직): DART/SEC 실서버 미접속 검증(모의 핸들러 E2E만 · 실키 미보유) · DART 발생 시각 = 발견 시각(분 단위 접수 시각 미제공) · SEC 는 8-K 최신 40건 · CIK 표 5종 ·
+  두 아레나가 서로 다른 합성 도메인을 동시에 공급하면 앞선 도메인 채택(뒤처진 쪽 판독 = 미래 뉴스 → 0 · fail-closed) · 실시세 모드에서도 합성 측 동기 중이면 실뉴스 필터가 합성 시각 기준 · 리플레이 엔진(ArenaTickReplayEngine) 미결속.
+- 불변: liveArmed:false(뉴스 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30 무변경 · 핫패스 δ=0 · Pure Shell(UI = 포트 DTO만) · 래칫 ≤40 · 타 세션 파일(LiveWireKisLongSoakTests.cs · .claude/*) 미스테이징 · 원격 푸시 없음.

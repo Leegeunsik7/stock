@@ -157,6 +157,9 @@ namespace StockManager.Engines.Arena.Us
 
         public bool PlutoAttached => Volatile.Read(ref _pluto) is not null;
 
+        /// <summary>[v12.18.64-DEV] 결속된 플루토 버퍼(UI 촉매 배지 투영 · 미결속 = null).</summary>
+        public PlutoSentimentBuffer? PlutoBuffer => Volatile.Read(ref _pluto);
+
         // ── 휴먼 주문 큐(Vyukov 유계 MPSC · 할당 0) ──────────────────────────────────
 
         public int SubmitHuman(long symbol, int side, long qty)

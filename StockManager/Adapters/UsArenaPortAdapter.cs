@@ -5,6 +5,7 @@
 //   티커 문자열 ↔ 엔진 long 키 변환은 여기서만(UsTechUniverse). 표 밖 티커 주문 = Invalid(엔진 미도달).
 //   ★liveArmed:false — 주문 경로 = 엔진 휴먼 가상 원장 큐(SubmitHuman)뿐(해외 주문 API 송출 0). ★Fed=false(정산 0회) = 피드 미결선 정직 렌더.
 //   주입기 미결속(null) = 출처 선택 거부 · Pumped=false(정직 렌더).
+//   [v12.18.64-DEV] Catalyst(ticker) = 엔진 결속 플루토 버퍼 → ArenaCatalystMapper(마지막 정산 KST 기준 감쇄) — UI 뉴스 촉매 배지.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -101,6 +102,13 @@ namespace StockManager.Adapters
         {
             long symbol = string.IsNullOrEmpty(ticker) ? 0 : UsTechUniverse.Pack(ticker.AsSpan());
             return symbol == 0 ? UsArenaReject.Invalid : _engine.SubmitHuman(symbol, side, qty);
+        }
+
+        public ArenaCatalystView? Catalyst(string ticker)
+        {
+            long symbol = string.IsNullOrEmpty(ticker) ? 0 : UsTechUniverse.Pack(ticker.AsSpan());
+            if (symbol == 0 || !_engine.TryReadSnapshot(out var s)) return null;
+            return ArenaCatalystMapper.Project(_engine.PlutoBuffer, symbol, s.LastKstTicks);
         }
 
         private static UsArenaBookView Map(in DuelBookStats b) => new(

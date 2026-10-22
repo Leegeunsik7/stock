@@ -12,7 +12,9 @@
 //   ④ 엔티티: 별칭 표(한글 사명 · 영문 사명 · 티커 · 6자리 코드) — ASCII 별칭은 단어 경계 검사(pineapple ≠ Apple) ·
 //     겹치는 매칭은 긴 별칭 우선(카카오뱅크 ≠ 카카오) · 출처 힌트(DART 종목코드 6자리 · 티커) 우선 · 항목당 최대 4종목.
 //   ⑤ 비동기: TryEnqueue(임의 스레드) → 유계 채널(DropOldest · 폐기 계수 · 재시도 0) → Start() 워커가 Ingest. 항목 예외 = 계수 후 다음 항목.
-//   ★실시간 뉴스 소스(DART OpenAPI · SEC EDGAR · 통신사) 미결선 — 주입 API(Ingest · TryEnqueue)만 제공.
+//   [v12.18.64-DEV] 시계 = IVirtualClock(실거래 = SystemVirtualClock · 합성/리플레이 = TickSyncedVirtualClock · 시험 = ManualVirtualClock) —
+//     미래(>5분)/과거(>24h) 필터와 버퍼 우세 비교가 같은 시간 도메인을 쓴다. 1단계 Func<long> 생성자는 호환 유지(DelegateVirtualClock).
+//   [v12.18.64-DEV] 소스 결선 = IPlutoNewsFeeder(DartDisclosureFeeder · SecEdgarFeeder · ScenarioNewsFeeder) → TryEnqueue. 피더 장애는 피더 안에서 격리.
 //   ★liveArmed:false — 이 분석기의 출력은 가상 아레나 시그널뿐(주문 · 브로커 경로 0).
 // ============================================================================
 using System;
@@ -110,24 +112,32 @@ namespace StockManager.Engines.Cognitive.News
         private static readonly Alias[] s_aliases = BuildAliases();
 
         private readonly PlutoSentimentBuffer _buffer;
-        private readonly Func<long> _utcNow;
+        private readonly IVirtualClock _clock;
         private readonly Channel<PlutoNewsItem> _queue;
         private readonly CancellationTokenSource _cts = new();
         private Task? _worker;
         private int _started;
         private long _enqueued, _droppedOldest, _processed, _published, _noise, _rejected, _faulted;
 
+        /// <summary>1단계 호환 생성자(utcNowTicks null = 시스템 벽시계).</summary>
         public PlutoCatalystAnalyzer(PlutoSentimentBuffer buffer, Func<long>? utcNowTicks = null, int queueCapacity = DefaultQueueCapacity)
+            : this(buffer, utcNowTicks is null ? SystemVirtualClock.Instance : new DelegateVirtualClock(utcNowTicks), queueCapacity)
+        {
+        }
+
+        /// <summary>[v12.18.64-DEV] 가상 시계 주입 생성자.</summary>
+        public PlutoCatalystAnalyzer(PlutoSentimentBuffer buffer, IVirtualClock clock, int queueCapacity = DefaultQueueCapacity)
         {
             _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
             if (queueCapacity < 1) throw new ArgumentOutOfRangeException(nameof(queueCapacity));
-            _utcNow = utcNowTicks ?? (static () => DateTime.UtcNow.Ticks);
             _queue = Channel.CreateBounded<PlutoNewsItem>(
                 new BoundedChannelOptions(queueCapacity) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false },
                 _ => Interlocked.Increment(ref _droppedOldest));
         }
 
         public PlutoSentimentBuffer Buffer => _buffer;
+        public IVirtualClock Clock => _clock;
         public long Enqueued => Interlocked.Read(ref _enqueued);
         public long DroppedOldest => Interlocked.Read(ref _droppedOldest);
         public long Processed => Interlocked.Read(ref _processed);
@@ -188,7 +198,7 @@ namespace StockManager.Engines.Cognitive.News
         {
             ArgumentNullException.ThrowIfNull(item);
             Interlocked.Increment(ref _processed);
-            long now = _utcNow();
+            long now = _clock.UtcNowTicks;
             if (string.IsNullOrWhiteSpace(item.Headline) || item.PublishedUtcTicks <= 0 || item.PublishedUtcTicks > DateTime.MaxValue.Ticks)
                 return Reject(PlutoIngestStatus.InvalidItem, default);
             if (item.PublishedUtcTicks - now > PlutoClock.MaxSkewTicks) return Reject(PlutoIngestStatus.FutureTimestamp, default);

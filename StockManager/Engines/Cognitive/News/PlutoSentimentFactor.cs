@@ -7,6 +7,7 @@
 //   EffectiveScore(now) = DecayedScore × Confidence / 100(0 방향 절단) — 아레나 시그널에 실리는 값.
 //   ★δ=0: 감쇄/판독 = 정수 · double 산술만(할당 0). Headline(문자열 복원)은 콜드 경로(UI · 근거 요약 전용).
 //   ★시계: 주입 틱 전용(자체 시계 없음) — now 는 호출 측(아레나 엔진 = 정산 KST → UTC)이 준다.
+//   [v12.18.64-DEV] 호출 측 시계 = IVirtualClock(PlutoVirtualClock.cs) 또는 아레나 정산 틱 시각 — 합성/리플레이도 같은 감쇄가 재현된다.
 // ============================================================================
 using System;
 using System.Runtime.CompilerServices;

@@ -14,6 +14,7 @@
 //      ★합성은 UI 가 '합성 시세(데모)'로 명시 렌더(실시세 위장 0) · KIS 슬롯은 합성 중에도 계속 갱신되나 엔진 미주입.
 //   ④ 출처 전환 = 다음 펌프에서 엔진 원장 · 종목 상태 초기화(SetCapital) 후 적용 — 출처 간 가격/EWMA/갭 오염 0. KIS 복귀 시 기존 슬롯은 '본 것'(재주입 0).
 //
+//   [v12.18.64-DEV] 플루토 가상 시계(AttachClock · 선택): 합성 틱마다 가상 UTC 를 TickSyncedVirtualClock.Observe(단조) · 출처 전환 = Reset.
 //   ★δ=0: OnKisQuoteBody/OnKisQuote/OnBook/Pump 힙 할당 0(고정 배열 · 값 타입 · Utf8JsonReader 판독). ★liveArmed:false — 시세 수신 · 가상 원장 주입뿐(해외 주문 송출 수단 0).
 // ============================================================================
 using System;
@@ -51,6 +52,7 @@ namespace StockManager.Engines.Arena.Us
         private readonly int[] _synDrift = new int[MaxSlots], _synRegimeLeft = new int[MaxSlots];
         private ulong _rng;
         private long _virtUtcTicks, _virtEtDay;
+        private StockManager.Engines.Cognitive.News.TickSyncedVirtualClock? _clock;
 
         public UsArenaQuoteFeeder(UsTechArenaEngine engine, ulong seed = 0x5EED_0005_0061UL)
         {
@@ -68,6 +70,9 @@ namespace StockManager.Engines.Arena.Us
         public long DroppedQuotes => Interlocked.Read(ref _dropped);
         /// <summary>합성 가상 세션 시각(UTC ticks · 합성 미적용 = 0).</summary>
         public long SyntheticUtcTicks => Interlocked.Read(ref _virtUtcTicks);
+
+        /// <summary>[v12.18.64-DEV] 플루토 가상 시계 결속(합성 틱 UTC 동기 · 출처 전환 시 Reset).</summary>
+        public void AttachClock(StockManager.Engines.Cognitive.News.TickSyncedVirtualClock clock) => Volatile.Write(ref _clock, clock ?? throw new ArgumentNullException(nameof(clock)));
 
         /// <summary>출처 선택(KisOverseas · Synthetic). 범위 밖 = false. 적용 = 다음 펌프(원장 초기화 동반).</summary>
         public bool SelectSource(int source)
@@ -143,6 +148,7 @@ namespace StockManager.Engines.Arena.Us
             if (req != _applied)
             {
                 _engine.SetCapital(_engine.CapitalCents);
+                Volatile.Read(ref _clock)?.Reset();
                 if (req == UsArenaFeed.Synthetic) InitSynthetic(utcTicks);
                 else { MarkAllSeen(); Interlocked.Exchange(ref _virtUtcTicks, 0); }
                 Volatile.Write(ref _applied, req);
@@ -237,6 +243,7 @@ namespace StockManager.Engines.Arena.Us
             }
             long day = et.Date.Ticks;
             if (day != _virtEtDay) { _virtEtDay = day; NewVirtualDay(); }
+            Volatile.Read(ref _clock)?.Observe(utc.Ticks);
             var kst = new DateTime(utc.Ticks + KstOffsetTicks);
             for (int k = 0; k < MaxSlots; k++)
             {

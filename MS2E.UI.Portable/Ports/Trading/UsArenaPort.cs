@@ -105,5 +105,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         IReadOnlyList<UsArenaQuoteView> Quotes();
         /// <summary>진영(ArenaSide) 보유 종목(표 순서).</summary>
         IReadOnlyList<UsArenaPositionView> Positions(int side);
+        /// <summary>[v12.18.64-DEV] 티커 실시간 뉴스 촉매(아레나 정산 시각 기준 감쇄 · 노이즈/중립/미결속 = null). 기본 구현 = null.</summary>
+        ArenaCatalystView? Catalyst(string ticker) => null;
     }
 }
