@@ -1,12 +1,14 @@
 // ============================================================================
-// KisOverseasPaperProbeTests — [v12.18.53-DEV] KIS 해외주식 모의투자(VTS) 통신 점검(토큰 · VTTS3012R 해외 잔고) 하네스 검증
+// KisOverseasPaperProbeTests — [v12.18.53-DEV → v12.18.57-DEV] KIS 해외주식 모의투자(VTS) 통신 점검(토큰 · VTTS3012R 3대 거래소 잔고 · HHDFS00000300 현재가) 하네스 검증
 //
 //   §1 송출 허용 목록(오프라인): 실도메인 · 위장 호스트 · http · 해외 주문 TR · 실 해외 조회 TR(TTTS3012R) · 국내 잔고 경로/TR ·
-//      허용 밖 경로/메서드 · tr_id 중복 · 본문 동봉 = 예외 · 가드 위반 요청 핸들러 도달 0(패킷 0) · 요청 생성기 = 허용 목록 통과
+//      허용 밖 경로/메서드 · tr_id 중복 · 본문 동봉 · 경로↔TR 교차 · 3대 외 거래소/통화/심볼 이탈 = 예외 · 가드 위반 요청 핸들러 도달 0(패킷 0) ·
+//      요청 생성기(3대 거래소 잔고 · 시세) = 허용 목록 통과
 //   §2 자격증명(오프라인 · 임시 DB): PaperOverseas 키 3종만 판독(PaperDomestic · Real 미판독) · 허용 프로필 밖(Real · PaperFutures) = DB 미접속 거부 ·
 //      국내 프로필 자격증명으로 해외 점검 실행 = 거부 · 옵트인 Skip 사유(국내 사전 점검 · 주문 프로브 옵트인과 분리)
-//   §3 마스킹 · 판독(오프라인): 가짜 VTS 왕복 출력 줄에 키/시크릿/토큰/계좌 원문 0 · 토큰 실패 = 잔고 미송출 · USD 금액 raw 10^8 · 형식 이탈 fail-closed
-//   §4 리얼 와이어(옵트인 MS2E_KIS_VTS_OVERSEAS=1): 실제 VTS 토큰 발급 → VTTS3012R 해외 잔고 → 마스킹 요약 출력(결과 코드 · USD 금액 · 지연)
+//   §3 마스킹 · 판독(오프라인): 가짜 VTS 왕복(토큰 1 + 잔고 3 + 시세 3) 출력 줄에 키/시크릿/토큰/계좌 원문 0 · 토큰 실패 = 잔고/시세 미송출 ·
+//      USD 금액 raw 10^8 · 거래소 불일치 행 집계 · 세션 페이즈 → 시세 유효성 · 형식 이탈 fail-closed
+//   §4 리얼 와이어(옵트인 MS2E_KIS_VTS_OVERSEAS=1): 실제 VTS 토큰 발급 → VTTS3012R 3대 거래소 잔고 → HHDFS00000300 현재가 3종 → 마스킹 요약 출력
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -18,6 +20,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using MS2E.Infrastructure;
+using StockManager.Engines.Brokers.Kis;
+using StockManager.Engines.Feeds;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -46,13 +50,24 @@ namespace StockManager.Tests.Integration
                                       + "\"tot_evlu_pfls_amt\":\"-7.89000000\",\"tot_pftrt\":\"-0.64\"},"
                                       + "\"rt_cd\":\"0\",\"msg_cd\":\"20310000\",\"msg1\":\"모의투자 조회가 완료되었습니다.                       \"}";
             public HttpStatusCode TokenStatus = HttpStatusCode.OK;
+            public bool EchoExchange;                                                       // 잔고 행 ovrs_excg_cd 를 요청 거래소로 응답
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
             {
                 Seen.Add(request);
-                bool tok = request.RequestUri!.AbsolutePath == VtsPreFlightGuard.TokenPath;
+                string path = request.RequestUri!.AbsolutePath, query = request.RequestUri.Query;
+                string Arg(string k) { foreach (var p in query.TrimStart('?').Split('&')) if (p.StartsWith(k + "=", StringComparison.Ordinal)) return p[(k.Length + 1)..]; return ""; }
+                bool tok = path == VtsPreFlightGuard.TokenPath;
+                string json = tok ? TokenJson
+                    : path == KisOverseasPaperGuard.QuotePath ? QuoteJson(Arg("EXCD"), Arg("SYMB"))
+                    : EchoExchange ? BalanceJson.Replace("\"ovrs_pdno\":\"AAPL\"", "\"ovrs_pdno\":\"AAPL\",\"ovrs_excg_cd\":\"" + Arg("OVRS_EXCG_CD") + "\"") : BalanceJson;
                 return Task.FromResult(new HttpResponseMessage(tok ? TokenStatus : HttpStatusCode.OK)
-                { Content = new StringContent(tok ? TokenJson : BalanceJson, Encoding.UTF8, "application/json") });
+                { Content = new StringContent(json, Encoding.UTF8, "application/json") });
             }
+
+            public static string QuoteJson(string excd, string symb)
+                => "{\"output\":{\"rsym\":\"D" + excd + symb + "\",\"zdiv\":\"4\",\"base\":\"227.5200\",\"pvol\":\"41000000\",\"last\":\"229.0000\",\"sign\":\"2\","
+                 + "\"diff\":\"1.4800\",\"rate\":\"+0.65\",\"tvol\":\"38123456\",\"tamt\":\"8730000000\",\"ordy\":\"매수불가\"},"
+                 + "\"rt_cd\":\"0\",\"msg_cd\":\"MCA00000\",\"msg1\":\"정상처리 되었습니다.\"}";
         }
 
         private static HttpRequestMessage Get(string url, params string[] trs)
@@ -69,6 +84,11 @@ namespace StockManager.Tests.Integration
         {
             using (var t = VtsPreFlightRequests.Token(Cred)) KisOverseasPaperGuard.EnsureAllowed(t);
             using (var b = KisOverseasPaperRequests.Balance(Cred, FakeToken)) KisOverseasPaperGuard.EnsureAllowed(b);
+            foreach (var ex in UsExchangeCode.All)
+            {
+                using (var b = KisOverseasPaperRequests.Balance(Cred, FakeToken, ex)) KisOverseasPaperGuard.EnsureAllowed(b);
+                using (var q = KisOverseasPaperRequests.Quote(Cred, FakeToken, ex, "AAPL")) KisOverseasPaperGuard.EnsureAllowed(q);
+            }
 
             void Rejects(HttpRequestMessage r) { using (r) Assert.Throws<InvalidOperationException>(() => KisOverseasPaperGuard.EnsureAllowed(r)); }
             Rejects(new HttpRequestMessage(HttpMethod.Post, "https://openapi.koreainvestment.com:9443" + VtsPreFlightGuard.TokenPath));             // 실도메인
@@ -95,6 +115,30 @@ namespace StockManager.Tests.Integration
             var tokTr = new HttpRequestMessage(HttpMethod.Post, Vts + VtsPreFlightGuard.TokenPath); tokTr.Headers.TryAddWithoutValidation("tr_id", "VTTT1002U");
             Rejects(tokTr);                                                                                                                          // 토큰 + tr_id
             Rejects(new HttpRequestMessage(HttpMethod.Post, Vts + "/uapi/overseas-stock/v1/trading/order"));                                         // 해외 주문 POST
+            // [v12.18.57] 3대 거래소 · 시세 경로
+            const string Bal = KisOverseasPaperGuard.BalancePath + "?CANO=1&ACNT_PRDT_CD=01&TR_CRCY_CD=USD&OVRS_EXCG_CD=";
+            const string Px = KisOverseasPaperGuard.QuotePath + "?AUTH=&EXCD=";
+            KisOverseasPaperGuard.EnsureAllowed(Get(Vts + Bal + "AMEX", "VTTS3012R"));
+            KisOverseasPaperGuard.EnsureAllowed(Get(Vts + Px + "NYS&SYMB=BRK.B", "HHDFS00000300"));
+            Rejects(Get(Vts + Bal + "SEHK", "VTTS3012R"));                                                                                           // 3대 외 거래소(홍콩)
+            Rejects(Get(Vts + Bal + "NAS", "VTTS3012R"));                                                                                            // 시세 코드를 잔고에(계열 혼용)
+            Rejects(Get(Vts + Bal + "nasd", "VTTS3012R"));                                                                                           // 대소문자
+            Rejects(Get(Vts + Bal + "NASD&OVRS_EXCG_CD=NYSE", "VTTS3012R"));                                                                         // 거래소 중복
+            Rejects(Get(Vts + KisOverseasPaperGuard.BalancePath + "?CANO=1&OVRS_EXCG_CD=NASD&TR_CRCY_CD=HKD", "VTTS3012R"));                          // 통화 이탈
+            Rejects(Get(Vts + KisOverseasPaperGuard.BalancePath + "?CANO=1&OVRS_EXCG_CD=NASD", "VTTS3012R"));                                         // 통화 없음
+            Rejects(Get(Vts + Px + "NASD&SYMB=AAPL", "HHDFS00000300"));                                                                              // 잔고 코드를 시세에(계열 혼용)
+            Rejects(Get(Vts + Px + "NAS&SYMB=aapl", "HHDFS00000300"));                                                                               // 심볼 소문자
+            Rejects(Get(Vts + Px + "NAS&SYMB=AAPL%26X", "HHDFS00000300"));                                                                           // 심볼 주입
+            Rejects(Get(Vts + Px + "NAS", "HHDFS00000300"));                                                                                         // 심볼 없음
+            Rejects(Get(Vts + Px + "NAS&SYMB=AAPL", "VTTS3012R"));                                                                                   // 시세 경로 + 잔고 TR(교차)
+            Rejects(Get(Vts + Bal + "NASD", "HHDFS00000300"));                                                                                       // 잔고 경로 + 시세 TR(교차)
+            Rejects(Get(Vts + Px + "NAS&SYMB=AAPL", "HHDFS00000300", "HHDFS00000300"));                                                             // 시세 tr_id 중복
+            Rejects(Get("https://openapi.koreainvestment.com:9443" + Px + "NAS&SYMB=AAPL", "HHDFS00000300"));                                       // 실도메인 시세
+            var postPx = new HttpRequestMessage(HttpMethod.Post, Vts + Px + "NAS&SYMB=AAPL"); postPx.Headers.TryAddWithoutValidation("tr_id", "HHDFS00000300");
+            Rejects(postPx);                                                                                                                         // 시세 = GET 만
+            Assert.Throws<ArgumentOutOfRangeException>(() => KisOverseasPaperRequests.Balance(Cred, FakeToken, UsExchange.None));
+            Assert.Throws<ArgumentOutOfRangeException>(() => KisOverseasPaperRequests.Quote(Cred, FakeToken, (UsExchange)9, "AAPL"));
+            Assert.Throws<ArgumentException>(() => KisOverseasPaperRequests.Quote(Cred, FakeToken, UsExchange.Nasdaq, "AAPL&EXCD=HKS"));
         }
 
         [Fact]
@@ -124,6 +168,27 @@ namespace StockManager.Tests.Integration
             Assert.Equal(new[] { "VTTS3012R" }, b.Headers.GetValues("tr_id"));
             Assert.Contains("CANO=" + FakeCano + "&ACNT_PRDT_CD=01&OVRS_EXCG_CD=NASD&TR_CRCY_CD=USD&", b.RequestUri.Query);
             Assert.Null(b.Content);                                                                                                                  // 조회 = 본문 0
+        }
+
+        [Theory]
+        [InlineData(UsExchange.Nasdaq, "NASD", "NAS")]
+        [InlineData(UsExchange.Nyse, "NYSE", "NYS")]
+        [InlineData(UsExchange.Amex, "AMEX", "AMS")]
+        public void Per_Exchange_Requests_Use_Trade_Code_For_Balance_And_Quote_Code_For_Price(UsExchange ex, string trade, string quote)
+        {
+            using (var b = KisOverseasPaperRequests.Balance(Cred, FakeToken, ex))
+            {
+                Assert.Contains("&OVRS_EXCG_CD=" + trade + "&TR_CRCY_CD=USD&", b.RequestUri!.Query);
+                Assert.Equal(new[] { "VTTS3012R" }, b.Headers.GetValues("tr_id"));
+            }
+            using var q = KisOverseasPaperRequests.Quote(Cred, FakeToken, ex, "SPY");
+            Assert.Equal(HttpMethod.Get, q.Method);
+            Assert.Equal("openapivts.koreainvestment.com", q.RequestUri!.Host);
+            Assert.Equal(29443, q.RequestUri.Port);
+            Assert.Equal(KisOverseasPaperGuard.QuotePath, q.RequestUri.AbsolutePath);
+            Assert.Equal("?AUTH=&EXCD=" + quote + "&SYMB=SPY", q.RequestUri.Query);
+            Assert.Equal(new[] { "HHDFS00000300" }, q.Headers.GetValues("tr_id"));
+            Assert.Null(q.Content);
         }
 
         // ════════════ §2 자격증명(임시 DB) ════════════
@@ -239,30 +304,89 @@ namespace StockManager.Tests.Integration
 
         // ════════════ §3 마스킹 · 판독 ════════════
 
+        // 2026-10-22 23:00 KST = 10:00 EDT(정규장) · 18:00 KST = 05:00 EDT(프리) · 2026-10-24 23:00 KST = 토요일
+        private static long KstMicros(int y, int mo, int d, int h, int mi) => (new DateTime(y, mo, d, h, mi, 0).Ticks - TimeSpan.TicksPerHour * 9 - DateTime.UnixEpoch.Ticks) / 10;
+        private static KisOverseasProbeOptions Fast(long utcMicros) => new() { Pace = TimeSpan.Zero, UtcMicrosNow = () => utcMicros };
+
         [Fact]
-        public async Task Fake_Vts_Roundtrip_Reports_Token_And_Overseas_Balance_Without_Leaking_Secrets()
+        public async Task Fake_Vts_Roundtrip_Reports_Token_Three_Exchange_Balances_And_Quotes_Without_Leaking_Secrets()
         {
-            var h = new FakeVts();
+            var h = new FakeVts { EchoExchange = true };
             using var http = new HttpMessageInvoker(h);
-            var rep = await KisOverseasPaperProbe.RunAsync(http, Cred, CancellationToken.None);
+            var rep = await KisOverseasPaperProbe.RunAsync(http, Cred, Fast(KstMicros(2026, 10, 22, 23, 0)), CancellationToken.None);
             Assert.True(rep.TokenIssued);
             Assert.Equal(86400, rep.TokenExpiresInSeconds);
             Assert.True(rep.BalanceOk);
-            Assert.Equal(1, rep.Balance.HoldingRows);
-            Assert.Equal(123_456_000_000L, rep.Balance.PurchaseUsdRaw);                                                                               // $1,234.56
-            Assert.Equal(-789_000_000L, rep.Balance.EvalPnlUsdRaw);                                                                                   // −$7.89
-            Assert.Equal(-1_234_500_000L, rep.Balance.TotalPnlUsdRaw);                                                                                // −$12.345
-            Assert.Equal(2, h.Seen.Count);
+            Assert.Equal(new[] { UsExchange.Nasdaq, UsExchange.Nyse, UsExchange.Amex }, rep.Balances.ConvertAll(b => b.Exchange));
+            foreach (var b in rep.Balances)
+            {
+                Assert.Equal(1, b.Summary.HoldingRows);
+                Assert.Equal(0, b.Summary.MismatchedExchangeRows);                                                                                    // 행 거래소 = 요청 거래소
+                Assert.Equal(123_456_000_000L, b.Summary.PurchaseUsdRaw);                                                                             // $1,234.56
+                Assert.Equal(-789_000_000L, b.Summary.EvalPnlUsdRaw);                                                                                 // −$7.89
+                Assert.Equal(-1_234_500_000L, b.Summary.TotalPnlUsdRaw);                                                                              // −$12.345
+            }
+            Assert.True(rep.QuotesOk);
+            Assert.Equal(3, rep.Quotes.Count);
+            foreach (var q in rep.Quotes)
+            {
+                Assert.True(q.Summary.SymbolVerified);
+                Assert.Equal(22_900_000_000L, q.Summary.LastRaw);                                                                                     // $229.00
+                Assert.Equal(22_752_000_000L, q.Summary.BaseRaw);
+                Assert.Equal(38_123_456L, q.Summary.Volume);
+                Assert.Equal(UsSessionPhase.ContinuousTrading, q.Summary.Phase);
+                Assert.Equal(UsQuoteValidity.Tradable, q.Summary.Validity);
+            }
+            Assert.Equal(7, h.Seen.Count);                                                                                                           // 토큰 1 + 잔고 3 + 시세 3
             Assert.Equal("Bearer " + FakeToken, string.Join("", h.Seen[1].Headers.GetValues("authorization")));
-            Assert.Equal(new[] { "VTTS3012R" }, h.Seen[1].Headers.GetValues("tr_id"));
+            for (int i = 1; i <= 3; i++) Assert.Equal(new[] { "VTTS3012R" }, h.Seen[i].Headers.GetValues("tr_id"));
+            for (int i = 4; i <= 6; i++) Assert.Equal(new[] { "HHDFS00000300" }, h.Seen[i].Headers.GetValues("tr_id"));
+            Assert.Contains("OVRS_EXCG_CD=NASD&", h.Seen[1].RequestUri!.Query);
+            Assert.Contains("OVRS_EXCG_CD=NYSE&", h.Seen[2].RequestUri!.Query);
+            Assert.Contains("OVRS_EXCG_CD=AMEX&", h.Seen[3].RequestUri!.Query);
+            Assert.Contains("EXCD=NAS&SYMB=AAPL", h.Seen[4].RequestUri!.Query);
+            Assert.Contains("EXCD=NYS&SYMB=IBM", h.Seen[5].RequestUri!.Query);
+            Assert.Contains("EXCD=AMS&SYMB=SPY", h.Seen[6].RequestUri!.Query);
             string all = string.Join("\n", rep.Lines);
             foreach (var s in new[] { FakeKey, FakeSecret, FakeCano, FakeToken, FakeKey[..10], FakeToken[..10], FakeSecret[..10] })
                 Assert.DoesNotContain(s, all);
             Assert.Contains("[token] 발급 성공", all);
-            Assert.Contains("[balance] 해외 잔고 조회 성공", all);
+            Assert.Contains("[balance NASD] 해외 잔고 조회 성공", all);
+            Assert.Contains("[balance NYSE] 해외 잔고 조회 성공", all);
+            Assert.Contains("[balance AMEX] 해외 잔고 조회 성공", all);
+            Assert.Contains("[quote AMS SPY] 현재가 조회 성공", all);
+            Assert.Contains("현재가 $229.00", all);
+            Assert.Contains("유효성 Tradable", all);
             Assert.Contains("외화매입 $1,234.56", all);
             Assert.Contains("모의투자 조회가 완료되었습니다. ·", all);                                                                                  // msg1 후행 공백 절단
+            Assert.DoesNotContain("거래소 불일치", all);
             foreach (var l in rep.Lines) _out.WriteLine(l);
+        }
+
+        [Fact]
+        public async Task Quote_Validity_Follows_Us_Session_Phase_And_Mismatched_Exchange_Rows_Are_Counted()
+        {
+            var h = new FakeVts();
+            using var http = new HttpMessageInvoker(h);
+            var pre = await KisOverseasPaperProbe.RunAsync(http, Cred, Fast(KstMicros(2026, 10, 22, 18, 0)), CancellationToken.None);
+            Assert.All(pre.Quotes, q => Assert.Equal(UsSessionPhase.PreMarket, q.Summary.Phase));
+            Assert.All(pre.Quotes, q => Assert.Equal(UsQuoteValidity.ExtendedIndicative, q.Summary.Validity));
+            Assert.Contains("주문 근거 불가", string.Join("\n", pre.Lines));
+            var weekend = await KisOverseasPaperProbe.RunAsync(http, Cred, Fast(KstMicros(2026, 10, 24, 23, 0)), CancellationToken.None);
+            Assert.All(weekend.Quotes, q => Assert.Equal(UsQuoteValidity.ClosedReference, q.Summary.Validity));
+
+            // 응답 행이 다른 거래소 코드를 실어 오면 집계 · 시세 rsym 불일치 = 사용 불가(Invalid)
+            var bad = new FakeVts { BalanceJson = "{\"output1\":[{\"ovrs_excg_cd\":\"NYSE\"},{\"ovrs_excg_cd\":\"NASD\"}],\"output2\":{},\"rt_cd\":\"0\"}" };
+            using var http2 = new HttpMessageInvoker(bad);
+            var o = Fast(KstMicros(2026, 10, 22, 23, 0));
+            o.BalanceExchanges = new[] { UsExchange.Nasdaq };
+            o.Quotes = new[] { (UsExchange.Nasdaq, "MSFT") };
+            var r2 = await KisOverseasPaperProbe.RunAsync(http2, Cred, o, CancellationToken.None);
+            Assert.Equal(2, r2.Balances[0].Summary.HoldingRows);
+            Assert.Equal(1, r2.Balances[0].Summary.MismatchedExchangeRows);
+            Assert.Contains("★거래소 불일치 행 1", string.Join("\n", r2.Lines));
+            var q2 = VtsOverseasQuoteSummary.Parse(Encoding.UTF8.GetBytes(FakeVts.QuoteJson("NYS", "MSFT")), UsExchange.Nasdaq, "MSFT", UsSessionPhase.ContinuousTrading);
+            Assert.True(q2.Ok); Assert.False(q2.SymbolVerified); Assert.Equal(UsQuoteValidity.Invalid, q2.Validity);
         }
 
         [Fact]
@@ -277,7 +401,8 @@ namespace StockManager.Tests.Integration
             var rep = await KisOverseasPaperProbe.RunAsync(http, Cred, CancellationToken.None);
             Assert.False(rep.TokenIssued);
             Assert.False(rep.BalanceOk);
-            Assert.Single(h.Seen);                                                                                                                   // 잔고 미송출
+            Assert.Single(h.Seen);                                                                                                                   // 잔고 · 시세 미송출
+            Assert.Empty(rep.Balances); Assert.Empty(rep.Quotes);
             string all = string.Join("\n", rep.Lines);
             Assert.Contains("EGW00103", all);
             Assert.DoesNotContain(FakeKey, all);
@@ -302,19 +427,22 @@ namespace StockManager.Tests.Integration
         // ════════════ §4 리얼 와이어(옵트인) ════════════
 
         [KisOverseasPaperFact]
-        public async Task LiveWire_Vts_Overseas_Token_And_Vtts3012R_Balance_Roundtrip()
+        public async Task LiveWire_Vts_Overseas_Token_Three_Exchange_Balances_And_Quotes_Roundtrip()
         {
             var c = VtsPreFlightCredentials.Load(VtsPreFlightCredentials.DefaultDbPath, VtsPreFlightCredentials.OverseasProfile, out var why);
             Assert.True(c is not null, "자격증명 판독 실패: " + why);
             using var http = VtsPreFlightGuard.CreateInvoker();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             var rep = await KisOverseasPaperProbe.RunAsync(http, c!, cts.Token);
             string dir = Path.Combine(Path.GetTempPath(), "ms2e-vts-probe");
             Directory.CreateDirectory(dir);
             File.WriteAllLines(Path.Combine(dir, "overseas-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt"), rep.Lines);
             foreach (var l in rep.Lines) _out.WriteLine(l);
             Assert.True(rep.TokenIssued, "토큰 발급 실패");
-            Assert.True(rep.BalanceOk, "해외 잔고 조회 실패");
+            Assert.Equal(3, rep.Balances.Count);
+            Assert.True(rep.BalanceOk, "해외 잔고 조회 실패(3대 거래소 중 1곳 이상)");
+            Assert.Equal(3, rep.Quotes.Count);
+            Assert.True(rep.QuotesOk, "해외 현재가 조회 실패(rt_cd ≠ 0 또는 HTTP ≠ 200)");
         }
     }
 }

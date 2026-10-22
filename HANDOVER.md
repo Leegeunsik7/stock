@@ -3776,3 +3776,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): UpbitWebSocketFeedAdapter 는 출하 바이너리에 포함되나 제품 경로(UI) 미배선 · 실측 테스트는 옵트인(출하 스위트에서 건너뜀).
 - 한계(정직): 피드 어댑터 장시간 소크 미실행 · 비트 23 실 래치 미실측 · KRX 달력 2028+ 미등재 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 161. v12.18.57-DEV — KIS 해외주식 미국 3대 거래소(NASD · NYSE · AMEX) 잔고 다변화 · 해외 현재가(HHDFS00000300) 무할당 파서 · 미국 세션 시세 유효성 바인딩 (2026-10-22)
+
+- Engines/Brokers/Kis/UsExchangeCode.cs(신규 · 제품 어셈블리 · 미배선): UsExchange(None/Nasdaq/Nyse/Amex) · ★KIS 코드 2계열 분리 —
+  거래 계열(잔고/주문 OVRS_EXCG_CD) NASD/NYSE/AMEX · 시세 계열(EXCD) NAS/NYS/AMS(혼용 = 역매핑 None) · u8 상수 · 서수 역매핑 · 심볼 형식(대문자/숫자/'.'/'/' 1~12자).
+- Engines/Brokers/Kis/KisOverseasProtocol.cs(신규 · 순수 판독 · 송출 코드 0): TryParseBalance(VTTS3012R) · TryParseQuote(HHDFS00000300) =
+  Utf8JsonReader isFinalBlock=false · 루트 뒤 공백만 · 깊이 8 · 추적 필드 중복 거부 · JsonException 만 catch · 문자열 = 본문 위치(KisTextRange)만 · 금액 = Utf8Parser → raw 10^8 반올림(형식 이탈/범위 초과 = Missing).
+  잔고: 행 수 · 행별 ovrs_excg_cd ≠ 요청 거래소 = 불일치 집계 · output2 객체/배열 변형. 시세: rsym = "D"+시세 코드+심볼 정확 일치만 검증 · last > 0 · rt_cd 0 = 사용 가능.
+  UsQuoteSessionGate: 정규장 = Tradable(주문 근거 유일) · 프리/애프터 = ExtendedIndicative · 마감/휴장 = ClosedReference · 달력 밖 = Uncovered · 사용 불가 = Invalid.
+- 테스트 하네스 KisOverseasPaperProbe 개조: 허용 목록 = 토큰 POST + 잔고 GET(VTTS3012R · OVRS_EXCG_CD ∈ 3대 1회 · TR_CRCY_CD=USD 1회) + 시세 GET(HHDFS00000300 · EXCD ∈ 3대 1회 · SYMB 형식 1회) ·
+  경로↔TR 교차/계열 혼용/중복 파라미터 = 송출 전 예외. 판독 = 제품 파서 · 세션 = UsSessionStateMachine(시계 주입) · 요청 간격 기본 1,100ms · 재시도 0.
+- 테스트: UsMultiExchangeBalanceTests 신규([Collection("ConcurrencyStress")]) — 매핑 · 3대 잔고/시세 정확값 · 손상 본문 20종 · 변조 10만 회 예외 0 · 게이트 페이즈 7종 · KST 경계(EDT/EST) ·
+  ★δ=0: 3대 잔고 10만 회 · 시세+세션 게이트 10만 회 = 힙 0. KisOverseasPaperProbeTests 확장(가드 거부 20종 추가 · 가짜 VTS 7요청 왕복 · 세션별 유효성 · 불일치 행). 사보타주(금액 1B 할당 + 프리마켓 Tradable · 빌드 0E 확인) → 5건 실패 후 원복.
+- ★실측(2026-10-22 15:28 KST · 옵트인 1회 · 미 동부 02:28 = Closed): 토큰 179ms · 잔고 NASD/NYSE/AMEX 전부 rt_cd 0(70070000 보유 없음 · $0.00) 1,056/838/741ms ·
+  현재가 AAPL $343.99 · IBM $251.46 · SPY(AMS) $773.09 전부 심볼 검증 일치 · ClosedReference · 8~58ms. 선행 시도: 600ms 간격 = 6번째 요청 EGW00201(HTTP 500) → 1,100ms 상향 · 토큰 재발급 1분 1회(EGW00133) 확인.
+- 검증(격리 worktree · 타 세션 파일 배제): WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 전체 스위트 4,980 통과 + 6 건너뜀(옵트인) · 실패 0 · 3분 46초(래칫 ≤40 포함).
+- 한계(정직): 제품 경로/DI/UI 미배선 · 실 보유 0 이라 행 판독/불일치 집계는 실 응답 미검증(가짜 VTS 만) · 연속조회(CTX_AREA) 미구현 · 정규장 시세 실측 미실행(오늘 22:30 KST 이후 재실측 권장) · 호가(HHDFS76200100) 미구현.
+- 불변: liveArmed:false(해외 주문 TR/경로 송출 전 거부) · 실전 도메인 0 · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
