@@ -3830,3 +3830,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): CryptoPaperExchange · Upbit 공개 WebSocket 은 여전히 제품 DI 미등록 → UI 는 '미배선'으로 렌더(가동 표시는 등록 시에만) · KIS 모의 프로필 키 입력 UI 없음(판독 전용) ·
   BrokerSettingsPage 자체는 LocalDatabase/BrokerHub/ApiKeyVault 직결 잔존(래칫 40 중 1 — 후속 이주 대상) · 실 앱 화면 육안 확인 미실행.
 - 불변: liveArmed:false(신규 Port 발주/무장 경로 0) · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.
+
+## 164. v12.18.59-DEV — 아레나 3대 모드 1단계: 국내 대형주(KRX) 휴먼 vs AI 듀얼 원장 · 설명 가능한 AI 매매 근거(AiTradeRationale) (2026-10-22)
+
+- 경로 정정(정직): 오더의 `StockManager/Ports/IArenaPort.cs` · `StockManager.Tests/Arena/` 는 리포 관례와 불일치(포트 = MS2E.UI.Portable/Ports · IArenaPort 는 v12.18.11 기존재 — 이름 충돌 회피) →
+  포트 = MS2E.UI.Portable/Ports/Trading/KrxArenaPort.cs(IKrxArenaPort) · 테스트 = StockManager.Tests/Engines/Arena/KrxArenaEngineTests.cs. 기존 ArenaMatchGovernor/DualBookSimulator 무변경.
+- 신규 Engines/Arena/Common: AiTradeRationale(불변 값 구조체 — TriggerType · SentimentScore · ConfidenceScore 0~100 · TargetPrice · StopLossPrice · RiskRewardRatio(×100 정수) ·
+  매크로/불균형/급증/모멘텀 구성요소 bp · 실현손익 · IsWellFormed · HumanReadableSummary = 콜드 경로 한국어 조립) · IArenaModeEngine(듀얼 스냅샷 · 보유 · 근거 피드 seqlock 사본 · 휴먼 큐 · 매크로 가중치).
+- 신규 Engines/Arena/Domestic/KrxArenaEngine: 평일 09:00~15:30 KST 체결 · 15:20 이후 AI 신규 진입 0 + 보유 SessionClose 청산 · 시그널 = 20·야간 글로벌 + 35·호가 불균형 + 20·거래량 급증(EWMA 대비) + 25·모멘텀(EWMA 중간가)
+  · 점수 ≥ 3000 진입(확신도 = 점수/100 · 목표 +(100+3·확신도)bp 호가 올림 · 손절 −80bp 호가 내림) · 익절/손절/점수 ≤ −2000/장마감 청산 · AI 체결 1건 = 근거 1건.
+  체결 = 최우선 호가 · 그 호가 잔량 상한(잔량 폐기 · 큐잉/재시도 0) · 수수료 0.015% · 거래세 0.18% · 진영 간 원장 공유 0. 휴먼 = Vyukov 유계 MPSC 링(64 · 포화 = QueueFull 폐기). 정산 1회 = 단일 seqlock 창.
+- 신규 어댑터 StockManager/Adapters/KrxArenaPortAdapter(DTO 투영 · 근거 최신순) · BlazorHomeForm 합성 루트 싱글턴 등록. UI 페이지 미추가(래칫 불변).
+- 테스트 15건: 근거 필드/요약 무결성(진입 · 익절 · 손절 · 장마감) · 무작위 2만 틱 AI 체결 수 == 근거 수 · 듀얼 원장 독립 · 큐 포화/현금 가드 · 무효 호가 폐기 · 4제출+정산+판독 스레드 유실 0 ·
+  10만 회 시그널+가상 체결+휴먼 큐+판독 δ=0B(ZeroAllocProbe · AI 체결 5,790 = 근거 5,790) · 핫패스 IL 할당 지점 0 · 포트 브로커/무장 멤버 0 · DI 결선.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 84) ·
+  전체 스위트 5,010 통과 + 6 건너뜀 · 실패 0 · 4분 57초. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): 시세 피드 미결선(엔진 OnQuote 호출자 없음 → Fed=false · UI 미노출) · 휴장일 캘린더 미반영 · 10호가 깊이 미사용(최우선 1호가) · 시그널 가중치 = 휴리스틱(백테스트 검증 전) ·
+  무작위 테이프 AI 수익률 음수(신호 유효성 주장 아님) · 실 앱 화면 미확인.
+- 불변: liveArmed:false(외부 송출 수단 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.

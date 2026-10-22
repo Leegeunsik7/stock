@@ -1705,6 +1705,11 @@ namespace StockManager.Blazor
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKisFeedLatencyPort>(kisSkew);
             services.AddSingleton(arena);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPort>(arena);
+            // [v12.18.59-DEV] 국내 대형주 아레나(휴먼 vs AI · 설명 가능한 AI 근거) — 순수 인메모리 가상 원장 · 브로커 경로 0.
+            //   시세 피드 미결선(Fed=false) = UI 는 정산 0회를 정직 렌더(가짜 손익 0).
+            var krxArena = new StockManager.Engines.Arena.Domestic.KrxArenaEngine();
+            services.AddSingleton(krxArena);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKrxArenaPort>(new StockManager.Adapters.KrxArenaPortAdapter(krxArena));
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));
