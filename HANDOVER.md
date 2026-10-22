@@ -3911,3 +3911,20 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): KIS HHDFS00000300 폴러 미결선(주입 API만 · 실 응답 구동 미확인) · 해외 호가 잔량(HDFSASP0) 미결선 → KIS 출처는 호가 불균형 0 · QQQ/SOXX/10년물 실시간 소스 미결선(KIS 출처 맥락 = 0) ·
   아레나 UI 페이지 미신설 · 합성 장세 AI 고수익(테스트 +41%)은 생성기 특성(알파 증거 아님) · 장전 시세 무변동 시 갭 = 0.
 - 불변: liveArmed:false(주문 목적지 = 휴먼 가상 원장 큐뿐 · 해외 주문 API 송출 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 168. v12.18.62-DEV — DualArenaPage 다중 모드 탭(국내 대형주 KRW ₩ ↔ 미국 빅테크 USD $) · IUsArenaPort 바인딩 · USD 대시보드 (2026-10-22)
+
+- DualArenaPage(MS2E.UI.Portable/Pages/Trading · 순수 RCL): [Inject] = IKrxArenaPort + IUsArenaPort 뿐(엔진/인프라 타입 참조 0). 상단 모드 탭 .da-mode-tab[data-mode=krx|us] — 기본 = 국내(기존 KRX 화면 무변경 · .da-krx 래핑).
+- 미국 모드(.da-us): 출처 탭(KIS 해외 시세 ↔ 합성 데모) · 출처 뱃지(합성 명시) · 세션 뱃지 .da-phase(프리마켓 관측 중 / 정규장 매매 가동 / 장 종료 · 휴장 · 애프터 · 달력 밖=bad) + QQQ · SOXX · 美10년 bp ·
+  스코어보드(자본금 $100,000.00 · 자산 · 수익률 · 실현/평가손익 · MDD · 승률 · 체결/거부 · 수수료+SEC) · 진영별 보유(AI 목표/손절 $) ·
+  휴먼 USD 시장가 티켓(빅테크 5종 AAPL·NVDA·MSFT·AMZN·TSLA · 거래소 코드 · 매수/매도 호가 $) → IUsArenaPort.SubmitHuman(휴먼 가상 원장 큐) ·
+  AI USD 근거 카드 최신 30건(목표/손절 $ · 확신도 바 · 감성 · 손익비 · 실현 $ · ETF 베타/금리/갭 수급/모멘텀 팩터 · 한국어 요약).
+- 금액 표기: 센트(long) → decimal /100 → "$#,##0.00"(InvariantCulture · 음수 "-$") = $0.01 해상도. 정직 렌더: 펌프 미결선 / KIS 시세 미수신 / 합성 준비 중 = 안내만(가짜 손익 · 카드 0).
+- 교차 오염 0: 모드별 상태 분리(국내 _symbol/_qty/_msg ↔ 미국 _ticker/_usQty/_usMsg) · 출처 탭/티켓은 활성 모드 포트로만 · 렌더 펌프는 활성 모드 포트 게시 버전만 폴링(모드 전환 시 그려진 버전 무효화).
+- NavMenu 라벨 "휴먼 vs AI 대결(국내 · 미국)" · 호스트 셸 DualArena.razor 주석만 갱신([Inject] 0 유지 → 래칫 불변).
+- 테스트: 신규 DualArenaModeTabTests 4건(기본 국내/탭 2/미국 정직 빈 상태 · 합성 정규장 USD 대시보드 · $ 정규식 · 티커 5종 · 근거 카드 · 미국 티켓 → 미국 원장만 체결 · 국내 원장/메시지 불변 · 출처 탭 모드 격리 ·
+  거부 메시지/원장 불변 · 미국 버전 변화 렌더 펌프 · 포트 표면 무장/브로커/실주문 멤버 0) + KrxArenaFeedAndPageTests 2건 갱신(렌더 헬퍼 US 포트 등록 · 주입 포트 = {IKrxArenaPort, IUsArenaPort}).
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) ·
+  전체 스위트 5,056 통과 + 6 건너뜀(옵트인) · 실패 0 · 6분. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): KIS HHDFS00000300 폴러 미결선 → 실환경 미국 모드는 '시세 미수신' 또는 합성 데모만 · QQQ/SOXX/10년물 실시간 소스 미결선 · 실 브라우저 육안 렌더 미확인(bUnit 검증만).
+- 불변: liveArmed:false(주문 목적지 = 양 포트 휴먼 가상 원장 큐뿐 · 외부 주문 송출 0) · 코어 엔진/핫패스 무변경 · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

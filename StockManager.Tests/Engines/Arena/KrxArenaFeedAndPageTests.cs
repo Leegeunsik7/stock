@@ -330,6 +330,7 @@ namespace StockManager.Tests.Engines.Arena
         {
             var ctx = new Bunit.TestContext();
             ctx.Services.AddSingleton(port);
+            ctx.Services.AddSingleton<IUsArenaPort>(new UsArenaPortAdapter(new StockManager.Engines.Arena.Us.UsTechArenaEngine()));   // [v12.18.62-DEV] 미국 모드 탭 포트(국내 기본 모드 · 미사용)
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 
@@ -406,11 +407,11 @@ namespace StockManager.Tests.Engines.Arena
         }
 
         [Fact]
-        public void Pure_Shell_Page_Injects_Only_Krx_Arena_Port_And_Host_Shell_Is_Uncoupled()
+        public void Pure_Shell_Page_Injects_Only_Arena_Ports_And_Host_Shell_Is_Uncoupled()
         {
             const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-            var injected = typeof(DualArenaPage).GetProperties(all).Where(p => p.GetCustomAttribute<InjectAttribute>() is not null).Select(p => p.PropertyType).ToArray();
-            Assert.Equal(new[] { typeof(IKrxArenaPort) }, injected);
+            var injected = typeof(DualArenaPage).GetProperties(all).Where(p => p.GetCustomAttribute<InjectAttribute>() is not null).Select(p => p.PropertyType.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            Assert.Equal(new[] { nameof(IKrxArenaPort), nameof(IUsArenaPort) }, injected);   // [v12.18.62-DEV] 미국 모드 탭 = IUsArenaPort 추가
 
             var shell = typeof(KrxArenaEngine).Assembly.GetType("StockManager.Blazor.Pages.DualArena");
             Assert.NotNull(shell);

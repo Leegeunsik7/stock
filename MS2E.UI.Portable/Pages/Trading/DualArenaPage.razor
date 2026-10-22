@@ -3,17 +3,165 @@
    스코어보드(자산 · 수익률 · MDD · 승률 · 체결/거부) · 휴먼 시장가 티켓(수신 종목 · 휴먼 큐 → 다음 정산 가상 체결) · 진영별 보유 ·
    AI 매매 근거 타임라인(AiTradeRationale 카드: 사유 · 확신도 바 · 감성 · 목표/손절/손익비 · 한국어 요약).
    ★정직 렌더: 펌프 미결선 / 시세 미수신 = 안내만(가짜 손익 · 가짜 카드 0). 렌더 = 게시 버전 레벨 폴링(변경 시에만 InvokeAsync 1건).
-   ★liveArmed:false — 이 페이지의 주문 목적지는 IKrxArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐. *@
+   ★liveArmed:false — 이 페이지의 주문 목적지는 IKrxArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
+   [v12.18.62-DEV] 상단 모드 탭 [국내 대형주(KRW ₩) | 미국 빅테크(USD $)] — 미국 모드 = IUsArenaPort(빅테크 5종 · USD 센트 → $0.01 표기 ·
+     세션 뱃지 프리마켓/정규장/장외 · 스코어보드 · 휴먼 USD 티켓 · AI USD 근거 카드). 모드별 원장 · 티켓 · 메시지 상태 분리(교차 오염 0) ·
+     렌더 펌프는 활성 모드 포트의 게시 버전만 폴링. 미국 모드 주문 목적지 = IUsArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐. *@
 @implements IDisposable
 @inject IKrxArenaPort Port
+@inject IUsArenaPort UsPort
 
 <div class="top">
     <div class="hello">
-        <h1>🥊 휴먼 vs AI 대결 · @(Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
+        <h1>🥊 휴먼 vs AI 대결 · @(_mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
         <p>같은 자본금 · 같은 호가로 휴먼과 AI 가 가상 매매를 겨룹니다. AI 는 매 체결마다 근거(수급 · 거시 · 기술적 타점 · 손익비)를 남깁니다. 증권사로 나가는 주문은 없습니다.</p>
     </div>
 </div>
 
+<div class="ar-mode da-modes" role="tablist">
+    <button class="da-mode-tab @(_mode == ModeKrx ? "on" : "")" role="tab" data-mode="krx" @onclick="() => SetMode(ModeKrx)">🇰🇷 국내 대형주 (KRW ₩)</button>
+    <button class="da-mode-tab @(_mode == ModeUs ? "on" : "")" role="tab" data-mode="us" @onclick="() => SetMode(ModeUs)">🇺🇸 미국 빅테크 (USD $)</button>
+</div>
+
+@if (_mode == ModeUs)
+{
+    <div class="da-us">
+    @{
+        var uf = UsPort.Feed;
+        bool uHas = UsPort.TryRead(out var u);
+        System.Threading.Volatile.Write(ref _drawn, u.Version);
+    }
+
+    <div class="da-feed">
+        <div class="ar-mode" role="tablist">
+            <button class="ar-tab @(uf.Requested == UsArenaFeed.KisOverseas ? "on" : "")" role="tab" @onclick="() => SelectUs(UsArenaFeed.KisOverseas)">📡 KIS 해외 시세</button>
+            <button class="ar-tab @(uf.Requested == UsArenaFeed.Synthetic ? "on" : "")" role="tab" @onclick="() => SelectUs(UsArenaFeed.Synthetic)">🧪 합성 시세(데모)</button>
+        </div>
+        <span class="da-badge @UsFeedCss(uf, u)">@UsFeedText(uf, u)</span>
+        @if (uHas && u.SessionKst is { } ukst)
+        {
+            <span class="da-badge da-phase @PhaseCss(u.Phase)" data-phase="@u.Phase">@PhaseText(u.Phase) · @ukst.ToString("MM-dd HH:mm:ss") KST</span>
+            <span class="da-badge">QQQ <b class="@Css(u.QqqBp)">@Bp(u.QqqBp)</b> · SOXX <b class="@Css(u.SoxxBp)">@Bp(u.SoxxBp)</b> · 美10년 <b class="@Css(u.Us10yChangeBp)">@SignedBp(u.Us10yChangeBp)</b></span>
+        }
+    </div>
+
+    @if (!uf.Pumped)
+    {
+        <div class="ar-card ar-note da-empty">정산 펌프 미결선 — 호스트 대시보드 허브가 결선되지 않아 대결을 진행할 수 없습니다(가짜 손익을 표시하지 않습니다).</div>
+    }
+    else if (!uHas || u.Ticks == 0)
+    {
+        <div class="ar-card ar-note da-empty">
+            @if (uf.Applied == UsArenaFeed.KisOverseas)
+            {
+                <span>시세 미수신 — KIS 해외 현재체결가를 기다리는 중입니다(정규장 09:30~16:00 ET · KIS 시세 수신 @(uf.KisUpdates)건). KIS 시세가 없는 환경이면 '합성 시세(데모)'를 선택하세요.</span>
+            }
+            else
+            {
+                <span>합성 시세 준비 중 — 다음 정산 회차부터 데모 호가가 공급됩니다.</span>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="ar-lead">
+            <b>@ArenaLeader.Label(u.Leader)</b>
+            <span class="ar-sub">AI @Bp(u.Ai.ReturnBp) · 휴먼 @Bp(u.Human.ReturnBp) · 정산 틱 @u.Ticks.ToString("N0") · AI 근거 @u.RationaleCount.ToString("N0")건</span>
+        </div>
+
+        <div class="ar-grid da-score">
+            @foreach (int side in new[] { ArenaSide.Ai, ArenaSide.Human })
+            {
+                var b = u.Side(side);
+                long pnl = b.EquityCents - b.CapitalCents;
+                <div class="ar-card da-book" data-side="@side">
+                    <h3>@(side == ArenaSide.Ai ? "🤖 AI" : "🧑 휴먼") <small>자본금 @Usd(b.CapitalCents)</small></h3>
+                    <div class="ar-pnl @Css(pnl)">@Usd(b.EquityCents) <small>@SignedUsd(pnl) · @Bp(b.ReturnBp)</small></div>
+                    <table class="ar-tbl">
+                        <tr><td>USD 현금</td><td>@Usd(b.CashCents)</td><td>보유 종목</td><td>@b.OpenPositions</td></tr>
+                        <tr><td>실현손익</td><td class="@Css(b.RealizedCents)">@SignedUsd(b.RealizedCents)</td><td>평가손익</td><td class="@Css(b.UnrealizedCents)">@SignedUsd(b.UnrealizedCents)</td></tr>
+                        <tr><td>MDD</td><td class="ar-down">@Bp(-b.MddBp)</td><td>승률</td><td>@WinRate(b.Wins, b.Losses, b.WinRateBp)</td></tr>
+                        <tr><td>체결 / 거부</td><td>@b.Fills.ToString("N0") / @b.Rejects.ToString("N0")</td><td>수수료+SEC</td><td>@Usd(b.FeesCents + b.SecFeeCents)</td></tr>
+                    </table>
+                    @{ var upos = UsPort.Positions(side); }
+                    @if (upos.Count == 0)
+                    {
+                        <div class="ar-sub da-nopos">보유 없음</div>
+                    }
+                    else
+                    {
+                        <table class="ar-tbl da-pos">
+                            <tr><th>티커</th><th>수량</th><th>평단</th><th>현재</th><th>평가손익</th>@if (side == ArenaSide.Ai) { <th>목표 / 손절</th> }</tr>
+                            @foreach (var p in upos)
+                            {
+                                <tr>
+                                    <td>@p.Ticker</td><td>@p.Qty.ToString("N0")</td><td>@Usd(p.AvgPriceCents)</td><td>@Usd(p.MarkCents)</td>
+                                    <td class="@Css(p.PnlCents)">@SignedUsd(p.PnlCents)</td>
+                                    @if (side == ArenaSide.Ai) { <td>@Usd(p.TargetPriceCents) / @Usd(p.StopLossPriceCents)</td> }
+                                </tr>
+                            }
+                        </table>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="ar-card ar-ticket da-ticket">
+            <h3>🧑 휴먼 USD 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 정규장(연속매매)만 · 다음 정산 회차 가상 체결</small></h3>
+            @{ var uq = UsPort.Quotes(); }
+            <div class="ar-ctl">
+                <select class="da-tkr" @bind="_ticker">
+                    @foreach (var q in uq)
+                    {
+                        <option value="@q.Ticker">@q.Ticker (@q.Exchange) · 매수 @Usd(q.BidCents) / 매도 @Usd(q.AskCents)</option>
+                    }
+                </select>
+                <input class="da-uqty" type="number" min="1" @bind="_usQty" />
+                <span>주</span>
+                <button class="ar-btn buy" disabled="@(uq.Count == 0)" @onclick="() => SubmitUs(1)">매수</button>
+                <button class="ar-btn sell" disabled="@(uq.Count == 0)" @onclick="() => SubmitUs(-1)">매도</button>
+                @if (_usMsg is not null) { <span class="ar-msg da-msg">@_usMsg</span> }
+            </div>
+        </div>
+    }
+
+    <div class="ar-card da-timeline">
+        <h3>🧠 AI USD 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
+        @{ var ucards = uHas && u.RationaleCount > 0 ? UsPort.RecentRationales(MaxCards) : System.Array.Empty<UsRationaleView>(); }
+        @if (ucards.Count == 0)
+        {
+            <div class="ar-sub da-nocard">아직 AI 체결이 없습니다 — 근거 카드는 실제 가상 체결이 일어날 때만 생성됩니다.</div>
+        }
+        @foreach (var r in ucards)
+        {
+            <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
+                <div class="da-card-head">
+                    <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
+                    <b>@r.Ticker</b> @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
+                    <span class="da-trigger">@r.Trigger</span>
+                    <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
+                </div>
+                <div class="da-metrics">
+                    <span class="da-conf">확신도 <i class="bar"><i style="width:@(r.ConfidenceScore)%"></i></i> @(r.ConfidenceScore)/100</span>
+                    <span>감성 <b class="@Css(r.SentimentScore)">@Signed(r.SentimentScore)</b></span>
+                    <span>목표 <b class="ar-up da-tgt">@Usd(r.TargetPriceCents)</b> · 손절 <b class="ar-down da-stop">@Usd(r.StopLossPriceCents)</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
+                    @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlCents)">@SignedUsd(r.RealizedPnlCents)</b></span> }
+                </div>
+                <div class="da-metrics da-factors">
+                    <span>ETF 베타 <b class="@Css(r.EtfBetaBp)">@SignedBp(r.EtfBetaBp)</b></span>
+                    <span>금리 <b class="@Css(r.RateBp)">@SignedBp(r.RateBp)</b></span>
+                    <span>갭 수급 <b class="@Css(r.GapFlowBp)">@SignedBp(r.GapFlowBp)</b></span>
+                    <span>모멘텀 <b class="@Css(r.MomentumBp)">@SignedBp(r.MomentumBp)</b></span>
+                </div>
+                <div class="da-summary">@r.Summary</div>
+            </div>
+        }
+    </div>
+    </div>
+}
+else
+{
+<div class="da-krx">
 @{
     var feed = Port.Feed;
     bool hasView = Port.TryRead(out var v);
@@ -139,13 +287,21 @@ else
         </div>
     }
 </div>
+</div>
+}
 
 @code {
     public const int RenderPumpMs = 100, MaxCards = 30;
+    public const int ModeKrx = 0, ModeUs = 1;
 
+    private int _mode = ModeKrx;
     private long _symbol;
     private long _qty = 10;
     private string? _msg;
+    // 미국 모드 전용 상태(국내 티켓 · 메시지와 분리 — 모드 전환 시 교차 오염 0)
+    private string? _ticker;
+    private long _usQty = 10;
+    private string? _usMsg;
     private long _drawn = -1;
     private int _renderInFlight;
     private System.Threading.Timer? _timer;
@@ -166,6 +322,65 @@ else
             : "접수 거부: " + KrxArenaReject.Label(r);
     }
 
+    // 모드 전환 = 표시 대상 포트만 바꾼다(각 원장은 자기 엔진에 그대로 · 그려진 버전 무효화 → 새 모드 첫 폴링에서 다시 그린다).
+    private void SetMode(int mode)
+    {
+        if (mode == _mode || (mode != ModeKrx && mode != ModeUs)) return;
+        System.Threading.Volatile.Write(ref _mode, mode);
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
+
+    private void SelectUs(int source)
+    {
+        if (UsPort.Feed.Requested == source) return;
+        _usMsg = UsPort.SelectSource(source) ? UsArenaFeed.Label(source) + " 선택 — 다음 정산에서 양 진영 원장 초기화 후 적용" : "출처 선택 불가(주입기 미결선)";
+    }
+
+    private void SubmitUs(int side)
+    {
+        string? tkr = _ticker;
+        if (string.IsNullOrEmpty(tkr)) { var q = UsPort.Quotes(); tkr = q.Count > 0 ? q[0].Ticker : null; }
+        int r = UsPort.SubmitHuman(tkr ?? "", side, _usQty);
+        _usMsg = r == UsArenaReject.None
+            ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결(USD)"
+            : "접수 거부: " + UsArenaReject.Label(r);
+    }
+
+    private static string UsFeedText(UsArenaFeedStatus f, UsArenaView v)
+    {
+        if (!f.Pumped) return "정산 펌프 미결선";
+        if (f.Switching) return "출처 전환 중…";
+        if (f.Applied == UsArenaFeed.Synthetic) return "🧪 " + UsArenaFeed.Label(UsArenaFeed.Synthetic);
+        return v.Ticks > 0 ? "📡 " + UsArenaFeed.Label(UsArenaFeed.KisOverseas) : "📡 KIS 해외 시세 대기";
+    }
+
+    private static string UsFeedCss(UsArenaFeedStatus f, UsArenaView v)
+        => !f.Pumped ? "bad" : f.Switching ? "wait" : f.Applied == UsArenaFeed.Synthetic ? "syn" : v.Ticks > 0 ? "ok" : "wait";
+
+    private static string PhaseText(int phase) => phase switch
+    {
+        UsArenaPhase.PreMarket => "프리마켓 관측 중",
+        UsArenaPhase.ContinuousTrading => "정규장 매매 가동",
+        _ => UsArenaPhase.Label(phase),
+    };
+
+    private static string PhaseCss(int phase) => phase switch
+    {
+        UsArenaPhase.ContinuousTrading => "ok",
+        UsArenaPhase.PreMarket => "pre",
+        UsArenaPhase.CalendarUncovered => "bad",
+        _ => "wait",
+    };
+
+    // USD 센트 → $0.01 표기(문화권 무관 · 천 단위 쉼표).
+    private static string Usd(long cents)
+    {
+        decimal d = cents / 100m;
+        return (d < 0 ? "-$" : "$") + Math.Abs(d).ToString("N2", System.Globalization.CultureInfo.InvariantCulture);
+    }
+    private static string SignedUsd(long cents) => (cents > 0 ? "+" : "") + Usd(cents);
+    private static string SignedBp(long bp) => (bp > 0 ? "+" : "") + bp.ToString("N0") + "bp";
+
     private static string FeedText(KrxArenaFeedStatus f, KrxArenaView v)
     {
         if (!f.Pumped) return "정산 펌프 미결선";
@@ -182,15 +397,17 @@ else
     private static string Signed(long w) => (w > 0 ? "+" : "") + w.ToString("N0");
     private static string Bp(long bp) => (bp > 0 ? "+" : "") + (bp / 100.0).ToString("F2") + "%";
     private static string Ret(KrxArenaBookView b) => Bp(b.ReturnBp);
-    private static string WinRate(KrxArenaBookView b) => b.Wins + b.Losses == 0 ? "-" : (b.WinRateBp / 100.0).ToString("F1") + "% (" + b.Wins + "승 " + b.Losses + "패)";
+    private static string WinRate(KrxArenaBookView b) => WinRate(b.Wins, b.Losses, b.WinRateBp);
+    private static string WinRate(int wins, int losses, long winRateBp) => wins + losses == 0 ? "-" : (winRateBp / 100.0).ToString("F1") + "% (" + wins + "승 " + losses + "패)";
 
     protected override void OnInitialized()
         => _timer = new System.Threading.Timer(_ => RenderPump(), null, RenderPumpMs, RenderPumpMs);
 
-    // 레벨 트리거 렌더 펌프(타이머 스레드): 그려진 버전 ≠ 현재 버전 ∧ 진행 중 렌더 없음 → InvokeAsync 1건.
+    // 레벨 트리거 렌더 펌프(타이머 스레드): 활성 모드 포트의 그려진 버전 ≠ 현재 버전 ∧ 진행 중 렌더 없음 → InvokeAsync 1건.
     private void RenderPump()
     {
-        if (Port.Version == System.Threading.Volatile.Read(ref _drawn)) return;
+        long current = System.Threading.Volatile.Read(ref _mode) == ModeUs ? UsPort.Version : Port.Version;
+        if (current == System.Threading.Volatile.Read(ref _drawn)) return;
         if (System.Threading.Interlocked.CompareExchange(ref _renderInFlight, 1, 0) != 0) return;
         try { _ = InvokeAsync(StateHasChanged); }
         catch (Exception) { System.Threading.Volatile.Write(ref _renderInFlight, 0); }
@@ -207,6 +424,11 @@ else
     .da-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 6px; background: #3a3f4b; color: #ccc; }
     .da-badge.ok { background: #2e7d32; color: #fff; } .da-badge.wait { background: #616161; color: #fff; }
     .da-badge.bad { background: #6d4c41; color: #fff; } .da-badge.syn { background: #f9a825; color: #111; }
+    .da-badge.pre { background: #5e35b1; color: #fff; }
+    .da-modes { margin: 0 0 8px; }
+    .da-mode-tab { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 8px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
+    .da-mode-tab.on { background: #1d2230; color: #fff; border-color: #4dd0e1; }
+    .da-factors { font-size: 11.5px; color: var(--sub); margin-top: 0; }
     .da-empty { margin-bottom: 10px; }
     .da-pos { margin-top: 8px; } .da-pos th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; }
     .da-nopos { margin-top: 8px; }
