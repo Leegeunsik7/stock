@@ -3718,3 +3718,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   보증 = 오프라인 재생 테스트(Vts_H0STCNI9_Reject_Notice_Latches_Bit23_Through_The_Product_Path) 한정. 비동기 거부 유도(가격 정상 · 잔고/수량 계열)는 체결 위험이 있어 미착수.
 - 검증: VtsOrderRejectionProbeTests 8/8(옵트인 리얼 와이어 포함 · 18초) · 테스트 프로젝트 Release -warnaserror 0W/0E.
 - 불변: liveArmed:false · 실도메인 송출 0(VtsDomainGuard) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 158. v12.18.55-GM — VTS 고의 거부 호가 정렬 · 실 VTS 동기 기각 2종 실측 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-22)
+
+- v12.18.55-DEV(§156 · §157) = b0c6cb0. 12.18.53 → 12.18.55(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/LF 유지) =
+  6072269(4파일 · 11/11 줄 · 핀 테스트 48 통과) · 태그 v12.18.55-GM -f. 빌드 서버 종료 후 착수. (12.18.54 = DEV 전용 · GM 미발행.)
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E ·
+  ★전체 스위트 4,835 통과 + 5 건너뜀(VTS 주문 거부 · LiveWire 소크 · 해외 모의 · VTS 사전 점검 · 업비트 공개 시세 = 옵트인) · 실패 0 · 4분 22초 · Offline_1M 프레임 소크(스위트 내 통과) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(2/2) · liveArmed:false 소스 가드(물리 이중키 조회 16 · 마스터 플래그 1 · 위반 0) · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 38/38(zip 포함) ·
+  masterSeal CAC8BF3F… · verify-zip 무추출 일치 · verify-live-armed(IL 판독 21 · Tighten 6 · 위반 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · 매니페스트 @6072269e0e 핸드셰이크 Ok.
+- 산출물: release-v12.18.55-GM.zip(642900BA…) · StockManager-v12.18.55-Standalone-win-x64.zip(569F27A5…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 16400 · HWND 0x850FDE 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.53-GM 산출물 15종 → release/superseded-v12.18.53-GM/. 신규 산출물 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 2종 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 본 저장소 잔류 프로세스 0(타 프로젝트 testhost 1 = 무관 · 미종료). 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 이번 출하 변경분(VTS 거부 하네스 · 업비트 프로브) = 테스트 전용(출하 바이너리 미포함). 가상자산 모의 엔진 · 미국 달력/세션 머신 = 정적 엔진만 포함(제품 경로 미배선).
+- 한계(정직): 비트 23 실 래치 미실측(VTS 동기 기각 · 오프라인 재생 보증) · KRX 달력 2028+ 미등재 · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
