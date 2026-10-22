@@ -6,6 +6,8 @@
 //   ★δ=0: 필드는 전부 값 타입(핫패스 체결 루프에서 구조체 복사만). 한국어 요약(HumanReadableSummary)은 판독 시점에 조립하는
 //     콜드 경로(UI/어댑터 전용 — 체결 루프는 호출하지 않는다).
 //   ★liveArmed:false — 이 타입은 기록일 뿐 주문 수단이 아니다.
+//   [v12.18.61-DEV] 통화(Currency): Krw = 가격 원 · Usd = 가격 센트(미국 테크 아레나). Usd 모드 구성요소 슬롯 =
+//     SurgeBp ← QQQ/반도체 ETF 베타 · MacroBp ← 10년물 국채금리 감응 · ImbalanceBp ← 프리마켓 갭/수급 · MomentumBp ← 장중 모멘텀.
 // ============================================================================
 using System;
 using System.Globalization;
@@ -24,11 +26,22 @@ namespace StockManager.Engines.Arena.Common
         StopLoss = 6,
         SignalReversal = 7,
         SessionClose = 8,
+        EtfBeta = 9,               // [v12.18.61-DEV] 미국 테크 진입 주도 근거(9~11 · 장중 모멘텀 = MomentumBreakout 공용)
+        RateSensitivity = 10,
+        PremarketGapFlow = 11,
+    }
+
+    /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
+    public enum ArenaCurrency : byte
+    {
+        Krw = 0,
+        Usd = 1,
     }
 
     public static class ArenaTriggerText
     {
-        public static bool IsEntry(ArenaTrigger t) => t is >= ArenaTrigger.OrderbookImbalance and <= ArenaTrigger.MomentumBreakout;
+        public static bool IsEntry(ArenaTrigger t) => t is >= ArenaTrigger.OrderbookImbalance and <= ArenaTrigger.MomentumBreakout
+                                                          or >= ArenaTrigger.EtfBeta and <= ArenaTrigger.PremarketGapFlow;
         public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose;
 
         public static string Label(ArenaTrigger t) => t switch
@@ -41,6 +54,9 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.StopLoss => "손절가 이탈(손절)",
             ArenaTrigger.SignalReversal => "시그널 반전",
             ArenaTrigger.SessionClose => "정규장 마감 전 청산",
+            ArenaTrigger.EtfBeta => "QQQ/반도체 ETF 베타",
+            ArenaTrigger.RateSensitivity => "10년물 국채금리 감응",
+            ArenaTrigger.PremarketGapFlow => "프리마켓 갭/수급",
             _ => "미분류",
         };
     }
@@ -65,11 +81,13 @@ namespace StockManager.Engines.Arena.Common
         public readonly int RiskRewardX100;
         public readonly int MacroBp, ImbalanceBp, SurgeBp, MomentumBp;
         public readonly long RealizedPnlWon;
+        public readonly ArenaCurrency Currency;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
-            int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon)
+            int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw)
         {
+            Currency = currency;
             Seq = seq; Symbol = symbol; Side = side; Qty = qty; PriceWon = priceWon; KstTicks = kstTicks; TriggerType = triggerType;
             SentimentScore = sentimentScore; ConfidenceScore = confidenceScore; TargetPrice = targetPrice; StopLossPrice = stopLossPrice;
             RiskRewardX100 = riskRewardX100; MacroBp = macroBp; ImbalanceBp = imbalanceBp; SurgeBp = surgeBp; MomentumBp = momentumBp;
@@ -101,8 +119,12 @@ namespace StockManager.Engines.Arena.Common
 
         private static string Signed(long v) => (v > 0 ? "+" : "") + v.ToString("N0", Inv);
 
+        private static string Usd(long cents) => string.Create(Inv, $"${cents / 100:N0}.{Math.Abs(cents % 100):D2}");
+        private static string SignedUsd(long cents) => (cents > 0 ? "+" : cents < 0 ? "-" : "") + Usd(Math.Abs(cents));
+
         public static string Compose(in AiTradeRationale r)
         {
+            if (r.Currency == ArenaCurrency.Usd) return ComposeUsd(in r);
             string head = string.Create(Inv, $"[AI {(r.Side > 0 ? "매수" : "매도")}] {r.Symbol:D6} {r.Qty:N0}주 @ {r.PriceWon:N0}원");
             string factors = $"야간 글로벌 {Signed(r.MacroBp)}bp · 호가 불균형 {Signed(r.ImbalanceBp)}bp · 거래량 급증 {Signed(r.SurgeBp)}bp · 기술적 모멘텀 {Signed(r.MomentumBp)}bp";
             string plan = string.Create(Inv, $"목표가 {r.TargetPrice:N0}원 · 손절가 {r.StopLossPrice:N0}원 · 손익비 {r.RiskRewardRatio:F2}");
@@ -110,6 +132,18 @@ namespace StockManager.Engines.Arena.Common
             return r.Side > 0
                 ? $"{head} — 주도 근거: {label}. {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. {plan}."
                 : $"{head} — 청산 사유: {label}. 실현손익 {Signed(r.RealizedPnlWon)}원 · {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. 진입 계획: {plan}.";
+        }
+
+        /// <summary>[v12.18.61-DEV] 미국 테크 근거 요약(가격 = 센트 → $ 표기 · 종목 = 티커(거래 계열 거래소 코드)).</summary>
+        private static string ComposeUsd(in AiTradeRationale r)
+        {
+            string head = string.Create(Inv, $"[AI {(r.Side > 0 ? "매수" : "매도")}] {StockManager.Engines.Arena.Us.UsTechUniverse.Label(r.Symbol)} {r.Qty:N0}주 @ {Usd(r.PriceWon)}");
+            string factors = $"QQQ/반도체 ETF 베타 {Signed(r.SurgeBp)}bp · 10년물 금리 감응 {Signed(r.MacroBp)}bp · 프리마켓 갭/수급 {Signed(r.ImbalanceBp)}bp · 장중 모멘텀 {Signed(r.MomentumBp)}bp";
+            string plan = string.Create(Inv, $"목표가 {Usd(r.TargetPrice)} · 손절가 {Usd(r.StopLossPrice)} · 손익비 {r.RiskRewardRatio:F2}");
+            string label = ArenaTriggerText.Label(r.TriggerType);
+            return r.Side > 0
+                ? $"{head} — 주도 근거: {label}. {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. {plan}."
+                : $"{head} — 청산 사유: {label}. 실현손익 {SignedUsd(r.RealizedPnlWon)} · {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. 진입 계획: {plan}.";
         }
     }
 }

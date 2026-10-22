@@ -189,6 +189,7 @@ namespace StockManager.Blazor.Services
         private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
         // [v12.18.60-DEV] 국내 대형주 아레나 시세 주입기(선택 결선 · 펌프가 Pump 구동 = 엔진 단일 작성자)
         private StockManager.Engines.Arena.Domestic.KrxArenaQuoteFeeder? _krxArena;
+        private StockManager.Engines.Arena.Us.UsArenaQuoteFeeder? _usArena;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -372,6 +373,10 @@ namespace StockManager.Blazor.Services
         public void AttachKrxArena(StockManager.Engines.Arena.Domestic.KrxArenaQuoteFeeder feeder)
             => Volatile.Write(ref _krxArena, feeder ?? throw new ArgumentNullException(nameof(feeder)));
 
+        /// <summary>[v12.18.61-DEV] US 테크 아레나 시세 주입기 결속(허브 50ms 펌프가 Pump 구동 · 단일 작성자).</summary>
+        public void AttachUsArena(StockManager.Engines.Arena.Us.UsArenaQuoteFeeder feeder)
+            => Volatile.Write(ref _usArena, feeder ?? throw new ArgumentNullException(nameof(feeder)));
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -439,6 +444,7 @@ namespace StockManager.Blazor.Services
             Volatile.Read(ref _arena)?.Step(nowT);                                  // [v12.18.11-DEV] 아레나 정산(자체 seqlock 게시 · 프레임 서명 무관)
             Volatile.Read(ref _arenaReplay)?.OnHubPump();                           // [v12.18.12-DEV] 리플레이 게시 요청(플래그 1워드 · δ=0)
             Volatile.Read(ref _krxArena)?.Pump(nowT);                              // [v12.18.60-DEV] KRX 아레나 시세 주입 · 정산(자체 seqlock 게시)
+            Volatile.Read(ref _usArena)?.Pump(nowT);                               // [v12.18.61-DEV] US 테크 아레나 시세 주입 · 정산(자체 seqlock 게시)
             dirty |= SampleOrderPath(nowT);
             // 시가평가 · 자산 · MDD
             long unreal = 0; int open = 0;

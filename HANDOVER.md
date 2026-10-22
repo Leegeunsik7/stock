@@ -3887,3 +3887,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): KrxArenaQuoteFeeder · DualArenaPage(/dualarena) 포함 · 실 키움 브리지 호가 구동 미확인 · 합성 시세는 데모 전용(노란 뱃지).
 - 한계(정직): 장중 실 브리지 /dualarena 실기동 미확인 · 실 앱 화면 육안 미확인 · 야간 글로벌 지표 소스 미결선 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종(.claude/* 2종 · LiveWireKisLongSoakTests.cs) 미스테이징 · 원격 푸시 없음.
+
+## 167. v12.18.61-DEV — 미국 빅테크 아레나 엔진(UsTechArenaEngine · 휴먼 vs AI 가상 $100,000 듀얼 원장) · 설명 가능한 USD 매매 근거 (2026-10-22)
+
+- 신규 Engines/Arena/Us/UsTechUniverse: AAPL · NVDA · MSFT · AMZN · TSLA(전원 나스닥 → 거래 NASD / 시세 NAS · UsExchangeCode 매핑) · 티커 ASCII ≤8자 → long 키(Pack/Unpack) ·
+  종목별 QQQ 베타 · 반도체 ETF 베타 · 10년물 금리 감응(×100) · 합성 시작가. 표 밖 티커 = 폐기(fail-closed). ※ 5종 모두 나스닥 상장이라 NYSE 매핑은 표에 실사용 0(코드 경로만 공용).
+- 신규 UsTechArenaEngine(단일 작성자 · seqlock 게시 · Vyukov 휴먼 큐): 금액 = USD 센트 · 진영별 $100,000 독립 원장 · 위탁 0.025% · SEC $27.80/백만(매도).
+  세션 = KST → ET(UsTradingCalendar 서머타임) → UsSessionStateMachine: 프리마켓 = 탐색/준비(워밍업 · 갭 측정 · 체결 0) · 정규 연속매매만 AI/휴먼 체결 ·
+  마감 10분 전(조기 폐장 12:50 ET) 이후 신규 0 + SessionClose 청산 · 애프터/휴장/달력 밖 = 0. ET 날짜 변경 = 직전 정규장 마지막 중간가를 전일 종가로 확정.
+  알파 = (25·ETF 베타 + 20·10년물 금리 감응 + 30·프리마켓 갭/수급 + 25·장중 모멘텀)/100 · ≥3000 진입 · 목표 +(150+4·확신도)bp · 손절 −150bp(UsTickAligner $0.01 격자 · raw 10^8 경유).
+  AI 체결 1건 = AiTradeRationale(Currency=Usd) 1건. SetMarketContext(QQQ · SOXX · 10년물 bp) = 외부 주입(실시간 소스 미결선).
+- 공용 확장: AiTradeRationale.Currency(Krw 기본 · 기존 KRX 호출 무변경) · ArenaTrigger EtfBeta/RateSensitivity/PremarketGapFlow(진입 사유 9~11) · USD 한국어 요약($ 표기 · 티커(NASD)).
+- 신규 UsArenaQuoteFeeder: 생산자 OnKisQuoteBody(HHDFS00000300 → KisOverseasProtocol.TryParseQuote · rsym "D"+NAS+티커 정확 일치) → 현재체결가 AlignNearest $0.01 →
+  매수=매도=체결가 · 잔량 1,000주(호가 잔량 미제공 → '체결가 기준 가상 체결' 명시) · OnBook(최우선 호가+잔량). 슬롯 5 다중 작성자 seqlock · 허브 50ms Pump(단일 작성자).
+  합성 데모: 다음 NYSE 매매일 09:00 ET(프리 30분) → 정규 → 다음 매매일 · 펌프 1회 = 가상 1초(×20) · 가상 일자마다 맥락 재추첨 + 프리마켓 갭 점프 · 가격 비례 스텝. 출처 전환 = 원장 초기화.
+- 포트 MS2E.UI.Portable/Ports/Trading/UsArenaPort.cs(IUsArenaPort · DTO 센트 · UsArenaReject/Phase/Feed) + StockManager/Adapters/UsArenaPortAdapter · BlazorHomeForm DI(엔진 · 주입기 · 포트) ·
+  DashboardSnapshotHub.AttachUsArena + PumpCore 구동. 주문/무장/브로커 멤버 0. UI 페이지 미신설(Razor 변경 0 → 래칫 불변).
+- 테스트 UsTechArenaEngineTests 30건: 프리마켓 대기 → 정규장 자동 진입 · 마감 청산 · 애프터/추수감사절/달력 밖 차단 · EDT/EST 경계 9 · 날짜 롤 → 갭/수급 주도 진입 ·
+  진입/익절/손절 근거 · $0.01 정렬 · 무작위 장세 4만 틱 + 합성 10만 펌프(4 매매일) AI 체결 == 근거 · 근거 시각 전량 정규장 · 독립 원장 · 폐기 · KIS 본문 판독/불일치 폐기 ·
+  출처 전환/허브 펌프 · 4 생산자 동시 주입 찢김 0 · 엔진 10만 회 δ=0B · KIS/합성 피드 각 10만 회 δ=0B · IL 할당 지점 0 · 포트 표면/네트워크 필드 0 · 어댑터 투영 · DI.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) ·
+  전체 스위트 5,052 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 23초. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): KIS HHDFS00000300 폴러 미결선(주입 API만 · 실 응답 구동 미확인) · 해외 호가 잔량(HDFSASP0) 미결선 → KIS 출처는 호가 불균형 0 · QQQ/SOXX/10년물 실시간 소스 미결선(KIS 출처 맥락 = 0) ·
+  아레나 UI 페이지 미신설 · 합성 장세 AI 고수익(테스트 +41%)은 생성기 특성(알파 증거 아님) · 장전 시세 무변동 시 갭 = 0.
+- 불변: liveArmed:false(주문 목적지 = 휴먼 가상 원장 큐뿐 · 해외 주문 API 송출 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
