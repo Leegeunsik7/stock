@@ -3736,3 +3736,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 이번 출하 변경분(VTS 거부 하네스 · 업비트 프로브) = 테스트 전용(출하 바이너리 미포함). 가상자산 모의 엔진 · 미국 달력/세션 머신 = 정적 엔진만 포함(제품 경로 미배선).
 - 한계(정직): 비트 23 실 래치 미실측(VTS 동기 기각 · 오프라인 재생 보증) · KRX 달력 2028+ 미등재 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 159. v12.18.56-DEV — 업비트 공개 WebSocket 실시간 호가/체결 피드 어댑터(무할당 스트림 파서 · seqlock 시장 상태 · 모의 체결기 직결 · 재접속 백오프) (2026-10-22)
+
+- Engines/Feeds/Crypto/UpbitWebSocketFeedAdapter.cs(신규 · 제품 어셈블리 · 미배선):
+  UpbitStreamProtocol.TryParse = ReadOnlySpan<byte> · Utf8JsonReader 타입드 게터 · ★isFinalBlock=false(잘림 = 예외 없이 거부) · 루트 뒤 잔여 = 공백만 · 깊이 8 ·
+  JsonException 만 catch · orderbook L1(첫 단 가격/잔량 4종 · 0<매수<매도) · trade(가격/수량>0 · ask_bid · sequential_id) · status/error/미구독 type 분류 · 숫자 → raw 10^8(KRW-BTC 정확 일치).
+  UpbitMarketState = 단일 라이터 CAS + seqlock(CryptoPaperExchange 동일 규약) · 호가 시각 역행/체결 재전송 폐기. 수용 호가 → CryptoPaperExchange.UpdateQuote(ms × 1000).
+  수신 = POH 64KB 버퍼 조각 조립 · 초과 메시지 폐기(메시지당 1 집계) · 전송 ReceiveAsync = 풀링 ValueTask.
+  RunAsync = 접속 10초 제한 · 지수 백오프 1·2·4…30초(수신 실적 후 초기화) · 침묵 10초 = 강제 단절 · PING 60초 · 예외 미전파.
+  ★송출 = 구독 1건 + PING 뿐 · 접속 대상 = wss://api.upbit.com/websocket/v1 정확 일치(연결 전 예외) · 주문/인증/브로커/무장 키 참조 0. 단절 = 호가 정지 → 2초 후 StaleQuote(fail-closed).
+- 테스트 UpbitWebSocketParserTests 84건([Collection("ConcurrencyStress")]): 원시 샘플 정확값 · 필드 순서 무관 · 손상 프레임 63종 + 비 UTF-8/gzip · 변조 10만 회 예외 0 ·
+  ★δ=0: 파서 10만 · OnFrame(+거래소) 10만 · 서로 다른 체결 4,096 · 수신 루프 조각(97B) 조립 10만 = 힙 0 · 투영 → 가상 매수/매도 정확값 · 역행/재전송 · 비정렬 거래소 거부 ·
+  StaleQuote · seqlock 찢김 0(판독 4) · 백오프 1·2·4→초기화 · 상한 · 침묵 단절 + PING · 접속 대상 가드 10종 · 소스 주문/인증 문자열 0.
+  사보타주(교차 호가 검사 제거 + OnFrame 1B 할당 · 빌드 0E 확인) → 7건 실패 후 원복.
+  UpbitWebSocketLiveTests: 옵트인 MS2E_UPBIT_WS=1 + Skip 사유 단위 테스트.
+- ★실측(2026-10-22 · 옵트인 1회): 접속(TCP+TLS+업그레이드) 143.8ms · 첫 프레임 173.1ms · 10 프레임(호가 6 · 체결 4) 767ms · 간격 중앙 79.1ms · 손상/error 0 ·
+  서버 시각 → 로컬 중앙 353ms(로컬 시계 오차 포함 · 절대 지연 아님) · L1 110,490,000/110,539,000원 · 가상 왕복 체결 비용 18.59원 · 정상 종료(단절 1 · 결함 0).
+- 검증(격리 worktree · 타 세션 파일 배제): WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 ·
+  전체 스위트 4,920 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 42초(래칫 ≤40 포함).
+- 한계(정직): 제품 경로/DI/UI 미배선 · KRW-BTC 단일 · L1 만(깊이 미사용) · 실 소켓 수신 δ=0 은 대역 전송으로만 판정(TLS/런타임 내부 할당은 범위 밖 · 실측 프로세스 전체 222KB 참고값) ·
+  SIMPLE 포맷 · 업비트 요청 한도 실측 없음 · 장시간 소크 미실행.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
