@@ -187,6 +187,8 @@ namespace StockManager.Blazor.Services
         // ── [v12.18.11-DEV] AI vs Human 아레나(선택 결선 · 펌프가 Step 구동 · 생산자는 결정 분기만) ──
         private StockManager.Engines.Arena.ArenaMatchGovernor? _arena;
         private StockManager.Engines.Arena.ArenaTickReplayEngine? _arenaReplay;
+        // [v12.18.60-DEV] 국내 대형주 아레나 시세 주입기(선택 결선 · 펌프가 Pump 구동 = 엔진 단일 작성자)
+        private StockManager.Engines.Arena.Domestic.KrxArenaQuoteFeeder? _krxArena;
 
         /// <param name="mask">무장 집계어(인터락 LED · null = 미표시).</param>
         /// <param name="matrix">자식 슬롯 매트릭스(분할 시각화 · null = 미표시).</param>
@@ -363,6 +365,13 @@ namespace StockManager.Blazor.Services
         public void AttachArenaReplay(StockManager.Engines.Arena.ArenaTickReplayEngine replay)
             => Volatile.Write(ref _arenaReplay, replay ?? throw new ArgumentNullException(nameof(replay)));
 
+        /// <summary>
+        /// [v12.18.60-DEV] 국내 대형주 아레나 결선 — 펌프가 회차마다 주입기 Pump(브리지 최신 호가 슬롯 → 엔진 OnQuote · 합성 시세 1스텝 · 휴먼 큐 드레인)를
+        /// 구동한다(엔진 작성자 = 펌프 단일 · δ=0). 가상 원장 전용 · 브로커 경로 0.
+        /// </summary>
+        public void AttachKrxArena(StockManager.Engines.Arena.Domestic.KrxArenaQuoteFeeder feeder)
+            => Volatile.Write(ref _krxArena, feeder ?? throw new ArgumentNullException(nameof(feeder)));
+
         /// <summary>[v12.18.1-DEV] 국면 · 요구 확신 변경(시그널 엔진 · 변경 시에만 · δ=0). 종목 코드 &gt; 2^39 = 0 으로 표시(KRX 6자리는 항상 안).</summary>
         public void PublishCalibration(long symbol, int regime, int requiredBp)
         {
@@ -429,6 +438,7 @@ namespace StockManager.Blazor.Services
             long nowT = _nowTicks();
             Volatile.Read(ref _arena)?.Step(nowT);                                  // [v12.18.11-DEV] 아레나 정산(자체 seqlock 게시 · 프레임 서명 무관)
             Volatile.Read(ref _arenaReplay)?.OnHubPump();                           // [v12.18.12-DEV] 리플레이 게시 요청(플래그 1워드 · δ=0)
+            Volatile.Read(ref _krxArena)?.Pump(nowT);                              // [v12.18.60-DEV] KRX 아레나 시세 주입 · 정산(자체 seqlock 게시)
             dirty |= SampleOrderPath(nowT);
             // 시가평가 · 자산 · MDD
             long unreal = 0; int open = 0;

@@ -3848,3 +3848,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 시세 피드 미결선(엔진 OnQuote 호출자 없음 → Fed=false · UI 미노출) · 휴장일 캘린더 미반영 · 10호가 깊이 미사용(최우선 1호가) · 시그널 가중치 = 휴리스틱(백테스트 검증 전) ·
   무작위 테이프 AI 수익률 음수(신호 유효성 주장 아님) · 실 앱 화면 미확인.
 - 불변: liveArmed:false(외부 송출 수단 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.
+
+## 165. v12.18.60-DEV — KRX 아레나 시세 피드 배선(KrxArenaQuoteFeeder) · DualArenaPage(휴먼 vs AI 스코어보드 · AI 매매 근거 타임라인) (2026-10-22)
+
+- 신규 Engines/Arena/Domestic/KrxArenaQuoteFeeder: 생산자(키움 브리지 디스패치 · 다중 가능) OnBook(최우선 1호가) · OnTrade(누적 거래량) → 종목별 최신값 슬롯 32(CAS 점유 · 슬롯별 다중 작성자 seqlock ·
+  포화/무효 = 폐기 계수 · 큐잉/재시도 0) → 소비자 Pump(utc) = 대시보드 허브 50ms 펌프(엔진 단일 작성자): 버전 변경 슬롯만 OnQuote(틱 거래량 = 누적 차분 · 감소 = 0 · 호가 전 체결 = 이월) · 갱신 0 = Drain.
+  합성 데모 시세(대형주 5종 결정론 난수 보행 · 호가단위 정렬 · 추세 국면/불균형/간헐 급증 · 가상 세션 평일 09:00 펌프 1회 = 1초 ×20 · 15:30 → 다음 평일 · 가상 일자마다 야간 글로벌 재추첨).
+  출처 전환 = 다음 펌프에서 양 진영 원장 + 엔진 종목 표 초기화(출처 간 오염 0) · 브리지 복귀 시 묵은 슬롯 재주입 0.
+- 엔진 확장: SetCapital 이 종목 표 · 틱 계수도 초기화 · CopyQuotes(DuelQuote seqlock 사본). DashboardSnapshotHub.AttachKrxArena + PumpCore 에서 Pump 구동. BlazorHomeForm: 브리지 → 주입기 → 허브 · 포트 어댑터(엔진+주입기).
+- 포트 확장(IKrxArenaPort): Version · Feed(KrxArenaFeedStatus) · SelectSource(KrxArenaFeed Bridge/Synthetic) · Quotes · Positions(side) · KrxArenaView 에 SessionKst/DroppedQuotes. 주문/무장/브로커 멤버 0 유지.
+- UI: MS2E.UI.Portable/Pages/Trading/DualArenaPage.razor(순수 RCL · [Inject] = IKrxArenaPort 1개) + 호스트 셸 StockManager/Blazor/Pages/DualArena.razor(@page "/dualarena" · [Inject] 0) + 내비 'AI & 저널' 항목.
+  출처 탭(📡 실시간 브리지 · 🧪 합성 시세(데모) — 합성은 노란 뱃지로 명시) · 세션 시각/정규장 뱃지 · 진영 스코어보드(자산 · 수익률 · 실현/평가 · MDD · 승률 · 체결/거부 · 보유 + AI 목표/손절) ·
+  휴먼 시장가 티켓(수신 종목 선택) · AI 근거 카드 타임라인(최신 30 · 사유 · 확신도 바 · 감성 · 목표/손절/손익비 · 실현 · 한국어 요약). 펌프 미결선/시세 미수신 = 안내만(가짜 손익/카드 0).
+  렌더 = 게시 버전 레벨 폴링 100ms(변경 시에만 InvokeAsync 1건). 상승 #E53935 · 하강 #1E88E5.
+- 테스트 KrxArenaFeedAndPageTests 12건: 브리지 주입 · 누적 차분 급증 → AI 근거 · 미갱신 재주입 0 · 빈 펌프 Drain · 폐기 · 4생산자 찢김 0 · 합성 가상 세션/익일 롤 · AI 체결 == 근거 · 전환 초기화 ·
+  주말 건너뜀 · 브리지/합성 각 10만 회 δ=0B · 허브 펌프 구동 · bUnit 빈 상태 정직 렌더 · 스코어보드/카드/티켓/출처 탭 → 포트 · Pure Shell(주입 1개 · 셸 결합 0) · 호스트 배선/내비.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) ·
+  전체 스위트 5,022 통과 + 6 건너뜀 · 실패 0 · 4분 12초. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): 실 키움 브리지 호가로 /dualarena 구동 미확인(장중 실기동 필요) · 실 앱 화면 육안 미확인(bUnit 렌더만) · 합성 장세 AI 고수익(테스트 +255%)은 추세 국면 생성기 특성(알파 증거 아님) ·
+  실시간 야간 글로벌 지표 소스 미결선(브리지 모드 매크로 = 0) · KIS H0STASP0 호가 미결선(키움 브리지만) · 휴장일 캘린더 미반영.
+- 불변: liveArmed:false(주문 목적지 = 휴먼 가상 원장 큐뿐) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.

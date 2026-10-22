@@ -507,7 +507,7 @@ namespace StockManager.Tests.Engines.Arena
         public void Host_Di_Registers_Krx_Arena_Port_Via_Adapter()
         {
             string form = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "Blazor", "BlazorHomeForm.cs"));
-            Assert.Contains("services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKrxArenaPort>(new StockManager.Adapters.KrxArenaPortAdapter(krxArena));", form);
+            Assert.Contains("services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKrxArenaPort>(new StockManager.Adapters.KrxArenaPortAdapter(krxArena, krxArenaFeeder));", form);
         }
 
         private static string RepoRoot()

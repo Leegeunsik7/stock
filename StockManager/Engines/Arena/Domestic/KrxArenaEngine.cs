@@ -89,7 +89,7 @@ namespace StockManager.Engines.Arena.Domestic
         public long Version => Volatile.Read(ref _ver);
         public int OvernightMacroBp => Volatile.Read(ref _macroBp);
 
-        /// <summary>양 진영 원장 초기화(정산 스레드 · 대결 시작 전). 범위 밖 자본금 = ArgumentOutOfRange.</summary>
+        /// <summary>양 진영 원장 · 종목 표 초기화(정산 스레드 · 대결 시작 전/시세 출처 전환). 범위 밖 자본금 = ArgumentOutOfRange.</summary>
         public void SetCapital(long capitalWon)
         {
             if (capitalWon < 1_000_000 || capitalWon > 100_000_000_000) throw new ArgumentOutOfRangeException(nameof(capitalWon));
@@ -105,6 +105,9 @@ namespace StockManager.Engines.Arena.Domestic
             }
             Array.Clear(_rationales);
             _rationaleCount = 0;
+            Array.Clear(_syms);                       // [v12.18.60-DEV] 시세 출처 전환(브리지 ↔ 합성) = 종목 표 · EWMA · 틱 계수 동시 초기화(출처 간 오염 0)
+            _symCount = 0;
+            _ticks = _dropped = 0;
             PublishSnapshot();
             EndWrite();
         }
@@ -434,6 +437,24 @@ namespace StockManager.Engines.Arena.Domestic
                     Pos p = b.Positions[k];
                     long mark = (uint)p.SymIdx < MaxSymbols ? _syms[p.SymIdx].Bid : 0;
                     destination[k] = new DuelPosition(p.Symbol, p.Qty, p.AvgPx, p.CostWon, mark, p.Target, p.Stop);
+                }
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return n;
+            }
+            return 0;
+        }
+
+        public int CopyQuotes(Span<DuelQuote> destination)
+        {
+            for (int i = 0; i < SeqlockRetries; i++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                int n = Math.Min(Math.Min(_symCount, MaxSymbols), destination.Length);
+                for (int k = 0; k < n; k++)
+                {
+                    Sym q = _syms[k];
+                    destination[k] = new DuelQuote(q.Symbol, q.Bid, q.Ask, q.BidQty, q.AskQty);
                 }
                 Interlocked.MemoryBarrier();
                 if (Volatile.Read(ref _ver) == v) return n;

@@ -1708,8 +1708,15 @@ namespace StockManager.Blazor
             // [v12.18.59-DEV] 국내 대형주 아레나(휴먼 vs AI · 설명 가능한 AI 근거) — 순수 인메모리 가상 원장 · 브로커 경로 0.
             //   시세 피드 미결선(Fed=false) = UI 는 정산 0회를 정직 렌더(가짜 손익 0).
             var krxArena = new StockManager.Engines.Arena.Domestic.KrxArenaEngine();
+            // [v12.18.60-DEV] 시세 주입기: 브리지 10호가/누적 거래량 → 종목별 최신값 슬롯(생산자 = 브리지 디스패치 · δ=0) → 허브 50ms 펌프가 엔진에 주입(단일 작성자).
+            //   브리지 미가동 PC = /dualarena 에서 합성 데모 시세 선택 가능(UI 가 '합성'으로 명시 · 실시세 위장 0).
+            var krxArenaFeeder = new StockManager.Engines.Arena.Domestic.KrxArenaQuoteFeeder(krxArena);
+            bridge.OrderBookReceived += b => krxArenaFeeder.OnBook(in b);
+            bridge.TickReceived += t => krxArenaFeeder.OnTrade(t.SymbolCode, t.Volume);
+            dashHub.AttachKrxArena(krxArenaFeeder);
             services.AddSingleton(krxArena);
-            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKrxArenaPort>(new StockManager.Adapters.KrxArenaPortAdapter(krxArena));
+            services.AddSingleton(krxArenaFeeder);
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IKrxArenaPort>(new StockManager.Adapters.KrxArenaPortAdapter(krxArena, krxArenaFeeder));
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));

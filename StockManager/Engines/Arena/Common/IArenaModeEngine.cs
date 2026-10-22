@@ -55,6 +55,17 @@ namespace StockManager.Engines.Arena.Common
         }
     }
 
+    /// <summary>[v12.18.60-DEV] 종목 최우선 호가 1건(원 · 주) — 휴먼 티켓 종목 선택 · 시세 판독.</summary>
+    public readonly struct DuelQuote
+    {
+        public readonly long Symbol, BidWon, AskWon, BidQty, AskQty;
+
+        public DuelQuote(long symbol, long bidWon, long askWon, long bidQty, long askQty)
+        {
+            Symbol = symbol; BidWon = bidWon; AskWon = askWon; BidQty = bidQty; AskQty = askQty;
+        }
+    }
+
     public interface IArenaModeEngine
     {
         /// <summary>모드 표시명(예: "국내 대형주(KRX)").</summary>
@@ -73,5 +84,7 @@ namespace StockManager.Engines.Arena.Common
         int CopyPositions(int side, Span<DuelPosition> destination);
         /// <summary>최근 AI 근거 피드 사본(과거 → 최신) — 반환 = 복사 개수(경합 상한 초과 = 0).</summary>
         int CopyRationales(Span<AiTradeRationale> destination);
+        /// <summary>[v12.18.60-DEV] 수신 종목 최우선 호가 사본 — 반환 = 복사 개수(경합 상한 초과 = 0).</summary>
+        int CopyQuotes(Span<DuelQuote> destination);
     }
 }
