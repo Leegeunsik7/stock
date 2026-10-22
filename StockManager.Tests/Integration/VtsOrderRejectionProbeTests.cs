@@ -3,7 +3,7 @@
 //
 //   §1 도메인 가드(오프라인): 실도메인 플래그 · 실 REST 호스트/포트 · 위장 호스트(부분 문자열 'openapivts' 포함) · http · 실 WebSocket(21000) · 실 TR(TTTC…) = 예외 ·
 //      송출 직전 재검 = 가드 위반 요청은 HttpMessageHandler 도달 0(패킷 0) · VTS 요청만 1회 도달
-//   §2 주문 명세(오프라인): 005930 매도 1주 지정가 999,999 · ORD_DVSN 00 · VTTC0801U · 취소 VTTC0803U(원주문 · 조직번호) · 같은 가드
+//   §2 주문 명세(오프라인): 005930 매도 1주 지정가 1,000,000(호가단위 정렬) · ORD_DVSN 00 · VTTC0801U · 취소 VTTC0803U(원주문 · 조직번호) · 같은 가드
 //   §3 실행 조건(오프라인): PROBE=1 옵트인 · HTS ID(env) · portfolio.db · 정규장 — 미충족 = Skip 사유(실패 아님) · [v12.18.55] DPAPI 로더 결합 · ToString 마스킹 ·
 //      마스킹 · VTS H0STCNI9 거부 통보 → 비트 23
 //   §4 리얼 와이어(옵트인 · 장중): 체결통보 구독 확인 → 고의 거부 주문 1회 →
@@ -109,7 +109,7 @@ namespace StockManager.Tests.Integration
             Assert.Equal("Bearer tok", req.Headers.GetValues("authorization").Single());
             using var body = JsonDocument.Parse(h.Bodies[0]);
             var b = body.RootElement;
-            Assert.Equal(("005930", "1", "999999", "00"), (b.GetProperty("PDNO").GetString(), b.GetProperty("ORD_QTY").GetString(), b.GetProperty("ORD_UNPR").GetString(), b.GetProperty("ORD_DVSN").GetString()));
+            Assert.Equal(("005930", "1", "1000000", "00"), (b.GetProperty("PDNO").GetString(), b.GetProperty("ORD_QTY").GetString(), b.GetProperty("ORD_UNPR").GetString(), b.GetProperty("ORD_DVSN").GetString()));
             Assert.Equal(("50012345", "01"), (b.GetProperty("CANO").GetString(), b.GetProperty("ACNT_PRDT_CD").GetString()));
 
             await VtsRestClient.PostAsync(http, VtsRejectionOrder.BuildCancel(VtsDomainGuard.VtsRestBase, Cfg, "tok", orgNo: 91252, odno: 117057), CancellationToken.None);

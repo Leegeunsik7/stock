@@ -3703,3 +3703,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: 테스트 프로젝트 Release -warnaserror 0W/0E · 전체 스위트 Release 4,835 통과 + 5 건너뜀(옵트인) · 실패 0 · 제품 코드 변경 0(테스트 도구 2파일).
 - 한계(정직): 비트 23 래치는 실 VTS 통보로 미실측(REST 동기 기각) — 오프라인 재생 테스트(Vts_H0STCNI9_Reject_Notice_Latches_Bit23_Through_The_Product_Path)로만 보증.
 - 불변: liveArmed:false(제품 경로 무변경) · 실도메인 송출 0(VtsDomainGuard) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 157. v12.18.55-DEV — VTS 고의 거부 지정가 호가 정렬(1,000,000원) · 실 VTS 게이트웨이 동기 기각 2종 실측(40030000 · 40270000) · 파서 정합 (2026-10-22)
+
+- 배경: §156 실측에서 999,999원 = 호가 단위(50만원 이상 1,000원) 비정렬 → '호가단위 오류' 선기각. 설계 의도(상한가 초과 · 무보유 매도) 검사 단계 도달 실패.
+- Integration/VtsOrderRejectionProbeHarness.cs: VtsRejectionOrder.LimitWon 999,999 → 1,000,000(호가 정렬 · 상한가 ±30% 대폭 초과 유지) · 머리말 주문 명세 갱신.
+  Integration/VtsOrderRejectionProbeTests.cs: §2 주문 명세 단언 ORD_UNPR "1000000" · 머리말 갱신. 제품 코드 변경 0.
+- ★실측(2026-10-22 11:35 KST · 옵트인 1회 · PROBE=1 + HTS ID env · 자격증명 DB DPAPI): WSS 연결 1 · 구독 응답 2/거부 0 · 체결통보 키 장착 861ms /
+  주문(005930 매도 1주 지정가 1,000,000 · VTTC0801U) HTTP 200 · 1,009.8ms · {"rt_cd":"1","msg_cd":"40270000","msg1":"모의투자 상/하한가 오류"} ·
+  TryParseOrderAck 판독 True · Ok False · ODNO 0 · ORGNO 0('^' 없음 · JSON) → 주문번호 미발급 → H0STCNI9 거부 통보 0(수신 메시지 54 · 형식이탈 0 · 누락 키 0) · 비트 23 미래치(마스크 0x0 · 정상).
+  덤프 %TEMP%\ms2e-vts-probe\probe-20261022-113528.txt · 스캔 = 'eyJ' 0 · HTS ID 원문 0(콘솔도 마스킹 kr****** · 50******).
+- 결론: VTS 게이트웨이 동기 기각 2종 실측 = 40030000(호가단위 오류 · 999,999) · 40270000(상/하한가 오류 · 1,000,000). 두 경우 모두 제품 파서 TryParseOrderAck 가 rt_cd≠0 → Ok=false 정확 판독(무결성 입증).
+- 한계(정직): VTS 는 가격 검증을 REST 동기 단계에서 끝내 주문번호를 발급하지 않음 → 거래소 단계 거부 통보(H0STCNI9) 미발생 → 비트 23(0x00800000) 실 래치는 미실측.
+  보증 = 오프라인 재생 테스트(Vts_H0STCNI9_Reject_Notice_Latches_Bit23_Through_The_Product_Path) 한정. 비동기 거부 유도(가격 정상 · 잔고/수량 계열)는 체결 위험이 있어 미착수.
+- 검증: VtsOrderRejectionProbeTests 8/8(옵트인 리얼 와이어 포함 · 18초) · 테스트 프로젝트 Release -warnaserror 0W/0E.
+- 불변: liveArmed:false · 실도메인 송출 0(VtsDomainGuard) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

@@ -10,7 +10,7 @@
 //  ★제품 경로 무관: LocalDatabase(쓰기) · KisLiveBroker · 디스패처 · 무장 키 참조 0 — liveArmed:false 불변.
 //  ★[v12.18.55] 자격증명: AppKey · Secret · 계좌 = portfolio.db KIS.Profile.PaperDomestic.*(DPAPI · 읽기 전용 · VtsPreFlightCredentials.Load) —
 //   평문 환경변수 경로 폐지. HTS ID(체결통보 구독 tr_key)만 환경변수 MS2E_KIS_HTS_ID. 출력 = PreFlightRedactor 전수 치환(키 · 시크릿 · 토큰 · 계좌 · HTS ID).
-//  ★주문 명세(체결 위험 0): 005930 매도 1주 지정가 999,999원 — 상한가(±30%) 대폭 초과 + 보유 없는 매도(잔고 초과) 이중 거부 유도.
+//  ★주문 명세(체결 위험 0): 005930 매도 1주 지정가 1,000,000원(50만원 이상 호가단위 1,000원 정렬) — 상한가(±30%) 대폭 초과 + 보유 없는 매도(잔고 초과) 이중 거부 유도.
 //   만에 하나 접수(rt_cd = 0)되면 즉시 전량 취소(VTTC0803U) 후 보고 — 매도 지정가가 시장가 훨씬 위라 체결 불가.
 //  ★실행 조건(옵트인 2중): MS2E_KIS_VTS_PROBE=1 + MS2E_KIS_HTS_ID + portfolio.db 존재 + KRX 정규장 연속매매.
 //   사전 점검(PREFLIGHT=1)만 켠 채 전체 스위트를 장중에 돌려도 주문은 나가지 않는다(PROBE=1 별도 요구). 미충족 = Skip(실패 아님).
@@ -118,7 +118,7 @@ namespace StockManager.Tests.Integration
     public static class VtsRejectionOrder
     {
         public const string Symbol = "005930", TrSellVts = "VTTC0801U", TrCancelVts = "VTTC0803U";
-        public const long Qty = 1, LimitWon = 999_999;
+        public const long Qty = 1, LimitWon = 1_000_000;
 
         public static HttpRequestMessage Build(Uri restBase, VtsProbeConfig cfg, string token)
         {
