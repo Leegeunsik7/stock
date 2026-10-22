@@ -3868,3 +3868,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 실 키움 브리지 호가로 /dualarena 구동 미확인(장중 실기동 필요) · 실 앱 화면 육안 미확인(bUnit 렌더만) · 합성 장세 AI 고수익(테스트 +255%)은 추세 국면 생성기 특성(알파 증거 아님) ·
   실시간 야간 글로벌 지표 소스 미결선(브리지 모드 매크로 = 0) · KIS H0STASP0 호가 미결선(키움 브리지만) · 휴장일 캘린더 미반영.
 - 불변: liveArmed:false(주문 목적지 = 휴먼 가상 원장 큐뿐) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.
+
+## 166. v12.18.60-GM — KRX 아레나 시세 피드 · DualArenaPage 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-22)
+
+- v12.18.60-DEV(§165) = ff406b6. 12.18.57 → 12.18.60(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) =
+  e678595(4파일 · 11/11 줄) · 태그 v12.18.60-GM -f. 빌드 서버 종료(가용 메모리 10.2GB) 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+  ※ 지시문 경로 scripts/release-package.ps1 은 부재 — 실 스크립트는 리포 루트 release-package.ps1.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  ★전체 스위트 5,022 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 25초 · Offline_1M(스위트 내 통과 · 태그 커밋본) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(2/2) · liveArmed:false 소스 가드 · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 38/38(zip 포함) ·
+  masterSeal C50A9A75… · verify-zip 무추출 일치 · verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · 매니페스트 @e6785957f8 핸드셰이크 Ok.
+- 산출물: release-v12.18.60-GM.zip(E22FC0ED…) · StockManager-v12.18.60-Standalone-win-x64.zip(2F567674…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 9492 · HWND 0xD916A4 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.57-GM 산출물 15종 → release/superseded-v12.18.57-GM/. 신규 산출물 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 2종 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · 동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · MS2E.StockSuite 잔류 프로세스 0. 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): KrxArenaQuoteFeeder · DualArenaPage(/dualarena) 포함 · 실 키움 브리지 호가 구동 미확인 · 합성 시세는 데모 전용(노란 뱃지).
+- 한계(정직): 장중 실 브리지 /dualarena 실기동 미확인 · 실 앱 화면 육안 미확인 · 야간 글로벌 지표 소스 미결선 · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종(.claude/* 2종 · LiveWireKisLongSoakTests.cs) 미스테이징 · 원격 푸시 없음.
