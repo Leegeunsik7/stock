@@ -7,11 +7,13 @@
 //   ① isRealDomain == false ② REST = https · 호스트 정확히 openapivts.koreainvestment.com · 포트 29443(부분 문자열 'openapivts' 포함 판정은
 //      openapivts.koreainvestment.com.evil.io 같은 위장 호스트를 통과시키므로 정확 일치) ③ WebSocket = KisRealtimeSession.VtsUri(31000)
 //   ④ 주문 TR = VTTC…(모의) 만. 하나라도 어긋나면 InvalidOperationException — HttpMessageInvoker.SendAsync 이전이라 패킷 0.
-//  ★제품 경로 무관: 사용자 LocalDatabase · KisLiveBroker · 디스패처 · 무장 키 참조 0(자격증명 = 환경변수만) — liveArmed:false 불변.
+//  ★제품 경로 무관: LocalDatabase(쓰기) · KisLiveBroker · 디스패처 · 무장 키 참조 0 — liveArmed:false 불변.
+//  ★[v12.18.55] 자격증명: AppKey · Secret · 계좌 = portfolio.db KIS.Profile.PaperDomestic.*(DPAPI · 읽기 전용 · VtsPreFlightCredentials.Load) —
+//   평문 환경변수 경로 폐지. HTS ID(체결통보 구독 tr_key)만 환경변수 MS2E_KIS_HTS_ID. 출력 = PreFlightRedactor 전수 치환(키 · 시크릿 · 토큰 · 계좌 · HTS ID).
 //  ★주문 명세(체결 위험 0): 005930 매도 1주 지정가 999,999원 — 상한가(±30%) 대폭 초과 + 보유 없는 매도(잔고 초과) 이중 거부 유도.
 //   만에 하나 접수(rt_cd = 0)되면 즉시 전량 취소(VTTC0803U) 후 보고 — 매도 지정가가 시장가 훨씬 위라 체결 불가.
-//  ★실행 조건(옵트인 2중): 자격증명 4종(MS2E_KIS_VTS_APPKEY · SECRETKEY · HTSID · ACCOUNT) + MS2E_KIS_VTS_PROBE=1 + KRX 정규장.
-//   소크 테스트 자격증명만 넣은 채 전체 스위트를 장중에 돌려도 주문은 나가지 않는다(PROBE=1 별도 요구). 미충족 = Skip(실패 아님).
+//  ★실행 조건(옵트인 2중): MS2E_KIS_VTS_PROBE=1 + MS2E_KIS_HTS_ID + portfolio.db 존재 + KRX 정규장 연속매매.
+//   사전 점검(PREFLIGHT=1)만 켠 채 전체 스위트를 장중에 돌려도 주문은 나가지 않는다(PROBE=1 별도 요구). 미충족 = Skip(실패 아님).
 //  덤프: ITestOutputHelper + %TEMP%\ms2e-vts-probe\probe-yyyyMMdd-HHmmss.txt — 고객 ID · 계좌번호 마스킹(필드 0 · 1 · REST CANO).
 // ============================================================================
 using System;
@@ -69,16 +71,17 @@ namespace StockManager.Tests.Integration
     /// <summary>프로브 자격증명(환경변수) · 실행 조건 판정.</summary>
     public sealed record VtsProbeConfig(string AppKey, string Secret, string HtsId, string Cano, string Prdt)
     {
-        public const string AppKeyVar = "MS2E_KIS_VTS_APPKEY", SecretVar = "MS2E_KIS_VTS_SECRETKEY", HtsIdVar = "MS2E_KIS_VTS_HTSID",
-                            AccountVar = "MS2E_KIS_VTS_ACCOUNT", OptInVar = "MS2E_KIS_VTS_PROBE";
+        public const string HtsIdVar = "MS2E_KIS_HTS_ID", OptInVar = "MS2E_KIS_VTS_PROBE";
 
-        /// <summary>Skip 사유(null = 실행). env 는 주입식(테스트).</summary>
-        public static string? SkipReason(Func<string, string?> env, DateTime utcNow)
+        /// <summary>record 기본 ToString 은 전 필드 원문 — 비밀값 노출 차단(앞 2자리 외 '*').</summary>
+        public override string ToString() => "VtsProbeConfig(appkey=" + VtsPayloadMask.Mask(AppKey) + " · hts=" + VtsPayloadMask.Mask(HtsId) + " · cano=" + VtsPayloadMask.Mask(Cano) + ")";
+
+        /// <summary>Skip 사유(null = 실행). env · DB 경로는 주입식(테스트).</summary>
+        public static string? SkipReason(Func<string, string?> env, DateTime utcNow, string dbPath)
         {
-            foreach (var v in new[] { AppKeyVar, SecretVar, HtsIdVar, AccountVar })
-                if (string.IsNullOrWhiteSpace(env(v))) return "KIS VTS 프로브 자격증명 미설정(" + v + ") — 고의 거부 주문 미송출";
-            if (!TryParseAccount(env(AccountVar)!, out _, out _)) return "MS2E_KIS_VTS_ACCOUNT 형식 오류(8자리-2자리) — 미송출";
             if (env(OptInVar) != "1") return "MS2E_KIS_VTS_PROBE ≠ 1(주문 송출 옵트인 없음) — 미송출";
+            if (string.IsNullOrWhiteSpace(env(HtsIdVar))) return HtsIdVar + " 미설정(체결통보 구독 HTS ID) — 고의 거부 주문 미송출";
+            if (!System.IO.File.Exists(dbPath)) return "portfolio.db 없음(PaperDomestic 자격증명) — 미송출";
             // [v12.18.52] 송출 측 = 엄격 연속매매 판정(달력 범위 밖 = 미송출) — IsKrxRegularSession 은 감시 측 술어(범위 밖 = 장중 취급)라 쓰지 않는다
             if (StockManager.Engines.Feeds.KrxSessionStateMachine.GetSessionPhaseUtcMicros((utcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10)
                 != StockManager.Engines.Feeds.KrxSessionPhase.ContinuousTrading)
@@ -96,17 +99,19 @@ namespace StockManager.Tests.Integration
             return true;
         }
 
-        public static VtsProbeConfig FromEnvironment()
+        /// <summary>PaperDomestic DPAPI 자격증명 + HTS ID(env) 결합. 실패 = null + 사유(사유 문자열에 비밀값 0).</summary>
+        public static VtsProbeConfig? Load(string dbPath, string? htsId, out string? failure)
         {
-            string Env(string v) => Environment.GetEnvironmentVariable(v)!.Trim();
-            Assert.True(TryParseAccount(Env(AccountVar), out var cano, out var prdt));
-            return new VtsProbeConfig(Env(AppKeyVar), Env(SecretVar), Env(HtsIdVar), cano, prdt);
+            if (string.IsNullOrWhiteSpace(htsId)) { failure = HtsIdVar + " 미설정"; return null; }
+            if (!System.IO.File.Exists(dbPath)) { failure = "portfolio.db 없음"; return null; }     // ReadOnly 열기 = 예외 대신 사유 반환
+            var c = VtsPreFlightCredentials.Load(dbPath, VtsPreFlightCredentials.Profile, out failure);
+            return c is null ? null : new VtsProbeConfig(c.AppKey, c.Secret, htsId.Trim(), c.Cano, c.Prdt);
         }
     }
 
     public sealed class KisVtsProbeFactAttribute : FactAttribute
     {
-        public KisVtsProbeFactAttribute() => Skip = VtsProbeConfig.SkipReason(Environment.GetEnvironmentVariable, DateTime.UtcNow);
+        public KisVtsProbeFactAttribute() => Skip = VtsProbeConfig.SkipReason(Environment.GetEnvironmentVariable, DateTime.UtcNow, VtsPreFlightCredentials.DefaultDbPath);
     }
 
     /// <summary>고의 거부 주문 요청 생성기(순수 · 오프라인 검증 가능).</summary>

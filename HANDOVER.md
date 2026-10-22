@@ -3684,3 +3684,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 전체 스위트 Release 4,834 통과 + 5 건너뜀(옵트인) · 실패 0 · 4분 14초.
 - 한계(정직): 체결 모델 = L1 즉시 체결/거부(깊이 · 부분 체결 · 대기 주문 미모델) · KRW-BTC 단일 · 종목 한정 호가 예외 미반영 · 거래소 점검 시간 미반영 · 제품 경로/UI 미배선 · 업비트 실측 옵트인 미실행.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종(BrokerSettingsPage · InstallerBuildPanel · LiveWire 소크 · .claude/* 2종) 미스테이징 · 원격 푸시 없음.
+
+## 156. v12.18.55-DEV — VTS 고의 거부 하네스 DPAPI 전환 · 장중 실 VTS 거부 페이로드 캡처(REST 동기 기각 · 파서 정합) · 업비트 공개 시세 실측 (2026-10-22)
+
+- 오더 전제 대조(정직): '어젯밤 DB 발급 토큰 재사용' = portfolio.db 에 토큰 키 없음 · 파일 캐시 없음 → 토큰 1회 신규 발급. 하네스는 평문 환경변수 4종만 읽었고 HTS ID 는 DB 에 없음 → 사용자 결정(Option A)으로 개조.
+- Integration/VtsOrderRejectionProbeHarness.cs: VtsProbeConfig = AppKey · Secret · 계좌 ← portfolio.db KIS.Profile.PaperDomestic.*(DPAPI · 읽기 전용 · VtsPreFlightCredentials.Load) · HTS ID ← env MS2E_KIS_HTS_ID.
+  평문 자격증명 환경변수(MS2E_KIS_VTS_APPKEY/SECRETKEY/HTSID/ACCOUNT) 경로 폐지. ★record 기본 ToString(전 필드 원문) 재정의 → 마스킹. DB 부재 = 예외 대신 사유 반환.
+  실행 조건 = PROBE=1 + HTS ID + DB 존재 + KRX 연속매매(엄격 판정) — 미충족 = Skip.
+- Integration/VtsOrderRejectionProbeTests.cs: Skip 사유 재작성(옛 평문 변수만 = 미송출 단언 포함) · 신규 Config_Loads_PaperDomestic_From_Dpapi_Db_And_Masks_ToString(임시 DB · Real 프로필 미판독 · ToString 비밀값 0) ·
+  리얼 와이어 2단계화 — [1] REST 원문 · rt_cd/msg_cd/msg1(후행 공백 길이) · '^' 유무 · TryParseOrderAck 판독 단언(rt_cd≠0 → Ok=false) ·
+  [2] 거부 통보 수신 시 비트 23(0x00800000) 래치 단언 / REST 동기 기각 = 통보 미발생 사유 기록(실패 아님). 출력 전 PreFlightRedactor(키 · 시크릿 · 토큰 · 계좌 · HTS ID) · 덤프 비밀값 원문 0 단언.
+- ★실측(2026-10-22 11:02 KST · 옵트인 1회 · 사용자 실행): WSS 연결 1 · 구독 응답 1/거부 0 · 체결통보 키 장착 209ms(접속키 포함) · 토큰 346자 72.8ms /
+  주문(005930 매도 1주 지정가 999,999 · VTTC0801U) HTTP 200 · 494.3ms · {"rt_cd":"1","msg_cd":"40030000","msg1":"모의투자 주문처리가 안되었습니다(호가단위 오류)"} ·
+  msg1 26자 · 후행 공백 0 · '^' 없음(JSON) · TryParseOrderAck 판독 True · Ok False · ODNO 0 → 주문번호 미발급 → H0STCNI9 거부 통보 0(수신 메시지 53 · 형식이탈 0) · 비트 23 미래치(정상 · 통보 없음).
+  덤프 %TEMP%\ms2e-vts-probe\probe-20261022-110218.txt · 스캔 = 'eyJ' 0 · 12자 이상 영숫자 연속은 식별자(PaperDomestic 등)뿐.
+- 발견: 999,999원은 KRX 호가 단위(50만원 이상 1,000원) 비정렬 → VTS 가 '호가단위 오류'로 먼저 기각 — 설계 의도(상한가 초과 · 무보유 매도) 검사 단계까지 도달하지 않음.
+- 업비트 공개 시세 옵트인 실측(09:45 KST): ticker 중앙 9.9ms(최대 152.3ms = 첫 요청 TLS) · orderbook 중앙 11.7ms · KRW-BTC 112,324,000원 · 인메모리 가상 왕복 체결 비용 18.01원 · 송출 = 시세 GET 2종뿐.
+- 검증: 테스트 프로젝트 Release -warnaserror 0W/0E · 전체 스위트 Release 4,835 통과 + 5 건너뜀(옵트인) · 실패 0 · 제품 코드 변경 0(테스트 도구 2파일).
+- 한계(정직): 비트 23 래치는 실 VTS 통보로 미실측(REST 동기 기각) — 오프라인 재생 테스트(Vts_H0STCNI9_Reject_Notice_Latches_Bit23_Through_The_Product_Path)로만 보증.
+- 불변: liveArmed:false(제품 경로 무변경) · 실도메인 송출 0(VtsDomainGuard) · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.

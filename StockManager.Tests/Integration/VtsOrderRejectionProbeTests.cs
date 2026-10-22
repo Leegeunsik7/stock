@@ -4,11 +4,16 @@
 //   §1 도메인 가드(오프라인): 실도메인 플래그 · 실 REST 호스트/포트 · 위장 호스트(부분 문자열 'openapivts' 포함) · http · 실 WebSocket(21000) · 실 TR(TTTC…) = 예외 ·
 //      송출 직전 재검 = 가드 위반 요청은 HttpMessageHandler 도달 0(패킷 0) · VTS 요청만 1회 도달
 //   §2 주문 명세(오프라인): 005930 매도 1주 지정가 999,999 · ORD_DVSN 00 · VTTC0801U · 취소 VTTC0803U(원주문 · 조직번호) · 같은 가드
-//   §3 실행 조건(오프라인): 자격증명 4종 · 계좌 형식 · PROBE=1 옵트인 · 정규장 — 미충족 = Skip 사유(실패 아님) · 마스킹 · VTS H0STCNI9 거부 통보 → 비트 23
-//   §4 리얼 와이어(옵트인 · 장중): 체결통보 구독 확인 → 고의 거부 주문 1회 → REST 응답 + H0STCNI9 원시 프레임 덤프(마스킹) → 제품 판독기/매트릭스 재생 대조
+//   §3 실행 조건(오프라인): PROBE=1 옵트인 · HTS ID(env) · portfolio.db · 정규장 — 미충족 = Skip 사유(실패 아님) · [v12.18.55] DPAPI 로더 결합 · ToString 마스킹 ·
+//      마스킹 · VTS H0STCNI9 거부 통보 → 비트 23
+//   §4 리얼 와이어(옵트인 · 장중): 체결통보 구독 확인 → 고의 거부 주문 1회 →
+//      [단계 1] REST 동기 응답 원시 캡처(rt_cd · msg_cd · msg1 · 공백 패딩) + 제품 판독기 TryParseOrderAck 대조 ·
+//      [단계 2] 접수 후 사후 거부 = H0STCNI9 + 비트 23 래치 단언 / REST 즉시 기각 = 통보 미발생 사유 기록(실패 아님)
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -17,6 +22,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using MS2E.Core;
 using MS2E.Infrastructure;
 using StockManager.Adapters;
@@ -121,26 +127,69 @@ namespace StockManager.Tests.Integration
         {
             var open = new DateTime(2026, 10, 21, 1, 0, 0, DateTimeKind.Utc);                  // 수 10:00 KST
             var closed = new DateTime(2026, 10, 20, 22, 0, 0, DateTimeKind.Utc);               // 수 07:00 KST
-            var all = new Dictionary<string, string?>
+            string db = Path.GetTempFileName();
+            try
             {
-                [VtsProbeConfig.AppKeyVar] = "k", [VtsProbeConfig.SecretVar] = "s", [VtsProbeConfig.HtsIdVar] = "h",
-                [VtsProbeConfig.AccountVar] = "50012345-01", [VtsProbeConfig.OptInVar] = "1",
-            };
-            string? Reason(Action<Dictionary<string, string?>> edit, DateTime t)
-            {
-                var e = new Dictionary<string, string?>(all);
-                edit(e);
-                return VtsProbeConfig.SkipReason(v => e.GetValueOrDefault(v), t);
+                var all = new Dictionary<string, string?> { [VtsProbeConfig.HtsIdVar] = "h", [VtsProbeConfig.OptInVar] = "1" };
+                string? Reason(Action<Dictionary<string, string?>> edit, DateTime t, string? dbPath = null)
+                {
+                    var e = new Dictionary<string, string?>(all);
+                    edit(e);
+                    return VtsProbeConfig.SkipReason(v => e.GetValueOrDefault(v), t, dbPath ?? db);
+                }
+                Assert.Null(Reason(_ => { }, open));                                            // 전부 충족 = 실행
+                Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = null, open)); // 사전 점검 옵트인만 = 주문 0
+                Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = "true", open));
+                Assert.Contains("MS2E_KIS_HTS_ID", Reason(e => e.Remove(VtsProbeConfig.HtsIdVar), open));
+                Assert.Contains("MS2E_KIS_HTS_ID", Reason(e => e[VtsProbeConfig.HtsIdVar] = "  ", open));
+                Assert.Contains("portfolio.db", Reason(_ => { }, open, Path.Combine(Path.GetTempPath(), "ms2e-none-" + Guid.NewGuid().ToString("N") + ".db")));
+                Assert.Contains("정규장", Reason(_ => { }, closed));
+                Assert.Contains("정규장", Reason(_ => { }, new DateTime(2026, 12, 31, 1, 0, 0, DateTimeKind.Utc)));    // [v12.18.52] 연말 폐장일 10:00 = 미송출
+                Assert.Contains("정규장", Reason(_ => { }, new DateTime(2029, 1, 4, 1, 0, 0, DateTimeKind.Utc)));     // 달력 범위 밖 = 미송출(감시 측과 반대 방향)
+                // [v12.18.55] 평문 자격증명 환경변수 경로 폐지 — 옛 변수(MS2E_KIS_VTS_APPKEY 등)만 있어도 HTS ID/옵트인 없으면 미송출
+                Assert.NotNull(VtsProbeConfig.SkipReason(v => v.StartsWith("MS2E_KIS_VTS_", StringComparison.Ordinal) && v != VtsProbeConfig.OptInVar ? "x" : null, open, db));
             }
-            Assert.Null(Reason(_ => { }, open));                                                // 전부 충족 = 실행
-            Assert.Contains("MS2E_KIS_VTS_APPKEY", Reason(e => e[VtsProbeConfig.AppKeyVar] = null, open));
-            Assert.Contains("MS2E_KIS_VTS_ACCOUNT", Reason(e => e.Remove(VtsProbeConfig.AccountVar), open));
-            Assert.Contains("형식", Reason(e => e[VtsProbeConfig.AccountVar] = "5001234501", open));
-            Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = null, open));    // 소크 자격증명만 = 주문 0
-            Assert.Contains("PROBE", Reason(e => e[VtsProbeConfig.OptInVar] = "true", open));
-            Assert.Contains("정규장", Reason(_ => { }, closed));
-            Assert.Contains("정규장", Reason(_ => { }, new DateTime(2026, 12, 31, 1, 0, 0, DateTimeKind.Utc)));    // [v12.18.52] 연말 폐장일 10:00 = 미송출
-            Assert.Contains("정규장", Reason(_ => { }, new DateTime(2028, 1, 4, 1, 0, 0, DateTimeKind.Utc)));     // 달력 범위 밖 = 미송출(감시 측과 반대 방향)
+            finally { File.Delete(db); }
+        }
+
+        [Fact]
+        public void Config_Loads_PaperDomestic_From_Dpapi_Db_And_Masks_ToString()
+        {
+            string db = Path.Combine(Path.GetTempPath(), "ms2e-vtsprobe-" + Guid.NewGuid().ToString("N") + ".db");
+            try
+            {
+                using (var c = new SqliteConnection("Data Source=" + db + ";Pooling=False"))
+                {
+                    c.Open();
+                    using (var cmd = c.CreateCommand())
+                    {
+                        cmd.CommandText = "CREATE TABLE Settings([Key] TEXT PRIMARY KEY, Value TEXT)";
+                        cmd.ExecuteNonQuery();
+                    }
+                    void Put(string k, string v)
+                    {
+                        using var i = c.CreateCommand();
+                        i.CommandText = "INSERT INTO Settings VALUES(@k,@v)";
+                        i.Parameters.AddWithValue("@k", k);
+                        i.Parameters.AddWithValue("@v", Secret.Protect(v));
+                        i.ExecuteNonQuery();
+                    }
+                    Put(VtsPreFlightCredentials.AppKeyKey, "PSdomFakeAppKey0123456789");
+                    Put(VtsPreFlightCredentials.SecretKey, "domFakeSecret/0123456789+abc==");
+                    Put(VtsPreFlightCredentials.AccountKey, "50098765-01");
+                    Put("KIS.Profile.Real.AppKey", "REALKEY-MUST-NOT-LOAD");
+                }
+                Assert.Null(VtsProbeConfig.Load(db, null, out var f0));
+                Assert.Contains("MS2E_KIS_HTS_ID", f0);
+                var cfg = VtsProbeConfig.Load(db, " htsuser01 ", out var f1);
+                Assert.True(cfg is not null, f1);
+                Assert.Equal(("PSdomFakeAppKey0123456789", "domFakeSecret/0123456789+abc==", "htsuser01", "50098765", "01"), (cfg!.AppKey, cfg.Secret, cfg.HtsId, cfg.Cano, cfg.Prdt));
+                string shown = cfg.ToString();
+                foreach (var secret in new[] { cfg.AppKey, cfg.Secret, cfg.HtsId, cfg.Cano }) Assert.DoesNotContain(secret, shown);
+                Assert.Null(VtsProbeConfig.Load(db + ".missing", "h", out var f2));               // DB 없음 = 거부
+                Assert.False(string.IsNullOrEmpty(f2));
+            }
+            finally { SqliteConnection.ClearAllPools(); File.Delete(db); }
         }
 
         [Fact]
@@ -181,10 +230,14 @@ namespace StockManager.Tests.Integration
         [KisVtsProbeFact]
         public async Task LiveWire_Vts_Deliberate_Rejection_Captures_Raw_Payloads()
         {
-            var cfg = VtsProbeConfig.FromEnvironment();
+            var cfg = VtsProbeConfig.Load(VtsPreFlightCredentials.DefaultDbPath, Environment.GetEnvironmentVariable(VtsProbeConfig.HtsIdVar), out var loadFailure);
+            Assert.True(cfg is not null, "PaperDomestic 자격증명 판독 실패 — 주문 미송출: " + loadFailure);
+            var red = new PreFlightRedactor();
+            foreach (var v in new[] { cfg!.AppKey, cfg.Secret, cfg.HtsId, cfg.Cano, cfg.Cano + cfg.Prdt, cfg.Cano + "-" + cfg.Prdt }) red.Add(v);
             var log = new StringBuilder();
-            void Log(string s) { _out.WriteLine(s); log.AppendLine(s); }
-            using var http = new HttpMessageInvoker(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(15) });
+            void Log(string s) { s = red.Redact(s); _out.WriteLine(s); log.AppendLine(s); }
+            Log("[자격증명] " + cfg + " · 출처 portfolio.db(DPAPI · PaperDomestic) · HTS ID = env " + VtsProbeConfig.HtsIdVar);
+            using var http = new HttpMessageInvoker(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(15), AllowAutoRedirect = false });
 
             var mask = new ArmingInterlockBitmask(ArmingInterlockSource.ChildSlotRejection);
             var matrix = new ChildSlotTrackingMatrix(16);
@@ -201,23 +254,43 @@ namespace StockManager.Tests.Integration
             Assert.Equal("H0STCNI9", rt.NoticeTrId);
             using var cts = new CancellationTokenSource();
             var run = Task.Run(() => rt.RunAsync(cts.Token));
+            bool restAccepted = false;
+            string restRt = "", restMsgCd = "";
             try
             {
+                var sw = Stopwatch.StartNew();
                 for (int i = 0; i < 300 && !adapter.HasNoticeKeys; i++) await Task.Delay(100);   // 체결통보 구독(복호 키) 확인 후 송출
-                Log($"[구독] 연결 {rt.Connects} · 구독 응답 {adapter.SubscribeAcks}/거부 {adapter.SubscribeRejects} · 체결통보 키 {(adapter.HasNoticeKeys ? "장착" : "없음")}");
+                Log($"[구독] 연결 {rt.Connects} · 구독 응답 {adapter.SubscribeAcks}/거부 {adapter.SubscribeRejects} · 체결통보 키 {(adapter.HasNoticeKeys ? "장착" : "없음")} · {sw.Elapsed.TotalMilliseconds:F0}ms(접속키 발급 포함)");
                 Assert.True(adapter.HasNoticeKeys, "체결통보(H0STCNI9) 구독 키 미수신 — 주문 미송출(통보 캡처 불가 상태에서 송출 안 함)");
 
+                sw.Restart();
                 string? token = await VtsRestClient.TokenAsync(http, cfg, cts.Token);
+                double tokenMs = sw.Elapsed.TotalMilliseconds;
                 Assert.False(string.IsNullOrEmpty(token), "VTS 접근 토큰 발급 실패 — 주문 미송출");
-                var (status, body) = await VtsRestClient.PostAsync(http, VtsRejectionOrder.Build(VtsDomainGuard.VtsRestBase, cfg, token!), cts.Token);
+                red.Add(token);
+                Log($"[토큰] 발급 {token!.Length}자 · {tokenMs:F1}ms(원문 미출력)");
+
+                sw.Restart();
+                var (status, body) = await VtsRestClient.PostAsync(http, VtsRejectionOrder.Build(VtsDomainGuard.VtsRestBase, cfg, token), cts.Token);
+                double orderMs = sw.Elapsed.TotalMilliseconds;
                 string rest = Encoding.UTF8.GetString(body);
-                Log($"[REST 주문 응답] HTTP {status} · {VtsPayloadMask.MaskAccount(rest, cfg.Cano)}");
-                bool parsed = KisProtocol.TryParseOrderAck(body, out var ack);
-                Log($"[제품 판독기 TryParseOrderAck] 판독 {parsed} · Ok {ack.Ok} · ODNO {ack.OrderNo} · ORGNO {ack.OrgNo}");
-                if (parsed && ack.Ok)
+                Log($"[단계 1 · REST 주문 응답] HTTP {status} · {orderMs:F1}ms · 원문 {rest}");
+                string restMsg1 = "";
+                using (var doc = JsonDocument.Parse(body))
                 {
-                    var (cs, cbody) = await VtsRestClient.PostAsync(http, VtsRejectionOrder.BuildCancel(VtsDomainGuard.VtsRestBase, cfg, token!, ack.OrgNo, ack.OrderNo), cts.Token);
-                    Log($"[예상 밖 접수 → 즉시 취소] HTTP {cs} · {VtsPayloadMask.MaskAccount(Encoding.UTF8.GetString(cbody), cfg.Cano)}");
+                    string Str(string n) => doc.RootElement.TryGetProperty(n, out var e) && e.ValueKind == JsonValueKind.String ? e.GetString()! : "(없음)";
+                    (restRt, restMsgCd, restMsg1) = (Str("rt_cd"), Str("msg_cd"), Str("msg1"));
+                }
+                Log($"[단계 1 · 필드] rt_cd '{restRt}' · msg_cd '{restMsgCd}' · msg1 '{restMsg1}'(길이 {restMsg1.Length} · 후행 공백 {restMsg1.Length - restMsg1.TrimEnd().Length}자) · '^' 구분자 {(rest.Contains('^') ? "있음" : "없음(JSON)")}");
+                bool parsed = KisProtocol.TryParseOrderAck(body, out var ack);
+                Log($"[단계 1 · 제품 판독기 TryParseOrderAck] 판독 {parsed} · Ok {ack.Ok} · ODNO {ack.OrderNo} · ORGNO {ack.OrgNo}");
+                Assert.True(parsed, "실 VTS REST 주문 응답을 제품 판독기가 판독 못함(형식 이탈)");
+                if (restRt.Trim() != "0") Assert.False(ack.Ok, "rt_cd ≠ 0 인데 판독기가 접수(Ok)로 판정");
+                restAccepted = ack.Ok;
+                if (restAccepted)
+                {
+                    var (cs, cbody) = await VtsRestClient.PostAsync(http, VtsRejectionOrder.BuildCancel(VtsDomainGuard.VtsRestBase, cfg, token, ack.OrgNo, ack.OrderNo), cts.Token);
+                    Log($"[예상 밖 접수 → 즉시 취소] HTTP {cs} · {Encoding.UTF8.GetString(cbody)}");
                 }
                 for (int i = 0; i < 150; i++) await Task.Delay(100);                            // 비동기 체결통보 대기 15초
             }
@@ -246,18 +319,27 @@ namespace StockManager.Tests.Integration
             }
             FillPayload[] got;
             lock (fills) got = fills.ToArray();
-            Log($"[대조] 수신 메시지 {msgs.Length} · 체결통보 {notices} · 어댑터 통보 {got.Length}(거부 {got.Count(x => BridgeFillStatusCodec.Decode(x.Status, out _) == BridgeFillStatus.Rejected)}) · " +
-                $"미추적 거부 {matrix.UntrackedRejects} · 비트23 {(matrix.Tripped ? "래치" : "미래치")} · 형식이탈 {adapter.Malformed} · 키없음 {adapter.NoticeWithoutKey}");
+            int rejectedNotices = got.Count(x => BridgeFillStatusCodec.Decode(x.Status, out _) == BridgeFillStatus.Rejected);
+            Log($"[단계 2 · 대조] 수신 메시지 {msgs.Length} · 체결통보 {notices} · 어댑터 통보 {got.Length}(거부 {rejectedNotices}) · " +
+                $"미추적 거부 {matrix.UntrackedRejects} · 비트23 {(matrix.Tripped ? "래치" : "미래치")} · 마스크 0x{mask.Mask:X} · 형식이탈 {adapter.Malformed} · 키없음 {adapter.NoticeWithoutKey}");
+            if (!restAccepted && notices == 0)
+                Log($"[단계 2 · 판정] REST 동기 기각(rt_cd '{restRt}' · msg_cd '{restMsgCd}') — 주문번호 미발급 → 거래소 미전달 → H0STCNI9 미발생(정상). " +
+                    "비트 23 실측 불가 · 오프라인 재생(Vts_H0STCNI9_Reject_Notice_Latches_Bit23_Through_The_Product_Path)으로만 보증.");
 
-            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ms2e-vts-probe");
-            System.IO.Directory.CreateDirectory(dir);
-            string file = System.IO.Path.Combine(dir, "probe-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
-            System.IO.File.WriteAllText(file, log.ToString(), Encoding.UTF8);
+            string dir = Path.Combine(Path.GetTempPath(), "ms2e-vts-probe");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, "probe-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
+            File.WriteAllText(file, log.ToString(), Encoding.UTF8);
             _out.WriteLine("[덤프] " + file);
 
+            string dump = log.ToString();
+            foreach (var secret in new[] { cfg.AppKey, cfg.Secret, cfg.HtsId, cfg.Cano }) Assert.DoesNotContain(secret, dump);   // 비밀값 원문 0
             Assert.True(adapter.Malformed == 0 || notices > 0, "형식 이탈 발생 — 덤프 대조 필요");
-            if (got.Any(x => BridgeFillStatusCodec.Decode(x.Status, out _) == BridgeFillStatus.Rejected))
+            if (rejectedNotices > 0)
+            {
                 Assert.True(matrix.Tripped, "거부 통보 수신했으나 비트 23 미래치");
+                Assert.Equal(0x00800000L, mask.Mask & 0x00800000L);
+            }
         }
 
         private static string Get(string[] p, int i) => i < p.Length ? p[i] : "(없음)";
