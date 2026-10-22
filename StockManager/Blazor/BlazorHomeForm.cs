@@ -1725,6 +1725,15 @@ namespace StockManager.Blazor
             services.AddSingleton(usArena);
             services.AddSingleton(usArenaFeeder);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IUsArenaPort>(new StockManager.Adapters.UsArenaPortAdapter(usArena, usArenaFeeder));
+            // [v12.18.63-DEV] 플루토 브레인 1단계 — 뉴스/공시 촉매 분석기(비동기 워커 · 콜드) → seqlock 버퍼 → 양 아레나 정산 핫패스 판독(δ=0).
+            //   실시간 뉴스 소스(DART · SEC · 통신사) 미결선 — 주입 API(TryEnqueue · Ingest)만. 버퍼 공백 = 아레나 기존 동작 그대로.
+            var plutoBuffer = new StockManager.Engines.Cognitive.News.PlutoSentimentBuffer();
+            var plutoAnalyzer = new StockManager.Engines.Cognitive.News.PlutoCatalystAnalyzer(plutoBuffer);
+            krxArena.AttachPluto(plutoBuffer);
+            usArena.AttachPluto(plutoBuffer);
+            plutoAnalyzer.Start();
+            services.AddSingleton(plutoBuffer);
+            services.AddSingleton(plutoAnalyzer);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));

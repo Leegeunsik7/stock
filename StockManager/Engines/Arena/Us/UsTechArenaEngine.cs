@@ -20,11 +20,14 @@
 //
 //   ★δ=0: OnQuote/Drain/SubmitHuman/판독 경로 힙 할당 0(고정 배열 · 값 타입 · LINQ/박싱/클로저/문자열 0).
 //   ★단일 작성자: OnQuote/Drain/SetCapital 은 정산 스레드 1개만. ★liveArmed:false — 해외 주문 API 송출 수단 0(순수 인메모리 가상 대결).
+//   [v12.18.63-DEV] 플루토 뉴스 촉매(AttachPluto · 선택): 정산마다 티커 뉴스 판정을 seqlock 판독(δ=0) → 실효 × 100bp 를 NewsWeight(30)로 가산 ·
+//     뉴스 기여 최대 = NewsCatalyst 진입 · 치명적 구조적 악재(실효 ≤ −60) = 신규 진입 차단 · 보유 즉시 NewsShock 청산. 미결속/뉴스 없음 = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena.Common;
+using StockManager.Engines.Cognitive.News;
 using StockManager.Engines.Feeds;
 using StockManager.Engines.Pricing;
 
@@ -33,12 +36,12 @@ namespace StockManager.Engines.Arena.Us
     /// <summary>US 알파 시그널 1회 평가 결과(bp). Dominant = 점수 방향으로 가장 크게 기여한 구성요소.</summary>
     public readonly struct UsAlphaSignal
     {
-        public readonly int Score, EtfBetaBp, RateBp, GapFlowBp, MomentumBp;
+        public readonly int Score, EtfBetaBp, RateBp, GapFlowBp, MomentumBp, NewsBp;
         public readonly ArenaTrigger Dominant;
 
-        public UsAlphaSignal(int score, int etfBetaBp, int rateBp, int gapFlowBp, int momentumBp, ArenaTrigger dominant)
+        public UsAlphaSignal(int score, int etfBetaBp, int rateBp, int gapFlowBp, int momentumBp, ArenaTrigger dominant, int newsBp = 0)
         {
-            Score = score; EtfBetaBp = etfBetaBp; RateBp = rateBp; GapFlowBp = gapFlowBp; MomentumBp = momentumBp; Dominant = dominant;
+            Score = score; EtfBetaBp = etfBetaBp; RateBp = rateBp; GapFlowBp = gapFlowBp; MomentumBp = momentumBp; Dominant = dominant; NewsBp = newsBp;
         }
     }
 
@@ -71,6 +74,7 @@ namespace StockManager.Engines.Arena.Us
         public const int WarmupTicks = 5;
         public const int EntryScore = 3000, ExitScore = -2000;
         public const int EtfWeight = 25, RateWeight = 20, GapFlowWeight = 30, MomentumWeight = 25;
+        public const int NewsWeight = 30;        // [v12.18.63-DEV] 플루토 뉴스 가산 가중(실효 ±100 → 점수 ±3000)
         public const int EtfGain = 10, RateGain = 100, GapGain = 10, MomentumGain = 20;
         public const int StopBp = 150, TargetBaseBp = 150, TargetPerConfidenceBp = 4, PositionWeightBp = 2000;
         public static readonly long AiCutoffBeforeCloseTicks = TimeSpan.FromMinutes(10).Ticks;
@@ -101,6 +105,7 @@ namespace StockManager.Engines.Arena.Us
         private long _hqEnq, _hqDeq;
         private long _capital;
         private long _ticks, _dropped, _lastKstTicks, _etDay;
+        private PlutoSentimentBuffer? _pluto;
         private UsSessionPhase _phase = UsSessionPhase.Closed;
         private bool _cutoff;
         private int _qqqBp, _soxxBp, _us10yBp;
@@ -146,6 +151,11 @@ namespace StockManager.Engines.Arena.Us
             Volatile.Write(ref _soxxBp, Math.Clamp(soxxBp, -10000, 10000));
             Volatile.Write(ref _us10yBp, Math.Clamp(us10yChangeBp, -10000, 10000));
         }
+
+        /// <summary>[v12.18.63-DEV] 플루토 뉴스 촉매 버퍼 결속(정산 시 티커별 판독 · δ=0).</summary>
+        public void AttachPluto(PlutoSentimentBuffer buffer) => Volatile.Write(ref _pluto, buffer ?? throw new ArgumentNullException(nameof(buffer)));
+
+        public bool PlutoAttached => Volatile.Read(ref _pluto) is not null;
 
         // ── 휴먼 주문 큐(Vyukov 유계 MPSC · 할당 0) ──────────────────────────────────
 
@@ -250,24 +260,28 @@ namespace StockManager.Engines.Arena.Us
                     s.GapBp = (int)Math.Clamp((midX2 - s.PrevCloseX2) * 10000 / s.PrevCloseX2, -10000, 10000);
                 else if (_phase == UsSessionPhase.ContinuousTrading)
                     s.LastRegularMidX2 = midX2;
+                PlutoNewsTag news = default;
+                var pluto = Volatile.Read(ref _pluto);
+                if (pluto is not null && pluto.TryRead(symbol, out var nf)) news = new PlutoNewsTag(in nf, kst.Ticks - PlutoClock.KstOffsetTicks);
                 var sig = s.Seen >= WarmupTicks
-                    ? Evaluate(si, Volatile.Read(ref _qqqBp), Volatile.Read(ref _soxxBp), Volatile.Read(ref _us10yBp), s.GapBp, bidQty, askQty, midFx, s.EmaMidFx)
+                    ? Evaluate(si, Volatile.Read(ref _qqqBp), Volatile.Read(ref _soxxBp), Volatile.Read(ref _us10yBp), s.GapBp, bidQty, askQty, midFx, s.EmaMidFx, news.NewsBp)
                     : default;
                 if (s.Seen == 0) s.EmaMidFx = midFx;
                 else s.EmaMidFx += (midFx - s.EmaMidFx) >> EmaShift;
                 if (s.Seen < int.MaxValue) s.Seen++;
 
                 DrainHuman();
-                if (_phase == UsSessionPhase.ContinuousTrading) StepAi(si, in sig, kst);
+                if (_phase == UsSessionPhase.ContinuousTrading) StepAi(si, in sig, in news, kst);
             }
             PublishSnapshot();
             EndWrite();
         }
 
         /// <summary>순수 시그널 평가(할당 0). index = UsTechUniverse 인덱스 · midFx/emaMidFx = 중간가 ×1024 고정소수점.</summary>
-        public static UsAlphaSignal Evaluate(int index, int qqqBp, int soxxBp, int us10yChangeBp, int gapBp, long bidQty, long askQty, long midFx, long emaMidFx)
+        public static UsAlphaSignal Evaluate(int index, int qqqBp, int soxxBp, int us10yChangeBp, int gapBp, long bidQty, long askQty, long midFx, long emaMidFx, int newsBp = 0)
         {
             if ((uint)index >= MaxSymbols) return default;
+            int news = Math.Clamp(newsBp, -10000, 10000);
             long qqq = Math.Clamp(qqqBp, -10000, 10000), soxx = Math.Clamp(soxxBp, -10000, 10000), y10 = Math.Clamp(us10yChangeBp, -10000, 10000);
             int etf = (int)Math.Clamp((qqq * UsTechUniverse.QqqBetaX100(index) + soxx * UsTechUniverse.SemiBetaX100(index)) / 100 * EtfGain, -10000, 10000);
             int rate = (int)Math.Clamp(-y10 * UsTechUniverse.RateSensX100(index) / 100 * RateGain, -10000, 10000);
@@ -276,17 +290,19 @@ namespace StockManager.Engines.Arena.Us
             int gapFlow = ((int)Math.Clamp((long)Math.Clamp(gapBp, -10000, 10000) * GapGain, -10000, 10000) + obi) / 2;
             int mom = emaMidFx <= 0 ? 0 : (int)Math.Clamp((midFx - emaMidFx) * 10000 / emaMidFx * MomentumGain, -10000, 10000);
             long cEtf = (long)etf * EtfWeight, cRate = (long)rate * RateWeight, cGap = (long)gapFlow * GapFlowWeight, cMom = (long)mom * MomentumWeight;
-            int score = (int)((cEtf + cRate + cGap + cMom) / 100);
+            long cNews = (long)news * NewsWeight;
+            int score = (int)Math.Clamp((cEtf + cRate + cGap + cMom + cNews) / 100, -10000, 10000);
             int sign = score >= 0 ? 1 : -1;
             var dom = ArenaTrigger.PremarketGapFlow;
             long best = cGap * sign;
             if (cEtf * sign > best) { best = cEtf * sign; dom = ArenaTrigger.EtfBeta; }
             if (cMom * sign > best) { best = cMom * sign; dom = ArenaTrigger.MomentumBreakout; }
-            if (cRate * sign > best) dom = ArenaTrigger.RateSensitivity;
-            return new UsAlphaSignal(score, etf, rate, gapFlow, mom, dom);
+            if (cRate * sign > best) { best = cRate * sign; dom = ArenaTrigger.RateSensitivity; }
+            if (cNews * sign > best) dom = ArenaTrigger.NewsCatalyst;
+            return new UsAlphaSignal(score, etf, rate, gapFlow, mom, dom, news);
         }
 
-        private void StepAi(int si, in UsAlphaSignal sig, DateTime kst)
+        private void StepAi(int si, in UsAlphaSignal sig, in PlutoNewsTag news, DateTime kst)
         {
             var b = _books[ArenaSide.Ai];
             ref Sym s = ref _syms[si];
@@ -296,18 +312,20 @@ namespace StockManager.Engines.Arena.Us
                 ref Pos p = ref b.Positions[pi];
                 ArenaTrigger exit = ArenaTrigger.None;
                 if (_cutoff) exit = ArenaTrigger.SessionClose;
+                else if (news.IsShock) exit = ArenaTrigger.NewsShock;
                 else if (s.Bid >= p.Target) exit = ArenaTrigger.TakeProfit;
                 else if (s.Bid <= p.Stop) exit = ArenaTrigger.StopLoss;
                 else if (sig.Score <= ExitScore) exit = ArenaTrigger.SignalReversal;
                 if (exit == ArenaTrigger.None) return;
                 long target = p.Target, stop = p.Stop; int rr = p.RiskRewardX100;
                 if (Sell(b, si, p.Qty, out long filled, out long pnl) != UsArenaReject.None) return;
-                int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100) : 100;
+                int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100)
+                         : exit == ArenaTrigger.NewsShock ? Math.Clamp(-news.EffectiveScore, 0, 100) : 100;
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, s.Bid, kst.Ticks, exit, sig.Score, conf,
-                    target, stop, rr, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, pnl, ArenaCurrency.Usd));
+                    target, stop, rr, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, pnl, ArenaCurrency.Usd, in news));
                 return;
             }
-            if (_cutoff || sig.Score < EntryScore || b.Count >= MaxAiPositions) return;
+            if (_cutoff || news.IsShock || sig.Score < EntryScore || b.Count >= MaxAiPositions) return;
             int confidence = Math.Clamp(sig.Score / 100, 0, 100);
             long tgt = AlignUpCents(s.Ask, TargetBaseBp + TargetPerConfidenceBp * confidence);
             long stp = AlignDownCents(s.Ask, -StopBp);
@@ -321,7 +339,7 @@ namespace StockManager.Engines.Arena.Us
             ref Pos np = ref b.Positions[FindPos(b, s.Symbol)];
             np.Target = tgt; np.Stop = stp; np.RiskRewardX100 = rrX100;
             Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, s.Ask, kst.Ticks, sig.Dominant, sig.Score, confidence,
-                tgt, stp, rrX100, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, 0, ArenaCurrency.Usd));
+                tgt, stp, rrX100, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, 0, ArenaCurrency.Usd, in news));
         }
 
         /// <summary>가격(센트) × (1 + bp) 를 $0.01 격자로 올림(UsTickAligner · raw 10^8 경유 · 무효 = 0).</summary>

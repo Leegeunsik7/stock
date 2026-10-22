@@ -3928,3 +3928,35 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   전체 스위트 5,056 통과 + 6 건너뜀(옵트인) · 실패 0 · 6분. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
 - 한계(정직): KIS HHDFS00000300 폴러 미결선 → 실환경 미국 모드는 '시세 미수신' 또는 합성 데모만 · QQQ/SOXX/10년물 실시간 소스 미결선 · 실 브라우저 육안 렌더 미확인(bUnit 검증만).
 - 불변: liveArmed:false(주문 목적지 = 양 포트 휴먼 가상 원장 큐뿐 · 외부 주문 송출 0) · 코어 엔진/핫패스 무변경 · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 169. v12.18.63-DEV — 플루토 브레인 1단계: 실시간 뉴스/공시 촉매 분석 엔진(PlutoCatalystAnalyzer) · 감쇄 · seqlock 버퍼 · 아레나 핫패스 무할당 결속 (2026-10-22)
+
+- 버전 표기: 오더는 v12.18.62-DEV 를 지정했으나 그 번호는 DualArenaPage 모드 탭(ae2b59f · §168)에 이미 사용 → 본 마일스톤 = v12.18.63-DEV.
+- 신규 StockManager/Engines/Cognitive/News/:
+  · CatalystCategory(Noise · StructuralPositive · MomentumPositive · MomentumNegative · StructuralNegative) + PlutoSource(Dart · Sec · Wire · Unknown) + CatalystText(밴드 · 반감기).
+    밴드: 구조적 호재 +60~+100 · 모멘텀 호재 +20~+59 · 노이즈 0 · 단기 악재 −20~−59 · 구조적 악재 −60~−100. 반감기: 모멘텀(±) 10분 · 구조적 호재 30분 · 구조적 악재 60분.
+  · PlutoSentimentFactor(불변 값 타입): Symbol · Seq · TimestampUtcTicks · Score · Confidence · Category · Source · 64B 인라인 UTF-8 헤드라인([InlineArray] · 코드 포인트 경계 절단).
+    DecayedScore = Score × 2^(−경과/반감기)(0 방향 절단 · |값| 단조 비증가 · 24 반감기 후 0 · 5분 넘는 미래 시각 = 0 fail-closed) · EffectiveScore = 감쇄 × 확신도/100.
+  · PlutoNewsTag(체결 시점 판독 결속): Decayed · Effective · 경과 · IsShock(구조적 악재 ∧ 실효 ≤ −60) · NewsBp(실효 × 100bp).
+  · PlutoSentimentBuffer: 64 슬롯 개방 주소 · 키 CAS 선점 · 슬롯 버전 CAS 잠금(다중 작성자 seqlock) · 판독 버전 브래킷(상한 1024회 · 초과 = false 계수) · 포화 = BufferFull(재시도 0).
+    우세 규칙: |새 감쇄| ≥ |기존 감쇄| 일 때 교체 · 새 구조적 악재는 비구조적-악재 판정을 항상 교체 · 충격 수준 악재 동안 호재 교체 불가(악재 고착).
+  · PlutoCatalystAnalyzer(콜드 · 비동기 지각 계층): 검증(빈 헤드라인/무효·미래>5분·과거>24h 시각 기각) → 노이즈 필터(부인/사실무근 · 비공시 루머 · 비공시 낚시 · 단순 시황) →
+    한/영 키워드 규칙 26종(최대 |점수| 채택 · 동률 음수 우선 · 대규모/조원/역대/billion 강조 +10) → 반전(해지 · 철회 · 무산 · terminated …: 구조적 호재→−60 · 모멘텀 호재→−30 · 구조적 악재→+30 · 단기 악재→노이즈) →
+    확신도(DART/SEC 90 · 통신사 70 · 미상 45 · 같은 방향 추가 규칙 +5(최대 +10) · 혼재 −20) → 엔티티(KRX 15종 · 미국 빅테크 5종 별칭 · ASCII 단어 경계 · 긴 별칭 우선 · 6자리 코드 · 힌트 우선 · 최대 4종목) →
+    종목별 Publish. 비동기: TryEnqueue → 유계 Channel(DropOldest · 폐기 계수) → Start() 워커(항목 예외 = 계수 후 계속).
+- 아레나 결속(KrxArenaEngine · UsTechArenaEngine): AttachPluto(buffer) 선택 결속 · 정산마다 TryRead → PlutoNewsTag(뉴스 UTC = 정산 KST − 9h) →
+  Evaluate(…, newsBp) 가산 가중 NewsWeight 30(실효 ±100 → 점수 ±3000 · 점수 ±10000 포화) · 뉴스 기여 최대 = ArenaTrigger.NewsCatalyst(12) 진입 ·
+  IsShock = 신규 진입 차단 + 보유 즉시 ArenaTrigger.NewsShock(13) 청산(SessionClose 다음 우선). 미결속/뉴스 0 = 기존 점수 · 주도 근거 동일(기존 테스트 무변경 통과).
+- AiTradeRationale: News(PlutoNewsTag) 필드 · 생성자 선택 인자 `in news` · IsEntry/IsExit/Label 확장 · IsWellFormed(태그 무결 · 종목 일치 · NewsCatalyst = 실효 양수 · NewsShock = 충격) ·
+  HumanReadableSummary 끝에 "플루토 뉴스 촉매: {유형} 실효 ±N점(원점수 · 감쇄 후 · 확신도 · 경과 · 반감기 · 출처) "{헤드라인}"" 결속(콜드 경로 · UI 근거 카드에 자동 노출 — 포트 변경 0).
+- 호스트 BlazorHomeForm: 버퍼 · 분석기 생성 → 양 엔진 AttachPluto → 워커 Start → DI 싱글턴. 실시간 뉴스 소스 미결선(주입 API만).
+- 테스트 StockManager.Tests/Cognitive/PlutoCatalystAnalyzerTests 37건: 분류 24종(유상증자 −80 · 감사의견 거절/횡령/분식 −100 · CB −70 · 수주 75/85 · 품목허가 85 · 목표가 ± · MOU · 리콜 · 해지 −60 · 철회 +30 · 루머/낚시/시황/부인/빈 = 0) ·
+  노이즈 사유 · 확신도 · 혼재 · 엔티티(경계 · 긴 별칭 · 코드 · 힌트 · 상한) · 감쇄(반감기 정합 · 단조 · 부호 · 미래 · 만료) · 버퍼(우세 · 악재 고착 · 포화 · 거부) · 분석기 검증/절단 ·
+  비동기 DropOldest · KRX/US NewsCatalyst 진입 + NewsShock 청산 · 충격 진입 차단(대조군 진입 1 vs 0) · 트리거/기본 태그 · 뉴스 0 = 시그널 동일 ·
+  δ=0: 조회 10만 회 0B · 뉴스 결속 KRX 정산 10만 회 0B(측정 구간 AI 체결 ≥10 · 실측 468) · IL 할당 지점 0 · 4 작성자 × 2 판독자 20만 교체 게시 찢김 0.
+  결함 주입 확인: 충격 진입 차단 제거 · seqlock 재검 제거 → 3건 실패 검출(사보타주 빌드 오류 0) 후 원복.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) ·
+  전체 스위트 5,093 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 5초. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): 실시간 뉴스/공시 소스(DART OpenAPI · SEC EDGAR · 통신사) 미결선 → 운영 버퍼 공백 = 아레나 동작 불변 · 키워드 규칙 기반(형태소 분석 · 문맥 이해 없음 — 오탐/미탐 가능) ·
+  엔티티 표 20종 한정 · 합성 시세 모드는 가상 시계라 실시간 뉴스 시각과 도메인 불일치 → 미래(>5분) = 0 · 과거 = 감쇄로 자연 무시 · 판독 경합 상한 초과 시 해당 정산 뉴스 미반영(경합 계수 · 실측 0).
+- 불변: liveArmed:false(뉴스 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(Razor/포트 변경 0) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

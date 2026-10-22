@@ -1,15 +1,15 @@
 # Current Project Status
 
-- **Active Milestone**: v12.18.62-DEV — DualArenaPage 다중 모드 탭(국내 대형주 KRW ₩ ↔ 미국 빅테크 USD $) · IUsArenaPort 바인딩
-- **Build Status**: 오중 빌드 Release 0W/0E · 전체 스위트 5,056 통과 6 건너뜀(옵트인) · 실패 0 · infra 0 · 래칫 40/40
+- **Active Milestone**: v12.18.63-DEV — 플루토 브레인 1단계: 뉴스/공시 촉매 분석(PlutoCatalystAnalyzer) · 감쇄 · 아레나 핫패스 무할당 결속
+- **Build Status**: 오중 빌드 Release 0W/0E · 전체 스위트 5,093 통과 6 건너뜀(옵트인) · 실패 0 · infra 0 · 래칫 40/40
 - **Updated At**: 2026-10-22
 
 ## Completed Deliverables
-- DualArenaPage 상단 모드 탭 · 주입 포트 = IKrxArenaPort + IUsArenaPort 뿐(순수 RCL · 호스트 셸 [Inject] 0)
-- 미국 모드 USD 대시보드: 세션 뱃지(프리마켓 관측 중/정규장 매매 가동/장외) · $100,000 스코어보드 · $0.01 표기
-- 휴먼 USD 티켓(빅테크 5종 → 휴먼 가상 원장 큐) · AI USD 근거 카드 30건(목표/손절 $ · 확신도 · 팩터 · 한글 요약)
-- 모드별 상태 분리 · 활성 모드 포트만 렌더 폴링 → 원장 간 교차 오염 0
-- DualArenaModeTabTests 4건 + KRX 페이지 테스트 2건 갱신 · HANDOVER §168
+- CatalystCategory 5종 · 점수 밴드(±60~100 구조적 · ±20~59 모멘텀 · 노이즈 0) · 반감기 10/30/60분
+- PlutoSentimentFactor(64B 인라인 헤드라인 · 감쇄 · 실효 점수) · PlutoSentimentBuffer(다중 작성자 seqlock · 악재 고착)
+- PlutoCatalystAnalyzer: 노이즈 필터 · 한/영 규칙 26종 · 반전 · 확신도 · 엔티티 20종 · 비동기 DropOldest 큐
+- KRX/US 아레나 결속: NewsCatalyst 진입 · NewsShock 즉시 청산/진입 차단 · AI 근거 요약에 뉴스 진단 결속
+- PlutoCatalystAnalyzerTests 37건(조회/정산 10만 회 δ=0B · 찢김 0 · 결함 주입 검출) · HANDOVER §169
 
 ## Next Milestone
-- KIS 해외 시세 폴러 결선 · QQQ/SOXX/10년물 맥락 소스 · 아레나 3단계(크립토)
+- 실시간 뉴스 소스 결선(DART OpenAPI · SEC EDGAR) · UI 근거 카드 뉴스 배지 · 플루토 브레인 2단계
