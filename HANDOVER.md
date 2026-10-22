@@ -3666,3 +3666,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   전체 스위트 4,756 통과 + 4 건너뜀(옵트인) · 실패 0 · 5분 28초.
 - 한계(정직): 2028 = NYSE 현 공지 기준 · 임시 휴장(국장 등) 시 표 갱신 필요 · 2029+ 미등재(fail-closed). KRX 2028 미등재. 세션 머신 제품 경로 미배선(§152 동일).
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일(크립토 · Upbit · BrokerSettings · InstallerBuildPanel · LiveWire 소크) 미스테이징 · 원격 푸시 없음.
+
+## 155. v12.18.54-DEV — CS0165 빌드 복구 · 업비트 공개 시세 점검 · 24/7 가상자산 인메모리 모의 체결 엔진 안착 (2026-10-22)
+
+- 진단: 메인 작업 트리 미커밋 Integration/UpbitPublicFeedProbe.cs 가 CS0165 2건(235·241행 tk · q — `status == 200 && TryParse(…, out var x)` 단락 시 out 미대입 경로)으로 테스트 프로젝트 빌드 실패.
+  수정 = 두 지역 변수를 `default` 로 선언 후 `out tk` / `out q` 로 전달(의미 무변경 · tOk/oOk 가 false 면 값 미사용).
+- 안착(04:17 작성 · 미커밋이던 3종 + 점검 도구 검토 후 반영):
+  Engines/Feeds/CryptoContinuousSession.cs: 24/7/365 · 시각 >0 = ContinuousTrading(UsSessionPhase 와 같은 값 3) · ≤0 = Invalid(fail-closed) · 무상태 δ=0.
+  Engines/Pricing/UpbitTickAligner.cs: 업비트 KRW 마켓 2025-07-31 개정 호가 단위(100만 이상 1,000 · 50만 500 · 10만 100 · … · 0.00001 미만 raw 1) · 내림/올림/반올림 · ≤0 · 올림 오버플로 = 0.
+  Engines/Brokers/Crypto/CryptoPaperExchange.cs: 예수금 1억 · 수수료 5bp 올림 · 슬리피지 2bp · 시장가/지정가 IOC · Int128 중간값 · 최소 주문 5,000원 · 단일 라이터 CAS(경합 = 즉시 거부 · 재시도 0) ·
+  seqlock 스냅샷 · 자체 시계 없음. 네트워크/어댑터/무장 키 참조 0 → 송출 경로 자체가 없음.
+  Integration/UpbitPublicFeedProbe.cs: 송출 허용 목록 = GET api.upbit.com /v1/ticker · /v1/orderbook ?markets=KRW-BTC 2종 · Utf8JsonReader 타입드 게터 파서(JsonException 만 catch) · 옵트인 MS2E_UPBIT_PUBLIC=1.
+- 신규 테스트 UpbitCryptoPaperEngineTests 79건(오프라인 78 + 옵트인 1 · [Collection("ConcurrencyStress")]): 세션 경계 · 호가 표 경계 34점(개정 전 표 회귀 차단) · 격자 성질 20만 난수(시드 20261022) ·
+  체결 산술 정확값(매수 150,030,000 · 매도 149,960,000) · fail-closed 거부 12종 잔고 무변경 · 예수금 경계 1 satoshi · Reset · 4 라이터 경합 회계 보존 + seqlock 찢김 0 ·
+  ★가상 체결 10만 회(호가 갱신 + 매수 + 매도 + 스냅샷) δ=0 · 세션/호가/파서 δ=0 · 가드 거부 11종 핸들러 도달 0.
+  첫 전체 실행에서 경합 테스트 1건 실패 = 4,000 매수 × 약 15만원 > 1억 → 666 체결 후 InsufficientKrw(엔진 정상 fail-closed · 테스트 집계 누락) → 집계 분리 + '고갈 시에만 부족 거부' 단언 추가 · 5회 연속 통과.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 전체 스위트 Release 4,834 통과 + 5 건너뜀(옵트인) · 실패 0 · 4분 14초.
+- 한계(정직): 체결 모델 = L1 즉시 체결/거부(깊이 · 부분 체결 · 대기 주문 미모델) · KRW-BTC 단일 · 종목 한정 호가 예외 미반영 · 거래소 점검 시간 미반영 · 제품 경로/UI 미배선 · 업비트 실측 옵트인 미실행.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종(BrokerSettingsPage · InstallerBuildPanel · LiveWire 소크 · .claude/* 2종) 미스테이징 · 원격 푸시 없음.
