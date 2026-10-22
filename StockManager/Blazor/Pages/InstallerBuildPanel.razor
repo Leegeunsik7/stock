@@ -1,0 +1,138 @@
+@* InstallerBuildPanel — 거래 설정(BrokerSettingsPage) 내부 임베드용 재사용 컴포넌트.
+   ★ 기존 InstallerBuildService(v10.1.0 Phase 94-A · MS2E.Core/Infrastructure)를 그대로 재사용한다(재발명 0).
+   DistributePage(/tools/distribute)와 동일 엔진 — 자체 포함 퍼블리시 + Inno Setup → dist\MS2E.StockSuite-Setup-vX.exe.
+   UAV 드론 관제 시스템의 '원스톱 프로덕션 인스톨러 생성기'와 동등. 개발 환경 전용(배포본은 안내만).
+   [v12.18.58] 구상 서비스 직접 new 제거 → 부모(BrokerSettingsPage)가 주입한 IInstallerBuildPort 를 [Parameter] 로 수령
+   (inject 미사용 → Pure Shell 래칫 결합 수 불변). *@
+@using MS2E.UI.Portable.Ports.Tools
+@using System.Threading
+@implements IDisposable
+
+<div class="card-sec ibp">
+    <div class="sec-h">📦 배포 패키지 만들기 (올인원 인스톨러)</div>
+    <div class="ibp-sub">자체 포함(.NET 런타임 내장) 설치관리자를 <b>원클릭</b>으로 생성합니다. 받는 사람은 사전 설치 없이 Windows 10/11에서 <b>설치·실행·제거</b>할 수 있고, <b>소스코드는 포함되지 않습니다</b>(컴파일 바이너리만). 사이드 메뉴 <b>도구 › 배포 패키지 만들기</b>와 동일 엔진.</div>
+
+    @if (_prereqs is null)
+    {
+        <div class="ibp-notice">환경 확인 중…</div>
+    }
+    else if (!_prereqs.IsDevEnvironment)
+    {
+        <div class="ibp-notice ibp-dev">
+            🔒 이 도구는 <b>개발 환경 전용</b>입니다. 배포된 앱에는 빌드 스크립트·소스·SDK가 없어 실행되지 않습니다.<br />
+            배포 설치관리자는 개발 PC의 소스 폴더에서 이 도구(또는 <code>build-installer.ps1</code>)로 생성하세요.
+        </div>
+    }
+    else
+    {
+        <div class="ibp-prereq">
+            <span class="ibp-pr @(_prereqs.DotnetSdk ? "ok" : "bad")">.NET SDK @(_prereqs.DotnetSdk ? "✓" : "✗ 미설치")</span>
+            <span class="ibp-pr @(_prereqs.InnoSetup ? "ok" : "bad")">
+                Inno Setup @(_prereqs.InnoSetup ? "✓" : "✗ 미설치")
+                @if (!_prereqs.InnoSetup) { <a href="https://jrsoftware.org/isdl.php" target="_blank" rel="noopener">설치 →</a> }
+            </span>
+        </div>
+        @if (!_prereqs.InnoSetup)
+        {
+            <div class="ibp-notice ibp-warn">⚠ 설치관리자 컴파일에는 <b>Inno Setup 6</b>(무료)이 필요합니다. 위 링크에서 설치 후 이 화면을 새로고침하세요.</div>
+        }
+
+        <div class="ibp-ctrls">
+            <label>버전 <input @bind="_version" disabled="@_running" class="ibp-ver" /></label>
+            <button class="ibp-go" @onclick="StartBuild" disabled="@(_running || !_prereqs.DotnetSdk || !_prereqs.InnoSetup)">
+                @(_running ? "⏳ 빌드 중…" : "🚀 설치관리자 빌드")
+            </button>
+            @if (_running) { <button class="ibp-cancel" @onclick="CancelBuild">취소</button> }
+            @if (!_running && _lastExit == 0 && _prereqs.DistDir is not null) { <button class="ibp-folder" @onclick="OpenDist">📂 dist 폴더 열기</button> }
+        </div>
+
+        @if (_result is not null) { <div class="ibp-result @(_lastExit == 0 ? "ok" : "bad")">@_result</div> }
+
+        @if (_log.Count > 0)
+        {
+            <div class="ibp-log">
+                @foreach (var line in _log) { <div class="ibp-ln">@line</div> }
+            </div>
+        }
+        <div class="ibp-hint">빌드는 자체 포함 퍼블리시 + 컴파일로 <b>수 분</b> 소요됩니다. 산출물: <code>dist\MS2E.StockSuite-Setup-v버전.exe</code> (약 150~200MB). ★앱이 실행 중이면 bin 잠금으로 실패할 수 있으니, 빌드 전 이 앱을 종료하거나 사이드 <b>도구 › 배포 패키지 만들기</b>에서 진행하세요.</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IInstallerBuildPort Port { get; set; } = default!;
+
+    private InstallerPrereqs? _prereqs;
+    private string _version = "10.1.0";
+    private bool _running;
+    private int _lastExit = -999;
+    private string? _result;
+    private readonly List<string> _log = new();
+    private CancellationTokenSource? _cts;
+
+    protected override void OnInitialized()
+    {
+        _prereqs = Port.Detect();
+        var v = Port.DefaultVersion;
+        if (!string.IsNullOrWhiteSpace(v)) _version = v;
+    }
+
+    private async Task StartBuild()
+    {
+        if (_running || _prereqs?.RepoRoot is null) return;
+        _running = true; _log.Clear(); _result = null; _lastExit = -999;
+        _cts = new CancellationTokenSource();
+        _log.Add($"== 빌드 시작 (v{_version}) — 퍼블리시 후 Inno Setup 컴파일 ==");
+        StateHasChanged();
+
+        int exit;
+        try { exit = await Port.RunBuildAsync(_prereqs.RepoRoot, _version, AppendLine, _cts.Token); }
+        catch (Exception ex) { AppendLine($"[오류] {ex.Message}"); exit = -1; }
+
+        _lastExit = exit;
+        _running = false;
+        _result = exit == 0
+            ? "✅ 완료 — dist 폴더에 설치관리자(setup.exe)가 생성되었습니다. 이 파일을 받는 사람에게 전달하세요."
+            : $"❌ 실패(코드 {exit}) — 위 로그를 확인하세요(Inno Setup 미설치·앱 실행 중 bin 잠금·인터넷 차단 등).";
+        _prereqs = Port.Detect();
+        StateHasChanged();
+    }
+
+    private void AppendLine(string line) => InvokeAsync(() =>
+    {
+        _log.Add(line);
+        if (_log.Count > 600) _log.RemoveRange(0, _log.Count - 600);
+        StateHasChanged();
+    });
+
+    private void CancelBuild() => _cts?.Cancel();
+    private void OpenDist() { if (_prereqs?.DistDir is not null) Port.OpenFolder(_prereqs.DistDir); }
+
+    public void Dispose() { try { _cts?.Cancel(); _cts?.Dispose(); } catch { } }
+}
+
+<style>
+    .ibp{margin-top:18px}
+    .ibp .ibp-sub{color:var(--sub);font-size:12.5px;line-height:1.6;margin:2px 0 14px}
+    .ibp-notice{padding:12px 14px;border-radius:9px;font-size:13px;line-height:1.6;margin:10px 0}
+    .ibp-dev{background:rgba(80,100,140,.15);border:1px solid #3a4a63;color:var(--sub)}
+    .ibp-warn{background:rgba(210,150,40,.14);border:1px solid #7a5a20;color:#e3b968}
+    .ibp-prereq{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+    .ibp-pr{padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600}
+    .ibp-pr.ok{background:rgba(70,160,90,.16);border:1px solid #2f6b41;color:#79c88f}
+    .ibp-pr.bad{background:rgba(200,70,70,.14);border:1px solid #7a2f2f;color:#e08a8a}
+    .ibp-pr a{margin-left:8px;color:#6db3ff}
+    .ibp-ctrls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}
+    .ibp-ctrls label{font-size:13px;color:var(--sub)}
+    .ibp-ver{background:var(--card);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:5px 8px;font-family:Consolas,monospace}
+    .ibp-go{background:linear-gradient(180deg,#2d6be0,#1f52bb);color:#fff;border:0;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:700;cursor:pointer}
+    .ibp-go:disabled{opacity:.5;cursor:not-allowed}
+    .ibp-cancel{background:#5a2530;color:#f0b8c0;border:1px solid #7a3040;border-radius:8px;padding:9px 14px;cursor:pointer}
+    .ibp-folder{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 14px;cursor:pointer}
+    .ibp-result{padding:11px 14px;border-radius:8px;font-size:13.5px;font-weight:600;margin:10px 0}
+    .ibp-result.ok{background:rgba(70,160,90,.16);border:1px solid #2f6b41;color:#8fdca4}
+    .ibp-result.bad{background:rgba(200,70,70,.14);border:1px solid #7a2f2f;color:#e79a9a}
+    .ibp-log{background:#080d18;border:1px solid #1e2740;border-radius:9px;padding:12px 14px;margin:10px 0;max-height:340px;overflow:auto;font-family:Consolas,monospace;font-size:12px;line-height:1.55;color:#b9c6df}
+    .ibp-log .ibp-ln{white-space:pre-wrap;word-break:break-all}
+    .ibp-hint{color:var(--sub);font-size:12px;margin-top:8px}
+    .ibp-hint code,.ibp-notice code{background:var(--card);padding:1px 6px;border-radius:4px;font-family:Consolas,monospace;color:var(--ink)}
+</style>

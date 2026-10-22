@@ -3812,3 +3812,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): UsExchangeCode · KisOverseasProtocol · UsQuoteSessionGate 는 출하 바이너리에 포함되나 제품 경로/DI/UI 미배선 · 해외 모의 실측은 옵트인(출하 스위트에서 건너뜀).
 - 한계(정직): 정규장 시세 Tradable 실측 미실행 · 연속조회(CTX_AREA)/해외 호가 TR 미구현 · 실 보유 행 판독 실응답 미검증 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 163. v12.18.58-DEV — UI 잔류 컴포넌트 정비(BrokerSettingsPage · InstallerBuildPanel) · 자산군 모의 상태 바인딩 · 자격증명 평문 DOM 노출 제거 (2026-10-22)
+
+- 장기 미커밋 2종 흡수: BrokerSettingsPage.razor(InstallerBuildPanel 임베드 3줄) · InstallerBuildPanel.razor(신규). InstallerBuildPanel 은 InstallerBuildService 직접 new · SystemVersionProvider 직결을
+  제거하고 부모가 주입한 IInstallerBuildPort 를 [Parameter] 로 수령(inject 0 → 래칫 결합 수 불변).
+- 신규 Port(MS2E.UI.Portable): Ports/Brokers/BrokerSettingsStatusPorts.cs — IBrokerSettingsStatusPort(GetSnapshot 단일 · 저장/발주/무장 메서드 0) · CredentialFieldStatus · KisProfileStatus ·
+  CryptoPaperView · CredentialMask.First2(앞 2자 외 '*' · 별 상한 16 · 2자 이하 전부 '*'). Ports/Tools/InstallerBuildPorts.cs — IInstallerBuildPort · InstallerPrereqs.
+- 신규 어댑터: StockManager/Adapters/BrokerSettingsStatusAdapter.cs — KIS.Profile.{PaperDomestic|PaperOverseas}.{AppKey · AppSecret · Account} + 레거시 KIS.* · Upbit.* 원시값 판독(DB 쓰기 0) ·
+  enc:v1(DPAPI) 봉인값만 복호 직후 마스킹 · 평문 저장/복호 실패 = Sealed=false '****'(앞자리 미노출) · CryptoPaperExchange 는 DI 등록 시에만 Snapshot()(미등록 = Wired=false · 날조 0).
+  src/02_Infrastructure/Engine/InstallerBuildAdapter.cs — InstallerBuildService 위임. BlazorHomeForm 합성 루트에 2종 싱글턴 등록.
+- BrokerSettingsPage: ★저장된 키를 입력칸에 프리필하던 경로 제거(기존 = 복호 평문이 type=password value 로 DOM 에 실림) → 마스킹 placeholder + 빈칸 저장 = 기존값 유지(서버 측 지역 병합) ·
+  계좌번호도 password · autocomplete=off. 모의투자 자산군 상태 카드 신설: KIS 국내/해외 모의 봉인 상태 · Upbit 크립토 모의(초기 예수금 1억 · 예수금/BTC/체결/최신 호가 경과 · 미배선 정직 표기).
+- 테스트: BrokerSettingsStatusTests 17건 신규 — 마스킹 규칙 · 봉인/평문/복호불가 판정 · 프로필 무교차 · 레거시 키 마스킹 · 크립토 미등록/등록(1억 시드 · 호가 미수신) · Port 판독 전용 · 패널 Port 결속.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 84 · shell 44) ·
+  전체 스위트 4,995 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 35초. ※공유 primary 작업 트리 실행(타 세션 미커밋 LiveWireKisLongSoakTests.cs 변경 포함 상태).
+- 한계(정직): CryptoPaperExchange · Upbit 공개 WebSocket 은 여전히 제품 DI 미등록 → UI 는 '미배선'으로 렌더(가동 표시는 등록 시에만) · KIS 모의 프로필 키 입력 UI 없음(판독 전용) ·
+  BrokerSettingsPage 자체는 LocalDatabase/BrokerHub/ApiKeyVault 직결 잔존(래칫 40 중 1 — 후속 이주 대상) · 실 앱 화면 육안 확인 미실행.
+- 불변: liveArmed:false(신규 Port 발주/무장 경로 0) · 인터락 30(0x800000001FFFFFFF)/Tighten 6 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40 · 타 세션 파일(.claude/* 2종 · LiveWire 소크) 미스테이징 · 원격 푸시 없음.

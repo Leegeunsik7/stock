@@ -1207,6 +1207,10 @@ namespace StockManager.Blazor
             // v11.3.0 — 이중 브로커 관제 Port(조회 전용·DIP): 등록된 브로커 서비스(키움 bridge·토스 IBrokerAccountPort·토큰/거버너)만
             //   소비하고 미배선은 fail-closed(N/A). ★발주 무장 0(liveArmed:false) — 상태 판독 전용.
             services.AddSingleton<MS2E.UI.Portable.Ports.Brokers.IDualBrokerStatusPort>(sp => new MS2E.Infrastructure.DualBrokerStatusAdapter(sp));
+            // v12.18.58-DEV — 거래 설정 상태 Port(조회 전용): KIS 모의 2종 자격증명 봉인/마스킹 · 크립토 모의 체결기(미등록=미배선 fail-closed).
+            //   + 설치관리자 빌드 Port(InstallerBuildPanel 의 InstallerBuildService 직접 new 격리). ★발주/무장 0.
+            services.AddSingleton<MS2E.UI.Portable.Ports.Brokers.IBrokerSettingsStatusPort>(sp => new StockManager.Adapters.BrokerSettingsStatusAdapter(sp));
+            services.AddSingleton<MS2E.UI.Portable.Ports.Tools.IInstallerBuildPort, MS2E.Infrastructure.InstallerBuildAdapter>();
             // Phase 94-D — 전략/백테스트 엔진 Port(DIP): UI 는 IStrategyLabPort/IBacktestExecutionPort 만 알고 시세/DB/엔진은 어댑터가 격리(내부 fetch·오프로드).
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IStrategyLabPort, MS2E.Infrastructure.StrategyLabAdapter>();
             services.AddSingleton<MS2E.UI.Portable.Ports.Strategy.IBacktestExecutionPort, MS2E.Infrastructure.BacktestExecutionAdapter>();

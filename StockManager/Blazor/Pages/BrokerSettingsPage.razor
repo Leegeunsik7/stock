@@ -3,9 +3,14 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 @inject ToastService Toasts
+@inject MS2E.UI.Portable.Ports.Brokers.IBrokerSettingsStatusPort Status
+@inject MS2E.UI.Portable.Ports.Tools.IInstallerBuildPort Installer
+@using MS2E.UI.Portable.Ports.Brokers
 
 @* 레거시 WinForms BrokerSettingsForm의 Blazor 네이티브 이식 (검증된 ApiKeyVault/BrokerHub 재사용).
-   실거래 안전장치(무장 확인·경고)는 원본과 동일하게 보존. 실주문 실행 로직은 LiveBrokers에 그대로. *@
+   실거래 안전장치(무장 확인·경고)는 원본과 동일하게 보존. 실주문 실행 로직은 LiveBrokers에 그대로.
+   [v12.18.58] 저장된 키는 입력칸에 프리필하지 않는다(평문 DOM 노출 0) — 마스킹(앞 2자) 표시 + 빈칸 저장 = 기존값 유지.
+   자산군(KIS 국내/해외 모의 · Upbit 크립토 모의) 상태는 IBrokerSettingsStatusPort(판독 전용)로만 렌더. *@
 
 <div class="top">
     <div class="hello"><h1>⚙️ 거래 설정</h1><p>모의/실전 · 무장 · API 키 (DPAPI 암호화)</p></div>
@@ -38,24 +43,62 @@
         </div>
     </div>
 
+    @* 모의투자 자산군 상태(판독 전용 · 마스킹) *@
+    <div class="card-sec">
+        <div class="sec-h">모의투자 자산군 상태</div>
+        @foreach (var p in new[] { _snap.PaperDomestic, _snap.PaperOverseas })
+        {
+            <div class="st-row">
+                <b>@p.Label</b>
+                <span class="st @(p.AllSealed ? "ok" : p.AnyPlaintext ? "warn" : "off")">@(p.AllSealed ? "DPAPI 봉인" : p.AnyPlaintext ? "⚠ 평문 저장" : "미설정")</span>
+            </div>
+            <div class="st-fields">
+                @foreach (var f in new[] { p.AppKey, p.AppSecret, p.Account })
+                {
+                    <span>@f.Name <code>@(f.Present ? f.Masked : "—")</code></span>
+                }
+            </div>
+        }
+        <div class="st-row">
+            <b>Upbit 크립토 모의 (24/7 · KRW-BTC)</b>
+            <span class="st @(_snap.Crypto.Wired ? "ok" : "off")">@(_snap.Crypto.Wired ? "가동" : "미배선")</span>
+        </div>
+        <div class="st-fields">
+            <span>초기 예수금 <code>@(_snap.Crypto.InitialKrw.ToString("N0"))원</code></span>
+            @if (_snap.Crypto.Wired)
+            {
+                <span>예수금 <code>@(_snap.Crypto.KrwBalance.ToString("N0"))원</code></span>
+                <span>BTC <code>@(_snap.Crypto.BtcBalance.ToString("0.########"))</code></span>
+                <span>체결 <code>@(_snap.Crypto.FillCount.ToString("N0"))건</code></span>
+                <span>최신 호가 <code>@(_snap.Crypto.QuoteAgeMs < 0 ? "미수신" : $"{_snap.Crypto.Bid:N0} / {_snap.Crypto.Ask:N0} · {_snap.Crypto.QuoteAgeMs:N0}ms 전")</code></span>
+            }
+            else
+            {
+                <span>공개 웹소켓 시세 · 모의 체결기 <code>런타임 미배선 — 호가 미수신</code></span>
+            }
+        </div>
+        <div class="st-note">🔒 판독 전용 · 실주문 경로 없음(liveArmed:false). 키는 앞 2자만 표시됩니다.</div>
+    </div>
+
     @* KIS *@
     <div class="card-sec">
         <div class="sec-h">KIS (한국투자증권)</div>
+        <div class="st-note" style="margin:0 0 10px">저장된 값은 표시하지 않습니다. 빈칸으로 저장하면 기존 값이 유지됩니다.</div>
         <label class="flbl">App Key</label>
-        <input class="fin" type="password" @bind="_kisKey" />
+        <input class="fin" type="password" autocomplete="off" @bind="_kisKey" placeholder="@Hint(_snap.LegacyKisAppKey)" />
         <label class="flbl" style="margin-top:10px">App Secret</label>
-        <input class="fin" type="password" @bind="_kisSecret" />
+        <input class="fin" type="password" autocomplete="off" @bind="_kisSecret" placeholder="@Hint(_snap.LegacyKisAppSecret)" />
         <label class="flbl" style="margin-top:10px">계좌번호 (예: 12345678-01)</label>
-        <input class="fin" @bind="_kisAcct" placeholder="12345678-01" />
+        <input class="fin" type="password" autocomplete="off" @bind="_kisAcct" placeholder="@Hint(_snap.LegacyKisAccount, "12345678-01")" />
     </div>
 
     @* 업비트 *@
     <div class="card-sec">
         <div class="sec-h">업비트</div>
         <label class="flbl">Access Key</label>
-        <input class="fin" type="password" @bind="_upAccess" />
+        <input class="fin" type="password" autocomplete="off" @bind="_upAccess" placeholder="@Hint(_snap.UpbitAccessKey)" />
         <label class="flbl" style="margin-top:10px">Secret Key</label>
-        <input class="fin" type="password" @bind="_upSecret" />
+        <input class="fin" type="password" autocomplete="off" @bind="_upSecret" placeholder="@Hint(_snap.UpbitSecretKey)" />
     </div>
 
     <div style="display:flex;gap:10px;align-items:center">
@@ -63,18 +106,34 @@
         <button class="addbtn" style="background:var(--card-2);color:var(--ink);border:1px solid var(--line)" @onclick='() => Nav.NavigateTo("/settings")'>취소</button>
         <span style="color:var(--sub);font-size:12.5px">현재: <b>@CurrentModeText</b></span>
     </div>
+
+    @* ── 원스톱 프로덕션 인스톨러 생성기 (UAV 드론과 동등 · 기존 InstallerBuildService 재사용) ── *@
+    <InstallerBuildPanel Port="Installer" />
 </div>
 
 <style>
     .card-sec{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:18px}
     .sec-h{font-weight:700;margin-bottom:14px}
     .ck{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:8px;cursor:pointer}
+    .st-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;margin-top:12px}
+    .st-row:first-of-type{margin-top:0}
+    .st{padding:3px 10px;border-radius:7px;font-size:12px;font-weight:600}
+    .st.ok{background:rgba(70,160,90,.16);border:1px solid #2f6b41;color:#79c88f}
+    .st.warn{background:rgba(210,150,40,.14);border:1px solid #7a5a20;color:#e3b968}
+    .st.off{background:var(--card-2);border:1px solid var(--line);color:var(--sub)}
+    .st-fields{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--sub);margin-top:6px}
+    .st-fields code{background:var(--card-2);padding:1px 6px;border-radius:4px;font-family:Consolas,monospace;color:var(--ink)}
+    .st-note{color:var(--sub);font-size:12px;margin-top:12px}
 </style>
 
 @code {
     private bool _live, _armed, _kisReal;
     private decimal _maxKrw = 100_000m;
-    private string _kisKey = "", _kisSecret = "", _kisAcct = "", _upAccess = "", _upSecret = "";
+    private string _kisKey = "", _kisSecret = "", _kisAcct = "", _upAccess = "", _upSecret = "";   // 신규 입력분만(저장값 프리필 0)
+    private BrokerSettingsSnapshot _snap = default!;
+
+    private static string Hint(CredentialFieldStatus f, string empty = "") => f.Present ? f.Masked + " (저장됨)" : empty;
+    private static string Keep(string input, string stored) { var t = input.Trim(); return t.Length > 0 ? t : stored; }
 
     private string CurrentModeText => !_live ? "모의투자"
         : (_armed ? "실거래(무장)" : "실거래(미무장 — 주문 거부)");
@@ -85,8 +144,7 @@
         _armed = BrokerHub.IsArmed(Db);
         _kisReal = Db.GetSetting("Kis.UseRealDomain") == "1";
         _maxKrw = BrokerHub.MaxOrderKrw(Db);
-        (_kisKey, _kisSecret, _kisAcct) = ApiKeyVault.GetKis(Db);
-        (_upAccess, _upSecret) = ApiKeyVault.GetUpbit(Db);
+        _snap = Status.GetSnapshot();
     }
 
     private async Task Save()
@@ -106,8 +164,13 @@
         BrokerHub.SetArmed(Db, _armed);
         BrokerHub.SetMaxOrderKrw(Db, _maxKrw);
         Db.SetSetting("Kis.UseRealDomain", _kisReal ? "1" : "0");
-        ApiKeyVault.SaveKis(Db, _kisKey.Trim(), _kisSecret.Trim(), _kisAcct.Trim());   // DPAPI 암호화 저장
-        ApiKeyVault.SaveUpbit(Db, _upAccess.Trim(), _upSecret.Trim());
+        // 빈칸 = 기존값 유지(저장값은 서버 측 지역변수로만 병합 — 렌더/DOM 경유 0)
+        var (kKey, kSecret, kAcct) = ApiKeyVault.GetKis(Db);
+        ApiKeyVault.SaveKis(Db, Keep(_kisKey, kKey), Keep(_kisSecret, kSecret), Keep(_kisAcct, kAcct));   // DPAPI 암호화 저장
+        var (uAccess, uSecret) = ApiKeyVault.GetUpbit(Db);
+        ApiKeyVault.SaveUpbit(Db, Keep(_upAccess, uAccess), Keep(_upSecret, uSecret));
+        _kisKey = _kisSecret = _kisAcct = _upAccess = _upSecret = "";
+        _snap = Status.GetSnapshot();
 
         Toasts.Success("거래 설정 저장됨", $"현재 모드: {CurrentModeText}");
     }
