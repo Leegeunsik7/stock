@@ -3794,3 +3794,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증(격리 worktree · 타 세션 파일 배제): WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0 · 전체 스위트 4,980 통과 + 6 건너뜀(옵트인) · 실패 0 · 3분 46초(래칫 ≤40 포함).
 - 한계(정직): 제품 경로/DI/UI 미배선 · 실 보유 0 이라 행 판독/불일치 집계는 실 응답 미검증(가짜 VTS 만) · 연속조회(CTX_AREA) 미구현 · 정규장 시세 실측 미실행(오늘 22:30 KST 이후 재실측 권장) · 호가(HHDFS76200100) 미구현.
 - 불변: liveArmed:false(해외 주문 TR/경로 송출 전 거부) · 실전 도메인 0 · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근 · 래칫 ≤40(UI 변경 0) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
+
+## 162. v12.18.57-GM — KIS 해외 미국 3대 거래소 잔고 · 해외 시세 파이프라인 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-22)
+
+- v12.18.57-DEV(§161) = 83abf25. 12.18.56 → 12.18.57(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) =
+  321a9c5(4파일 · 11/11 줄) · 태그 v12.18.57-GM -f. 빌드 서버 종료(가용 메모리 9.8GB) 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release 0W/0E ·
+  ★전체 스위트 4,980 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 42초 · Offline_1M(스위트 내 통과) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(2/2) · liveArmed:false 소스 가드 · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 38/38(zip 포함) ·
+  masterSeal 1BC25877… · verify-zip 무추출 일치 · verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · 매니페스트 @321a9c5034 핸드셰이크 Ok.
+- 산출물: release-v12.18.57-GM.zip(C6EF055A…) · StockManager-v12.18.57-Standalone-win-x64.zip(5427E704…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 14888 · HWND 0x8717E2 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 이관: v12.18.56-GM 산출물 15종 → release/superseded-v12.18.56-GM/. 신규 산출물 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 2종 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · 동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · MS2E.StockSuite 잔류 프로세스 0. 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): UsExchangeCode · KisOverseasProtocol · UsQuoteSessionGate 는 출하 바이너리에 포함되나 제품 경로/DI/UI 미배선 · 해외 모의 실측은 옵트인(출하 스위트에서 건너뜀).
+- 한계(정직): 정규장 시세 Tradable 실측 미실행 · 연속조회(CTX_AREA)/해외 호가 TR 미구현 · 실 보유 행 판독 실응답 미검증 · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 5종 미스테이징 · 원격 푸시 없음.
