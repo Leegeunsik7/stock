@@ -4119,3 +4119,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,236 통과 + 6 건너뜀 · 실패 0 · 4분 5초 · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45).
 - 한계(정직): 토글은 런타임 상태(재기동 시 설정값으로 복귀 · 설정 영속화 미구현) · 거시 역풍 입력(SetMacroHeadwind) 실 피드 미결선 · 대표 국면은 수신 종목 단순 다수결(시가총액 가중 아님).
 - 불변: liveArmed:false(토글 = AI 가상 원장 진입 판정만 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 176. v12.18.68-GM — 플루토 프로 거버너(국면 · 악마의 변호인 · 동적 사이징 · 자가 회고) + /dualarena 거버넌스 UI 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-23)
+
+- 순서 결정(정직): 같은 날 받은 두 오더(v12.18.69-DEV 토글 영속화 · v12.18.68-GM 출하)가 모두 §176 을 지정 → 12.18.68 봉인본에 69-DEV 코드가 섞이지 않도록 GM 출하를 먼저(§176) · 영속화는 다음(§177).
+- v12.18.68-DEV(§175) = 4c930d2. 12.18.66 → 12.18.68(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) =
+  18919f4(4파일 · 11/11 줄) · 태그 v12.18.68-GM -f. 빌드 서버 종료(가용 메모리 10.9GB) 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,236 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 28초(Offline_1M 스위트 내 통과) · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40(2/2) ·
+  [6/11] liveArmed:false 소스 가드 · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 38/38 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal F7CCA73B… ·
+  verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 18124 · HWND 0x2310BC 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 산출물: release-v12.18.68-GM.zip(7872D41A…) · StockManager-v12.18.68-Standalone-win-x64.zip(EF1188DE…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig 외 15종.
+  사후 독립 대조: 봉인 zip 항목 40(38 아티팩트 포함) ↔ 배포본 zip 동명 항목 SHA-256 전부 일치 · 불일치/누락 0.
+- 이관: v12.18.66-GM 산출물 15종 → release/superseded-v12.18.66-GM/. 신규 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 2종 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · 동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 패키징 로그/매니페스트 QuantumVault 참조 0. (사용자 Debug 앱 PID 2288 은 패키징 전 기동분 — 미접촉.)
+- 출하 바이너리 상태(정직): 플루토 프로 거버너 기본 켜짐(Arena.PlutoGovernanceEnabled) · /dualarena 토글 = 런타임 상태(이 출하본에는 영속화 미포함 — §177 에서 구현) ·
+  거시 역풍 입력 실 피드 미결선 · 업비트 스트림 기본 꺼짐 · 합성 시세는 데모 전용.
+- 한계(정직): 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
