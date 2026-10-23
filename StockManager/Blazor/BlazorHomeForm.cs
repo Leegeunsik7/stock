@@ -1755,6 +1755,15 @@ namespace StockManager.Blazor
             services.AddSingleton(plutoClock);
             services.AddSingleton(plutoBuffer);
             services.AddSingleton(plutoAnalyzer);
+            // [v12.18.65-DEV] 플루토 밸류에이션(오더상 브레인 2단계 · 피더 2단계 §170 와 별개) — 재무 프로필 → 적정가 · 안전마진 · 등급 평가(콜드 · 부트 1회) → seqlock 버퍼 → 양 아레나 호가 재판정(δ=0).
+            //   실 재무 피드(DART · SEC EDGAR) 미결선 — 내장 시드 프로필 10종(근거 요약에 '시드 프로필' 표기 · 기준일 + 180일 경과 = 자동 만료 → 아레나 기존 동작).
+            var plutoValuationBuffer = new StockManager.Engines.Cognitive.Valuation.PlutoValuationBuffer();
+            var plutoValuation = new StockManager.Engines.Cognitive.Valuation.PlutoValuationEngine(plutoValuationBuffer);
+            plutoValuation.SeedDefaults();
+            krxArena.AttachValuation(plutoValuationBuffer);
+            usArena.AttachValuation(plutoValuationBuffer);
+            services.AddSingleton(plutoValuationBuffer);
+            services.AddSingleton(plutoValuation);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));

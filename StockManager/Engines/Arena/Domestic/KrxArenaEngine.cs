@@ -18,6 +18,9 @@
 //   [v12.18.63-DEV] 플루토 뉴스 촉매(AttachPluto · 선택): 정산마다 종목 뉴스 판정을 seqlock 판독(δ=0 · 텍스트 처리 0) →
 //     실효 점수 × 100bp 를 NewsWeight(30)로 가산(점수 ±10000 포화) · 뉴스 기여 최대 = NewsCatalyst 진입.
 //     치명적 구조적 악재(실효 ≤ −60) = 신규 진입 차단 · 보유 즉시 NewsShock 청산. 뉴스 시각 = 정산 KST − 9h(UTC). 미결속/뉴스 없음 = 기존 동작 동일.
+//   [v12.18.65-DEV] 플루토 밸류에이션(AttachValuation · 선택): 정산마다 종목 판정을 seqlock 판독 → 매도호가로 재판정(정수 산술 · δ=0) →
+//     점수 × 100bp 를 ValuationWeight(20)로 가산 · 밸류에이션 기여 최대 = ValuationDiscount 진입 · 고평가 경계 이상 = 신규 매수 보류 ·
+//     극심한 과열 = 보유 ValuationBubble 조기 청산(NewsShock 다음 우선). 미결속/판정 없음/만료 = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
@@ -25,18 +28,20 @@ using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena.Common;
 using StockManager.Engines.Cognitive.News;
+using StockManager.Engines.Cognitive.Valuation;
 
 namespace StockManager.Engines.Arena.Domestic
 {
     /// <summary>알파 시그널 1회 평가 결과(bp). Dominant = 점수 방향으로 가장 크게 기여한 구성요소.</summary>
     public readonly struct KrxAlphaSignal
     {
-        public readonly int Score, MacroBp, ImbalanceBp, SurgeBp, MomentumBp, NewsBp;
+        public readonly int Score, MacroBp, ImbalanceBp, SurgeBp, MomentumBp, NewsBp, ValuationBp;
         public readonly ArenaTrigger Dominant;
 
-        public KrxAlphaSignal(int score, int macroBp, int imbalanceBp, int surgeBp, int momentumBp, ArenaTrigger dominant, int newsBp = 0)
+        public KrxAlphaSignal(int score, int macroBp, int imbalanceBp, int surgeBp, int momentumBp, ArenaTrigger dominant, int newsBp = 0, int valuationBp = 0)
         {
             Score = score; MacroBp = macroBp; ImbalanceBp = imbalanceBp; SurgeBp = surgeBp; MomentumBp = momentumBp; Dominant = dominant; NewsBp = newsBp;
+            ValuationBp = valuationBp;
         }
     }
 
@@ -50,6 +55,7 @@ namespace StockManager.Engines.Arena.Domestic
         public const int EntryScore = 3000, ExitScore = -2000;
         public const int MacroWeight = 20, ImbalanceWeight = 35, SurgeWeight = 20, MomentumWeight = 25, MomentumGain = 20;
         public const int NewsWeight = 30;        // [v12.18.63-DEV] 플루토 뉴스 가산 가중(실효 ±100 → 점수 ±3000)
+        public const int ValuationWeight = 20;   // [v12.18.65-DEV] 플루토 밸류에이션 가산 가중(점수 ±100 → 점수 ±2000)
         public const int StopBp = 80, TargetBaseBp = 100, TargetPerConfidenceBp = 3, PositionWeightBp = 2000;
         public static readonly TimeSpan SessionStart = new(9, 0, 0), SessionEnd = new(15, 30, 0), AiCutoff = new(15, 20, 0);
 
@@ -79,6 +85,7 @@ namespace StockManager.Engines.Arena.Domestic
         private long _capital;
         private long _ticks, _dropped, _lastKstTicks;
         private PlutoSentimentBuffer? _pluto;
+        private PlutoValuationBuffer? _valuation;
         private bool _sessionOpen;
         private int _macroBp;
         private long _ver;
@@ -127,6 +134,11 @@ namespace StockManager.Engines.Arena.Domestic
 
         /// <summary>[v12.18.64-DEV] 결속된 플루토 버퍼(UI 촉매 배지 투영 · 미결속 = null).</summary>
         public PlutoSentimentBuffer? PlutoBuffer => Volatile.Read(ref _pluto);
+
+        /// <summary>[v12.18.65-DEV] 플루토 밸류에이션 버퍼 결속(정산 시 종목별 판독 + 호가 재판정 · δ=0).</summary>
+        public void AttachValuation(PlutoValuationBuffer buffer) => Volatile.Write(ref _valuation, buffer ?? throw new ArgumentNullException(nameof(buffer)));
+
+        public bool ValuationAttached => Volatile.Read(ref _valuation) is not null;
 
         public static bool IsRegularSession(DateTime kst)
         {
@@ -207,24 +219,28 @@ namespace StockManager.Engines.Arena.Domestic
                 PlutoNewsTag news = default;
                 var pluto = Volatile.Read(ref _pluto);
                 if (pluto is not null && pluto.TryRead(symbol, out var nf)) news = new PlutoNewsTag(in nf, kst.Ticks - PlutoClock.KstOffsetTicks);
+                PlutoValuationTag val = default;
+                var valuation = Volatile.Read(ref _valuation);
+                if (valuation is not null && valuation.TryRead(symbol, out var vf)) val = new PlutoValuationTag(in vf, askWon, kst.Ticks - PlutoClock.KstOffsetTicks);
                 var sig = s.Seen >= WarmupTicks
-                    ? Evaluate(Volatile.Read(ref _macroBp), bidQty, askQty, volFx, s.EmaVolFx, midFx, s.EmaMidFx, news.NewsBp)
+                    ? Evaluate(Volatile.Read(ref _macroBp), bidQty, askQty, volFx, s.EmaVolFx, midFx, s.EmaMidFx, news.NewsBp, val.ValuationBp)
                     : default;
                 if (s.Seen == 0) { s.EmaMidFx = midFx; s.EmaVolFx = volFx; }
                 else { s.EmaMidFx += (midFx - s.EmaMidFx) >> EmaShift; s.EmaVolFx += (volFx - s.EmaVolFx) >> EmaShift; }
                 if (s.Seen < int.MaxValue) s.Seen++;
 
                 DrainHuman();
-                if (_sessionOpen) StepAi(si, in sig, in news, kst);
+                if (_sessionOpen) StepAi(si, in sig, in news, in val, kst);
             }
             PublishSnapshot();
             EndWrite();
         }
 
         /// <summary>순수 시그널 평가(할당 0). volFx/emaVolFx/midFx/emaMidFx = ×1024 고정소수점.</summary>
-        public static KrxAlphaSignal Evaluate(int macroBp, long bidQty, long askQty, long volFx, long emaVolFx, long midFx, long emaMidFx, int newsBp = 0)
+        public static KrxAlphaSignal Evaluate(int macroBp, long bidQty, long askQty, long volFx, long emaVolFx, long midFx, long emaMidFx, int newsBp = 0, int valuationBp = 0)
         {
             int news = Math.Clamp(newsBp, -10000, 10000);
+            int valuation = Math.Clamp(valuationBp, -10000, 10000);
             int macro = Math.Clamp(macroBp, -10000, 10000);
             long depth = bidQty + askQty;
             int obi = depth <= 0 ? 0 : (int)((bidQty - askQty) * 10000 / depth);
@@ -238,19 +254,20 @@ namespace StockManager.Engines.Arena.Domestic
                 surge = mag * dir;
             }
             long cMacro = (long)macro * MacroWeight, cObi = (long)obi * ImbalanceWeight, cSurge = (long)surge * SurgeWeight, cMom = (long)mom * MomentumWeight;
-            long cNews = (long)news * NewsWeight;
-            int score = (int)Math.Clamp((cMacro + cObi + cSurge + cMom + cNews) / 100, -10000, 10000);
+            long cNews = (long)news * NewsWeight, cVal = (long)valuation * ValuationWeight;
+            int score = (int)Math.Clamp((cMacro + cObi + cSurge + cMom + cNews + cVal) / 100, -10000, 10000);
             int sign = score >= 0 ? 1 : -1;
             var dom = ArenaTrigger.OrderbookImbalance;
             long best = cObi * sign;
             if (cSurge * sign > best) { best = cSurge * sign; dom = ArenaTrigger.VolumeSurge; }
             if (cMom * sign > best) { best = cMom * sign; dom = ArenaTrigger.MomentumBreakout; }
             if (cMacro * sign > best) { best = cMacro * sign; dom = ArenaTrigger.MacroTailwind; }
-            if (cNews * sign > best) dom = ArenaTrigger.NewsCatalyst;
-            return new KrxAlphaSignal(score, macro, obi, surge, mom, dom, news);
+            if (cNews * sign > best) { best = cNews * sign; dom = ArenaTrigger.NewsCatalyst; }
+            if (cVal * sign > best) dom = ArenaTrigger.ValuationDiscount;
+            return new KrxAlphaSignal(score, macro, obi, surge, mom, dom, news, valuation);
         }
 
-        private void StepAi(int si, in KrxAlphaSignal sig, in PlutoNewsTag news, DateTime kst)
+        private void StepAi(int si, in KrxAlphaSignal sig, in PlutoNewsTag news, in PlutoValuationTag val, DateTime kst)
         {
             var b = _books[ArenaSide.Ai];
             ref Sym s = ref _syms[si];
@@ -262,6 +279,7 @@ namespace StockManager.Engines.Arena.Domestic
                 ArenaTrigger exit = ArenaTrigger.None;
                 if (cutoff) exit = ArenaTrigger.SessionClose;
                 else if (news.IsShock) exit = ArenaTrigger.NewsShock;
+                else if (val.IsBubble) exit = ArenaTrigger.ValuationBubble;
                 else if (s.Bid >= p.Target) exit = ArenaTrigger.TakeProfit;
                 else if (s.Bid <= p.Stop) exit = ArenaTrigger.StopLoss;
                 else if (sig.Score <= ExitScore) exit = ArenaTrigger.SignalReversal;
@@ -269,12 +287,13 @@ namespace StockManager.Engines.Arena.Domestic
                 long target = p.Target, stop = p.Stop; int rr = p.RiskRewardX100;
                 if (Sell(b, si, p.Qty, out long filled, out long pnl) != KrxArenaReject.None) return;
                 int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100)
-                         : exit == ArenaTrigger.NewsShock ? Math.Clamp(-news.EffectiveScore, 0, 100) : 100;
+                         : exit == ArenaTrigger.NewsShock ? Math.Clamp(-news.EffectiveScore, 0, 100)
+                         : exit == ArenaTrigger.ValuationBubble ? Math.Clamp(-val.Score, 0, 100) : 100;
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, s.Bid, kst.Ticks, exit, sig.Score, conf,
-                    target, stop, rr, sig.MacroBp, sig.ImbalanceBp, sig.SurgeBp, sig.MomentumBp, pnl, ArenaCurrency.Krw, in news));
+                    target, stop, rr, sig.MacroBp, sig.ImbalanceBp, sig.SurgeBp, sig.MomentumBp, pnl, ArenaCurrency.Krw, in news, in val));
                 return;
             }
-            if (cutoff || news.IsShock || sig.Score < EntryScore || b.Count >= MaxAiPositions) return;
+            if (cutoff || news.IsShock || val.BlocksEntry || sig.Score < EntryScore || b.Count >= MaxAiPositions) return;
             int confidence = Math.Clamp(sig.Score / 100, 0, 100);
             long tgt = RoundUpTick(s.Ask * (10000 + TargetBaseBp + TargetPerConfidenceBp * confidence) / 10000);
             long stp = RoundDownTick(s.Ask * (10000 - StopBp) / 10000);
@@ -288,7 +307,7 @@ namespace StockManager.Engines.Arena.Domestic
             ref Pos np = ref b.Positions[FindPos(b, s.Symbol)];
             np.Target = tgt; np.Stop = stp; np.RiskRewardX100 = rrX100;
             Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, s.Ask, kst.Ticks, sig.Dominant, sig.Score, confidence,
-                tgt, stp, rrX100, sig.MacroBp, sig.ImbalanceBp, sig.SurgeBp, sig.MomentumBp, 0, ArenaCurrency.Krw, in news));
+                tgt, stp, rrX100, sig.MacroBp, sig.ImbalanceBp, sig.SurgeBp, sig.MomentumBp, 0, ArenaCurrency.Krw, in news, in val));
         }
 
         private void DrainHuman()

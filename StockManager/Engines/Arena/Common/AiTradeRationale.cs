@@ -10,10 +10,13 @@
 //     SurgeBp ← QQQ/반도체 ETF 베타 · MacroBp ← 10년물 국채금리 감응 · ImbalanceBp ← 프리마켓 갭/수급 · MomentumBp ← 장중 모멘텀.
 //   [v12.18.63-DEV] 플루토 뉴스 촉매(News · PlutoNewsTag 값 타입): 체결 시점에 판독한 종목 뉴스 판정(유형 · 원점수 · 감쇄 · 실효 · 64B 헤드라인).
 //     진입 사유 NewsCatalyst(12 · 뉴스 기여 최대) · 청산 사유 NewsShock(13 · 치명적 구조적 악재 긴급 청산). 요약 끝에 플루토 진단 문장 결속.
+//   [v12.18.65-DEV] 플루토 밸류에이션(Valuation · PlutoValuationTag 값 타입): 체결 호가로 재판정한 등급 · 점수 · 안전마진 · Fwd PER · PBR · 적정가.
+//     진입 사유 ValuationDiscount(14 · 밸류에이션 기여 최대) · 청산 사유 ValuationBubble(15 · 극심한 과열 조기 청산). 요약 끝에 재무 근거 문장 결속.
 // ============================================================================
 using System;
 using System.Globalization;
 using StockManager.Engines.Cognitive.News;
+using StockManager.Engines.Cognitive.Valuation;
 
 namespace StockManager.Engines.Arena.Common
 {
@@ -34,6 +37,8 @@ namespace StockManager.Engines.Arena.Common
         PremarketGapFlow = 11,
         NewsCatalyst = 12,         // [v12.18.63-DEV] 플루토 뉴스/공시 촉매 주도 진입
         NewsShock = 13,            // [v12.18.63-DEV] 플루토 치명적 구조적 악재 긴급 청산
+        ValuationDiscount = 14,    // [v12.18.65-DEV] 플루토 밸류에이션 저평가 주도 진입
+        ValuationBubble = 15,      // [v12.18.65-DEV] 플루토 극심한 과열 조기 청산
     }
 
     /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
@@ -47,8 +52,9 @@ namespace StockManager.Engines.Arena.Common
     {
         public static bool IsEntry(ArenaTrigger t) => t is >= ArenaTrigger.OrderbookImbalance and <= ArenaTrigger.MomentumBreakout
                                                           or >= ArenaTrigger.EtfBeta and <= ArenaTrigger.PremarketGapFlow
-                                                          or ArenaTrigger.NewsCatalyst;
-        public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock;
+                                                          or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount;
+        public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock
+                                                         or ArenaTrigger.ValuationBubble;
 
         public static string Label(ArenaTrigger t) => t switch
         {
@@ -65,6 +71,8 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.PremarketGapFlow => "프리마켓 갭/수급",
             ArenaTrigger.NewsCatalyst => "플루토 뉴스/공시 촉매",
             ArenaTrigger.NewsShock => "플루토 구조적 악재 긴급 청산",
+            ArenaTrigger.ValuationDiscount => "플루토 밸류에이션 저평가",
+            ArenaTrigger.ValuationBubble => "플루토 극심한 과열 조기 청산",
             _ => "미분류",
         };
     }
@@ -92,14 +100,17 @@ namespace StockManager.Engines.Arena.Common
         public readonly ArenaCurrency Currency;
         /// <summary>[v12.18.63-DEV] 체결 시점 플루토 뉴스 촉매(default = 뉴스 없음).</summary>
         public readonly PlutoNewsTag News;
+        /// <summary>[v12.18.65-DEV] 체결 시점 플루토 밸류에이션(default = 판정 없음).</summary>
+        public readonly PlutoValuationTag Valuation;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
             int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw,
-            in PlutoNewsTag news = default)
+            in PlutoNewsTag news = default, in PlutoValuationTag valuation = default)
         {
             Currency = currency;
             News = news;
+            Valuation = valuation;
             Seq = seq; Symbol = symbol; Side = side; Qty = qty; PriceWon = priceWon; KstTicks = kstTicks; TriggerType = triggerType;
             SentimentScore = sentimentScore; ConfidenceScore = confidenceScore; TargetPrice = targetPrice; StopLossPrice = stopLossPrice;
             RiskRewardX100 = riskRewardX100; MacroBp = macroBp; ImbalanceBp = imbalanceBp; SurgeBp = surgeBp; MomentumBp = momentumBp;
@@ -113,6 +124,7 @@ namespace StockManager.Engines.Arena.Common
         /// 근거 무결성: 식별/수량/가격 양수 · 사유가 방향과 일치(매수=진입 사유 · 매도=청산 사유) · 확신도 0~100 · 감성 ±10000 ·
         /// 손절가 &lt; 목표가 · 손익비 &gt; 0 · 매수는 손절가 &lt; 체결가 &lt; 목표가.
         /// [v12.18.63-DEV] 뉴스 태그 무결 · 뉴스 종목 = 체결 종목(뉴스 있을 때) · NewsCatalyst = 실효 양수 · NewsShock = 충격 수준 악재.
+        /// [v12.18.65-DEV] 밸류에이션 태그 무결 · 판정 종목 = 체결 종목 · ValuationDiscount = 점수 양수 · ValuationBubble = 극심한 과열.
         /// </summary>
         public bool IsWellFormed =>
             Seq > 0 && Symbol > 0 && Qty > 0 && PriceWon > 0 && KstTicks > 0
@@ -123,7 +135,10 @@ namespace StockManager.Engines.Arena.Common
             && (Side != 1 || (StopLossPrice < PriceWon && PriceWon < TargetPrice))
             && News.IsWellFormed && (News.Factor.Symbol == 0 || News.Factor.Symbol == Symbol)
             && (TriggerType != ArenaTrigger.NewsCatalyst || News.EffectiveScore > 0)
-            && (TriggerType != ArenaTrigger.NewsShock || News.IsShock);
+            && (TriggerType != ArenaTrigger.NewsShock || News.IsShock)
+            && Valuation.IsWellFormed && (Valuation.Factor.Symbol == 0 || Valuation.Factor.Symbol == Symbol)
+            && (TriggerType != ArenaTrigger.ValuationDiscount || Valuation.Score > 0)
+            && (TriggerType != ArenaTrigger.ValuationBubble || Valuation.IsBubble);
 
         /// <summary>한국어 설명 요약(콜드 경로 — 호출마다 문자열 조립).</summary>
         public string HumanReadableSummary => AiRationaleText.Compose(in this);
@@ -141,7 +156,38 @@ namespace StockManager.Engines.Arena.Common
         public static string Compose(in AiTradeRationale r)
         {
             string core = r.Currency == ArenaCurrency.Usd ? ComposeUsd(in r) : ComposeKrw(in r);
-            return r.News.HasCatalyst ? core + " " + ComposeNews(in r.News) : core;
+            if (r.News.HasCatalyst) core += " " + ComposeNews(in r.News);
+            return r.Valuation.HasValuation ? core + " " + ComposeValuation(in r.Valuation) : core;
+        }
+
+        /// <summary>[v12.18.65-DEV] 플루토 밸류에이션 재무 근거 문장(가격 = 판정 시장 통화).</summary>
+        public static string ComposeValuation(in PlutoValuationTag v)
+        {
+            var f = v.Factor;
+            var r = v.Reading;
+            string fair = f.Market == PlutoMarket.Us ? Usd(f.FairPrice) : string.Create(Inv, $"{f.FairPrice:N0}원");
+            string per;
+            if (r.FwdPerX10 <= 0) per = "Fwd PER 산출 불가(선행 적자)";
+            else
+            {
+                long gapPct = (long)(f.SectorFwdPerX10 - r.FwdPerX10) * 100 / f.SectorFwdPerX10;
+                string rel = gapPct > 0 ? $"{gapPct.ToString(Inv)}% 할인" : gapPct < 0 ? $"{(-gapPct).ToString(Inv)}% 프리미엄" : "동일";
+                per = $"Fwd PER {X10(r.FwdPerX10)}배(업종 평균 {X10(f.SectorFwdPerX10)}배 대비 {rel})";
+            }
+            string pbr = r.PbrX100 > 0 ? $"PBR {(r.PbrX100 / 100).ToString(Inv)}.{(r.PbrX100 % 100).ToString("D2", Inv)}배" : "PBR 산출 불가";
+            string surprise = f.SurpriseBps > 0 ? $"분기 영업이익 컨센서스 {Pct(f.SurpriseBps)} 상회"
+                            : f.SurpriseBps < 0 ? $"분기 영업이익 컨센서스 {Pct(f.SurpriseBps)} 하회" : "분기 영업이익 컨센서스 부합";
+            return $"플루토 밸류에이션: {ValuationText.Label(r.Grade)} {Signed(r.Score)}점 · {per} · {pbr} · ROE {Pct(f.RoeBps)} · " +
+                   $"안전마진 {Pct(r.MarginOfSafetyBps)}(적정가 {fair}) · {surprise} · 선행 EPS {Pct(f.EpsGrowthBps)} · {ValuationText.SourceLabel(f.Source)}.";
+        }
+
+        private static string X10(int v) => $"{(v / 10).ToString(Inv)}.{(v % 10).ToString(Inv)}";
+
+        /// <summary>bp → 부호 있는 % 소수 1자리(0 방향 절단).</summary>
+        private static string Pct(int bps)
+        {
+            long a = Math.Abs((long)bps);
+            return (bps > 0 ? "+" : bps < 0 ? "-" : "") + $"{(a / 100).ToString(Inv)}.{(a % 100 / 10).ToString(Inv)}%";
         }
 
         /// <summary>[v12.18.63-DEV] 플루토 뉴스 촉매 진단 문장.</summary>

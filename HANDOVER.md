@@ -3986,3 +3986,39 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): DART/SEC 실서버 미접속 검증(모의 핸들러 E2E만 · 실키 미보유) · DART 발생 시각 = 발견 시각(분 단위 접수 시각 미제공) · SEC 는 8-K 최신 40건 · CIK 표 5종 ·
   두 아레나가 서로 다른 합성 도메인을 동시에 공급하면 앞선 도메인 채택(뒤처진 쪽 판독 = 미래 뉴스 → 0 · fail-closed) · 실시세 모드에서도 합성 측 동기 중이면 실뉴스 필터가 합성 시각 기준 · 리플레이 엔진(ArenaTickReplayEngine) 미결속.
 - 불변: liveArmed:false(뉴스 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30 무변경 · 핫패스 δ=0 · Pure Shell(UI = 포트 DTO만) · 래칫 ≤40 · 타 세션 파일(LiveWireKisLongSoakTests.cs · .claude/*) 미스테이징 · 원격 푸시 없음.
+
+## 171. v12.18.65-DEV — 플루토 밸류에이션 엔진: 재무 프로필 · 적정가치 · 안전마진(Margin of Safety) · 등급/점수 · seqlock 버퍼 · 아레나 핫패스 무할당 결속 (2026-10-23)
+
+- 버전 표기: 오더는 v12.18.64-DEV · §170 을 지정했으나 그 번호는 착수 중 타 세션이 DART/SEC 피더(a5c57b2 · §170)로 먼저 사용 → 본 마일스톤 = v12.18.65-DEV · §171.
+  (오더상 '플루토 브레인 2단계' = 밸류에이션 · §170 의 '2단계' = 뉴스 피더 — 명칭 중복, 내용 별개.) 형제 worktree 격리 개발 → a5c57b2 위로 리베이스(충돌 2건 = 양쪽 보존).
+- 신규 StockManager/Engines/Cognitive/Valuation/:
+  · PlutoFundamentalProfile(불변 값 타입 · 정수 스케일): 가격/EPS/BPS = 시장 통화 최소 단위(Krx 원 · Us 센트) · EpsTtm · FwdEps · Bps · RoeBps · 5년 PER(×10)/PBR(×100) 밴드 하/중/상 ·
+    업종 Fwd PER · PerWeightPct(국내 60 · 미국 100) · 분기 영업이익 컨센서스/실적 · AsOfUtcTicks · EpsGrowthBps · SurpriseBps · IsWellFormed(밴드 단조 · 범위 · PER 단독은 FwdEps>0 필수).
+    PlutoFundamentalSeeds: 국내 5(005930 · 000660 · 373220 · 207940 · 005380 = KRX 합성 유니버스) + 미국 5(AAPL · NVDA · MSFT · AMZN · TSLA) · Source = Seed · 기준일 2026-10-01 · 기준가 = 합성 시작가.
+  · PlutoValuationMath(순수 · 할당 0): 적정가 = Fwd EPS × PER 밴드 중앙 × w + BPS × PBR 밴드 중앙 × (1−w) · 적자 = PBR 단독 · 불가 = 0 ·
+    안전마진 MoS(bp) = (적정가 − 현재가) × 10000 / 현재가(0 방향 절단 · ±1,000,000 포화).
+    등급: DeepValue(MoS ≥ +30% ∧ Fwd PER < 업종 ∧ ROE > 0 · 미충족 = FairDiscount 강등) +70~+100 · FairDiscount(+10~+30%) +20~+69 · FairlyValued(−15% 초과~+10%) −19~+19 ·
+    Overvalued(−15% 이하~−30% 초과) −20~−59 · ExtremeBubble(−30% 이하 ∨ Fwd PER > 밴드 상단 ∧ 선행 EPS 역성장) −60~−100 · 선행 적자 = 할인 판정 상한 FairlyValued.
+    점수 = 등급 구간 MoS 선형 보간(경계 연속 · 단조) + 서프라이즈 가감(±10점) → 최종 등급 밴드로 포화(점수는 항상 등급 밴드 안).
+  · PlutoValuationFactor: Symbol · Seq · TimestampUtcTicks(재무 기준 시각) · EvaluatedPrice · FairPrice · ValuationScore · MarginOfSafetyBps · FwdPerX10 · PbrX100 · RoeBps · 등급 ·
+    재판정 입력(FwdEps · Bps · 업종 PER · 밴드 상단 · 성장 · 서프라이즈) · IsWellFormed = 저장 판독이 평가가 재판정과 일치(위조/찢김 검출).
+  · PlutoValuationTag(체결 시점 결속): 버퍼 판정을 체결 매도호가로 재판정(MoS · 배수 · 등급 · 점수) · 기준일 + 180일 초과 · 1일 넘는 미래 · 무효 가격 = 빈 태그(fail-closed) ·
+    ValuationBp = 점수 × 100 · BlocksEntry = Overvalued 이상 · IsBubble = ExtremeBubble.
+  · PlutoValuationBuffer: 64 슬롯 다중 작성자 seqlock(PlutoSentimentBuffer 와 같은 구조 · 같은 키 도메인) · 우세 규칙 대신 과거 기준일 = Stale 거부 · 무결성 위반 = Rejected · 포화 = BufferFull.
+  · PlutoValuationEngine(콜드): 프로필 표(lock) · Upsert(무효 프로필 = 저장 0 · 보관보다 과거 기준일 = Stale 로 보관 유지) · Revalue(가격만 갱신) · SeedDefaults · 상태/실패 계수.
+- 아레나 결속(KrxArenaEngine · UsTechArenaEngine): AttachValuation(buffer) 선택 결속 · 정산마다 TryRead → PlutoValuationTag(매도호가 · 정산 KST − 9h) →
+  Evaluate(…, newsBp, valuationBp) 가산 가중 ValuationWeight 20(점수 ±100 → ±2000 · 총점 ±10000 포화) · 밸류 기여 최대 = ArenaTrigger.ValuationDiscount(14) 진입 ·
+  BlocksEntry = 신규 매수 보류 · IsBubble = 보유 ArenaTrigger.ValuationBubble(15) 조기 청산(SessionClose · NewsShock 다음 우선). 미결속/판정 없음/만료 = 기존 동작 동일(기존 테스트 무변경 통과).
+- AiTradeRationale: Valuation(PlutoValuationTag) 필드 · 생성자 선택 인자 `in valuation` · IsEntry/IsExit/Label 확장 · IsWellFormed(태그 무결 · 종목 일치 · ValuationDiscount = 양수 · ValuationBubble = 과열) ·
+  요약 끝에 "플루토 밸류에이션: {등급} ±N점 · Fwd PER x.x배(업종 평균 y.y배 대비 n% 할인/프리미엄) · PBR · ROE · 안전마진 ±x.x%(적정가 …원/$…) · 분기 영업이익 컨센서스 ±x.x% 상회/하회 · 선행 EPS · 출처" 결속.
+- 호스트 BlazorHomeForm: 버퍼 · 엔진 생성 → SeedDefaults(부트 1회) → 양 엔진 AttachValuation → DI 싱글턴. 실 재무 피드 미결선.
+- 테스트 StockManager.Tests/Cognitive/PlutoValuationEngineTests 41건: 시드 10종 적정가/MoS/배수/등급/점수/성장/서프라이즈(독립 파이썬 오라클 산출값과 일치) · 유니버스 포괄 · 등급 경계 15점 ·
+  단조/밴드(MoS −99%~+200% 7bp 간격) · 강등/적자 상한/밴드 이탈 버블 · 서프라이즈 가감 포화 · MoS 공식 · 적정가 혼합/적자 대체/무효 프로필 11종 · 태그 재판정/만료/미래 · 버퍼 위조 거부/Stale/포화 ·
+  엔진 상태 · KRX ValuationDiscount 진입(대조군 0 vs 1) + ValuationBubble 청산 + 재진입 차단 · LGES 고평가 진입 보류(대조군 1 vs 0) · US NVDA 진입 + TSLA 과열 매수 0 · 시그널 합성/지배 근거/근거 무결성 ·
+  δ=0: 조회 10만 회 0B · 밸류+뉴스 결속 KRX 정산 10만 회 0B(측정 구간 AI 체결 ≥10) · IL 할당 지점 0 · 4 작성자 × 2 판독자 20만 게시 찢김 0.
+  결함 주입 확인: 진입 보류 제거 · 밴드 이탈 버블 승격 무력화 · seqlock 재검 제거 → 4건 실패 검출(사보타주 빌드 오류 0 확인) 후 원복.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) ·
+  전체 스위트 5,174 통과 + 6 건너뜀(옵트인) · 실패 0 · 3분 43초(a5c57b2 리베이스 후 · 격리 worktree).
+- 한계(정직): 재무 수치는 시드 근사 예시치(실 DART/SEC 재무 · 컨센서스 피드 미결선 · 투자 판단 근거 아님 — 요약에 '시드 프로필' 표기) · 시드 기준일 + 180일(2027-03-30) 경과 시 자동 만료 →
+  아레나 밸류 기여 0 · 업종 평균 PER 은 종목별 고정 상수 · PEG · DCF 미구현 · 합성 시세가 시작가에서 크게 이탈하면 등급이 실제와 무관하게 변동(호가 재판정이므로 의도된 동작) · UI 배지/포트 노출 없음(근거 요약 문장만).
+- 불변: liveArmed:false(밸류 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(Razor/포트 변경 0) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
