@@ -4139,3 +4139,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 플루토 프로 거버너 기본 켜짐(Arena.PlutoGovernanceEnabled) · /dualarena 토글 = 런타임 상태(이 출하본에는 영속화 미포함 — §177 에서 구현) ·
   거시 역풍 입력 실 피드 미결선 · 업비트 스트림 기본 꺼짐 · 합성 시세는 데모 전용.
 - 한계(정직): 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
+
+## 177. v12.18.69-DEV — 플루토 프로 거버너 토글 영속화(로컬 DB 설정 키 · 비동기 저장 · 재기동 복원 · Pure Shell 포트) (2026-10-23)
+
+- 순서(정직): 오더상 §176 지정이나 같은 날 v12.18.68-GM 출하 오더가 §176 을 먼저 사용(12.18.68 봉인본에 이 변경 미포함) → §177.
+- 오더 전제 검증: 호스트 RuntimeConfig precedence = 환경변수 → LocalDatabase 설정 테이블(%LOCALAPPDATA%\StockManager\portfolio.db) → 기본값 이 이미 기동 시
+  `cfg.GetBool("Arena.PlutoGovernanceEnabled", true)` 로 3대 엔진에 주입(§175) → 복원 경로는 기존 그대로 · 이번 변경 = 같은 키에 '저장'만 추가.
+  IBrokerSettingsStatusPort 는 브로커 자격증명 상태 판독 전용이라 부적합 → 신규 좁은 포트.
+- 신규 MS2E.UI.Portable/Ports/Trading/ArenaPreferencePort.cs: IArenaPreferencePort(StoredGovernanceEnabled · SaveGovernanceEnabledAsync(bool) · SaveFailures · IsWired 기본 true) +
+  UnwiredArenaPreferencePort(저장소 없는 셸/하네스 null 객체 · 저장 = false · 기록 0). 임의 키/문자열 기입 멤버 0.
+- 신규 StockManager/Adapters/ArenaPreferenceAdapter: 고정 키 Arena.PlutoGovernanceEnabled · 값 "true"/"false" · 단일 작성자 드레인 태스크(스레드 풀)가 원하는 값 ↔ 기록 값이
+  같아질 때까지 SetSetting(연속 토글 = 최종값 수렴 · 역순 기입 0 · 드레인 종료는 잠금 안에서 표시 → 종료 직후 저장 유실 0) · 실패 = 계수 + false(자동 재시도 없음).
+  UiSettingWriteGuard 허용 목록 무변경 — 범용 UI 기입 포트로는 Arena.* 여전히 거부(Arena.UpbitStreamEnabled 등 네트워크 스위치 덮어쓰기 경로 0).
+- 호스트: BlazorHomeForm DI `IArenaPreferencePort` = ArenaPreferenceAdapter(db).
+- DualArenaPage: `@inject IArenaPreferencePort Prefs`(직접 주입 — 첫 시도의 IServiceProvider 선택 해석은 기존 Pure Shell 가드(주입 = 아레나 포트만)가 서비스 로케이터로 거부 → 직접 주입 + null 객체로 교정) ·
+  토글 → 3대 포트 적용 후 await 저장(UI 무차단 · 늦게 끝난 이전 저장 결과 표시 무시) · 저장 상태 뱃지(💾 저장값 ON/OFF · 저장값 없음 — 기동 설정값(기본 ON) · 저장 중 · 저장됨 — 재기동 후에도 유지 ·
+  저장 실패 — 재기동 시 이전 저장값으로 복귀 · 저장소 미결선).
+- 테스트 StockManager.Tests/Cognitive/PlutoGovernancePersistenceTests.cs 11건: 왕복 · 재기동(새 LocalDatabase) 유지 · 연속 토글 200회 최종값 · 4 스레드 동시 저장 수렴 · 고정 키만 기입(타 설정 무변경) ·
+  해석 불가 값 = null · 폐기된 연결 = false + 계수 + 기록 0 → 새 연결 재개 · 호스트와 같은 RuntimeConfig 복원(미저장 = true · 저장 false = 엔진 정지 주입) · 호스트 소스 결선 ·
+  bUnit 토글 OFF→ON→OFF 저장 + 뱃지 · 기동 저장값 뱃지 · 미결선/실패 뱃지 · null 객체 무기록 · 가드 미확장 · 포트 표면/RCL DB 참조 0.
+  기존 DualArenaPage 렌더 테스트 5곳 = null 객체 등록 · Pure Shell 주입 가드 기대값 + IArenaPreferencePort.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,247 통과 + 6 건너뜀 · 실패 0 · 4분 36초 · infra-scan 0(기준 117) · 래칫 coupled=40/40.
+- 한계(정직): 같은 이름 환경변수가 있으면 저장값보다 우선(기존 precedence) · 저장은 3대 아레나 공통 1개 키(아레나별 개별 선호 없음) · 실 앱 재기동 육안 확인 미실시(단위/통합 테스트로 검증).
+- 불변: liveArmed:false(선호 = AI 가상 원장 진입 판정 스위치 · 무장/브로커 키 기입 수단 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

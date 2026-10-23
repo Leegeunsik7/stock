@@ -1740,6 +1740,9 @@ namespace StockManager.Blazor
             krxArena.EnableGovernance(plutoGovernance);
             usArena.EnableGovernance(plutoGovernance);
             cryptoArena.EnableGovernance(plutoGovernance);
+            // [v12.18.69-DEV] 토글 영속화 — /dualarena 토글 → IArenaPreferencePort → 같은 DB 설정 키(고정 키 1개 · 비동기 · 연속 토글 최종값 수렴).
+            //   재기동 시 위 cfg.GetBool 이 저장값을 읽어 복원(환경변수 → DB 설정 → 기본 true). UiSettingWriteGuard 허용 목록 무변경(임의 키 기입 경로 0).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPreferencePort>(new StockManager.Adapters.ArenaPreferenceAdapter(db));
             if (cfg.GetBool("Arena.UpbitStreamEnabled", false))
             {
                 var upbitStream = new StockManager.Engines.Feeds.Crypto.UpbitWebSocketFeedAdapter(new StockManager.Engines.Feeds.Crypto.UpbitMarketState(), tap: cryptoArenaFeeder.OnUpbitFrame);

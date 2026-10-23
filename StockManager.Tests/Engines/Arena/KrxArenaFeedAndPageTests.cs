@@ -332,6 +332,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton(port);
             ctx.Services.AddSingleton<IUsArenaPort>(new UsArenaPortAdapter(new StockManager.Engines.Arena.Us.UsTechArenaEngine()));   // [v12.18.62-DEV] 미국 모드 탭 포트(국내 기본 모드 · 미사용)
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new StockManager.Engines.Arena.Crypto.UpbitCryptoArenaEngine()));   // [v12.18.66-DEV] 가상자산 탭 포트(미사용)
+            ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);   // [v12.18.69-DEV] 토글 영속화 포트(저장소 미결선 null 객체)
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 
@@ -412,7 +413,7 @@ namespace StockManager.Tests.Engines.Arena
         {
             const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
             var injected = typeof(DualArenaPage).GetProperties(all).Where(p => p.GetCustomAttribute<InjectAttribute>() is not null).Select(p => p.PropertyType.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { nameof(ICryptoArenaPort), nameof(IKrxArenaPort), nameof(IUsArenaPort) }, injected);   // [v12.18.62-DEV] 미국 모드 탭 = IUsArenaPort · [v12.18.66-DEV] 가상자산 탭 = ICryptoArenaPort 추가
+            Assert.Equal(new[] { nameof(IArenaPreferencePort), nameof(ICryptoArenaPort), nameof(IKrxArenaPort), nameof(IUsArenaPort) }, injected);   // [v12.18.69-DEV] 거버너 토글 영속화 = IArenaPreferencePort · [v12.18.62-DEV] 미국 모드 탭 = IUsArenaPort · [v12.18.66-DEV] 가상자산 탭 = ICryptoArenaPort 추가
 
             var shell = typeof(KrxArenaEngine).Assembly.GetType("StockManager.Blazor.Pages.DualArena");
             Assert.NotNull(shell);

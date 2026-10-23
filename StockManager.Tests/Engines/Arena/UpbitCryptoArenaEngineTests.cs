@@ -752,6 +752,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton<IKrxArenaPort>(new KrxArenaPortAdapter(krx));
             ctx.Services.AddSingleton<IUsArenaPort>(new UsArenaPortAdapter(new StockManager.Engines.Arena.Us.UsTechArenaEngine()));
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(e, f));
+            ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);   // [v12.18.69-DEV] 토글 영속화 포트(저장소 미결선 null 객체)
             var cut = ctx.RenderComponent<MS2E.UI.Portable.Pages.Trading.DualArenaPage>();
             Assert.Empty(cut.FindAll(".da-crypto"));
 

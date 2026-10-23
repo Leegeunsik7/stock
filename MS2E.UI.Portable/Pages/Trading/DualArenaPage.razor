@@ -16,11 +16,14 @@
    [v12.18.68-DEV] 플루토 프로 거버너: 헤더 [🧠 플루토 프로 거버너 (ON/OFF)] 토글 = 3대 포트 SetGovernanceEnabled 동시 적용(전부 켜짐 → 끔 · 그 외 → 전부 켬) ·
      세션 뱃지 옆 시장 국면 뱃지(📈 상승추세 · 📉 하락추세 · ⏸️ 박스권 · 🚨 패닉차단 · 꺼짐 = '표시만') · 연패/[15분 쿨다운 중] 뱃지 ·
      AI 근거 카드 감점 태그([과열 감점 -35] · [매도벽 감점 -20] · [거시역풍 감점 -15]) · 확신도 원→최종 · 동적 비중 · 연패 축소 ·
-     청산 카드 = 플루토 자가 회고 문장(승리 녹색 · 패착 적색 테두리). 판독 = 포트 DTO 만(엔진 참조 0 · 주문 경로 무변경). *@
+     청산 카드 = 플루토 자가 회고 문장(승리 녹색 · 패착 적색 테두리). 판독 = 포트 DTO 만(엔진 참조 0 · 주문 경로 무변경).
+   [v12.18.69-DEV] 토글 영속화: IArenaPreferencePort(직접 주입 · 미결선 null 객체 = '저장소 미결선' 정직 표시) 로 토글 결과를 비동기 저장(UI 무차단) →
+     재기동 시 호스트가 같은 설정 키로 복원. 저장 상태 뱃지 = 💾 저장됨 / 저장 중 / 저장 실패(재기동 시 이전 값) / 미결선. *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
 @inject ICryptoArenaPort CryptoPort
+@inject IArenaPreferencePort Prefs
 
 <div class="top">
     <div class="hello">
@@ -41,6 +44,7 @@
         🧠 플루토 프로 거버너 <b>(@(govOn == 3 ? "ON" : govOn == 0 ? "OFF" : "일부 ON"))</b>
     </button>
     <span class="ar-sub">국면 판정 · 악마의 변호인 감점 · 동적 비중 5~25% · 연패 쿨다운 — 3대 아레나 동시 적용(다음 정산부터 · 가상 원장 전용)</span>
+    <span class="da-badge da-gov-persist @_persistCss" data-persist="@_persistCss">@_persistText</span>
     @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
 </div>
 
@@ -486,6 +490,7 @@ else
 
     private int _mode = ModeKrx;
     private string? _govMsg;
+    private string _persistCss = "idle", _persistText = "";
     private long _symbol;
     private long _qty = 10;
     private string? _msg;
@@ -634,7 +639,7 @@ else
     private static string Css(long x) => x > 0 ? "ar-up" : x < 0 ? "ar-down" : "";
 
     // [v12.18.68-DEV] 거버너 토글 — 3대 포트 동시 적용(전부 켜짐 → 전부 끔 · 그 외(꺼짐/일부) → 전부 켬). 미지원 포트 = 안내(가짜 상태 표시 0).
-    private void ToggleGovernance()
+    private async Task ToggleGovernance()
     {
         bool target = !(Port.Governance.Enabled && UsPort.Governance.Enabled && CryptoPort.Governance.Enabled);
         bool k = Port.SetGovernanceEnabled(target), u = UsPort.SetGovernanceEnabled(target), c = CryptoPort.SetGovernanceEnabled(target);
@@ -643,6 +648,31 @@ else
                       : "플루토 프로 거버너 정지 — AI 는 기존 고정 비중 · 고정 확신도 규칙으로 매매합니다")
             : "일부 아레나가 거버너 제어를 지원하지 않습니다(" + (k ? "" : "국내 ") + (u ? "" : "미국 ") + (c ? "" : "코인 ") + "미결선)";
         System.Threading.Volatile.Write(ref _drawn, -1);
+        await Persist(target);
+    }
+
+    // [v12.18.69-DEV] 토글 결과 저장(스레드 풀 · 연속 토글 = 포트가 최종값으로 수렴 · 늦게 끝난 이전 저장의 결과 표시는 무시).
+    private int _persistSeq;
+    private async Task Persist(bool target)
+    {
+        if (!Prefs.IsWired) return;
+        int seq = ++_persistSeq;
+        _persistCss = "saving"; _persistText = "💾 저장 중…";
+        bool ok;
+        try { ok = await Prefs.SaveGovernanceEnabledAsync(target); }
+        catch (Exception) { ok = false; }
+        if (seq != _persistSeq) return;
+        (_persistCss, _persistText) = ok
+            ? ("ok", "💾 저장됨 — 재기동 후에도 " + (target ? "ON" : "OFF") + " 유지")
+            : ("bad", "저장 실패 — 재기동 시 이전 저장값으로 복귀");
+    }
+
+    private void InitPersistBadge()
+    {
+        if (!Prefs.IsWired) { _persistCss = "none"; _persistText = "저장소 미결선 — 재기동 시 설정 기본값으로 복귀"; return; }
+        bool? stored = Prefs.StoredGovernanceEnabled;
+        _persistCss = "ok";
+        _persistText = stored is { } s ? "💾 저장값 " + (s ? "ON" : "OFF") + " — 재기동 후에도 유지" : "💾 저장값 없음 — 기동 설정값(기본 ON) 사용";
     }
 
     // [v12.18.68-DEV] 세션 뱃지 옆 국면 · 연패 · 쿨다운 뱃지(거버너 꺼짐 = 국면 '표시만' · 차단 안 함).
@@ -710,7 +740,10 @@ else
     private static string WinRate(int wins, int losses, long winRateBp) => wins + losses == 0 ? "-" : (winRateBp / 100.0).ToString("F1") + "% (" + wins + "승 " + losses + "패)";
 
     protected override void OnInitialized()
-        => _timer = new System.Threading.Timer(_ => RenderPump(), null, RenderPumpMs, RenderPumpMs);
+    {
+        InitPersistBadge();
+        _timer = new System.Threading.Timer(_ => RenderPump(), null, RenderPumpMs, RenderPumpMs);
+    }
 
     // 레벨 트리거 렌더 펌프(타이머 스레드): 활성 모드 포트의 그려진 버전 ≠ 현재 버전 ∧ 진행 중 렌더 없음 → InvokeAsync 1건.
     private void RenderPump()
@@ -731,6 +764,8 @@ else
 <style>
     .da-gov-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px; }
     .da-gov-toggle { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 18px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
+    .da-gov-persist.saving { background: #616161; color: #fff; } .da-gov-persist.ok { background: #263238; color: #a5d6a7; }
+    .da-gov-persist.bad { background: #6d4c41; color: #fff; } .da-gov-persist.none { background: #3a3f4b; color: #bbb; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }

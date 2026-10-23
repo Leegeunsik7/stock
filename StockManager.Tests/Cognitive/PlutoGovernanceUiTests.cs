@@ -55,6 +55,7 @@ namespace StockManager.Tests.Cognitive
             ctx.Services.AddSingleton(krx);
             ctx.Services.AddSingleton(us);
             ctx.Services.AddSingleton(crypto);
+            ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);   // [v12.18.69-DEV] 토글 영속화 포트(저장소 미결선 null 객체)
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 

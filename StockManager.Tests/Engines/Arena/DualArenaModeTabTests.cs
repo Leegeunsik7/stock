@@ -42,6 +42,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton(krx);
             ctx.Services.AddSingleton(us);
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new StockManager.Engines.Arena.Crypto.UpbitCryptoArenaEngine()));   // [v12.18.66-DEV] 3번째 탭 포트(미사용)
+            ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);   // [v12.18.69-DEV] 토글 영속화 포트(저장소 미결선 null 객체)
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 
