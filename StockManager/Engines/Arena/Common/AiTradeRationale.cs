@@ -15,9 +15,12 @@
 //   [v12.18.66-DEV] 통화 Crypto(업비트 가상자산 아레나): 가격 = 원 raw 10^8 · 수량 = 코인 raw 10^8(1 = 0.00000001) · 손익 = 원 raw 10^8.
 //     구성요소 슬롯 = ImbalanceBp ← L2 오더북 불균형 · MomentumBp ← 24시간 체결 모멘텀 · SurgeBp ← 테이커 체결 강도 · MacroBp ← 김치프리미엄/변동성 감응.
 //     진입 사유 TradeFlowMomentum(16) · KimchiVolatility(17)(오더북 불균형 주도 = OrderbookImbalance 공용). 오더북 두께(BidDepthWon · AskDepthWon = 최우선 잔량 원화 환산) 결속.
+//   [v12.18.67-DEV] 플루토 거버넌스(Governance · PlutoGovernanceTag 값 타입): 진입 = 국면 뱃지 · 악마의 변호인 감점 내역 · 원/최종 확신도 · 동적 비중 ·
+//     청산 = 청산 국면 · 연패 · 자가 회고(PlutoPostMortem · 진입 근거 순번 1:1). 진입 ConfidenceScore = 감점 후 확신도. 요약 끝에 국면/감점/회고 문장 결속.
 // ============================================================================
 using System;
 using System.Globalization;
+using StockManager.Engines.Cognitive.Governance;
 using StockManager.Engines.Cognitive.News;
 using StockManager.Engines.Cognitive.Valuation;
 
@@ -113,12 +116,16 @@ namespace StockManager.Engines.Arena.Common
         public readonly PlutoValuationTag Valuation;
         /// <summary>[v12.18.66-DEV] 체결 시점 최우선 매수/매도 잔량의 원화 환산(원 · Crypto 전용 · 그 밖 = 0).</summary>
         public readonly long BidDepthWon, AskDepthWon;
+        /// <summary>[v12.18.67-DEV] 체결 시점 플루토 거버넌스(국면 · 감점 · 비중 · 회고 · default = 미가동).</summary>
+        public readonly PlutoGovernanceTag Governance;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
             int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw,
-            in PlutoNewsTag news = default, in PlutoValuationTag valuation = default, long bidDepthWon = 0, long askDepthWon = 0)
+            in PlutoNewsTag news = default, in PlutoValuationTag valuation = default, long bidDepthWon = 0, long askDepthWon = 0,
+            in PlutoGovernanceTag governance = default)
         {
+            Governance = governance;
             BidDepthWon = bidDepthWon; AskDepthWon = askDepthWon;
             Currency = currency;
             News = news;
@@ -137,6 +144,7 @@ namespace StockManager.Engines.Arena.Common
         /// 손절가 &lt; 목표가 · 손익비 &gt; 0 · 매수는 손절가 &lt; 체결가 &lt; 목표가.
         /// [v12.18.63-DEV] 뉴스 태그 무결 · 뉴스 종목 = 체결 종목(뉴스 있을 때) · NewsCatalyst = 실효 양수 · NewsShock = 충격 수준 악재.
         /// [v12.18.65-DEV] 밸류에이션 태그 무결 · 판정 종목 = 체결 종목 · ValuationDiscount = 점수 양수 · ValuationBubble = 극심한 과열.
+        /// [v12.18.67-DEV] 거버넌스 태그 무결 · 가동 시 매수 = 회고 없음 ∧ 확신도 = 감점 후 확신도 · 매도 = 회고 있음 ∧ 회고 청산 사유 = 체결 사유.
         /// </summary>
         public bool IsWellFormed =>
             Seq > 0 && Symbol > 0 && Qty > 0 && PriceWon > 0 && KstTicks > 0
@@ -151,7 +159,11 @@ namespace StockManager.Engines.Arena.Common
             && Valuation.IsWellFormed && (Valuation.Factor.Symbol == 0 || Valuation.Factor.Symbol == Symbol)
             && (TriggerType != ArenaTrigger.ValuationDiscount || Valuation.Score > 0)
             && (TriggerType != ArenaTrigger.ValuationBubble || Valuation.IsBubble)
-            && BidDepthWon >= 0 && AskDepthWon >= 0;
+            && BidDepthWon >= 0 && AskDepthWon >= 0
+            && Governance.IsWellFormed
+            && (!Governance.Governed || (Side == 1
+                ? !Governance.PostMortem.HasReview && Governance.Confidence == ConfidenceScore
+                : Governance.PostMortem.HasReview && Governance.PostMortem.ExitTrigger == TriggerType));
 
         /// <summary>한국어 설명 요약(콜드 경로 — 호출마다 문자열 조립).</summary>
         public string HumanReadableSummary => AiRationaleText.Compose(in this);
@@ -175,7 +187,8 @@ namespace StockManager.Engines.Arena.Common
                 _ => ComposeKrw(in r),
             };
             if (r.News.HasCatalyst) core += " " + ComposeNews(in r.News);
-            return r.Valuation.HasValuation ? core + " " + ComposeValuation(in r.Valuation) : core;
+            if (r.Valuation.HasValuation) core += " " + ComposeValuation(in r.Valuation);
+            return r.Governance.Governed ? core + " " + PlutoGovernanceText.Compose(in r.Governance) : core;
         }
 
         /// <summary>[v12.18.65-DEV] 플루토 밸류에이션 재무 근거 문장(가격 = 판정 시장 통화).</summary>

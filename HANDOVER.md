@@ -4068,3 +4068,31 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): UpbitCryptoArenaEngine · CryptoArenaQuoteFeeder · 플루토 촉매/밸류에이션 · /dualarena 3탭 포함 · 업비트 스트림 기본 꺼짐(Arena.UpbitStreamEnabled) · 합성 시세는 데모 전용.
 - 한계(정직): 실 업비트 스트림 장시간 소크 미확인 · 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종(.claude/* 2종 · LiveWireKisLongSoakTests.cs) 미스테이징 · 원격 푸시 없음.
+
+## 174. v12.18.67-DEV — 플루토 브레인 고도화: 시장 국면 판정 · 악마의 변호인 · 동적 변동성 사이징 · 자가 거래 회고 · 아레나 3대 엔진 결속 (2026-10-23)
+
+- 오더 전제 검증: KrxArenaEngine · UsTechArenaEngine · UpbitCryptoArenaEngine · AiTradeRationale · ZeroAllocProbe 실재 · Engines/Cognitive/Regime · Governance 부재 → 신설.
+  `MarketRegime` 이름은 MS2E.Core.MarketRegime(src/01_Core · 전역 using)과 충돌 → 사용 파일에 using 별칭(`MarketRegime = StockManager.Engines.Cognitive.Regime.MarketRegime`)으로 구분(기존 타입 무변경).
+- 신규 StockManager/Engines/Cognitive/Regime/:
+  · MarketRegime: Unknown · TrendingBull · TrendingBear · ChoppyRange · PanicLiquidation(+ 라벨 · 뱃지 BULL/BEAR/RANGE/PANIC · 패닉 = 신규 매수 차단).
+  · PlutoRegimeClassifier: 종목별 값 타입 상태(PlutoRegimeState · 엔진 종목 표 내장) · 빠른/느린 EWMA(α=1/8 · 1/32 · Int128 ×2^16 — 원 raw 10^8 가격도 오버플로 0) · ATR(|Δ중간가| cbp EWMA) · RSI · 호가 불균형 지속 EWMA · 이격도.
+    후보: 패닉(ATR ≥ 80bp ∧ 느린 EWMA 하회 ∨ ATR ≥ 40bp ∧ 불균형 ≤ −5000 ∧ 역배열) > 상승(이격 ≥ +15bp ∧ 정배열 ∧ 불균형 > −3000) > 하락(대칭) > 박스. 워밍업 8틱 · 패닉 즉시 · 그 외 3틱 확인.
+    Reweight = 국면별 모멘텀/불균형 기여 배율(상승 130/100 · 하락 130/80 · 박스 50/130 · 패닉 150/50 · 판정 전 무변경).
+- 신규 StockManager/Engines/Cognitive/Governance/:
+  · PlutoDevilsAdvocateFilter: 반대 논리 3종 — 과열(RSI > 70 ∧ 이격도 > 108% · −35) · 상단 매도 호가벽(매도1 ≥ 매수1 × 3 · −20) · 거시 역풍(미 10년물 ≥ +10bp ∨ 달러 인덱스 ≥ +50bp · −15).
+    감점 후 확신도 < 30 ∨ 반대 논리 ≥ 2종 = 거부권 차단. ※ 이격도는 일봉 피드 미결선이라 느린 틱 EWMA 대비(‘5일 이격도’ 근사 · 정직 표기).
+  · PlutoDynamicSizer: 비중 = 5% + 20% × (확신도 − 30)/70 × min(1, 20bp/ATR) → [5%, 25%] · 전량 청산 손익 ≤ 0 = 연패 +1(엔진 승패 기준) · 연패 ≥ 2 = 비중 50% 축소 + 15분 쿨다운(엔진 KST 시각 · 자체 시계 0).
+  · PlutoPostMortemReviewer: 진입 메모(PlutoEntryMemo: 진입 근거 순번 · 시각 · 원가 · 국면 · 반대 논리 · 감점 · 비중)로 청산 회고(PlutoPostMortem · 판정 · 수익률 bp · 보유 시간 · 요인 플래그 · 교훈 9종 우선순위 · 부분 청산 = IsFinal false).
+  · PlutoCognitiveGovernor: 패닉(원점수 기준 하드 차단) → 국면 재가중 점수 미달 → 쿨다운 → 악마의 변호인 → 동적 비중 · 결과 PlutoGovernanceTag(국면 · 감점 내역 · 원/최종 확신도 · 비중 · 연패 · 지표 · 회고) · 한국어 문장 = 콜드 경로.
+- 엔진 결속(KRX · US · Crypto 공통 · EnableGovernance(bool) 선택 · 기본 정지 = 기존 동작 동일): 유효 호가마다 국면 갱신 · AI 진입 직전 Govern(차단 사유별 계수) · 진입 비중 = 동적 bp(정지 시 PositionWeightBp) ·
+  청산 = GovernExit(전량 청산 연패 집계 + 회고) · SetMacroHeadwind(금리 · 달러) · TryReadRegime/RegimeOf · TryReadGovernor(PlutoGovernorStats · seqlock) · SetCapital = 연패/쿨다운/계수 초기화.
+  US 불균형 슬롯 = GapFlowBp(갭+호가 불균형 합성). 거버넌스 태그는 AiTradeRationale.Governance 로 같은 seqlock 쓰기 창 안에서 근거와 원자 게시.
+- AiTradeRationale: Governance 필드 · IsWellFormed(가동 매수 = 확신도 = 감점 후 확신도 ∧ 회고 없음 · 가동 매도 = 회고 필수 ∧ 회고 사유 = 체결 사유) · 요약 끝 "[국면 BULL] … 악마의 변호인 … 확신도 a→b · 동적 비중 n%" / "플루토 자가 회고 … 진입 근거 #n … 교훈".
+  UI 근거 카드는 기존 HumanReadableSummary 투영으로 자동 결속(포트/RCL 무변경 → 래칫 불변).
+- 테스트 StockManager.Tests/Cognitive/PlutoRegimeAndGovernorTests.cs 26건: 국면 워밍업/무효 호가 · 상승/하락/박스(무플래핑) · 상승→패닉 즉시 · 상승→하락 3틱 확인 · 급등 = 과열 지표 · 재가중 산식 ·
+  반대 논리 경계값/감점/거부권 · 거버너 차단 순서 · 사이저 단조/ATR/연패 축소 전수 · 쿨다운 경계 · 회고 교훈 9종 · KRX 패닉 반등(미가동 쌍둥이 진입 vs 가동 차단 · PanicBlocks 1) ·
+  KRX 손절 회고 1:1(진입 순번) → 연패 2 → 쿨다운 차단 → 15분 뒤 50% 축소 진입 · US/Crypto 가동 근거 무결 · 위조 근거 거부 · δ=0 거버너 파이프라인 10만 0B · 가동 KRX/Crypto 정산 10만 틱 0B(측정 구간 승인 진입 발생).
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,226 통과 + 6 건너뜀 · 실패 0 · 5분 32초 · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45).
+- 한계(정직): 국면/과열 지표는 틱 기반 EWMA(일봉 · 5일 이동평균 피드 미결선) · 거시 역풍 입력 = SetMacroHeadwind 주입 API 만(실 금리/달러 피드 미결선 · 호스트 미배선) ·
+  거버넌스는 엔진 API 로만 가동(호스트 DI/UI 토글 미배선 · 기본 정지) · 회고 교훈은 규칙 기반(학습 피드백 루프 없음) · 결과는 투자 판단 근거 아님.
+- 불변: liveArmed:false(판정일 뿐 주문 수단 0 · 외부 송출 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

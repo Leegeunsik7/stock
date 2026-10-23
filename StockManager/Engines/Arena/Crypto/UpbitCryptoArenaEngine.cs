@@ -22,12 +22,17 @@
 //
 //   ★δ=0: OnQuote/OnTrade/Drain/SubmitHuman/판독 경로 힙 할당 0(고정 배열 · 값 타입 · Int128 · LINQ/박싱/클로저/문자열 0).
 //   ★단일 작성자: OnQuote/OnTrade/Drain/SetCapital 은 정산 스레드 1개만. ★liveArmed:false — 업비트 주문/인증 API 참조 0(순수 인메모리 가상 대결).
+//   [v12.18.67-DEV] 플루토 거버넌스(EnableGovernance · 선택): 마켓별 국면 판정(매 유효 호가 · Int128 EWMA) → AI 진입 직전 PlutoCognitiveGovernor(국면 재가중 · 패닉 차단 ·
+//     연패 쿨다운(엔진 KST 시각) · 악마의 변호인 · 동적 비중 5~25%) · 청산 = 자가 회고 + 연패 집계 · 근거 Governance 원자 게시. 정지(기본) = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena.Common;
 using StockManager.Engines.Brokers.Crypto;
+using StockManager.Engines.Cognitive.Governance;
+using StockManager.Engines.Cognitive.Regime;
+using MarketRegime = StockManager.Engines.Cognitive.Regime.MarketRegime;   // MS2E.Core.MarketRegime(전역 using) 동명 타입과 구분
 using StockManager.Engines.Feeds;
 using StockManager.Engines.Pricing;
 
@@ -88,8 +93,8 @@ namespace StockManager.Engines.Arena.Crypto
         private const int SeqlockRetries = 64;
         private const int QueueMask = HumanQueueCapacity - 1;
 
-        private struct Sym { public long Symbol, Bid, Ask, BidQty, AskQty, QuoteUtc, EmaMid, LastMid, BuyFlow, SellFlow; public int VolX16, Seen; }
-        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl; public int SymIdx, RiskRewardX100; }
+        private struct Sym { public long Symbol, Bid, Ask, BidQty, AskQty, QuoteUtc, EmaMid, LastMid, BuyFlow, SellFlow; public int VolX16, Seen; public PlutoRegimeState Regime; }
+        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl; public int SymIdx, RiskRewardX100; public PlutoEntryMemo Memo; }
         private struct HumanCell { public long Seq, Symbol, Qty; public int Side; }
 
         private sealed class Book
@@ -109,6 +114,11 @@ namespace StockManager.Engines.Arena.Crypto
         private long _ticks, _trades, _dropped, _lastKstTicks, _lastUtc;
         private CryptoSessionPhase _phase = CryptoSessionPhase.Invalid;
         private int _kimchiBp, _globalBp;
+        private bool _governed;
+        private int _govUs10yBp, _govDxyBp;
+        private PlutoSizerState _sizer;
+        private long _govApproved, _govPanic, _govCooldown, _govVeto;
+        private PlutoGovernorStats _govSnap;
         private long _ver;
         private CryptoArenaSnapshot _snap;
 
@@ -139,6 +149,8 @@ namespace StockManager.Engines.Arena.Crypto
                 b.Realized = b.Fees = b.MddBp = b.Fills = b.Rejects = 0;
             }
             Array.Clear(_rationales);
+            _sizer = default;                         // [v12.18.67-DEV] 연패/쿨다운 · 거버넌스 계수 초기화
+            _govApproved = _govPanic = _govCooldown = _govVeto = 0;
             _rationaleCount = 0;
             for (int i = 0; i < MaxSymbols; i++) _syms[i] = new Sym { Symbol = CryptoArenaUniverse.Symbol(i) };
             _ticks = _trades = _dropped = 0;
@@ -151,6 +163,52 @@ namespace StockManager.Engines.Arena.Crypto
         {
             Volatile.Write(ref _kimchiBp, Math.Clamp(kimchiPremiumBp, -10000, 10000));
             Volatile.Write(ref _globalBp, Math.Clamp(globalChangeBp, -10000, 10000));
+        }
+
+        /// <summary>[v12.18.67-DEV] 플루토 거버넌스 가동/정지(국면 · 악마의 변호인 · 동적 사이징 · 자가 회고 · 다음 정산부터 · 정지 = 기존 동작 동일).</summary>
+        public void EnableGovernance(bool enabled) => Volatile.Write(ref _governed, enabled);
+
+        public bool GovernanceEnabled => Volatile.Read(ref _governed);
+
+        /// <summary>[v12.18.67-DEV] 악마의 변호인 거시 역풍 입력(bp · ±10000 클램프 · 다음 정산부터): 미 10년물 금리 변화 · 달러 인덱스 변화.</summary>
+        public void SetMacroHeadwind(int us10yChangeBp, int dollarIndexChangeBp)
+        {
+            Volatile.Write(ref _govUs10yBp, Math.Clamp(us10yChangeBp, -10000, 10000));
+            Volatile.Write(ref _govDxyBp, Math.Clamp(dollarIndexChangeBp, -10000, 10000));
+        }
+
+        /// <summary>[v12.18.67-DEV] 종목 현재 국면 상태(seqlock 판독 · δ=0 · 미등록/경합 상한 초과 = false).</summary>
+        public bool TryReadRegime(long symbol, out PlutoRegimeState state)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                int i = CryptoArenaUniverse.IndexOf(symbol);
+                state = i >= 0 ? _syms[i].Regime : default;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return i >= 0;
+            }
+            state = default;
+            return false;
+        }
+
+        /// <summary>[v12.18.67-DEV] 종목 현재 국면(판독 실패 = Unknown).</summary>
+        public MarketRegime RegimeOf(long symbol) => TryReadRegime(symbol, out var s) ? s.Regime : MarketRegime.Unknown;
+
+        /// <summary>[v12.18.67-DEV] 거버넌스 계수 판독(seqlock · 경합 상한 초과 = false).</summary>
+        public bool TryReadGovernor(out PlutoGovernorStats stats)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                stats = _govSnap;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return true;
+            }
+            stats = default;
+            return false;
         }
 
         // ── 휴먼 주문 큐(Vyukov 유계 MPSC · 할당 0) ──────────────────────────────────
@@ -262,6 +320,7 @@ namespace StockManager.Engines.Arena.Crypto
                 _ticks++;
                 ref Sym s = ref _syms[si];
                 s.Bid = bidRaw; s.Ask = askRaw; s.BidQty = bidQtyRaw; s.AskQty = askQtyRaw; s.QuoteUtc = utcMicros;
+                PlutoRegimeClassifier.Update(ref s.Regime, bidRaw, askRaw, bidQtyRaw, askQtyRaw);
                 long mid = bidRaw + (askRaw - bidRaw) / 2;
                 if (s.LastMid > 0)
                 {
@@ -327,34 +386,48 @@ namespace StockManager.Engines.Arena.Crypto
                 else if (s.Bid <= p.Stop) exit = ArenaTrigger.StopLoss;
                 else if (sig.Score <= ExitScore) exit = ArenaTrigger.SignalReversal;
                 if (exit == ArenaTrigger.None) return;
-                long target = p.Target, stop = p.Stop; int rr = p.RiskRewardX100;
+                long target = p.Target, stop = p.Stop, priorPnl = p.TradePnl; int rr = p.RiskRewardX100;
+                var memo = p.Memo;
                 long sellQty = ExitQty(p.Qty, s.BidQty, s.Bid);
                 if (sellQty <= 0) return;                                   // 매수1 잔량 부족 — 먼지 잔량 대신 다음 호가 대기
                 if (Sell(b, si, sellQty, out long filled, out long exitPx, out long pnl) != CryptoArenaReject.None) return;
                 int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100) : 100;
+                var exitGov = GovernExit(in memo, exit, si, priorPnl + pnl, FindPos(b, s.Symbol) < 0, kst);
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, exitPx, kst, exit, sig.Score, conf,
                     target, stop, rr, sig.KimchiVolBp, sig.ImbalanceBp, sig.FlowBp, sig.MomentumBp, pnl, ArenaCurrency.Crypto,
-                    default, default, bidDepth, askDepth));
+                    default, default, bidDepth, askDepth, in exitGov));
                 return;
             }
-            if (sig.Score < EntryScore || b.Count >= MaxAiPositions) return;
-            int confidence = Math.Clamp(sig.Score / 100, 0, 100);
+            if (b.Count >= MaxAiPositions) return;
+            int score = sig.Score, confidence, weightBp = PositionWeightBp;
+            PlutoGovernanceTag gov = default;
+            if (Volatile.Read(ref _governed))
+            {
+                if (!Govern(si, sig.Score, sig.MomentumBp, MomentumWeight, sig.ImbalanceBp, ImbalanceWeight, kst, out gov)) return;
+                score = gov.AdjustedScore; confidence = gov.Confidence; weightBp = gov.WeightBp;
+            }
+            else
+            {
+                if (sig.Score < EntryScore) return;
+                confidence = Math.Clamp(sig.Score / 100, 0, 100);
+            }
             long tgt = AlignUpRaw(s.Ask, TargetBaseBp + TargetPerConfidenceBp * confidence);
             long stp = AlignDownRaw(s.Ask, -StopBp);
             if (stp <= 0 || stp >= s.Ask || tgt <= s.Ask) return;
             if (CryptoPaperExchange.SlippedMarketPrice(CryptoOrderSide.Buy, s.Bid, s.Ask, SlippageBp, out long fillPx) != CryptoPaperStatus.Filled || fillPx >= tgt) return;
             int rrX100 = (int)Math.Min((tgt - fillPx) * 100 / (fillPx - stp), 100_000);
             if (rrX100 <= 0) return;
-            long budget = Math.Min(b.Cash, (long)((Int128)Equity(b) * PositionWeightBp / 10000)) - Scale;   // 1원 여유(대금/수수료 올림)
+            long budget = Math.Min(b.Cash, (long)((Int128)Equity(b) * weightBp / 10000)) - Scale;   // 1원 여유(대금/수수료 올림)
             if (budget <= 0) return;
             long qty = Math.Min(s.AskQty, (long)Int128.Min((Int128)budget * Scale * 10000 / ((Int128)fillPx * (10000 + FeeBp) + 1), long.MaxValue));
             if (qty <= 0 || (Int128)qty * fillPx / Scale < CryptoPaperExchange.MinOrderKrwRaw * 2) return;   // 매도1 잔량 상한 · 진입 대금 ≥ 최소 주문 2배(먼지 포지션 방지)
             if (Buy(b, si, qty, out long bought, out long px) != CryptoArenaReject.None) return;
             ref Pos np = ref b.Positions[FindPos(b, s.Symbol)];
             np.Target = tgt; np.Stop = stp; np.RiskRewardX100 = rrX100;
-            Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, px, kst, sig.Dominant, sig.Score, confidence,
+            if (gov.Governed) np.Memo = Memo(in gov, kst, np.Cost);
+            Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, px, kst, sig.Dominant, score, confidence,
                 tgt, stp, rrX100, sig.KimchiVolBp, sig.ImbalanceBp, sig.FlowBp, sig.MomentumBp, 0, ArenaCurrency.Crypto,
-                default, default, bidDepth, askDepth));
+                default, default, bidDepth, askDepth, in gov));
         }
 
         /// <summary>
@@ -495,8 +568,43 @@ namespace StockManager.Engines.Arena.Crypto
                 b.Wins, b.Losses, b.Count);
         }
 
+        /// <summary>[v12.18.67-DEV] AI 신규 진입 거버넌스 승인(δ=0 · 차단 사유별 계수).</summary>
+        private bool Govern(int si, int score, int momentumBp, int momentumWeight, int imbalanceBp, int imbalanceWeight, long nowTicks, out PlutoGovernanceTag gov)
+        {
+            ref Sym s = ref _syms[si];
+            var r = PlutoCognitiveGovernor.Approve(in s.Regime, score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, EntryScore, s.BidQty, s.AskQty,
+                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov);
+            switch (r)
+            {
+                case PlutoBlockReason.None: _govApproved++; return true;
+                case PlutoBlockReason.PanicRegime: _govPanic++; break;
+                case PlutoBlockReason.Cooldown: _govCooldown++; break;
+                case PlutoBlockReason.CounterThesisVeto: _govVeto++; break;
+            }
+            return false;
+        }
+
+        /// <summary>[v12.18.67-DEV] AI 청산 거버넌스(δ=0): 전량 청산 = 연패 집계 · 진입 메모 있음 = 자가 회고 태그(없음/정지 = default).</summary>
+        private PlutoGovernanceTag GovernExit(in PlutoEntryMemo memo, ArenaTrigger exit, int si, long tradePnl, bool closed, long nowTicks)
+        {
+            if (!Volatile.Read(ref _governed)) return default;
+            if (closed) _sizer.OnClose(tradePnl, nowTicks);
+            if (!memo.HasMemo) return default;
+            ref Sym s = ref _syms[si];
+            var pm = PlutoPostMortemReviewer.Review(in memo, exit, s.Regime.Regime, tradePnl, closed, nowTicks, s.Regime.AtrCbp);
+            return PlutoGovernanceTag.ForExit(in s.Regime, _sizer.LossStreak, in pm);
+        }
+
+        /// <summary>[v12.18.67-DEV] 진입 회고 메모(진입 근거 순번 = 다음 기록 순번).</summary>
+        private PlutoEntryMemo Memo(in PlutoGovernanceTag gov, long nowTicks, long entryCost) => new()
+        {
+            EntrySeq = _rationaleCount + 1, EntryTicks = nowTicks, EntryCost = entryCost, Penalty = gov.Penalty, Confidence = gov.Confidence,
+            WeightBp = gov.WeightBp, Regime = gov.Regime, Theses = gov.Theses, StreakCut = gov.StreakCut,
+        };
+
         private void PublishSnapshot()
         {
+            _govSnap = new PlutoGovernorStats(_governed, in _sizer, _govApproved, _govPanic, _govCooldown, _govVeto);
             var ai = Stats(_books[ArenaSide.Ai]);
             var human = Stats(_books[ArenaSide.Human]);
             _snap = new CryptoArenaSnapshot(_ticks, _trades, _dropped, _rationaleCount, _lastKstTicks, _lastUtc, _phase,
