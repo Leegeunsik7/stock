@@ -7,6 +7,7 @@
 //   ★정직 렌더: Fed=false = 시세 피드 미결선(정산 0회) — UI 는 가짜 손익을 그리지 않는다.
 //   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled · Governance(ArenaGovernanceView) · 스냅샷 IsGovernanceEnabled/CurrentRegime ·
 //     근거 Governance(ArenaGovernanceCard · 감점 태그 · 자가 회고). 기본 구현 = 미지원(정지 · 판정 전).
+//   [v12.18.70-DEV] GetClosedTrades(max) = AI 청산 거래 저널(ArenaClosedTradeView · 진입가 → 청산가 · 실현손익 · 수익률 · 청산 유형). 기본 구현 = 빈 목록.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -113,5 +114,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         bool SetGovernanceEnabled(bool enabled) => false;
         /// <summary>[v12.18.68-DEV] 거버너 상태(가동 · 시장 대표 국면 · 연패/쿨다운 · 계수). 기본 구현 = default(미지원 = 정지 · 판정 전).</summary>
         ArenaGovernanceView Governance => default;
+        /// <summary>[v12.18.70-DEV] AI 청산 거래 저널(최신 → 과거 · 최대 max건 · 기본 50). UI 콜드 경로. 기본 구현 = 빈 목록(미지원).</summary>
+        IReadOnlyList<ArenaClosedTradeView> GetClosedTrades(int max = 50) => Array.Empty<ArenaClosedTradeView>();
     }
 }

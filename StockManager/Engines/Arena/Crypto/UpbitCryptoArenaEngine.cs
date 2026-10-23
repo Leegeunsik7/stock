@@ -388,6 +388,7 @@ namespace StockManager.Engines.Arena.Crypto
                 if (exit == ArenaTrigger.None) return;
                 long target = p.Target, stop = p.Stop, priorPnl = p.TradePnl; int rr = p.RiskRewardX100;
                 var memo = p.Memo;
+                long entry = p.AvgPx;                                       // [v12.18.70-DEV] 청산 진입가(Sell 전 판독 · 전량 청산 시 슬롯 회수)
                 long sellQty = ExitQty(p.Qty, s.BidQty, s.Bid);
                 if (sellQty <= 0) return;                                   // 매수1 잔량 부족 — 먼지 잔량 대신 다음 호가 대기
                 if (Sell(b, si, sellQty, out long filled, out long exitPx, out long pnl) != CryptoArenaReject.None) return;
@@ -395,7 +396,7 @@ namespace StockManager.Engines.Arena.Crypto
                 var exitGov = GovernExit(in memo, exit, si, priorPnl + pnl, FindPos(b, s.Symbol) < 0, kst);
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, exitPx, kst, exit, sig.Score, conf,
                     target, stop, rr, sig.KimchiVolBp, sig.ImbalanceBp, sig.FlowBp, sig.MomentumBp, pnl, ArenaCurrency.Crypto,
-                    default, default, bidDepth, askDepth, in exitGov));
+                    default, default, bidDepth, askDepth, in exitGov, entry));
                 return;
             }
             if (b.Count >= MaxAiPositions) return;

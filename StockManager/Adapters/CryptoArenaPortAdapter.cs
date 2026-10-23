@@ -7,6 +7,7 @@
 //   주입기 미결속(null) = 출처 선택 거부 · Pumped=false(정직 렌더).
 //   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled → 엔진 EnableGovernance(Volatile 플래그 · 다음 정산부터 · 핫패스 무변경) ·
 //     Governance/스냅샷 = 거버너 계수 + 수신 종목 국면 대표값(패닉 우선) · 근거 Governance = ArenaGovernanceMapper.Card(감점 태그 · 자가 회고).
+//   [v12.18.70-DEV] GetClosedTrades = 근거 링 매도 근거 → ArenaClosedTradeMapper(청산 저널 · 진입가 · 수익률 · 한글 종목명).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -69,6 +70,14 @@ namespace StockManager.Adapters
                     ArenaGovernanceMapper.Card(in r.Governance)));
             }
             return list;
+        }
+
+        public IReadOnlyList<ArenaClosedTradeView> GetClosedTrades(int max = 50)
+        {
+            if (max <= 0) return Array.Empty<ArenaClosedTradeView>();
+            var buf = new AiTradeRationale[UpbitCryptoArenaEngine.RationaleCapacity];
+            int n = _engine.CopyRationales(buf);
+            return ArenaClosedTradeMapper.Collect(buf.AsSpan(0, n), max, static s => CryptoArenaUniverse.Label(s), CryptoArenaUnits.Scale);
         }
 
         public IReadOnlyList<CryptoArenaQuoteView> Quotes()

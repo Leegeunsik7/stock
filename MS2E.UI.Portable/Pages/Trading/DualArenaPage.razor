@@ -18,7 +18,9 @@
      AI 근거 카드 감점 태그([과열 감점 -35] · [매도벽 감점 -20] · [거시역풍 감점 -15]) · 확신도 원→최종 · 동적 비중 · 연패 축소 ·
      청산 카드 = 플루토 자가 회고 문장(승리 녹색 · 패착 적색 테두리). 판독 = 포트 DTO 만(엔진 참조 0 · 주문 경로 무변경).
    [v12.18.69-DEV] 토글 영속화: IArenaPreferencePort(직접 주입 · 미결선 null 객체 = '저장소 미결선' 정직 표시) 로 토글 결과를 비동기 저장(UI 무차단) →
-     재기동 시 호스트가 같은 설정 키로 복원. 저장 상태 뱃지 = 💾 저장됨 / 저장 중 / 저장 실패(재기동 시 이전 값) / 미결선. *@
+     재기동 시 호스트가 같은 설정 키로 복원. 저장 상태 뱃지 = 💾 저장됨 / 저장 중 / 저장 실패(재기동 시 이전 값) / 미결선.
+   [v12.18.70-DEV] 청산 저널: 3대 아레나 보유 표 아래 [📜 AI 실현손익 체결 내역] 표(GetClosedTrades · 청산시각 · 한글 종목명 · 진입가 → 청산가 · 실현손익 · 수익률 · 청산유형 배지 · 사유) ·
+   한글 종목명 병기(StockDisplayNameResolver — 보유 표 · 티켓 · 뉴스 촉매 · 근거 카드 헤더, 미등록 = 코드) · 청산 근거 카드 헤더 [실현손익: 금액 (수익률)] 칩(상승 적색 · 하락 청색). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -61,6 +63,7 @@
         var cf = CryptoPort.Feed;
         bool cHas = CryptoPort.TryRead(out var c);
         System.Threading.Volatile.Write(ref _drawn, c.Version);
+        var cClosed = cHas && c.RationaleCount > 0 ? CryptoPort.GetClosedTrades(MaxClosed) : System.Array.Empty<ArenaClosedTradeView>();
     }
 
     <div class="da-feed">
@@ -127,7 +130,7 @@
                             @foreach (var p in cpos)
                             {
                                 <tr>
-                                    <td>@p.Market</td><td>@CoinQty(p.QtyRaw) @p.Coin</td><td>@PriceRaw(p.AvgPriceRaw)</td><td>@PriceRaw(p.MarkRaw)</td>
+                                    <td>@Sym(p.Market)</td><td>@CoinQty(p.QtyRaw) @p.Coin</td><td>@PriceRaw(p.AvgPriceRaw)</td><td>@PriceRaw(p.MarkRaw)</td>
                                     <td class="@Css(p.PnlRaw)">@SignedKrwRaw(p.PnlRaw)</td>
                                     @if (side == ArenaSide.Ai) { <td>@PriceRaw(p.TargetPriceRaw) / @PriceRaw(p.StopLossPriceRaw)</td> }
                                 </tr>
@@ -138,6 +141,8 @@
             }
         </div>
 
+        @(ClosedTable(cClosed, PriceRaw, SignedKrwRaw, CoinQty, "코인"))
+
         <div class="ar-card ar-ticket da-ticket">
             <h3>🧑 휴먼 코인 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 수수료 0.05% · 최소 5,000원 · 24/7 · 다음 정산 회차 가상 체결</small></h3>
             @{ var cq = CryptoPort.Quotes(); }
@@ -145,7 +150,7 @@
                 <select class="da-mkt" @bind="_market">
                     @foreach (var q in cq)
                     {
-                        <option value="@q.Market">@q.Market · 매수 @PriceRaw(q.BidRaw) / 매도 @PriceRaw(q.AskRaw) · 잔량 @CoinQty(q.BidQtyRaw) / @CoinQty(q.AskQtyRaw) @q.Coin</option>
+                        <option value="@q.Market">@Sym(q.Market) · 매수 @PriceRaw(q.BidRaw) / 매도 @PriceRaw(q.AskRaw) · 잔량 @CoinQty(q.BidQtyRaw) / @CoinQty(q.AskQtyRaw) @q.Coin</option>
                     }
                 </select>
                 <input class="da-cqty" type="number" min="0.00000001" step="0.0001" @bind="_coinQty" />
@@ -169,7 +174,8 @@
             <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
                 <div class="da-card-head">
                     <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
-                    <b>@r.Market</b> @CoinQty(r.QtyRaw) @r.Coin @@ @PriceRaw(r.PriceRaw)
+                    <b class="da-name">@Sym(r.Market)</b> @CoinQty(r.QtyRaw) @r.Coin @@ @PriceRaw(r.PriceRaw)
+                    @if (r.Side < 0) { @PnlChip(SignedKrwRaw(r.RealizedPnlRaw), r.RealizedPnlRaw, ClosedOf(cClosed, r.Seq)) }
                     <span class="da-trigger">@r.Trigger</span>
                     <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
                 </div>
@@ -177,7 +183,6 @@
                     <span class="da-conf">확신도 <i class="bar"><i style="width:@(r.ConfidenceScore)%"></i></i> @(r.ConfidenceScore)/100</span>
                     <span>감성 <b class="@Css(r.SentimentScore)">@Signed(r.SentimentScore)</b></span>
                     <span>목표 <b class="ar-up da-tgt">@PriceRaw(r.TargetPriceRaw)</b> · 손절 <b class="ar-down da-stop">@PriceRaw(r.StopLossPriceRaw)</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
-                    @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlRaw)">@SignedKrwRaw(r.RealizedPnlRaw)</b></span> }
                 </div>
                 <div class="da-metrics da-factors">
                     <span>오더북 불균형 <b class="@Css(r.ImbalanceBp)">@SignedBp(r.ImbalanceBp)</b></span>
@@ -200,6 +205,7 @@ else if (_mode == ModeUs)
         var uf = UsPort.Feed;
         bool uHas = UsPort.TryRead(out var u);
         System.Threading.Volatile.Write(ref _drawn, u.Version);
+        var uClosed = uHas && u.RationaleCount > 0 ? UsPort.GetClosedTrades(MaxClosed) : System.Array.Empty<ArenaClosedTradeView>();
     }
 
     <div class="da-feed">
@@ -266,7 +272,7 @@ else if (_mode == ModeUs)
                             @foreach (var p in upos)
                             {
                                 <tr>
-                                    <td>@p.Ticker @Cat(UsPort.Catalyst(p.Ticker))</td><td>@p.Qty.ToString("N0")</td><td>@Usd(p.AvgPriceCents)</td><td>@Usd(p.MarkCents)</td>
+                                    <td>@Sym(p.Ticker) @Cat(UsPort.Catalyst(p.Ticker))</td><td>@p.Qty.ToString("N0")</td><td>@Usd(p.AvgPriceCents)</td><td>@Usd(p.MarkCents)</td>
                                     <td class="@Css(p.PnlCents)">@SignedUsd(p.PnlCents)</td>
                                     @if (side == ArenaSide.Ai) { <td>@Usd(p.TargetPriceCents) / @Usd(p.StopLossPriceCents)</td> }
                                 </tr>
@@ -277,12 +283,14 @@ else if (_mode == ModeUs)
             }
         </div>
 
+        @(ClosedTable(uClosed, Usd, SignedUsd, Shares, "주"))
+
         <div class="ar-card ar-ticket da-ticket">
             <h3>🧑 휴먼 USD 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 정규장(연속매매)만 · 다음 정산 회차 가상 체결</small></h3>
             @{ var uq = UsPort.Quotes(); }
             @{
                 var ucats = new List<(string Label, ArenaCatalystView View)>();
-                foreach (var q in uq) if (UsPort.Catalyst(q.Ticker) is { } uc) ucats.Add((q.Ticker, uc));
+                foreach (var q in uq) if (UsPort.Catalyst(q.Ticker) is { } uc) ucats.Add((Sym(q.Ticker), uc));
             }
             @if (ucats.Count > 0)
             {
@@ -294,7 +302,7 @@ else if (_mode == ModeUs)
                 <select class="da-tkr" @bind="_ticker">
                     @foreach (var q in uq)
                     {
-                        <option value="@q.Ticker">@q.Ticker (@q.Exchange) · 매수 @Usd(q.BidCents) / 매도 @Usd(q.AskCents)</option>
+                        <option value="@q.Ticker">@Sym(q.Ticker) (@q.Exchange) · 매수 @Usd(q.BidCents) / 매도 @Usd(q.AskCents)</option>
                     }
                 </select>
                 <input class="da-uqty" type="number" min="1" @bind="_usQty" />
@@ -318,7 +326,8 @@ else if (_mode == ModeUs)
             <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
                 <div class="da-card-head">
                     <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
-                    <b>@r.Ticker</b> @Cat(UsPort.Catalyst(r.Ticker)) @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
+                    <b class="da-name">@Sym(r.Ticker)</b> @Cat(UsPort.Catalyst(r.Ticker)) @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
+                    @if (r.Side < 0) { @PnlChip(SignedUsd(r.RealizedPnlCents), r.RealizedPnlCents, ClosedOf(uClosed, r.Seq)) }
                     <span class="da-trigger">@r.Trigger</span>
                     <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
                 </div>
@@ -326,7 +335,6 @@ else if (_mode == ModeUs)
                     <span class="da-conf">확신도 <i class="bar"><i style="width:@(r.ConfidenceScore)%"></i></i> @(r.ConfidenceScore)/100</span>
                     <span>감성 <b class="@Css(r.SentimentScore)">@Signed(r.SentimentScore)</b></span>
                     <span>목표 <b class="ar-up da-tgt">@Usd(r.TargetPriceCents)</b> · 손절 <b class="ar-down da-stop">@Usd(r.StopLossPriceCents)</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
-                    @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlCents)">@SignedUsd(r.RealizedPnlCents)</b></span> }
                 </div>
                 <div class="da-metrics da-factors">
                     <span>ETF 베타 <b class="@Css(r.EtfBetaBp)">@SignedBp(r.EtfBetaBp)</b></span>
@@ -348,6 +356,7 @@ else
     var feed = Port.Feed;
     bool hasView = Port.TryRead(out var v);
     System.Threading.Volatile.Write(ref _drawn, v.Version);
+    var kClosed = hasView && v.RationaleCount > 0 ? Port.GetClosedTrades(MaxClosed) : System.Array.Empty<ArenaClosedTradeView>();
 }
 
 <div class="da-feed">
@@ -414,7 +423,7 @@ else
                         @foreach (var p in pos)
                         {
                             <tr>
-                                <td>@p.Symbol.ToString("D6") @Cat(Port.Catalyst(p.Symbol))</td><td>@p.Qty.ToString("N0")</td><td>@p.AvgPriceWon.ToString("N0")</td><td>@p.MarkWon.ToString("N0")</td>
+                                <td>@StockDisplayNameResolver.Display(p.Symbol) @Cat(Port.Catalyst(p.Symbol))</td><td>@p.Qty.ToString("N0")</td><td>@p.AvgPriceWon.ToString("N0")</td><td>@p.MarkWon.ToString("N0")</td>
                                 <td class="@Css(p.PnlWon)">@Signed(p.PnlWon)</td>
                                 @if (side == ArenaSide.Ai) { <td>@p.TargetPriceWon.ToString("N0") / @p.StopLossPriceWon.ToString("N0")</td> }
                             </tr>
@@ -425,12 +434,14 @@ else
         }
     </div>
 
+    @(ClosedTable(kClosed, Won, SignedWon, Shares, "주"))
+
     <div class="ar-card ar-ticket da-ticket">
         <h3>🧑 휴먼 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 다음 정산 회차 가상 체결</small></h3>
         @{ var quotes = Port.Quotes(); }
         @{
             var kcats = new List<(string Label, ArenaCatalystView View)>();
-            foreach (var q in quotes) if (Port.Catalyst(q.Symbol) is { } kc) kcats.Add((q.Symbol.ToString("D6"), kc));
+            foreach (var q in quotes) if (Port.Catalyst(q.Symbol) is { } kc) kcats.Add((StockDisplayNameResolver.Display(q.Symbol), kc));
         }
         @if (kcats.Count > 0)
         {
@@ -442,7 +453,7 @@ else
             <select class="da-sym" @bind="_symbol">
                 @foreach (var q in quotes)
                 {
-                    <option value="@q.Symbol">@q.Symbol.ToString("D6") · 매수 @q.BidWon.ToString("N0") / 매도 @q.AskWon.ToString("N0")</option>
+                    <option value="@q.Symbol">@StockDisplayNameResolver.Display(q.Symbol) · 매수 @q.BidWon.ToString("N0") / 매도 @q.AskWon.ToString("N0")</option>
                 }
             </select>
             <input class="da-qty" type="number" min="1" @bind="_qty" />
@@ -466,7 +477,8 @@ else
         <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
             <div class="da-card-head">
                 <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
-                <b>@r.Symbol.ToString("D6")</b> @Cat(Port.Catalyst(r.Symbol)) @r.Qty.ToString("N0")주 @@ @r.PriceWon.ToString("N0")원
+                <b class="da-name">@StockDisplayNameResolver.Display(r.Symbol)</b> @Cat(Port.Catalyst(r.Symbol)) @r.Qty.ToString("N0")주 @@ @r.PriceWon.ToString("N0")원
+                @if (r.Side < 0) { @PnlChip(SignedWon(r.RealizedPnlWon), r.RealizedPnlWon, ClosedOf(kClosed, r.Seq)) }
                 <span class="da-trigger">@r.Trigger</span>
                 <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss")</span>
             </div>
@@ -474,7 +486,6 @@ else
                 <span class="da-conf">확신도 <i class="bar"><i style="width:@(r.ConfidenceScore)%"></i></i> @(r.ConfidenceScore)/100</span>
                 <span>감성 <b class="@Css(r.SentimentScore)">@Signed(r.SentimentScore)</b></span>
                 <span>목표 <b class="ar-up">@r.TargetPriceWon.ToString("N0")</b> · 손절 <b class="ar-down">@r.StopLossPriceWon.ToString("N0")</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
-                @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlWon)">@Signed(r.RealizedPnlWon)원</b></span> }
             </div>
             @GovRow(r.Governance)
             <div class="da-summary">@r.Summary</div>
@@ -485,7 +496,7 @@ else
 }
 
 @code {
-    public const int RenderPumpMs = 100, MaxCards = 30;
+    public const int RenderPumpMs = 100, MaxCards = 30, MaxClosed = 50;
     public const int ModeKrx = 0, ModeUs = 1, ModeCrypto = 2;
 
     private int _mode = ModeKrx;
@@ -732,6 +743,56 @@ else
         ArenaCatalystKind.Shock => "shock",
         _ => "neg",
     };
+    // [v12.18.70-DEV] AI 실현손익 체결 내역(청산 저널 · 최신순) — 단위 표기는 아레나별 포맷터 주입(원 · USD · 코인 raw).
+    private static RenderFragment ClosedTable(IReadOnlyList<ArenaClosedTradeView> list, Func<long, string> price, Func<long, string> signedPnl,
+        Func<long, string> qty, string unit) => @<text>
+        <div class="ar-card da-closed">
+            <h3>📜 AI 실현손익 체결 내역 <small>최신순 · 최대 @(MaxClosed)건 · 실현손익 = 수수료/세금 차감 후 · 수익률 = 실현손익 ÷ (진입가 × 수량)</small></h3>
+            @if (list.Count == 0)
+            {
+                <div class="ar-sub da-noclosed">아직 AI 청산 체결이 없습니다 — 실현손익은 매도(청산) 가상 체결이 일어날 때만 기록됩니다.</div>
+            }
+            else
+            {
+                int wins = 0, losses = 0;
+                foreach (var t in list) { if (t.RealizedPnl > 0) wins++; else if (t.RealizedPnl < 0) losses++; }
+                <div class="ar-sub da-closed-sum">표시 @(list.Count)건 · 수익 @(wins)건 · 손실 @(losses)건</div>
+                <table class="ar-tbl da-closed-tbl">
+                    <tr><th>청산시각(KST)</th><th>종목</th><th>수량</th><th>진입가</th><th>청산가</th><th>실현손익</th><th>수익률</th><th>청산유형</th><th>사유</th></tr>
+                    @foreach (var t in list)
+                    {
+                        <tr data-seq="@t.Seq" title="@t.Summary">
+                            <td>@t.AtKst.ToString("MM-dd HH:mm:ss")</td>
+                            <td class="da-closed-name">@if (t.Name != t.Code) { <b>@t.Name</b> <small>@t.Code</small> } else { <b>@t.Code</b> }</td>
+                            <td>@qty(t.Qty) @unit</td>
+                            <td>@(t.HasReturn ? price(t.EntryPrice) : "-")</td>
+                            <td>@price(t.ExitPrice)</td>
+                            <td class="@Css(t.RealizedPnl)"><b>@signedPnl(t.RealizedPnl)</b></td>
+                            <td><span class="da-ret @Css(t.ReturnBp)">@(t.HasReturn ? Bp(t.ReturnBp) : "-")</span></td>
+                            <td><span class="da-exit @ArenaExitKind.Css(t.ExitKind)">@t.ExitLabel</span></td>
+                            <td class="ar-sub">@t.Reason</td>
+                        </tr>
+                    }
+                </table>
+            }
+        </div>
+    </text>;
+
+    // [v12.18.70-DEV] 청산 근거 카드 헤더 실현손익 칩(저널 매칭 = 수익률 병기 · 미매칭 = 금액만).
+    private static RenderFragment PnlChip(string pnlText, long pnl, ArenaClosedTradeView? t) => @<text>
+        <span class="da-pnl-chip @Css(pnl)">[실현손익: @pnlText@(t is { HasReturn: true } ? " (" + Bp(t.ReturnBp) + ")" : "")]</span>
+    </text>;
+
+    private static ArenaClosedTradeView? ClosedOf(IReadOnlyList<ArenaClosedTradeView> list, long seq)
+    {
+        foreach (var t in list) if (t.Seq == seq) return t;
+        return null;
+    }
+
+    /// <summary>[v12.18.70-DEV] 미국 티커 · 업비트 마켓 표시("엔비디아 NVDA" · 미등록 = 코드).</summary>
+    private static string Sym(string code) => StockDisplayNameResolver.Display(code);
+    private static string Shares(long q) => q.ToString("N0");
+    private static string SignedWon(long w) => Signed(w) + "원";
     private static string Won(long w) => w.ToString("N0") + "원";
     private static string Signed(long w) => (w > 0 ? "+" : "") + w.ToString("N0");
     private static string Bp(long bp) => (bp > 0 ? "+" : "") + (bp / 100.0).ToString("F2") + "%";
@@ -797,6 +858,16 @@ else
     .da-ticket select { background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; min-width: 260px; }
     .da-ticket input { width: 90px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
     .da-timeline { margin-top: 10px; }
+    .da-closed { margin: 10px 0; } .da-closed-sum { margin: 2px 0 6px; }
+    .da-closed-tbl th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; } .da-closed-tbl td { font-variant-numeric: tabular-nums; }
+    .da-closed-name small { color: var(--sub); margin-left: 4px; }
+    .da-ret { font-weight: 700; } .da-ret.ar-up { color: #E53935; } .da-ret.ar-down { color: #1E88E5; }
+    .da-exit { padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; background: #3a3f4b; color: #ddd; }
+    .da-exit.tp { background: #E53935; color: #fff; } .da-exit.sl { background: #1E88E5; color: #fff; } .da-exit.close { background: #546e7a; color: #fff; }
+    .da-exit.shock { background: #b71c1c; color: #fff; } .da-exit.bubble { background: #f9a825; color: #111; }
+    .da-name { font-size: 13.5px; }
+    .da-pnl-chip { padding: 1px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; background: #1d2230; border: 1px solid #3a3f4b; }
+    .da-pnl-chip.ar-up { color: #E53935; border-color: #E53935; } .da-pnl-chip.ar-down { color: #1E88E5; border-color: #1E88E5; }
     .da-card { border-left: 3px solid #3a3f4b; background: #121722; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
     .da-card.buy { border-left-color: #E53935; } .da-card.sell { border-left-color: #1E88E5; }
     .da-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 13px; }

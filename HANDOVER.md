@@ -4162,3 +4162,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,247 통과 + 6 건너뜀 · 실패 0 · 4분 36초 · infra-scan 0(기준 117) · 래칫 coupled=40/40.
 - 한계(정직): 같은 이름 환경변수가 있으면 저장값보다 우선(기존 precedence) · 저장은 3대 아레나 공통 1개 키(아레나별 개별 선호 없음) · 실 앱 재기동 육안 확인 미실시(단위/통합 테스트로 검증).
 - 불변: liveArmed:false(선호 = AI 가상 원장 진입 판정 스위치 · 무장/브로커 키 기입 수단 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 178. v12.18.70-DEV — AI 실현손익 체결 내역(청산 저널) · 한글 종목명 매핑 · 실현손익 칩 (/dualarena) (2026-10-23)
+
+- 순서(정직): 오더는 v12.18.69-DEV · §176 지정이나 69-DEV(토글 영속화 ae00b74 · §177) · §176(68-GM 출하)이 이미 사용됨 → 버전 v12.18.70-DEV · §178.
+- 오더 전제 검증: 엔진 매도 근거(AiTradeRationale)에 진입가 필드 없음 → 수익률 산출 불가 → 엔진 청산 경로 3곳에 진입 평단 기록 추가(아래). 기존 한글명 사전 없음(SymbolCatalog 는 타 worktree 에만 존재) → 신규.
+- 엔진(최소 변경): AiTradeRationale.EntryPrice(값 타입 long · 생성자 끝 선택 인자 entryPrice=0) · Krx/UsTech/UpbitCrypto StepAi 청산 분기에서 Sell 전 p.AvgPx 판독 → 매도 근거에 결속.
+  매수 근거 = 0. 체결 루프 구조/할당 무변경(구조체 필드 1개 · 지역 변수 1개) — 기존 δ=0 · IL 할당 지점 테스트 전부 통과.
+- 신규 MS2E.UI.Portable/Ports/Trading/ArenaClosedTradePort.cs: ArenaClosedTradeView(Seq · 청산시각 · 코드 · 한글명 · 수량 · 진입가 · 청산가 · 실현손익 · 수익률 bp · 청산유형 · 사유 · 요약) ·
+  ArenaExitKind(익절/손절/장마감/시그널 반전/악재 긴급 청산/과열 조기 청산/기타) · ArenaClosedTradeMath.ReturnBp(Int128 · 코인 수량 스케일 · ±10^9 bp 포화 · 진입가 0 = 0).
+  진입가 미기록 = HasReturn=false → 표에 '-'(가짜 0% 금지).
+- 신규 MS2E.UI.Portable/Helpers/StockDisplayNameResolver.cs: 국내 20종(005930 삼성전자 · 000660 SK하이닉스 · 207940 삼성바이오로직스 · 005380 현대차 · 068270 셀트리온 · 373220 LG에너지솔루션 외) ·
+  미국 9종(AAPL 애플 · NVDA 엔비디아 · MSFT · AMZN · TSLA 외) · 업비트 4종(KRW-BTC 비트코인 · ETH · XRP · SOL). 미등록 = 코드 그대로(이름 날조 0). Display = "SK하이닉스 000660".
+- 포트: IKrxArenaPort/IUsArenaPort/ICryptoArenaPort.GetClosedTrades(max=50) 기본 구현 = 빈 목록. 어댑터 3종 = CopyRationales 스냅샷 → 신규 StockManager/Adapters/ArenaClosedTradeMapper
+  (매도 근거만 최신순 · max 상한 · 청산 사유 → 유형 · 한글명). 콜드 경로 전용(핫패스 오염 0).
+- DualArenaPage: 3대 탭 보유 표 아래 [📜 AI 실현손익 체결 내역] 표(청산시각 · 종목 한글명+코드 · 수량 · 진입가 · 청산가 · 실현손익 · 수익률 배지 · 청산유형 배지 · 사유 · 행 툴팁 = 요약 · 수익/손실 건수) ·
+  보유 표 · 휴먼 티켓 · 뉴스 촉매 띠 · 근거 카드 헤더에 한글명 병기 · 청산 카드 헤더 [실현손익: +585,061원 (+1.70%)] 칩(상승 적색 #E53935 · 하락 청색 #1E88E5) — 기존 metrics 줄 '실현' 항목은 칩으로 이동.
+  펌프 미결선 = 표 미렌더 · 청산 0건 = 안내 문구(정직 렌더).
+- 테스트 StockManager.Tests/Engines/Arena/ArenaClosedTradeJournalTests.cs 8건: 매핑(유니버스 전 종목 등록 · 미등록 = 코드) · ReturnBp 정확값/스케일/가드/포화 · 매퍼(매도만 · 최신순 · 상한 · 유형 6종 · 진입가 미기록) ·
+  국내 익절/손절 왕복(EntryPrice = 진입 체결가 · 저널 실현 = 원장 RealizedWon) · 미국/코인 왕복(센트 · raw 10^8 스케일 수익률) · bUnit 국내 표 9칸 정확값 + 칩 · 미국 손절 청색/코인 익절 적색 · 미결선 정직 렌더 + Portable 엔진 참조 0.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,255 통과 + 6 건너뜀 · 실패 0 · 5분 21초 · infra-scan 0(기준 117) · 래칫 테스트 통과(≤40).
+- 한계(정직): 저널 원천 = 엔진 근거 링 128건(진입+청산 공용) → 표시 청산 건수 ≤ 64 근사 · 링 덮어쓰기 이후 과거 청산은 소실(영속 저널 아님) · 업그레이드 이전 근거 = 진입가 0('-') ·
+  국내 한글명 사전 = 정적 20종(브리지 실시간 그 밖 종목은 코드만) · 실 앱 화면 육안 미확인(bUnit 렌더로 검증).
+- 불변: liveArmed:false(판독 전용 · 주문 경로 무변경) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
