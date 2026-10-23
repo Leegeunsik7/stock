@@ -78,13 +78,13 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_66_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_68_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 66, 0), v);
-            Assert.Equal("12.18.66", ReleasePackager.DefaultVersion);
+            Assert.Equal(new Version(12, 18, 68, 0), v);
+            Assert.Equal("12.18.68", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.66</Version>", csproj);
+            Assert.Contains("<Version>12.18.68</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -105,7 +105,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.66-GM Production Golden Master", s);
+            Assert.Contains("v12.18.68-GM Production Golden Master", s);
         }
 
         // ════════════ §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 — 실 스크립트 실행(낡은 봉인 1초 = 빌드 전 거부) ════════════
