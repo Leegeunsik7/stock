@@ -4230,3 +4230,20 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   국내 휴장일 캘린더 미반영 · 합성 시세는 데모 전용.
 - 한계(정직): 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 181. v12.18.72-DEV — 플루토 자동 미러링 선호 영속화(아레나별 활성 + 배율 · 로컬 DB 설정 키 · 비동기 저장 · 기동 복원) (/dualarena) (2026-10-23)
+
+- 오더 전제 검증: 자동 미러링은 모드별(활성 모드 포트 SetAutoCopyEnabled) · 엔진 배율 = 아레나별 bp → 선호도 아레나별 저장(공통 1키 아님). 배율 버튼 상태(_copyRatio)는 페이지 메모리뿐이었음.
+- IArenaPreferencePort 확장(기본 인터페이스 구현 = 미지원 · 기존 구현 무파손): StoredAutoCopy(arena) · SaveAutoCopyAsync(arena, enabled, ratio) + ArenaPreferenceArena(Krx 0 · Us 1 · Crypto 2 = 페이지 모드 상수) ·
+  ArenaAutoCopyPreference(Enabled, Ratio). 아레나 = 정수 식별자(문자열 키 기입 멤버 0 · Arm/Setting 멤버 0 유지).
+- ArenaPreferenceAdapter: 키 Arena.{Krx|Us|Crypto}.AutoCopyEnabled("true"/"false") · .AutoCopyRatio(불변 문화권 "0.5"/"1.0") · 거버너 드레인 규약을 슬롯화(거버너 1 + 아레나 3 · 슬롯별 단일 작성자 최종값 수렴) ·
+  기록 순서 = 배율 → 활성 · 범위 밖 아레나/배율(0.1x~3.0x 밖 · bp 미만 단위) = 기록 0 + false · 해석 불가/범위 밖 저장값 = null.
+- 기동 복원: 정적 RestoreAutoCopy(cfg, arena, engine.SetAutoCopy) — 호스트 RuntimeConfig(환경변수 → DB) · 미저장 = OFF/1.0x · 배율 오염 = 복원 생략(ON 복원 안 함 · fail-closed) · 활성 해석 불가 = 꺼짐.
+  BlazorHomeForm = 포트 DI 등록 직후 3대 엔진 복원(콜드 1회 · 정산 핫패스 무변경 · 엔진 Volatile 플래그만).
+- DualArenaPage: 토글/배율 성공 → await PersistCopy(스레드 풀 · UI 무차단 · 모드별 순번으로 늦은 결과 표시 무시) · 카피 바 모드별 저장 뱃지(.da-copy-persist: 저장값 ON/OFF · 배율 / 저장 중 / 저장됨 / 저장 실패 / 미결선) ·
+  배율 버튼 = 활성 모드 엔진 배율 동기화(기동 · 모드 전환 — 복원값 반영). 페이지/포트 DB · 어댑터 · 엔진 참조 0.
+- 테스트 StockManager.Tests/Engines/Arena/ArenaAutoCopyPersistenceTests.cs 11건: 왕복 · 재기동 유지 · 아레나 격리 · 거버너 키 무간섭 · 300회 연속 저장 아레나별 최종값 · 범위 밖 기록 0 · 오염값 null ·
+  폐기 연결 실패 계수 → 재개 · 3대 엔진 기동 복원 · 기본 OFF · 배율 오염 fail-closed · 호스트 소스 결선 순서 · bUnit 배율/토글 저장 뱃지 · 기동 복원값 렌더 + 모드 전환 배율 동기화 · 미결선 정직 표시 · 경계.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,280 통과 + 6 건너뜀 · 실패 0 · 5분 8초 · infra-scan 0(기준 117) · 래칫/PureShell 테스트 통과(≤40).
+- 한계(정직): 같은 이름 환경변수가 저장값보다 우선(기존 precedence) · 실 앱 재기동 육안 확인 미실시(단위/통합 테스트로 검증) · 버전 번호 승격(csproj 12.18.71) 미실시.
+- 불변: liveArmed:false(복제 목적지 = 휴먼 가상 원장 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · UiSettingWriteGuard 미확장 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

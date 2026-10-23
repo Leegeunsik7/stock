@@ -23,7 +23,9 @@
    한글 종목명 병기(StockDisplayNameResolver — 보유 표 · 티켓 · 뉴스 촉매 · 근거 카드 헤더, 미등록 = 코드) · 청산 근거 카드 헤더 [실현손익: 금액 (수익률)] 칩(상승 적색 · 하락 청색).
    [v12.18.71-DEV] 플루토 카피 트레이딩: 휴먼 티켓 위 [⚡ 플루토 자동 미러링 ON/OFF] 토글 + 배율(0.5x · 1.0x) = 활성 모드 포트 SetAutoCopyEnabled ·
      AI 근거 카드 [👤 따라사기]/[👤 따라팔기] · 청산 저널 행 [👤 따라팔기] = FollowAiTrade(근거 순번 · 배율) → 결과 토스트 배지(성공/거부 사유) ·
-     자동 미러링 최근 결과 배지(CopyTrading). 국내/미국 = 시초가 개장 게이트 배지(동시호가 접수 · 단일가 체결 · 갭 거부권 · 종목 개장 갭). 목적지 = 휴먼 가상 원장뿐. *@
+     자동 미러링 최근 결과 배지(CopyTrading). 국내/미국 = 시초가 개장 게이트 배지(동시호가 접수 · 단일가 체결 · 갭 거부권 · 종목 개장 갭). 목적지 = 휴먼 가상 원장뿐.
+   [v12.18.72-DEV] 자동 미러링 영속화: 토글/배율 성공 → IArenaPreferencePort.SaveAutoCopyAsync(모드 = 아레나 식별자 · 비동기 · UI 무차단) → 재기동 시 호스트가
+     같은 키로 3대 카피 엔진 복원. 배율 버튼 = 활성 모드 엔진 배율과 동기화(기동 · 모드 전환). 모드별 저장 상태 뱃지(💾 저장됨 / 저장 중 / 저장 실패 / 미결선). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -558,6 +560,7 @@ else
     {
         if (mode == _mode || (mode != ModeKrx && mode != ModeUs && mode != ModeCrypto)) return;
         System.Threading.Volatile.Write(ref _mode, mode);
+        SyncCopyRatio();
         System.Threading.Volatile.Write(ref _drawn, -1);
     }
 
@@ -816,7 +819,7 @@ else
     }
 
     // [v12.18.71-DEV] 자동 미러링 토글 · 배율(활성 모드 포트만 · 미지원 = 거부 토스트 · 가짜 상태 0).
-    private void SetAutoCopy(int mode, bool enabled, decimal ratio)
+    private async Task SetAutoCopy(int mode, bool enabled, decimal ratio)
     {
         bool ok = mode == ModeCrypto ? CryptoPort.SetAutoCopyEnabled(enabled, ratio) : mode == ModeUs ? UsPort.SetAutoCopyEnabled(enabled, ratio) : Port.SetAutoCopyEnabled(enabled, ratio);
         if (ok) _copyRatio = ratio;
@@ -824,6 +827,43 @@ else
             : enabled ? ("ok", "⚡ 플루토 자동 미러링 ON (" + RatioText(ratio) + ") — AI 체결 즉시 휴먼 가상 원장 비례 복제 · AI 청산 시 복제분 동반 청산 · 예수금 부족 = 거부")
             : ("idle", "플루토 자동 미러링 OFF — 휴먼 원장은 수동 주문 · 1-클릭 따라하기만 반영됩니다");
         System.Threading.Volatile.Write(ref _drawn, -1);
+        if (ok) await PersistCopy(mode, enabled, ratio);
+    }
+
+    // [v12.18.72-DEV] 자동 미러링 선호 저장(스레드 풀 · 아레나별 최종값 수렴 · 늦게 끝난 이전 저장의 결과 표시는 무시). 모드 상수 = ArenaPreferenceArena 값.
+    private readonly int[] _copyPersistSeq = new int[3];
+    private readonly string[] _copyPersistCss = { "idle", "idle", "idle" }, _copyPersistText = { "", "", "" };
+    private async Task PersistCopy(int mode, bool enabled, decimal ratio)
+    {
+        if (!Prefs.IsWired) return;
+        int seq = ++_copyPersistSeq[mode];
+        _copyPersistCss[mode] = "saving"; _copyPersistText[mode] = "💾 저장 중…";
+        bool ok;
+        try { ok = await Prefs.SaveAutoCopyAsync(mode, enabled, ratio); }
+        catch (Exception) { ok = false; }
+        if (seq != _copyPersistSeq[mode]) return;
+        (_copyPersistCss[mode], _copyPersistText[mode]) = ok
+            ? ("ok", "💾 저장됨 — 재기동 후에도 " + (enabled ? "ON" : "OFF") + " · " + RatioText(ratio) + " 유지")
+            : ("bad", "저장 실패 — 재기동 시 이전 저장값으로 복귀");
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
+
+    private void InitCopyPersistBadges()
+    {
+        for (int mode = ModeKrx; mode <= ModeCrypto; mode++)
+        {
+            if (!Prefs.IsWired) { _copyPersistCss[mode] = "none"; _copyPersistText[mode] = "저장소 미결선 — 재기동 시 OFF · 1.0x 로 복귀"; continue; }
+            var stored = Prefs.StoredAutoCopy(mode);
+            _copyPersistCss[mode] = "ok";
+            _copyPersistText[mode] = stored is { } p ? "💾 저장값 " + (p.Enabled ? "ON" : "OFF") + " · " + RatioText(p.Ratio) + " — 재기동 후에도 유지" : "💾 저장값 없음 — 기본 OFF · 1.0x";
+        }
+    }
+
+    // [v12.18.72-DEV] 배율 버튼 = 활성 모드 엔진 배율(기동 복원값 포함) 과 동기화. 미지원 · 배율 0 = 현재 값 유지.
+    private void SyncCopyRatio()
+    {
+        var c = CopyOf(_mode);
+        if (c.Supported && c.RatioBp > 0) _copyRatio = c.RatioBp / 10_000m;
     }
 
     private static string RatioText(decimal r) => r.ToString("0.0#", System.Globalization.CultureInfo.InvariantCulture) + "x";
@@ -843,6 +883,7 @@ else
             }
             else
             {
+                <span class="da-badge da-copy-persist @_copyPersistCss[mode]" data-copy-persist="@_copyPersistCss[mode]">@_copyPersistText[mode]</span>
                 <span class="ar-sub da-copy-stats">미러링 @c.Mirrored · 따라하기 @c.Followed · 동반 청산 @c.CompanionCloses · 슬리피지 취소 @c.SlippageCancels · 예수금 거부 @c.CashRejects</span>
                 @if (c.LastEvent > 0)
                 {
@@ -899,6 +940,8 @@ else
     protected override void OnInitialized()
     {
         InitPersistBadge();
+        InitCopyPersistBadges();
+        SyncCopyRatio();
         _timer = new System.Threading.Timer(_ => RenderPump(), null, RenderPumpMs, RenderPumpMs);
     }
 
@@ -923,6 +966,10 @@ else
     .da-gov-toggle { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 18px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
     .da-gov-persist.saving { background: #616161; color: #fff; } .da-gov-persist.ok { background: #263238; color: #a5d6a7; }
     .da-gov-persist.bad { background: #6d4c41; color: #fff; } .da-gov-persist.none { background: #3a3f4b; color: #bbb; }
+    .da-copy-persist.saving { background: #616161; color: #fff; }
+    .da-copy-persist.ok { background: #263238; color: #a5d6a7; }
+    .da-copy-persist.bad { background: #6d4c41; color: #fff; }
+    .da-copy-persist.none { background: #3a3f4b; color: #bbb; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }
