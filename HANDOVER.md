@@ -4049,3 +4049,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 실시간 스트림 = 기존 어댑터 구독 KRW-BTC 만(ETH · XRP · SOL = 합성 전용 · 다중 마켓 구독 미구현) · 김치프리미엄/글로벌 등락 = SetMarketContext 주입 API 만(실 해외 시세 피드 미결선 · 합성은 난수) ·
   L2 는 최우선 1단만 사용 · 플루토 뉴스/밸류에이션 미결속(가상자산 재무 없음) · 실 업비트 스트림 장시간 소크 미실시 · 결과는 투자 판단 근거 아님.
 - 불변: liveArmed:false(업비트 주문/인증 API 참조 0 · 송출 = 공개 스트림 구독/PING 뿐 · 기본 꺼짐) · 인터락 30(0x800000001FFFFFFF) 무변경 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 173. v12.18.66-GM — 업비트 24/7 가상자산 아레나 · 플루토 브레인 반영 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-23)
+
+- v12.18.66-DEV(§172) = 9b59fd2. 12.18.60 → 12.18.66(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM 유지) =
+  2865fe0(4파일 · 11/11 줄) · 태그 v12.18.66-GM -f. 빌드 서버 종료(가용 메모리 10GB) 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · WebOnly · sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  ★전체 스위트 5,200 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 41초 · Offline_1M(스위트 내 통과 · 태그 커밋본) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(2/2) · liveArmed:false 소스 가드 · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 38/38(zip 포함) ·
+  masterSeal C5155BE9… · verify-zip 무추출 일치 · verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · 매니페스트 @2865fe0d38 핸드셰이크 Ok.
+- 산출물: release-v12.18.66-GM.zip(E4B23D92…) · StockManager-v12.18.66-Standalone-win-x64.zip(33353B40…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig.
+  [11/11] 봉인 오버레이 38 바이너리 = 봉인 해시(바이트 동일) · 격리 기동 PID 44500 · HWND 0x281180 'MS2-E Stock Suite' 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+  사후 독립 대조: 봉인 zip 항목 39(38 아티팩트 포함) ↔ 배포본 zip 동명 항목 SHA-256 전부 일치 · 불일치/누락 0.
+- 이관: v12.18.60-GM 산출물 15종 → release/superseded-v12.18.60-GM/. 신규 산출물 15종 메인 release/ 복사(전 파일 바이트 비교 일치 · zip SHA-256 2종 = .sha256 기록).
+- 메인 release/ 복사본 재수검(태그 빌드 CLI · 동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · MS2E.StockSuite 잔류 프로세스 0. 패키징 로그 · 산출물 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): UpbitCryptoArenaEngine · CryptoArenaQuoteFeeder · 플루토 촉매/밸류에이션 · /dualarena 3탭 포함 · 업비트 스트림 기본 꺼짐(Arena.UpbitStreamEnabled) · 합성 시세는 데모 전용.
+- 한계(정직): 실 업비트 스트림 장시간 소크 미확인 · 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인.
+- 불변: liveArmed:false · 인터락 30/Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종(.claude/* 2종 · LiveWireKisLongSoakTests.cs) 미스테이징 · 원격 푸시 없음.
