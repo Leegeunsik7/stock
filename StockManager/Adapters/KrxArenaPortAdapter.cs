@@ -6,6 +6,8 @@
 //   [v12.18.60-DEV] 시세 주입기(KrxArenaQuoteFeeder) 결속: 출처 선택 · 공급 상태 · 수신 호가 · 진영 보유 투영.
 //     주입기 미결속(null) = 출처 선택 거부 · Pumped=false(정직 렌더).
 //   [v12.18.64-DEV] Catalyst(symbol) = 엔진 결속 플루토 버퍼 → ArenaCatalystMapper(마지막 정산 KST 기준 감쇄) — UI 뉴스 촉매 배지.
+//   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled → 엔진 EnableGovernance(Volatile 플래그 · 다음 정산부터 · 핫패스 무변경) ·
+//     Governance/스냅샷 = 거버너 계수 + 수신 종목 국면 대표값(패닉 우선) · 근거 Governance = ArenaGovernanceMapper.Card(감점 태그 · 자가 회고).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -43,7 +45,8 @@ namespace StockManager.Adapters
         {
             if (!_engine.TryReadSnapshot(out var s)) { view = default; return false; }
             DateTime? kst = s.LastKstTicks > 0 ? new DateTime(s.LastKstTicks, DateTimeKind.Unspecified) : null;
-            view = new KrxArenaView(_engine.Version, s.Ticks, s.SessionOpen, s.MacroBp, s.RationaleCount, kst, s.DroppedQuotes, Map(s.Ai), Map(s.Human));
+            view = new KrxArenaView(_engine.Version, s.Ticks, s.SessionOpen, s.MacroBp, s.RationaleCount, kst, s.DroppedQuotes, Map(s.Ai), Map(s.Human),
+                _engine.GovernanceEnabled, CurrentRegime());
             return true;
         }
 
@@ -57,7 +60,8 @@ namespace StockManager.Adapters
             {
                 ref readonly var r = ref buf[i];
                 list.Add(new KrxRationaleView(r.Seq, r.Symbol, r.Side, r.Qty, r.PriceWon, r.AtKst, ArenaTriggerText.Label(r.TriggerType),
-                    r.SentimentScore, r.ConfidenceScore, r.TargetPrice, r.StopLossPrice, r.RiskRewardRatio, r.RealizedPnlWon, r.HumanReadableSummary));
+                    r.SentimentScore, r.ConfidenceScore, r.TargetPrice, r.StopLossPrice, r.RiskRewardRatio, r.RealizedPnlWon, r.HumanReadableSummary,
+                    ArenaGovernanceMapper.Card(in r.Governance)));
             }
             return list;
         }
@@ -94,6 +98,27 @@ namespace StockManager.Adapters
 
         public ArenaCatalystView? Catalyst(long symbol)
             => _engine.TryReadSnapshot(out var s) ? ArenaCatalystMapper.Project(_engine.PlutoBuffer, symbol, s.LastKstTicks) : null;
+
+        public bool SetGovernanceEnabled(bool enabled)
+        {
+            _engine.EnableGovernance(enabled);
+            return true;
+        }
+
+        public ArenaGovernanceView Governance
+            => ArenaGovernanceMapper.View(_engine.TryReadGovernor(out var g), in g, _engine.GovernanceEnabled, CurrentRegime(), LastKstTicks());
+
+        private long LastKstTicks() => _engine.TryReadSnapshot(out var s) ? s.LastKstTicks : 0;
+
+        /// <summary>수신 종목 국면 대표값(콜드 · 종목 표 순회 · 패닉 우선).</summary>
+        private int CurrentRegime()
+        {
+            var buf = new DuelQuote[KrxArenaEngine.MaxSymbols];
+            int n = _engine.CopyQuotes(buf);
+            var symbols = new List<long>(n);
+            for (int i = 0; i < n; i++) if (buf[i].Symbol > 0 && buf[i].BidWon > 0) symbols.Add(buf[i].Symbol);
+            return ArenaGovernanceMapper.Aggregate(symbols, _engine.RegimeOf);
+        }
 
         private static KrxArenaBookView Map(in DuelBookStats b) => new(
             b.CapitalWon, b.CashWon, b.EquityWon, b.RealizedWon, b.UnrealizedWon, b.FeesWon, b.TaxWon,

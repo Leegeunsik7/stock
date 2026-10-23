@@ -4096,3 +4096,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 국면/과열 지표는 틱 기반 EWMA(일봉 · 5일 이동평균 피드 미결선) · 거시 역풍 입력 = SetMacroHeadwind 주입 API 만(실 금리/달러 피드 미결선 · 호스트 미배선) ·
   거버넌스는 엔진 API 로만 가동(호스트 DI/UI 토글 미배선 · 기본 정지) · 회고 교훈은 규칙 기반(학습 피드백 루프 없음) · 결과는 투자 판단 근거 아님.
 - 불변: liveArmed:false(판정일 뿐 주문 수단 0 · 외부 송출 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 175. v12.18.68-DEV — 플루토 프로 거버너 UI: /dualarena 토글 · 시장 국면 뱃지 · 악마의 변호인 감점 태그 · 자가 회고 · 기동 설정 기본 켜짐 (2026-10-23)
+
+- 오더 전제 검증: IKrxArenaPort · IUsArenaPort · ICryptoArenaPort · 3대 어댑터 · DualArenaPage.razor · BlazorHomeForm DI 실재. 설정 = RuntimeConfig 점 표기 관례 →
+  오더의 `Arena:PlutoGovernanceEnabled` 는 기존 키 관례(`Arena.UpbitStreamEnabled`)에 맞춰 `Arena.PlutoGovernanceEnabled`(기본 true)로 결선.
+- 신규 MS2E.UI.Portable/Ports/Trading/ArenaGovernancePort.cs(순수 DTO · 엔진 참조 0): ArenaRegimeCode(엔진 국면 값 1:1 · 뱃지 📈 상승추세/📉 하락추세/⏸️ 박스권/🚨 패닉차단 ·
+  Aggregate = 수신 종목 대표 국면 — 패닉 1종목이라도 패닉 · 그 외 다수결 · 동률 박스 · 판정 0 = 판정 전) · ArenaGovernanceView(가동 · 국면 · 연패 · 쿨다운 남은 분 · 승인/차단 계수) ·
+  ArenaPenaltyTag("과열/매도벽/거시역풍 감점 n") · ArenaGovernanceCard(국면 · 감점 태그 · 확신도 원→최종 · 비중 · 연패 축소 · 자가 회고 문장/승패).
+- 3대 포트: SetGovernanceEnabled(bool) · Governance(기본 구현 = 미지원/정지 → 기존 가짜 포트 무파손) · 스냅샷 IsGovernanceEnabled/CurrentRegime · 근거 Governance(선택 인자 끝 · 기존 생성자 호환).
+- 어댑터: SetGovernanceEnabled → 엔진 EnableGovernance(Volatile 플래그만 · 정산 핫패스 무변경) · Governance.Enabled = 엔진 실시간 플래그(계수 스냅샷은 다음 정산 게시 — 토글 직후 UI 즉시 반영) ·
+  쿨다운 = 엔진 마지막 정산 KST 기준(합성 ×20 가상 세션과 같은 시계) · 신규 StockManager/Adapters/ArenaGovernanceMapper(콜드 투영 공용).
+- 호스트: BlazorHomeForm 에서 `cfg.GetBool("Arena.PlutoGovernanceEnabled", true)` → krx/us/crypto EnableGovernance — 기동 시 거버너 기본 가동.
+- DualArenaPage: 헤더 [🧠 플루토 프로 거버너 (ON/OFF/일부 ON)] role=switch 토글(전부 켜짐 → 전부 끔 · 그 외 → 전부 켬 · 3대 포트 동시 · 미지원 포트 = 안내) ·
+  세션 뱃지 옆 국면 뱃지(꺼짐 = '거버너 꺼짐(표시만)' 흐림) · AI 연패 n회(≥2 = 비중 50% 축소) · [15분 쿨다운 중 · 남은 n분] ·
+  근거 카드 거버넌스 줄([과열 감점 -35] · [매도벽 감점 -20] · [거시역풍 감점 -15] · [반대 논리 없음] · 확신도 원→최종 · 동적 비중 · [연패 n회 · 비중 50% 축소]) ·
+  청산 카드 = 🪞 자가 회고 문장(승리 녹색 · 패착 적색 테두리). 상승 적색/하락 청색 팔레트 준수.
+  ※ '청산된 포지션 카드' = 보유 표는 청산 즉시 행이 사라지므로 청산(매도) 근거 카드에 회고를 결속.
+- 테스트 StockManager.Tests/Cognitive/PlutoGovernanceUiTests.cs 11건: 대표 국면 산식 · 엔진↔포트 국면 값 1:1 · 어댑터 토글/스냅샷 · 패닉 국면 투영(차단 1) ·
+  감점 태그/자가 회고 1:1(진입 근거 #) · 쿨다운 남은 분 · 미가동 근거 = null · bUnit 토글 OFF→ON(3엔진 동시)→OFF · 일부 ON→전부 ON · 패닉 뱃지/꺼짐 표시만 ·
+  감점 태그 · 회고 2건 · 쿨다운/연패 뱃지 · 페이지/포트 엔진 참조 0 · 기동 설정 결선 · 토글 + 정산 10만 틱 0B.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,236 통과 + 6 건너뜀 · 실패 0 · 4분 5초 · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45).
+- 한계(정직): 토글은 런타임 상태(재기동 시 설정값으로 복귀 · 설정 영속화 미구현) · 거시 역풍 입력(SetMacroHeadwind) 실 피드 미결선 · 대표 국면은 수신 종목 단순 다수결(시가총액 가중 아님).
+- 불변: liveArmed:false(토글 = AI 가상 원장 진입 판정만 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

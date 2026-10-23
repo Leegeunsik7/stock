@@ -12,7 +12,11 @@
      호버 툴팁 = 64B 헤드라인 + 출처 + 경과/반감기. 판독 전용(주문 경로 무변경).
    [v12.18.66-DEV] 3번째 모드 탭 [가상자산 (Upbit ₿)] — ICryptoArenaPort(KRW-BTC · ETH · XRP · SOL · 원 raw 10^8 → 원 표기 · 코인 수량 소수 8자리 ·
      24/7 연속매매 뱃지 · 김치프리미엄/글로벌 등락 · 업비트 스트림 연결 상태 · 스코어보드 · 휴먼 코인 티켓 · AI 근거 카드(오더북 불균형 · 체결 모멘텀 ·
-     김프/변동성 · 오더북 두께)). 크립토 모드 주문 목적지 = ICryptoArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐. *@
+     김프/변동성 · 오더북 두께)). 크립토 모드 주문 목적지 = ICryptoArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
+   [v12.18.68-DEV] 플루토 프로 거버너: 헤더 [🧠 플루토 프로 거버너 (ON/OFF)] 토글 = 3대 포트 SetGovernanceEnabled 동시 적용(전부 켜짐 → 끔 · 그 외 → 전부 켬) ·
+     세션 뱃지 옆 시장 국면 뱃지(📈 상승추세 · 📉 하락추세 · ⏸️ 박스권 · 🚨 패닉차단 · 꺼짐 = '표시만') · 연패/[15분 쿨다운 중] 뱃지 ·
+     AI 근거 카드 감점 태그([과열 감점 -35] · [매도벽 감점 -20] · [거시역풍 감점 -15]) · 확신도 원→최종 · 동적 비중 · 연패 축소 ·
+     청산 카드 = 플루토 자가 회고 문장(승리 녹색 · 패착 적색 테두리). 판독 = 포트 DTO 만(엔진 참조 0 · 주문 경로 무변경). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -23,6 +27,21 @@
         <h1>🥊 휴먼 vs AI 대결 · @(_mode == ModeCrypto ? CryptoPort.ModeName : _mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
         <p>같은 자본금 · 같은 호가로 휴먼과 AI 가 가상 매매를 겨룹니다. AI 는 매 체결마다 근거(수급 · 거시 · 기술적 타점 · 손익비)를 남깁니다. 증권사로 나가는 주문은 없습니다.</p>
     </div>
+</div>
+
+@{
+    var govKrx = Port.Governance;
+    var govUs = UsPort.Governance;
+    var govCrypto = CryptoPort.Governance;
+    int govOn = (govKrx.Enabled ? 1 : 0) + (govUs.Enabled ? 1 : 0) + (govCrypto.Enabled ? 1 : 0);
+    string govState = govOn == 3 ? "on" : govOn == 0 ? "off" : "mixed";
+}
+<div class="da-gov-bar">
+    <button class="da-gov-toggle @govState" role="switch" aria-checked="@(govOn == 3 ? "true" : "false")" data-gov="@govState" @onclick="ToggleGovernance">
+        🧠 플루토 프로 거버너 <b>(@(govOn == 3 ? "ON" : govOn == 0 ? "OFF" : "일부 ON"))</b>
+    </button>
+    <span class="ar-sub">국면 판정 · 악마의 변호인 감점 · 동적 비중 5~25% · 연패 쿨다운 — 3대 아레나 동시 적용(다음 정산부터 · 가상 원장 전용)</span>
+    @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
 </div>
 
 <div class="ar-mode da-modes" role="tablist">
@@ -50,6 +69,7 @@
         {
             <span class="da-badge da-phase @(c.Tradable ? "ok" : "bad")" data-phase="@(c.Tradable ? "24x7" : "invalid")">@(c.Tradable ? "24/7 연속매매 가동" : "세션 시각 무효(fail-closed)") · @ckst.ToString("MM-dd HH:mm:ss") KST</span>
             <span class="da-badge">김치프리미엄 <b class="@Css(c.KimchiPremiumBp)">@Bp(c.KimchiPremiumBp)</b> · 글로벌 BTC 24h <b class="@Css(c.GlobalChangeBp)">@Bp(c.GlobalChangeBp)</b></span>
+            @GovBadges(govCrypto)
         }
     </div>
 
@@ -162,7 +182,8 @@
                     <span>김프/변동성 <b class="@Css(r.KimchiVolBp)">@SignedBp(r.KimchiVolBp)</b></span>
                     <span class="da-depth">오더북 두께 매수1 <b class="ar-up">@r.BidDepthWon.ToString("N0")원</b> / 매도1 <b class="ar-down">@r.AskDepthWon.ToString("N0")원</b></span>
                 </div>
-                <div class="da-summary">@r.Summary</div>
+                @GovRow(r.Governance)
+            <div class="da-summary">@r.Summary</div>
             </div>
         }
     </div>
@@ -187,6 +208,7 @@ else if (_mode == ModeUs)
         {
             <span class="da-badge da-phase @PhaseCss(u.Phase)" data-phase="@u.Phase">@PhaseText(u.Phase) · @ukst.ToString("MM-dd HH:mm:ss") KST</span>
             <span class="da-badge">QQQ <b class="@Css(u.QqqBp)">@Bp(u.QqqBp)</b> · SOXX <b class="@Css(u.SoxxBp)">@Bp(u.SoxxBp)</b> · 美10년 <b class="@Css(u.Us10yChangeBp)">@SignedBp(u.Us10yChangeBp)</b></span>
+            @GovBadges(govUs)
         }
     </div>
 
@@ -308,7 +330,8 @@ else if (_mode == ModeUs)
                     <span>갭 수급 <b class="@Css(r.GapFlowBp)">@SignedBp(r.GapFlowBp)</b></span>
                     <span>모멘텀 <b class="@Css(r.MomentumBp)">@SignedBp(r.MomentumBp)</b></span>
                 </div>
-                <div class="da-summary">@r.Summary</div>
+                @GovRow(r.Governance)
+            <div class="da-summary">@r.Summary</div>
             </div>
         }
     </div>
@@ -333,6 +356,7 @@ else
     {
         <span class="da-badge @(v.SessionOpen ? "ok" : "wait")">@(v.SessionOpen ? "정규장" : "장외") · @kst.ToString("MM-dd HH:mm:ss") KST</span>
         <span class="da-badge">야간 글로벌 <b class="@Css(v.MacroBp)">@Bp(v.MacroBp)</b></span>
+        @GovBadges(govKrx)
     }
 </div>
 
@@ -448,6 +472,7 @@ else
                 <span>목표 <b class="ar-up">@r.TargetPriceWon.ToString("N0")</b> · 손절 <b class="ar-down">@r.StopLossPriceWon.ToString("N0")</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
                 @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlWon)">@Signed(r.RealizedPnlWon)원</b></span> }
             </div>
+            @GovRow(r.Governance)
             <div class="da-summary">@r.Summary</div>
         </div>
     }
@@ -460,6 +485,7 @@ else
     public const int ModeKrx = 0, ModeUs = 1, ModeCrypto = 2;
 
     private int _mode = ModeKrx;
+    private string? _govMsg;
     private long _symbol;
     private long _qty = 10;
     private string? _msg;
@@ -607,6 +633,60 @@ else
 
     private static string Css(long x) => x > 0 ? "ar-up" : x < 0 ? "ar-down" : "";
 
+    // [v12.18.68-DEV] 거버너 토글 — 3대 포트 동시 적용(전부 켜짐 → 전부 끔 · 그 외(꺼짐/일부) → 전부 켬). 미지원 포트 = 안내(가짜 상태 표시 0).
+    private void ToggleGovernance()
+    {
+        bool target = !(Port.Governance.Enabled && UsPort.Governance.Enabled && CryptoPort.Governance.Enabled);
+        bool k = Port.SetGovernanceEnabled(target), u = UsPort.SetGovernanceEnabled(target), c = CryptoPort.SetGovernanceEnabled(target);
+        _govMsg = k && u && c
+            ? (target ? "플루토 프로 거버너 가동 — 국면 · 악마의 변호인 · 동적 비중 · 연패 쿨다운이 다음 정산부터 AI 진입에 적용됩니다"
+                      : "플루토 프로 거버너 정지 — AI 는 기존 고정 비중 · 고정 확신도 규칙으로 매매합니다")
+            : "일부 아레나가 거버너 제어를 지원하지 않습니다(" + (k ? "" : "국내 ") + (u ? "" : "미국 ") + (c ? "" : "코인 ") + "미결선)";
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
+
+    // [v12.18.68-DEV] 세션 뱃지 옆 국면 · 연패 · 쿨다운 뱃지(거버너 꺼짐 = 국면 '표시만' · 차단 안 함).
+    private static RenderFragment GovBadges(ArenaGovernanceView g) => @<text>
+        <span class="da-badge da-regime @ArenaRegimeCode.Css(g.Regime) @(g.Enabled ? "" : "idle")" data-regime="@ArenaRegimeCode.Css(g.Regime)" title="플루토 시장 국면(수신 종목 대표 · 패닉 1종목 = 패닉)">@ArenaRegimeCode.Badge(g.Regime)@(g.Enabled ? "" : " · 거버너 꺼짐(표시만)")</span>
+        @if (g.Enabled && g.LossStreak > 0)
+        {
+            <span class="da-badge da-streak @(g.LossStreak >= 2 ? "bad" : "")">AI 연패 @(g.LossStreak)회@(g.LossStreak >= 2 ? " · 비중 50% 축소" : "")</span>
+        }
+        @if (g.Enabled && g.InCooldown)
+        {
+            <span class="da-badge da-cool" title="연패 2회 이상 — 신규 진입 15분 정지">[15분 쿨다운 중 · 남은 @(g.CooldownRemainingMinutes)분]</span>
+        }
+    </text>;
+
+    // [v12.18.68-DEV] 근거 카드 거버넌스 줄(진입 = 국면 · 감점 태그 · 확신도 원→최종 · 동적 비중 · 연패 축소 / 청산 = 자가 회고 문장).
+    private static RenderFragment GovRow(ArenaGovernanceCard? g) => @<text>@if (g is not null)
+    {
+        @if (g.IsExit)
+        {
+            <div class="da-pm @(g.PostMortemWin ? "win" : "loss")" data-verdict="@(g.PostMortemWin ? "win" : "loss")">🪞 @g.PostMortem</div>
+        }
+        else
+        {
+            <div class="da-metrics da-gov">
+                <span class="da-regime-mini @ArenaRegimeCode.Css(g.Regime)">@ArenaRegimeCode.Badge(g.Regime)</span>
+                @if (g.Penalties.Count == 0)
+                {
+                    <span class="da-pen none">[반대 논리 없음]</span>
+                }
+                @foreach (var pen in g.Penalties)
+                {
+                    <span class="da-pen" data-pen="@pen.Label">[@pen.Text]</span>
+                }
+                <span>확신도 <b>@(g.RawConfidence)→@(g.Confidence)</b></span>
+                <span>동적 비중 <b>@((g.WeightBp / 100.0).ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%</b></span>
+                @if (g.StreakCut)
+                {
+                    <span class="da-pen streak">[연패 @(g.LossStreak)회 · 비중 50% 축소]</span>
+                }
+            </div>
+        }
+    }</text>;
+
     // [v12.18.64-DEV] 뉴스 촉매 배지(null = 생략 · 호재 = 반감기 진행 막대 · 긴급 악재 = 점멸).
     private static RenderFragment Cat(ArenaCatalystView? c) => @<text>@if (c is not null)
     {
@@ -649,6 +729,21 @@ else
 }
 
 <style>
+    .da-gov-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px; }
+    .da-gov-toggle { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 18px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
+    .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
+    .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
+    .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }
+    .da-regime.range { background: #546e7a; color: #fff; } .da-regime.panic { background: #b71c1c; color: #fff; outline: 2px solid #ff8a80; }
+    .da-regime.idle { opacity: .6; }
+    .da-cool { background: #6a1b9a; color: #fff; } .da-streak.bad { background: #6d4c41; color: #fff; }
+    .da-gov { font-size: 11.5px; margin-top: 0; }
+    .da-regime-mini { padding: 0 6px; border-radius: 5px; background: #2a3040; }
+    .da-regime-mini.bull { color: #ef9a9a; } .da-regime-mini.bear { color: #90caf9; } .da-regime-mini.panic { color: #ff8a80; font-weight: 700; }
+    .da-pen { padding: 0 6px; border-radius: 5px; background: #3e2723; color: #ffcc80; font-weight: 700; }
+    .da-pen.none { background: #1b2a1b; color: #a5d6a7; font-weight: 400; } .da-pen.streak { background: #4a148c; color: #e1bee7; }
+    .da-pm { font-size: 12px; line-height: 1.5; margin: 4px 0; padding: 4px 8px; border-radius: 6px; background: #161b26; border-left: 3px solid #546e7a; }
+    .da-pm.win { border-left-color: #66bb6a; } .da-pm.loss { border-left-color: #E53935; }
     .da-feed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }
     .da-feed .ar-mode { margin: 0; }
     .da-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 6px; background: #3a3f4b; color: #ccc; }

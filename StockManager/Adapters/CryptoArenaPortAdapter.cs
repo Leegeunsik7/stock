@@ -5,6 +5,8 @@
 //   마켓 코드 문자열 ↔ 엔진 long 키 변환은 여기서만(CryptoArenaUniverse). 표 밖 마켓 주문 = Invalid(엔진 미도달).
 //   ★liveArmed:false — 주문 경로 = 엔진 휴먼 가상 원장 큐(SubmitHuman)뿐(업비트 주문 API 송출 0). ★Fed=false(정산 0회) = 피드 미결선 정직 렌더.
 //   주입기 미결속(null) = 출처 선택 거부 · Pumped=false(정직 렌더).
+//   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled → 엔진 EnableGovernance(Volatile 플래그 · 다음 정산부터 · 핫패스 무변경) ·
+//     Governance/스냅샷 = 거버너 계수 + 수신 종목 국면 대표값(패닉 우선) · 근거 Governance = ArenaGovernanceMapper.Card(감점 태그 · 자가 회고).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -48,7 +50,7 @@ namespace StockManager.Adapters
             if (!_engine.TryReadSnapshot(out var s)) { view = default; return false; }
             DateTime? kst = s.LastKstTicks > 0 ? new DateTime(s.LastKstTicks, DateTimeKind.Unspecified) : null;
             view = new CryptoArenaView(_engine.Version, s.Ticks, s.Trades, s.Tradable, s.KimchiPremiumBp, s.GlobalChangeBp, s.RationaleCount, kst,
-                s.DroppedQuotes, Map(s.Ai), Map(s.Human));
+                s.DroppedQuotes, Map(s.Ai), Map(s.Human), _engine.GovernanceEnabled, CurrentRegime());
             return true;
         }
 
@@ -63,7 +65,8 @@ namespace StockManager.Adapters
                 ref readonly var r = ref buf[i];
                 list.Add(new CryptoRationaleView(r.Seq, CryptoArenaUniverse.Label(r.Symbol), CryptoArenaUniverse.CoinOf(r.Symbol), r.Side, r.Qty, r.PriceWon, r.AtKst,
                     ArenaTriggerText.Label(r.TriggerType), r.SentimentScore, r.ConfidenceScore, r.TargetPrice, r.StopLossPrice, r.RiskRewardRatio, r.RealizedPnlWon,
-                    r.ImbalanceBp, r.MomentumBp, r.SurgeBp, r.MacroBp, r.BidDepthWon, r.AskDepthWon, r.HumanReadableSummary));
+                    r.ImbalanceBp, r.MomentumBp, r.SurgeBp, r.MacroBp, r.BidDepthWon, r.AskDepthWon, r.HumanReadableSummary,
+                    ArenaGovernanceMapper.Card(in r.Governance)));
             }
             return list;
         }
@@ -102,6 +105,27 @@ namespace StockManager.Adapters
         {
             long symbol = string.IsNullOrEmpty(market) ? 0 : CryptoArenaUniverse.Pack(market.AsSpan());
             return symbol == 0 ? CryptoArenaReject.Invalid : _engine.SubmitHuman(symbol, side, qtyRaw);
+        }
+
+        public bool SetGovernanceEnabled(bool enabled)
+        {
+            _engine.EnableGovernance(enabled);
+            return true;
+        }
+
+        public ArenaGovernanceView Governance
+            => ArenaGovernanceMapper.View(_engine.TryReadGovernor(out var g), in g, _engine.GovernanceEnabled, CurrentRegime(), LastKstTicks());
+
+        private long LastKstTicks() => _engine.TryReadSnapshot(out var s) ? s.LastKstTicks : 0;
+
+        /// <summary>수신 종목 국면 대표값(콜드 · 종목 표 순회 · 패닉 우선).</summary>
+        private int CurrentRegime()
+        {
+            var buf = new DuelQuote[UpbitCryptoArenaEngine.MaxSymbols];
+            int n = _engine.CopyQuotes(buf);
+            var symbols = new List<long>(n);
+            for (int i = 0; i < n; i++) if (buf[i].Symbol > 0 && buf[i].BidWon > 0) symbols.Add(buf[i].Symbol);
+            return ArenaGovernanceMapper.Aggregate(symbols, _engine.RegimeOf);
         }
 
         // ReturnBp = Int128 재계산(원 raw 10^8 × 10000 = long 범위 초과 — DuelBookStats.ReturnBp 는 원 단위 모드 전용).

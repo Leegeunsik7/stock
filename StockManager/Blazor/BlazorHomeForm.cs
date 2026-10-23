@@ -1734,6 +1734,12 @@ namespace StockManager.Blazor
             services.AddSingleton(cryptoArena);
             services.AddSingleton(cryptoArenaFeeder);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.ICryptoArenaPort>(new StockManager.Adapters.CryptoArenaPortAdapter(cryptoArena, cryptoArenaFeeder));
+            // [v12.18.68-DEV] 플루토 프로 거버너(국면 판정 · 악마의 변호인 · 동적 사이징 · 자가 회고) — `Arena.PlutoGovernanceEnabled`(기본 켜짐) 로 3대 아레나 기동 상태 주입.
+            //   /dualarena [🧠 플루토 프로 거버너] 토글이 런타임에 같은 엔진 플래그를 바꾼다(Volatile · 다음 정산부터 · 가상 원장 진입 판정만 · 송출 경로 0).
+            bool plutoGovernance = cfg.GetBool("Arena.PlutoGovernanceEnabled", true);
+            krxArena.EnableGovernance(plutoGovernance);
+            usArena.EnableGovernance(plutoGovernance);
+            cryptoArena.EnableGovernance(plutoGovernance);
             if (cfg.GetBool("Arena.UpbitStreamEnabled", false))
             {
                 var upbitStream = new StockManager.Engines.Feeds.Crypto.UpbitWebSocketFeedAdapter(new StockManager.Engines.Feeds.Crypto.UpbitMarketState(), tap: cryptoArenaFeeder.OnUpbitFrame);

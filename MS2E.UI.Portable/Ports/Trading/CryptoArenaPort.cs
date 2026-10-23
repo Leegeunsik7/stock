@@ -5,6 +5,8 @@
 //   금액/가격 단위 = 원 raw 10^8(long) · 수량 = 코인 raw 10^8(1 = 0.00000001) — 표시 변환은 UI 몫. 세션 = 24시간 무휴(Tradable = 유효 시각).
 //   ★Fail-Closed: 이 포트의 주문 경로는 휴먼 가상 원장 큐(SubmitHuman)뿐 — 업비트 주문/인증 · 무장 메서드 없음(외부 주문 송출 0).
 //   ★정직 렌더: Fed=false = 시세 피드 미결선(정산 0회) — UI 는 가짜 손익을 그리지 않는다.
+//   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled · Governance(ArenaGovernanceView) · 스냅샷 IsGovernanceEnabled/CurrentRegime ·
+//     근거 Governance(ArenaGovernanceCard · 감점 태그 · 자가 회고). 기본 구현 = 미지원(정지 · 판정 전).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -66,7 +68,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>크립토 아레나 스냅샷 투영. Tradable = 24/7 연속매매(유효 시각).</summary>
     public readonly record struct CryptoArenaView(
         long Version, long Ticks, long Trades, bool Tradable, int KimchiPremiumBp, int GlobalChangeBp, long RationaleCount, DateTime? SessionKst,
-        long DroppedQuotes, CryptoArenaBookView Ai, CryptoArenaBookView Human)
+        long DroppedQuotes, CryptoArenaBookView Ai, CryptoArenaBookView Human, bool IsGovernanceEnabled = false, int CurrentRegime = ArenaRegimeCode.Unknown)
     {
         public CryptoArenaBookView Side(int side) => side == ArenaSide.Human ? Human : Ai;
         public int Leader => Ai.EquityRaw > Human.EquityRaw ? ArenaLeader.Ai : Human.EquityRaw > Ai.EquityRaw ? ArenaLeader.Human : ArenaLeader.Draw;
@@ -76,7 +78,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     public sealed record CryptoRationaleView(
         long Seq, string Market, string Coin, int Side, long QtyRaw, long PriceRaw, DateTime AtKst, string Trigger, int SentimentScore, int ConfidenceScore,
         long TargetPriceRaw, long StopLossPriceRaw, double RiskRewardRatio, long RealizedPnlRaw,
-        int ImbalanceBp, int MomentumBp, int FlowBp, int KimchiVolBp, long BidDepthWon, long AskDepthWon, string Summary);
+        int ImbalanceBp, int MomentumBp, int FlowBp, int KimchiVolBp, long BidDepthWon, long AskDepthWon, string Summary, ArenaGovernanceCard? Governance = null);
 
     public interface ICryptoArenaPort
     {
@@ -102,5 +104,9 @@ namespace MS2E.UI.Portable.Ports.Trading
         IReadOnlyList<CryptoArenaQuoteView> Quotes();
         /// <summary>진영(ArenaSide) 보유 종목(표 순서).</summary>
         IReadOnlyList<CryptoArenaPositionView> Positions(int side);
+        /// <summary>[v12.18.68-DEV] 플루토 프로 거버너 가동/정지(다음 정산부터 · 미지원 = false). 기본 구현 = false.</summary>
+        bool SetGovernanceEnabled(bool enabled) => false;
+        /// <summary>[v12.18.68-DEV] 거버너 상태(가동 · 시장 대표 국면 · 연패/쿨다운 · 계수). 기본 구현 = default(미지원 = 정지 · 판정 전).</summary>
+        ArenaGovernanceView Governance => default;
     }
 }

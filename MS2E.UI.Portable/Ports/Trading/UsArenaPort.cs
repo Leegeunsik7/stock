@@ -5,6 +5,8 @@
 //   금액 단위 = USD 센트(long) — 표시 변환은 UI 몫. 세션 = 미국 세션 페이즈(UsArenaPhase) · 체결은 정규 연속매매(Tradable)뿐.
 //   ★Fail-Closed: 이 포트의 주문 경로는 휴먼 가상 원장 큐(SubmitHuman)뿐 — 브로커 · 무장 · 실주문 메서드 없음(해외 주문 API 송출 0).
 //   ★정직 렌더: Fed=false = 시세 피드 미결선(정산 0회) — UI 는 가짜 손익을 그리지 않는다.
+//   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled · Governance(ArenaGovernanceView) · 스냅샷 IsGovernanceEnabled/CurrentRegime ·
+//     근거 Governance(ArenaGovernanceCard · 감점 태그 · 자가 회고). 기본 구현 = 미지원(정지 · 판정 전).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -69,7 +71,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>US 아레나 스냅샷 투영. Phase = UsArenaPhase · Tradable = 정규 연속매매.</summary>
     public readonly record struct UsArenaView(
         long Version, long Ticks, int Phase, bool Tradable, int QqqBp, int SoxxBp, int Us10yChangeBp, long RationaleCount, DateTime? SessionKst,
-        long DroppedQuotes, UsArenaBookView Ai, UsArenaBookView Human)
+        long DroppedQuotes, UsArenaBookView Ai, UsArenaBookView Human, bool IsGovernanceEnabled = false, int CurrentRegime = ArenaRegimeCode.Unknown)
     {
         public UsArenaBookView Side(int side) => side == ArenaSide.Human ? Human : Ai;
         public int Leader => Ai.EquityCents > Human.EquityCents ? ArenaLeader.Ai : Human.EquityCents > Ai.EquityCents ? ArenaLeader.Human : ArenaLeader.Draw;
@@ -79,7 +81,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     public sealed record UsRationaleView(
         long Seq, string Ticker, int Side, long Qty, long PriceCents, DateTime AtKst, string Trigger, int SentimentScore, int ConfidenceScore,
         long TargetPriceCents, long StopLossPriceCents, double RiskRewardRatio, long RealizedPnlCents,
-        int EtfBetaBp, int RateBp, int GapFlowBp, int MomentumBp, string Summary);
+        int EtfBetaBp, int RateBp, int GapFlowBp, int MomentumBp, string Summary, ArenaGovernanceCard? Governance = null);
 
     public interface IUsArenaPort
     {
@@ -107,5 +109,9 @@ namespace MS2E.UI.Portable.Ports.Trading
         IReadOnlyList<UsArenaPositionView> Positions(int side);
         /// <summary>[v12.18.64-DEV] 티커 실시간 뉴스 촉매(아레나 정산 시각 기준 감쇄 · 노이즈/중립/미결속 = null). 기본 구현 = null.</summary>
         ArenaCatalystView? Catalyst(string ticker) => null;
+        /// <summary>[v12.18.68-DEV] 플루토 프로 거버너 가동/정지(다음 정산부터 · 미지원 = false). 기본 구현 = false.</summary>
+        bool SetGovernanceEnabled(bool enabled) => false;
+        /// <summary>[v12.18.68-DEV] 거버너 상태(가동 · 시장 대표 국면 · 연패/쿨다운 · 계수). 기본 구현 = default(미지원 = 정지 · 판정 전).</summary>
+        ArenaGovernanceView Governance => default;
     }
 }

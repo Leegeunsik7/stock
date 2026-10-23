@@ -6,6 +6,8 @@
 //   ★정직 렌더: Fed=false = 시세 피드 미결선(정산 0회) — UI 는 가짜 손익을 그리지 않는다.
 //   [v12.18.60-DEV] 시세 출처(KrxArenaFeed): 키움 브리지 실시간 호가 ↔ 합성 데모 시세(가상 세션 ×20 · UI 가 '합성'으로 명시) 선택 ·
 //     수신 종목 호가 · 진영별 보유 · 게시 버전(렌더 폴링) 판독. 출처 전환 = 양 진영 원장 초기화(출처 간 오염 0).
+//   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled · Governance(ArenaGovernanceView) · 스냅샷 IsGovernanceEnabled/CurrentRegime ·
+//     근거 Governance(ArenaGovernanceCard · 감점 태그 · 자가 회고). 기본 구현 = 미지원(정지 · 판정 전).
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -55,7 +57,8 @@ namespace MS2E.UI.Portable.Ports.Trading
 
     /// <summary>아레나 스냅샷 투영.</summary>
     public readonly record struct KrxArenaView(
-        long Version, long Ticks, bool SessionOpen, int MacroBp, long RationaleCount, DateTime? SessionKst, long DroppedQuotes, KrxArenaBookView Ai, KrxArenaBookView Human)
+        long Version, long Ticks, bool SessionOpen, int MacroBp, long RationaleCount, DateTime? SessionKst, long DroppedQuotes, KrxArenaBookView Ai, KrxArenaBookView Human,
+        bool IsGovernanceEnabled = false, int CurrentRegime = ArenaRegimeCode.Unknown)
     {
         public KrxArenaBookView Side(int side) => side == ArenaSide.Human ? Human : Ai;
         public int Leader => Ai.EquityWon > Human.EquityWon ? ArenaLeader.Ai : Human.EquityWon > Ai.EquityWon ? ArenaLeader.Human : ArenaLeader.Draw;
@@ -64,7 +67,7 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>AI 근거 1건 투영(Summary = 한국어 설명 요약).</summary>
     public sealed record KrxRationaleView(
         long Seq, long Symbol, int Side, long Qty, long PriceWon, DateTime AtKst, string Trigger, int SentimentScore, int ConfidenceScore,
-        long TargetPriceWon, long StopLossPriceWon, double RiskRewardRatio, long RealizedPnlWon, string Summary);
+        long TargetPriceWon, long StopLossPriceWon, double RiskRewardRatio, long RealizedPnlWon, string Summary, ArenaGovernanceCard? Governance = null);
 
     public interface IKrxArenaPort
     {
@@ -90,5 +93,9 @@ namespace MS2E.UI.Portable.Ports.Trading
         IReadOnlyList<KrxArenaPositionView> Positions(int side);
         /// <summary>[v12.18.64-DEV] 종목 실시간 뉴스 촉매(아레나 정산 시각 기준 감쇄 · 노이즈/중립/미결속 = null). 기본 구현 = null.</summary>
         ArenaCatalystView? Catalyst(long symbol) => null;
+        /// <summary>[v12.18.68-DEV] 플루토 프로 거버너 가동/정지(다음 정산부터 · 미지원 = false). 기본 구현 = false.</summary>
+        bool SetGovernanceEnabled(bool enabled) => false;
+        /// <summary>[v12.18.68-DEV] 거버너 상태(가동 · 시장 대표 국면 · 연패/쿨다운 · 계수). 기본 구현 = default(미지원 = 정지 · 판정 전).</summary>
+        ArenaGovernanceView Governance => default;
     }
 }
