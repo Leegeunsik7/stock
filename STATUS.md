@@ -1,14 +1,12 @@
-# Current Project Status
-- **Active Milestone**: v12.18.70-DEV — /dualarena AI 실현손익 체결 내역(청산 저널) · 한글 종목명 매핑 · 실현손익 칩
-- **Build Status**: 오중 빌드 Release -warnaserror 0W/0E · 전체 스위트 5,255 통과 6 건너뜀(옵트인) · 실패 0 · infra 0 · 래칫 ≤40 통과
+# STATUS
+
+- **Active Milestone**: v12.18.71-DEV — 시초가 개장 게이트(갭 · 동시호가 단일가) · 플루토 카피 트레이딩(1-클릭 따라하기 · 자동 미러링 · 동반 청산)
+- **Build Status**: 오중 Release -warnaserror 0W/0E(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,269 통과 / 6 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-23
-
-## Completed Deliverables
-- 엔진 청산 근거 EntryPrice(청산 직전 평단 · 3대 아레나 · 핫패스 구조 무변경)
-- ArenaClosedTradeView/ArenaExitKind/ReturnBp(Int128 · 코인 스케일) · 3대 포트 GetClosedTrades(최신순 50) · ArenaClosedTradeMapper
-- StockDisplayNameResolver(국내 20 · 미국 9 · 코인 4 · 미등록 = 코드)
-- DualArenaPage [📜 AI 실현손익 체결 내역] 표 · 보유/티켓/카드 한글명 병기 · 청산 카드 [실현손익 칩]
-- ArenaClosedTradeJournalTests 8건 · HANDOVER §178
-
-## Next Milestone
-- 영속 청산 저널(근거 링 128건 한계 해소) · 실 종목 마스터 기반 한글명 · 실 금리/달러 피드 → SetMacroHeadwind · 다음 GM 출하에 반영
+- **Completed Deliverables**:
+  - MarketOpenAuctionGate: 개장 갭(추격 금지 · 패닉 차단 · 갭 메우기 — 거버너 가동 시) · 동시호가 장부 → 개장 단일가 체결(국내 · 미국)
+  - ArenaCopyMath/Ledger: 비례 수량 · 20bp 슬리피지 취소 · 예수금 부족 Fail-Closed · 복제분 동반 청산(δ=0)
+  - 3대 아레나 포트 FollowAiTrade · SetAutoCopyEnabled · CopyTrading · 국내/미국 OpeningAuction/OpeningGaps
+  - DualArenaPage: 자동 미러링 토글 + 배율 · 따라사기/따라팔기 버튼 · 결과 토스트 · 시초 갭 배지
+  - ArenaCopyTradingTests 14건(δ=0 10만 회 0B 포함) · HANDOVER §179
+- **Next Milestone**: 자동 미러링 설정 영속화(IArenaPreferencePort 확장) · 실 앱 화면 육안 검증

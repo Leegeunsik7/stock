@@ -9,6 +9,7 @@
 //   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled → 엔진 EnableGovernance(Volatile 플래그 · 다음 정산부터 · 핫패스 무변경) ·
 //     Governance/스냅샷 = 거버너 계수 + 수신 종목 국면 대표값(패닉 우선) · 근거 Governance = ArenaGovernanceMapper.Card(감점 태그 · 자가 회고).
 //   [v12.18.70-DEV] GetClosedTrades = 근거 링 매도 근거 → ArenaClosedTradeMapper(청산 저널 · 진입가 · 수익률 · 한글 종목명).
+//   [v12.18.71-DEV] 카피 트레이딩(FollowAiTrade → 엔진 SubmitFollow · SetAutoCopyEnabled · CopyTrading) · 개장 게이트(OpeningAuction · OpeningGaps) = ArenaCopyMapper.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -78,6 +79,33 @@ namespace StockManager.Adapters
             var buf = new AiTradeRationale[UsTechArenaEngine.RationaleCapacity];
             int n = _engine.CopyRationales(buf);
             return ArenaClosedTradeMapper.Collect(buf.AsSpan(0, n), max, static s => UsTechUniverse.Unpack(s), 1);
+        }
+
+        public ArenaCopyResult FollowAiTrade(long rationaleSeq, decimal copyRatio = 1.0m)
+        {
+            var buf = new AiTradeRationale[UsTechArenaEngine.RationaleCapacity];
+            int n = _engine.CopyRationales(buf);
+            bool ok = _engine.TryReadSnapshot(out var s);
+            return ArenaCopyMapper.Follow(buf.AsSpan(0, n), rationaleSeq, copyRatio, ok, in s.Ai, in s.Human, _engine.SubmitFollow, UsTechArenaEngine.CopyCode);
+        }
+
+        public bool SetAutoCopyEnabled(bool enabled, decimal ratio = 1.0m)
+            => ArenaCopyMath.TryRatioBp(ratio, out int bp) && _engine.SetAutoCopy(enabled, bp);
+
+        public ArenaCopyTradingView CopyTrading
+            => ArenaCopyMapper.View(_engine.TryReadCopy(out var l), in l, _engine.AutoCopyEnabled, _engine.AutoCopyRatioBp, UsTechUniverse.Unpack);
+
+        public ArenaOpeningAuctionView OpeningAuction => ArenaCopyMapper.Auction(_engine.TryReadAuction(out var a), in a);
+
+        public IReadOnlyList<ArenaOpenGapView> OpeningGaps()
+        {
+            var list = new List<ArenaOpenGapView>(UsTechArenaEngine.MaxSymbols);
+            for (int i = 0; i < UsTechArenaEngine.MaxSymbols; i++)
+            {
+                long sym = UsTechUniverse.Symbol(i);
+                if (_engine.TryReadOpenGap(sym, out var g) && ArenaCopyMapper.TryGap(UsTechUniverse.Unpack(sym), in g, out var view)) list.Add(view);
+            }
+            return list;
         }
 
         public IReadOnlyList<UsArenaQuoteView> Quotes()

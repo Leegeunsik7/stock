@@ -8,6 +8,7 @@
 //   [v12.18.68-DEV] 플루토 프로 거버너: SetGovernanceEnabled · Governance(ArenaGovernanceView) · 스냅샷 IsGovernanceEnabled/CurrentRegime ·
 //     근거 Governance(ArenaGovernanceCard · 감점 태그 · 자가 회고). 기본 구현 = 미지원(정지 · 판정 전).
 //   [v12.18.70-DEV] GetClosedTrades(max) = AI 청산 거래 저널(ArenaClosedTradeView · 진입가 → 청산가 · 실현손익 · 수익률 · 청산 유형). 기본 구현 = 빈 목록.
+//   [v12.18.71-DEV] 카피 트레이딩: FollowAiTrade · SetAutoCopyEnabled · CopyTrading(ArenaCopyTradingPort DTO) · 시초가 개장 게이트 OpeningAuction/OpeningGaps. 기본 구현 = 미지원.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -116,5 +117,15 @@ namespace MS2E.UI.Portable.Ports.Trading
         ArenaGovernanceView Governance => default;
         /// <summary>[v12.18.70-DEV] AI 청산 거래 저널(최신 → 과거 · 최대 max건 · 기본 50). UI 콜드 경로. 기본 구현 = 빈 목록(미지원).</summary>
         IReadOnlyList<ArenaClosedTradeView> GetClosedTrades(int max = 50) => Array.Empty<ArenaClosedTradeView>();
+        /// <summary>[v12.18.71-DEV] AI 근거 1건(rationaleSeq) 1-클릭 복제 → 휴먼 가상 원장 큐(비례 수량 × 배율 · 슬리피지 20bp 보호 · 체결 = 다음 정산 회차). 기본 구현 = 미지원.</summary>
+        ArenaCopyResult FollowAiTrade(long rationaleSeq, decimal copyRatio = 1.0m) => new(ArenaCopyCode.Unsupported, 0, 0, rationaleSeq);
+        /// <summary>[v12.18.71-DEV] 플루토 자동 미러링 가동/정지(배율 0.1x~3.0x · 다음 정산부터 · 범위 밖/미지원 = false). 기본 구현 = false.</summary>
+        bool SetAutoCopyEnabled(bool enabled, decimal ratio = 1.0m) => false;
+        /// <summary>[v12.18.71-DEV] 자동 미러링 상태 · 복제 계수 · 마지막 결과. 기본 구현 = default(미지원).</summary>
+        ArenaCopyTradingView CopyTrading => default;
+        /// <summary>[v12.18.71-DEV] 시초가 개장 게이트 요약(동시호가 접수 · 단일가 체결 · 갭 거부권). 기본 구현 = default(미지원).</summary>
+        ArenaOpeningAuctionView OpeningAuction => default;
+        /// <summary>[v12.18.71-DEV] 수신 종목 개장 갭(전일 종가 vs 시초가 · 판정). 기본 구현 = 빈 목록.</summary>
+        IReadOnlyList<ArenaOpenGapView> OpeningGaps() => Array.Empty<ArenaOpenGapView>();
     }
 }

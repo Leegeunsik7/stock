@@ -4185,3 +4185,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 저널 원천 = 엔진 근거 링 128건(진입+청산 공용) → 표시 청산 건수 ≤ 64 근사 · 링 덮어쓰기 이후 과거 청산은 소실(영속 저널 아님) · 업그레이드 이전 근거 = 진입가 0('-') ·
   국내 한글명 사전 = 정적 20종(브리지 실시간 그 밖 종목은 코드만) · 실 앱 화면 육안 미확인(bUnit 렌더로 검증).
 - 불변: liveArmed:false(판독 전용 · 주문 경로 무변경) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 179. v12.18.71-DEV — 시초가 개장 게이트(갭 · 단일가) · 플루토 카피 트레이딩(1-클릭 따라하기 · 자동 미러링 · 동반 청산) (/dualarena) (2026-10-23)
+
+- 오더 전제 검증: 엔진에 개장 갭/동시호가 개념 없음(미국 = 프리마켓 갭 시그널만 · 국내 = 09:00 전 주문 SessionClosed) · 복제 API 없음 → 신규. 오더의 `FollowAiTrade(string rationaleId)` = 근거 식별자가 long Seq 이므로 `FollowAiTrade(long rationaleSeq, decimal copyRatio = 1.0m)`.
+- 신규 StockManager/Engines/Arena/Common/MarketOpenAuctionGate.cs(δ=0): OpenGapState(전일 종가 · 시초가 · 갭 bp · 판정 · 개장 창 5틱) · 갭 판정(≥+300bp 추격 금지 · ≤−500bp 패닉 · −500~−300bp 갭 메우기 후보) ·
+  ArenaAuctionOrder(동시호가 장부 32건) · ArenaAuctionStats. 국내 동시호가 08:30~09:00 KST · 미국 프리마켓 09:00~09:30 ET.
+- 신규 StockManager/Engines/Arena/Common/ArenaCopyTrading.cs(δ=0): ArenaCopyMath(진영 평가자산 비례 수량 Int128 · 배율 0.1x~3.0x · 불리한 슬리피지 bp 올림 · 20bp 초과 취소 · 동반 청산 수량) · ArenaCopyLedger(종류/사유별 계수 · 마지막 결과).
+- 엔진 3종(Krx/UsTech/UpbitCrypto): 휴먼 큐 셀에 RefPx/Flags 추가 · SubmitFollow(복제 = 체결 시 기준가 대비 20bp 초과 취소 · 매도 = 보유 상한) · SetAutoCopy(AI 진입 직후 같은 seqlock 쓰기 창에서 휴먼 비례 매수 ·
+  예수금 부족 = Fail-Closed(축소 복제 0)) · AI 청산 = 휴먼 Pos.CopiedQty(복제 보유분)만 AI 청산 비율로 동반 청산(휴먼 자기 매수분 보존) · TryReadCopy. ArenaTrigger.OpeningGapFill(18) 추가.
+  국내/미국: 일자 변경 = 전일 종가 승계 · 정규장 첫 틱 = 개장 → 장부 주문 단일 시초가(호가단위 내림 중간가 · 매수1호가 하한) 일괄 체결 · 미개장 장부 = 창 종료 시 전량 거부(이월 0) ·
+  갭 거부권/갭 메우기 = 플루토 거버너(악마의 변호인) 가동 시에만(정지 = 기존 동작 동일 — 기존 미국 프리마켓 갭 진입 테스트로 확인 후 이렇게 결정). 코인 = 24/7 → 개장 게이트 없음.
+- 포트(순수 DTO · 엔진 참조 0): 신규 MS2E.UI.Portable/Ports/Trading/ArenaCopyTradingPort.cs(ArenaCopyCode · ArenaCopyResult · ArenaCopyTradingView · ArenaOpenGapView/Kind · ArenaOpeningAuctionView) ·
+  3대 포트 FollowAiTrade · SetAutoCopyEnabled · CopyTrading(기본 구현 = 미지원) · 국내/미국 OpeningAuction · OpeningGaps. 어댑터 = 신규 StockManager/Adapters/ArenaCopyMapper(콜드 경로).
+- DualArenaPage: 휴먼 티켓 상단 [⚡ 플루토 자동 미러링 ON/OFF] + 배율 0.5x/1.0x + 복제 계수 + 최근 자동 결과 배지 · 근거 카드 [👤 따라사기]/[👤 따라팔기] · 청산 저널 '복제' 열 [👤 따라팔기] ·
+  결과 토스트(성공 = 수량·배율 · 거부 = 사유) · 국내/미국 세션 배지 옆 동시호가/단일가/갭 거부권 계수 + 종목 시초 갭 배지. 미지원 포트 = 토글 비활성 + 정직 거부 토스트.
+- 테스트 StockManager.Tests/Engines/Arena/ArenaCopyTradingTests.cs 14건: 산식 경계(20bp 허용/21bp 취소 · Int128 포화) · 게이트 경계/롤/창 · 국내 자동 미러링+동반 청산 · 예수금 부족 Fail-Closed + 자기 매수분 보존 ·
+  따라사기 0.5x/따라팔기 · 슬리피지 14bp 체결/28bp 취소 · 만료/배율/보유 없음 거부 · 동시호가 → 단일가(73,500원) + 갭 배지 · 추격 금지(거버너 ON만) · 미개장 장부 퍼지 · 미국 프리마켓 → 개장 단일가 ·
+  미국/코인 포트 · δ=0(엔진 복제 접수/체결 10만 회 × 창 · 산식 10만 회 = 0B) · bUnit 토글/배율/버튼/토스트 · 미지원 포트 정직 렌더 + Portable 엔진 참조 0.
+  기존 테스트 1건 수정: ArenaClosedTradeJournalTests 국내 표 칸 수 9 → 10(복제 열 추가 · 의도된 변경).
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,269 통과 + 6 건너뜀 · 실패 0 · 5분 27초 · infra-scan 0(기준 117) · 래칫/PureShell 테스트 19 통과(≤40).
+- 한계(정직): 1-클릭 복제는 '다음 정산 회차' 체결(시세가 멈추면 미체결 · 큐잉 재시도 없음) · 복제 기준가 = AI 체결가(오래된 근거일수록 슬리피지 취소 확률 상승) · 자동 미러링 설정은 메모리 전용(재기동 시 OFF · 영속화 미구현) ·
+  국내 휴장일 캘린더 미반영(기존과 동일) · 실 앱 화면 육안 미확인(bUnit 렌더로 검증).
+- 불변: liveArmed:false(목적지 = 휴먼 가상 원장 큐뿐 · 브로커/무장 수단 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

@@ -48,6 +48,7 @@ namespace StockManager.Engines.Arena.Common
         ValuationBubble = 15,      // [v12.18.65-DEV] 플루토 극심한 과열 조기 청산
         TradeFlowMomentum = 16,    // [v12.18.66-DEV] 업비트 24시간 체결 모멘텀 주도 진입
         KimchiVolatility = 17,     // [v12.18.66-DEV] 김치프리미엄/변동성 감응 주도 진입
+        OpeningGapFill = 18,       // [v12.18.71-DEV] 시초가 갭 하락 메우기(개장 창 · 매수 수급 우위) 진입
     }
 
     /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
@@ -63,7 +64,8 @@ namespace StockManager.Engines.Arena.Common
         public static bool IsEntry(ArenaTrigger t) => t is >= ArenaTrigger.OrderbookImbalance and <= ArenaTrigger.MomentumBreakout
                                                           or >= ArenaTrigger.EtfBeta and <= ArenaTrigger.PremarketGapFlow
                                                           or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount
-                                                          or ArenaTrigger.TradeFlowMomentum or ArenaTrigger.KimchiVolatility;
+                                                          or ArenaTrigger.TradeFlowMomentum or ArenaTrigger.KimchiVolatility
+                                                          or ArenaTrigger.OpeningGapFill;
         public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock
                                                          or ArenaTrigger.ValuationBubble;
 
@@ -86,6 +88,7 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.ValuationBubble => "플루토 극심한 과열 조기 청산",
             ArenaTrigger.TradeFlowMomentum => "24시간 체결 모멘텀",
             ArenaTrigger.KimchiVolatility => "김치프리미엄/변동성 감응",
+            ArenaTrigger.OpeningGapFill => "시초가 갭 메우기",
             _ => "미분류",
         };
     }

@@ -20,7 +20,10 @@
    [v12.18.69-DEV] 토글 영속화: IArenaPreferencePort(직접 주입 · 미결선 null 객체 = '저장소 미결선' 정직 표시) 로 토글 결과를 비동기 저장(UI 무차단) →
      재기동 시 호스트가 같은 설정 키로 복원. 저장 상태 뱃지 = 💾 저장됨 / 저장 중 / 저장 실패(재기동 시 이전 값) / 미결선.
    [v12.18.70-DEV] 청산 저널: 3대 아레나 보유 표 아래 [📜 AI 실현손익 체결 내역] 표(GetClosedTrades · 청산시각 · 한글 종목명 · 진입가 → 청산가 · 실현손익 · 수익률 · 청산유형 배지 · 사유) ·
-   한글 종목명 병기(StockDisplayNameResolver — 보유 표 · 티켓 · 뉴스 촉매 · 근거 카드 헤더, 미등록 = 코드) · 청산 근거 카드 헤더 [실현손익: 금액 (수익률)] 칩(상승 적색 · 하락 청색). *@
+   한글 종목명 병기(StockDisplayNameResolver — 보유 표 · 티켓 · 뉴스 촉매 · 근거 카드 헤더, 미등록 = 코드) · 청산 근거 카드 헤더 [실현손익: 금액 (수익률)] 칩(상승 적색 · 하락 청색).
+   [v12.18.71-DEV] 플루토 카피 트레이딩: 휴먼 티켓 위 [⚡ 플루토 자동 미러링 ON/OFF] 토글 + 배율(0.5x · 1.0x) = 활성 모드 포트 SetAutoCopyEnabled ·
+     AI 근거 카드 [👤 따라사기]/[👤 따라팔기] · 청산 저널 행 [👤 따라팔기] = FollowAiTrade(근거 순번 · 배율) → 결과 토스트 배지(성공/거부 사유) ·
+     자동 미러링 최근 결과 배지(CopyTrading). 국내/미국 = 시초가 개장 게이트 배지(동시호가 접수 · 단일가 체결 · 갭 거부권 · 종목 개장 갭). 목적지 = 휴먼 가상 원장뿐. *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -49,6 +52,11 @@
     <span class="da-badge da-gov-persist @_persistCss" data-persist="@_persistCss">@_persistText</span>
     @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
 </div>
+
+@if (_copyMsg is not null)
+{
+    <div class="da-toast @_copyCss" role="status" data-copy="@_copyCss">@_copyMsg</div>
+}
 
 <div class="ar-mode da-modes" role="tablist">
     <button class="da-mode-tab @(_mode == ModeKrx ? "on" : "")" role="tab" data-mode="krx" @onclick="() => SetMode(ModeKrx)">🇰🇷 국내 대형주 (KRW ₩)</button>
@@ -141,9 +149,10 @@
             }
         </div>
 
-        @(ClosedTable(cClosed, PriceRaw, SignedKrwRaw, CoinQty, "코인"))
+        @(ClosedTable(cClosed, PriceRaw, SignedKrwRaw, CoinQty, "코인", ModeCrypto))
 
         <div class="ar-card ar-ticket da-ticket">
+            @CopyBar(ModeCrypto, CryptoPort.CopyTrading)
             <h3>🧑 휴먼 코인 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 수수료 0.05% · 최소 5,000원 · 24/7 · 다음 정산 회차 가상 체결</small></h3>
             @{ var cq = CryptoPort.Quotes(); }
             <div class="ar-ctl">
@@ -177,6 +186,7 @@
                     <b class="da-name">@Sym(r.Market)</b> @CoinQty(r.QtyRaw) @r.Coin @@ @PriceRaw(r.PriceRaw)
                     @if (r.Side < 0) { @PnlChip(SignedKrwRaw(r.RealizedPnlRaw), r.RealizedPnlRaw, ClosedOf(cClosed, r.Seq)) }
                     <span class="da-trigger">@r.Trigger</span>
+                    @FollowButton(ModeCrypto, r.Seq, r.Side)
                     <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
                 </div>
                 <div class="da-metrics">
@@ -219,6 +229,7 @@ else if (_mode == ModeUs)
             <span class="da-badge da-phase @PhaseCss(u.Phase)" data-phase="@u.Phase">@PhaseText(u.Phase) · @ukst.ToString("MM-dd HH:mm:ss") KST</span>
             <span class="da-badge">QQQ <b class="@Css(u.QqqBp)">@Bp(u.QqqBp)</b> · SOXX <b class="@Css(u.SoxxBp)">@Bp(u.SoxxBp)</b> · 美10년 <b class="@Css(u.Us10yChangeBp)">@SignedBp(u.Us10yChangeBp)</b></span>
             @GovBadges(govUs)
+            @OpenBadges(UsPort.OpeningAuction, UsPort.OpeningGaps())
         }
     </div>
 
@@ -283,9 +294,10 @@ else if (_mode == ModeUs)
             }
         </div>
 
-        @(ClosedTable(uClosed, Usd, SignedUsd, Shares, "주"))
+        @(ClosedTable(uClosed, Usd, SignedUsd, Shares, "주", ModeUs))
 
         <div class="ar-card ar-ticket da-ticket">
+            @CopyBar(ModeUs, UsPort.CopyTrading)
             <h3>🧑 휴먼 USD 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 정규장(연속매매)만 · 다음 정산 회차 가상 체결</small></h3>
             @{ var uq = UsPort.Quotes(); }
             @{
@@ -329,6 +341,7 @@ else if (_mode == ModeUs)
                     <b class="da-name">@Sym(r.Ticker)</b> @Cat(UsPort.Catalyst(r.Ticker)) @r.Qty.ToString("N0")주 @@ @Usd(r.PriceCents)
                     @if (r.Side < 0) { @PnlChip(SignedUsd(r.RealizedPnlCents), r.RealizedPnlCents, ClosedOf(uClosed, r.Seq)) }
                     <span class="da-trigger">@r.Trigger</span>
+                    @FollowButton(ModeUs, r.Seq, r.Side)
                     <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
                 </div>
                 <div class="da-metrics">
@@ -370,6 +383,7 @@ else
         <span class="da-badge @(v.SessionOpen ? "ok" : "wait")">@(v.SessionOpen ? "정규장" : "장외") · @kst.ToString("MM-dd HH:mm:ss") KST</span>
         <span class="da-badge">야간 글로벌 <b class="@Css(v.MacroBp)">@Bp(v.MacroBp)</b></span>
         @GovBadges(govKrx)
+        @OpenBadges(Port.OpeningAuction, Port.OpeningGaps())
     }
 </div>
 
@@ -434,9 +448,10 @@ else
         }
     </div>
 
-    @(ClosedTable(kClosed, Won, SignedWon, Shares, "주"))
+    @(ClosedTable(kClosed, Won, SignedWon, Shares, "주", ModeKrx))
 
     <div class="ar-card ar-ticket da-ticket">
+        @CopyBar(ModeKrx, Port.CopyTrading)
         <h3>🧑 휴먼 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 다음 정산 회차 가상 체결</small></h3>
         @{ var quotes = Port.Quotes(); }
         @{
@@ -480,6 +495,7 @@ else
                 <b class="da-name">@StockDisplayNameResolver.Display(r.Symbol)</b> @Cat(Port.Catalyst(r.Symbol)) @r.Qty.ToString("N0")주 @@ @r.PriceWon.ToString("N0")원
                 @if (r.Side < 0) { @PnlChip(SignedWon(r.RealizedPnlWon), r.RealizedPnlWon, ClosedOf(kClosed, r.Seq)) }
                 <span class="da-trigger">@r.Trigger</span>
+                @FollowButton(ModeKrx, r.Seq, r.Side)
                 <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss")</span>
             </div>
             <div class="da-metrics">
@@ -513,6 +529,10 @@ else
     private string? _market;
     private decimal _coinQty = 0.001m;
     private string? _cryptoMsg;
+    // [v12.18.71-DEV] 카피 트레이딩 상태(배율 = 따라하기 · 자동 미러링 공용 · 토스트 = 마지막 1-클릭 결과)
+    private decimal _copyRatio = 1.0m;
+    private string? _copyMsg;
+    private string _copyCss = "ok";
     private long _drawn = -1;
     private int _renderInFlight;
     private System.Threading.Timer? _timer;
@@ -744,8 +764,8 @@ else
         _ => "neg",
     };
     // [v12.18.70-DEV] AI 실현손익 체결 내역(청산 저널 · 최신순) — 단위 표기는 아레나별 포맷터 주입(원 · USD · 코인 raw).
-    private static RenderFragment ClosedTable(IReadOnlyList<ArenaClosedTradeView> list, Func<long, string> price, Func<long, string> signedPnl,
-        Func<long, string> qty, string unit) => @<text>
+    private RenderFragment ClosedTable(IReadOnlyList<ArenaClosedTradeView> list, Func<long, string> price, Func<long, string> signedPnl,
+        Func<long, string> qty, string unit, int mode) => @<text>
         <div class="ar-card da-closed">
             <h3>📜 AI 실현손익 체결 내역 <small>최신순 · 최대 @(MaxClosed)건 · 실현손익 = 수수료/세금 차감 후 · 수익률 = 실현손익 ÷ (진입가 × 수량)</small></h3>
             @if (list.Count == 0)
@@ -758,7 +778,7 @@ else
                 foreach (var t in list) { if (t.RealizedPnl > 0) wins++; else if (t.RealizedPnl < 0) losses++; }
                 <div class="ar-sub da-closed-sum">표시 @(list.Count)건 · 수익 @(wins)건 · 손실 @(losses)건</div>
                 <table class="ar-tbl da-closed-tbl">
-                    <tr><th>청산시각(KST)</th><th>종목</th><th>수량</th><th>진입가</th><th>청산가</th><th>실현손익</th><th>수익률</th><th>청산유형</th><th>사유</th></tr>
+                    <tr><th>청산시각(KST)</th><th>종목</th><th>수량</th><th>진입가</th><th>청산가</th><th>실현손익</th><th>수익률</th><th>청산유형</th><th>사유</th><th>복제</th></tr>
                     @foreach (var t in list)
                     {
                         <tr data-seq="@t.Seq" title="@t.Summary">
@@ -771,12 +791,88 @@ else
                             <td><span class="da-ret @Css(t.ReturnBp)">@(t.HasReturn ? Bp(t.ReturnBp) : "-")</span></td>
                             <td><span class="da-exit @ArenaExitKind.Css(t.ExitKind)">@t.ExitLabel</span></td>
                             <td class="ar-sub">@t.Reason</td>
+                            <td>@FollowButton(mode, t.Seq, -1)</td>
                         </tr>
                     }
                 </table>
             }
         </div>
     </text>;
+
+    public static readonly decimal[] CopyRatios = { 0.5m, 1.0m };
+
+    private ArenaCopyTradingView CopyOf(int mode) => mode == ModeCrypto ? CryptoPort.CopyTrading : mode == ModeUs ? UsPort.CopyTrading : Port.CopyTrading;
+
+    // [v12.18.71-DEV] 1-클릭 복제(근거 순번 → 활성 모드 포트 FollowAiTrade · 비례 수량 × 배율) → 결과 토스트(성공 = 접수 · 거부 = 사유).
+    private void Follow(int mode, long seq)
+    {
+        var r = mode == ModeCrypto ? CryptoPort.FollowAiTrade(seq, _copyRatio) : mode == ModeUs ? UsPort.FollowAiTrade(seq, _copyRatio) : Port.FollowAiTrade(seq, _copyRatio);
+        string act = r.Side > 0 ? "따라사기" : "따라팔기";
+        string qty = mode == ModeCrypto ? CoinQty(r.Qty) + " 코인" : r.Qty.ToString("N0") + "주";
+        (_copyCss, _copyMsg) = r.Accepted
+            ? ("ok", "✅ " + act + " 접수 #" + seq + " — " + qty + " (배율 " + RatioText(_copyRatio) + ") → 다음 정산 회차 휴먼 가상 원장 체결 · 슬리피지 20bp 초과 시 자동 취소")
+            : ("bad", "⛔ " + act + " 거부 #" + seq + " — " + r.Label);
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
+
+    // [v12.18.71-DEV] 자동 미러링 토글 · 배율(활성 모드 포트만 · 미지원 = 거부 토스트 · 가짜 상태 0).
+    private void SetAutoCopy(int mode, bool enabled, decimal ratio)
+    {
+        bool ok = mode == ModeCrypto ? CryptoPort.SetAutoCopyEnabled(enabled, ratio) : mode == ModeUs ? UsPort.SetAutoCopyEnabled(enabled, ratio) : Port.SetAutoCopyEnabled(enabled, ratio);
+        if (ok) _copyRatio = ratio;
+        (_copyCss, _copyMsg) = !ok ? ("bad", "⛔ 자동 미러링 설정 거부 — 이 아레나는 카피 트레이딩 미지원")
+            : enabled ? ("ok", "⚡ 플루토 자동 미러링 ON (" + RatioText(ratio) + ") — AI 체결 즉시 휴먼 가상 원장 비례 복제 · AI 청산 시 복제분 동반 청산 · 예수금 부족 = 거부")
+            : ("idle", "플루토 자동 미러링 OFF — 휴먼 원장은 수동 주문 · 1-클릭 따라하기만 반영됩니다");
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
+
+    private static string RatioText(decimal r) => r.ToString("0.0#", System.Globalization.CultureInfo.InvariantCulture) + "x";
+
+    // [v12.18.71-DEV] 휴먼 티켓 상단 자동 미러링 바(토글 · 배율 · 복제 계수 · 최근 자동 결과).
+    private RenderFragment CopyBar(int mode, ArenaCopyTradingView c) => @<text>
+        <div class="da-copy-bar" data-mode="@mode">
+            <button class="da-copy-toggle @(c.AutoEnabled ? "on" : "off")" role="switch" aria-checked="@(c.AutoEnabled ? "true" : "false")" disabled="@(!c.Supported)"
+                    @onclick="() => SetAutoCopy(mode, !c.AutoEnabled, _copyRatio)">⚡ 플루토 자동 미러링 <b>(@(c.AutoEnabled ? "ON" : "OFF"))</b></button>
+            @foreach (var ratio in CopyRatios)
+            {
+                <button class="da-copy-ratio @(_copyRatio == ratio ? "on" : "")" data-ratio="@RatioText(ratio)" @onclick="() => SetAutoCopy(mode, c.AutoEnabled, ratio)">@RatioText(ratio)</button>
+            }
+            @if (!c.Supported)
+            {
+                <span class="ar-sub">카피 트레이딩 미결선</span>
+            }
+            else
+            {
+                <span class="ar-sub da-copy-stats">미러링 @c.Mirrored · 따라하기 @c.Followed · 동반 청산 @c.CompanionCloses · 슬리피지 취소 @c.SlippageCancels · 예수금 거부 @c.CashRejects</span>
+                @if (c.LastEvent > 0)
+                {
+                    <span class="da-badge da-copy-last @(c.LastCode == ArenaCopyCode.None ? "ok" : "bad")" data-copy-last="@c.LastCode">@c.LastKindLabel @(c.LastSide > 0 ? "매수" : "매도") @(c.LastSymbol is { } ls ? Sym(ls) : "") · @(c.LastCode == ArenaCopyCode.None ? "체결" : ArenaCopyCode.Label(c.LastCode))</span>
+                }
+            }
+        </div>
+    </text>;
+
+    // [v12.18.71-DEV] 근거 카드 · 청산 저널 행 1-클릭 복제 버튼(매수 근거 = 따라사기 · 매도 근거 = 따라팔기).
+    private RenderFragment FollowButton(int mode, long seq, int side) => @<text>
+        <button class="da-follow @(side > 0 ? "buy" : "sell")" data-follow="@seq" title="AI 체결 #@seq 를 휴먼 가상 원장으로 복제(배율 @RatioText(_copyRatio) · 슬리피지 20bp 보호)" @onclick="() => Follow(mode, seq)">👤 @(side > 0 ? "따라사기" : "따라팔기")</button>
+    </text>;
+
+    // [v12.18.71-DEV] 시초가 개장 게이트 배지(동시호가 접수 · 단일가 체결 · 갭 거부권 · 종목 개장 갭).
+    private static RenderFragment OpenBadges(ArenaOpeningAuctionView a, IReadOnlyList<ArenaOpenGapView> gaps) => @<text>@if (a.Supported)
+    {
+        @if (a.PreOpen)
+        {
+            <span class="da-badge da-auction pre" data-auction="pre">🔔 동시호가 접수 중 · 장부 @(a.Parked)건 → 개장 단일가 체결</span>
+        }
+        @if (a.AuctionFills + a.AuctionRejects + a.GapVetoes + a.GapFillEntries > 0)
+        {
+            <span class="da-badge da-auction">시초가 단일가 체결 @a.AuctionFills · 거부 @a.AuctionRejects · 갭 거부권 @a.GapVetoes · 갭 메우기 진입 @a.GapFillEntries</span>
+        }
+        @foreach (var g in gaps)
+        {
+            <span class="da-gap @ArenaOpenGapKind.Css(g.Kind) @(g.InWindow ? "live" : "")" data-gap="@g.Code" title="@g.KindLabel">@Sym(g.Code) 시초 갭 <b class="@Css(g.GapBp)">@Bp(g.GapBp)</b>@(g.InWindow ? " · " + g.KindLabel : "")</span>
+        }
+    }</text>;
 
     // [v12.18.70-DEV] 청산 근거 카드 헤더 실현손익 칩(저널 매칭 = 수익률 병기 · 미매칭 = 금액만).
     private static RenderFragment PnlChip(string pnlText, long pnl, ArenaClosedTradeView? t) => @<text>
@@ -866,6 +962,18 @@ else
     .da-exit.tp { background: #E53935; color: #fff; } .da-exit.sl { background: #1E88E5; color: #fff; } .da-exit.close { background: #546e7a; color: #fff; }
     .da-exit.shock { background: #b71c1c; color: #fff; } .da-exit.bubble { background: #f9a825; color: #111; }
     .da-name { font-size: 13.5px; }
+    .da-toast { margin: 0 0 8px; padding: 6px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600; background: #263238; color: #fff; }
+    .da-toast.ok { background: #1b5e20; } .da-toast.bad { background: #6d4c41; } .da-toast.idle { background: #3a3f4b; }
+    .da-copy-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 8px; }
+    .da-copy-toggle { font-size: 12.5px; font-weight: 700; padding: 4px 12px; border-radius: 16px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
+    .da-copy-toggle.on { background: #f9a825; color: #111; border-color: #ffd54f; }
+    .da-copy-ratio { font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
+    .da-copy-ratio.on { background: #1d2230; color: #fff; border-color: #4dd0e1; }
+    .da-follow { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 6px; border: 1px solid #3a3f4b; background: #1d2230; color: #ddd; cursor: pointer; }
+    .da-follow.buy { border-color: #E53935; color: #ef9a9a; } .da-follow.sell { border-color: #1E88E5; color: #90caf9; }
+    .da-auction.pre { background: #5e35b1; color: #fff; }
+    .da-gap { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: #1d2230; border: 1px solid #3a3f4b; }
+    .da-gap.chase.live { border-color: #E53935; } .da-gap.panic.live { border-color: #b71c1c; background: #3e1414; } .da-gap.fill.live { border-color: #66bb6a; }
     .da-pnl-chip { padding: 1px 8px; border-radius: 6px; font-size: 12px; font-weight: 700; background: #1d2230; border: 1px solid #3a3f4b; }
     .da-pnl-chip.ar-up { color: #E53935; border-color: #E53935; } .da-pnl-chip.ar-down { color: #1E88E5; border-color: #1E88E5; }
     .da-card { border-left: 3px solid #3a3f4b; background: #121722; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }

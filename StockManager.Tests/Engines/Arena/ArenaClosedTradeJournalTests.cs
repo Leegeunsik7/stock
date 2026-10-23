@@ -328,7 +328,7 @@ namespace StockManager.Tests.Engines.Arena
                 var row = Assert.Single(cut.FindAll(".da-closed-tbl tr[data-seq]"));
                 _out.WriteLine(row.TextContent);
                 var cells = row.QuerySelectorAll("td").Select(c => c.TextContent.Trim()).ToArray();
-                Assert.Equal(9, cells.Length);
+                Assert.Equal(10, cells.Length);                                      // [v12.18.71-DEV] 복제 열(👤 따라팔기) 추가
                 Assert.Equal(t.AtKst.ToString("MM-dd HH:mm:ss"), cells[0]);
                 Assert.Contains("삼성전자", cells[1]); Assert.Contains("005930", cells[1]);
                 Assert.Equal(t.Qty.ToString("N0") + " 주", cells[2]);

@@ -27,6 +27,10 @@
 //     극심한 과열 = 보유 ValuationBubble 조기 청산. 미결속/판정 없음/만료 = 기존 동작 동일.
 //   [v12.18.67-DEV] 플루토 거버넌스(EnableGovernance · 선택): 티커별 국면 판정(매 유효 호가) → AI 진입 직전 PlutoCognitiveGovernor(국면 재가중 · 패닉 차단 ·
 //     연패 쿨다운 · 악마의 변호인 · 동적 비중 5~25%) · 청산 = 자가 회고 + 연패 집계 · 근거 Governance 원자 게시. 모멘텀 = MomentumBp · 불균형 = GapFlowBp. 정지(기본) = 기존 동작 동일.
+//   [v12.18.71-DEV] 시초가 개장 게이트(MarketOpenAuctionGate): 미 동부 일자 변경 = 전일 종가 승계 · 티커 정규장(09:30 ET = 22:30/23:30 KST) 첫 틱 = 개장 갭 →
+//     (거버너 가동 시) 개장 창 갭 상승 ≥ 3% 추격 금지 · 갭 하락 ≤ −5% 패닉 차단 · −5%~−3% ∧ 갭/수급 우위 = OpeningGapFill 진입.
+//     동시호가 접수 창(프리마켓 09:00~09:30 ET) 휴먼 주문 = 경매 장부 적재(32건) → 개장 틱 단일 시초가($0.01 내림 중간가) 일괄 체결.
+//   [v12.18.71-DEV] 플루토 카피 트레이딩: SubmitFollow(슬리피지 20bp 보호) · SetAutoCopy(비례 미러링 · 예수금 부족 Fail-Closed · 복제분 동반 청산). 정지(기본) = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
@@ -97,9 +101,10 @@ namespace StockManager.Engines.Arena.Us
         private const int SeqlockRetries = 64;
         private const int QueueMask = HumanQueueCapacity - 1;
 
-        private struct Sym { public long Symbol, Bid, Ask, BidQty, AskQty, EmaMidFx, LastRegularMidX2, PrevCloseX2; public int GapBp, Seen; public PlutoRegimeState Regime; }
-        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl; public int SymIdx, RiskRewardX100; public PlutoEntryMemo Memo; }
-        private struct HumanCell { public long Seq, Symbol, Qty; public int Side; }
+        private struct Sym { public long Symbol, Bid, Ask, BidQty, AskQty, EmaMidFx, LastRegularMidX2, PrevCloseX2; public int GapBp, Seen; public PlutoRegimeState Regime; public OpenGapState Gate; }
+        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl, CopiedQty; public int SymIdx, RiskRewardX100; public PlutoEntryMemo Memo; }
+        private struct HumanCell { public long Seq, Symbol, Qty, RefPx; public int Side, Flags; }
+        private const int SlippageCancelled = -1;                                   // [v12.18.71-DEV] FillHuman 내부 거부(계수 기록 완료)
 
         private sealed class Book
         {
@@ -126,6 +131,14 @@ namespace StockManager.Engines.Arena.Us
         private UsSessionPhase _phase = UsSessionPhase.Closed;
         private bool _cutoff;
         private int _qqqBp, _soxxBp, _us10yBp;
+        private bool _preOpen;                                                    // [v12.18.71-DEV] 동시호가 접수 창(프리마켓 09:00~09:30 ET)
+        private readonly ArenaAuctionOrder[] _auction = new ArenaAuctionOrder[MarketOpenAuctionGate.AuctionCapacity];
+        private int _auctionCount;
+        private long _auctionFills, _auctionRejects, _gapVetoes, _gapFills;
+        private ArenaAuctionStats _auctionSnap;
+        private bool _copyAuto;
+        private int _copyRatioBp = ArenaCopyMath.DefaultRatioBp;
+        private ArenaCopyLedger _copy, _copySnap;
         private long _ver;
         private UsArenaSnapshot _snap;
 
@@ -158,6 +171,10 @@ namespace StockManager.Engines.Arena.Us
             _govApproved = _govPanic = _govCooldown = _govVeto = 0;
             _rationaleCount = 0;
             for (int i = 0; i < MaxSymbols; i++) _syms[i] = new Sym { Symbol = UsTechUniverse.Symbol(i) };
+            Array.Clear(_auction);                    // [v12.18.71-DEV] 경매 장부 · 개장 게이트 · 복제 계수 초기화(자동 미러링 설정은 유지)
+            _auctionCount = 0;
+            _auctionFills = _auctionRejects = _gapVetoes = _gapFills = 0;
+            _copy = default;
             _ticks = _dropped = _etDay = 0;
             PublishSnapshot();
             EndWrite();
@@ -232,7 +249,71 @@ namespace StockManager.Engines.Arena.Us
 
         // ── 휴먼 주문 큐(Vyukov 유계 MPSC · 할당 0) ──────────────────────────────────
 
-        public int SubmitHuman(long symbol, int side, long qty)
+        public int SubmitHuman(long symbol, int side, long qty) => Enqueue(symbol, side, qty, 0, 0);
+
+        /// <summary>[v12.18.71-DEV] 1-클릭 복제 주문(refPx = AI 체결가 센트 · 체결 시 불리한 슬리피지 20bp 초과 = 취소 · 매도 = 보유 상한). 반환 = UsArenaReject(접수 단계).</summary>
+        public int SubmitFollow(long symbol, int side, long qty, long refPx)
+            => refPx < MinPriceCents || refPx > MaxPriceCents ? UsArenaReject.Invalid : Enqueue(symbol, side, qty, refPx, MarketOpenAuctionGate.FlagCopy);
+
+        /// <summary>[v12.18.71-DEV] 플루토 자동 미러링 가동/정지(배율 bp 0.1x~3.0x · 다음 정산부터 · 범위 밖 = false · 무변경).</summary>
+        public bool SetAutoCopy(bool enabled, int ratioBp)
+        {
+            if (!ArenaCopyMath.ValidRatio(ratioBp)) return false;
+            Volatile.Write(ref _copyRatioBp, ratioBp);
+            Volatile.Write(ref _copyAuto, enabled);
+            return true;
+        }
+
+        public bool AutoCopyEnabled => Volatile.Read(ref _copyAuto);
+        public int AutoCopyRatioBp => Volatile.Read(ref _copyRatioBp);
+
+        /// <summary>[v12.18.71-DEV] 복제 계수 판독(seqlock · 경합 상한 초과 = false).</summary>
+        public bool TryReadCopy(out ArenaCopyLedger ledger)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                ledger = _copySnap;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return true;
+            }
+            ledger = default;
+            return false;
+        }
+
+        /// <summary>[v12.18.71-DEV] 개장 게이트 계수 판독(seqlock · 경합 상한 초과 = false).</summary>
+        public bool TryReadAuction(out ArenaAuctionStats stats)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                stats = _auctionSnap;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return true;
+            }
+            stats = default;
+            return false;
+        }
+
+        /// <summary>[v12.18.71-DEV] 티커 개장 갭 상태(seqlock · 표 밖/경합 상한 초과 = false).</summary>
+        public bool TryReadOpenGap(long symbol, out OpenGapState gate)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                int i = UsTechUniverse.IndexOf(symbol);
+                gate = i >= 0 ? _syms[i].Gate : default;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return i >= 0;
+            }
+            gate = default;
+            return false;
+        }
+
+        private int Enqueue(long symbol, int side, long qty, long refPx, int flags)
         {
             if (UsTechUniverse.IndexOf(symbol) < 0 || (side != 1 && side != -1) || qty <= 0 || qty > MaxOrderQty) return UsArenaReject.Invalid;
             long pos = Volatile.Read(ref _hqEnq);
@@ -244,7 +325,7 @@ namespace StockManager.Engines.Arena.Us
                 {
                     if (Interlocked.CompareExchange(ref _hqEnq, pos + 1, pos) == pos)
                     {
-                        c.Symbol = symbol; c.Side = side; c.Qty = qty;
+                        c.Symbol = symbol; c.Side = side; c.Qty = qty; c.RefPx = refPx; c.Flags = flags;
                         Volatile.Write(ref c.Seq, pos + 1);
                         return UsArenaReject.None;
                     }
@@ -255,12 +336,12 @@ namespace StockManager.Engines.Arena.Us
             }
         }
 
-        private bool TryDequeue(out long symbol, out int side, out long qty)
+        private bool TryDequeue(out ArenaAuctionOrder o)
         {
             long pos = _hqDeq;
             ref HumanCell c = ref _hq[pos & QueueMask];
-            if (Volatile.Read(ref c.Seq) != pos + 1) { symbol = 0; side = 0; qty = 0; return false; }
-            symbol = c.Symbol; side = c.Side; qty = c.Qty;
+            if (Volatile.Read(ref c.Seq) != pos + 1) { o = default; return false; }
+            o = new ArenaAuctionOrder { Symbol = c.Symbol, Side = c.Side, Qty = c.Qty, RefPx = c.RefPx, Flags = c.Flags };
             Volatile.Write(ref c.Seq, pos + HumanQueueCapacity);
             _hqDeq = pos + 1;
             return true;
@@ -274,7 +355,7 @@ namespace StockManager.Engines.Arena.Us
         private void Clock(DateTime kst)
         {
             _lastKstTicks = kst.Ticks;
-            if (kst.Ticks < KstOffsetTicks) { _phase = UsSessionPhase.CalendarUncovered; _cutoff = true; return; }
+            if (kst.Ticks < KstOffsetTicks) { _phase = UsSessionPhase.CalendarUncovered; _cutoff = true; _preOpen = false; return; }
             DateTime et = UsTradingCalendar.ToEastern(new DateTime(kst.Ticks - KstOffsetTicks));
             _phase = UsSessionStateMachine.GetSessionPhaseEastern(et);
             long day = et.Ticks - et.Ticks % TimeSpan.TicksPerDay;
@@ -283,6 +364,7 @@ namespace StockManager.Engines.Arena.Us
                 if (_etDay != 0) RollDay();
                 _etDay = day;
             }
+            _preOpen = _phase == UsSessionPhase.PreMarket && et.Ticks - day >= MarketOpenAuctionGate.UsAuctionStartEtTicks;
             long close = UsTradingCalendar.IsEarlyClose(et) ? EarlyCloseTicks : RegularCloseTicks;
             _cutoff = et.Ticks - day >= close - AiCutoffBeforeCloseTicks;
         }
@@ -295,6 +377,7 @@ namespace StockManager.Engines.Arena.Us
                 ref Sym s = ref _syms[i];
                 if (s.LastRegularMidX2 > 0) s.PrevCloseX2 = s.LastRegularMidX2;
                 s.GapBp = 0;
+                MarketOpenAuctionGate.RollDay(ref s.Gate);                  // [v12.18.71-DEV] 개장 게이트 전일 종가 승계
             }
         }
 
@@ -347,11 +430,27 @@ namespace StockManager.Engines.Arena.Us
                 else s.EmaMidFx += (midFx - s.EmaMidFx) >> EmaShift;
                 if (s.Seen < int.MaxValue) s.Seen++;
 
+                if (_phase == UsSessionPhase.ContinuousTrading && MarketOpenAuctionGate.OnRegularTick(ref s.Gate, midX2)) Uncross(si);
                 DrainHuman();
                 if (_phase == UsSessionPhase.ContinuousTrading) StepAi(si, in sig, in news, in val, kst);
             }
             PublishSnapshot();
             EndWrite();
+        }
+
+        /// <summary>[v12.18.71-DEV] 개장 틱: 경매 장부의 해당 티커 주문을 단일 시초가($0.01 내림 중간가 · 매수1호가 하한)로 일괄 체결(접수 순서 · 잔량 상한).</summary>
+        private void Uncross(int si)
+        {
+            ref Sym s = ref _syms[si];
+            long px = Math.Max(AlignDownCents((s.Bid + s.Ask) / 2, 0), s.Bid);
+            int keep = 0;
+            for (int i = 0; i < _auctionCount; i++)
+            {
+                if (_auction[i].Symbol != s.Symbol) { _auction[keep++] = _auction[i]; continue; }
+                if (FillHuman(in _auction[i], si, px, px) == UsArenaReject.None) _auctionFills++; else _auctionRejects++;
+            }
+            for (int i = keep; i < _auctionCount; i++) _auction[i] = default;
+            _auctionCount = keep;
         }
 
         /// <summary>순수 시그널 평가(할당 0). index = UsTechUniverse 인덱스 · midFx/emaMidFx = 중간가 ×1024 고정소수점.</summary>
@@ -400,27 +499,34 @@ namespace StockManager.Engines.Arena.Us
                 long target = p.Target, stop = p.Stop, priorPnl = p.TradePnl; int rr = p.RiskRewardX100;
                 var memo = p.Memo;
                 long entry = p.AvgPx;                                       // [v12.18.70-DEV] 청산 진입가(Sell 전 판독 · 전량 청산 시 슬롯 회수)
-                if (Sell(b, si, p.Qty, out long filled, out long pnl) != UsArenaReject.None) return;
+                long heldBefore = p.Qty;
+                if (Sell(b, si, p.Qty, s.Bid, out long filled, out long pnl) != UsArenaReject.None) return;
                 int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100)
                          : exit == ArenaTrigger.NewsShock ? Math.Clamp(-news.EffectiveScore, 0, 100)
                          : exit == ArenaTrigger.ValuationBubble ? Math.Clamp(-val.Score, 0, 100) : 100;
                 var exitGov = GovernExit(in memo, exit, si, priorPnl + pnl, FindPos(b, s.Symbol) < 0, kst.Ticks);
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, s.Bid, kst.Ticks, exit, sig.Score, conf,
                     target, stop, rr, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, pnl, ArenaCurrency.Usd, in news, in val, 0, 0, in exitGov, entry));
+                if (Volatile.Read(ref _copyAuto)) MirrorExit(si, filled, heldBefore);
                 return;
             }
             if (_cutoff || news.IsShock || val.BlocksEntry || b.Count >= MaxAiPositions) return;
-            int score = sig.Score, confidence, weightBp = PositionWeightBp;
+            bool governed = Volatile.Read(ref _governed);                  // [v12.18.71-DEV] 개장 갭 전략 = 거버너(악마의 변호인) 가동 시에만 · 정지 = 기존 동작 동일
+            if (governed && MarketOpenAuctionGate.VetoesEntry(in s.Gate)) { if (sig.Score >= EntryScore) _gapVetoes++; return; }
+            bool gapFill = governed && MarketOpenAuctionGate.GapFillSignal(in s.Gate, sig.GapFlowBp);
+            int raw = gapFill ? Math.Max(sig.Score, EntryScore) : sig.Score;
+            var dominant = gapFill && sig.Score < EntryScore ? ArenaTrigger.OpeningGapFill : sig.Dominant;
+            int score = raw, confidence, weightBp = PositionWeightBp;
             PlutoGovernanceTag gov = default;
-            if (Volatile.Read(ref _governed))
+            if (governed)
             {
-                if (!Govern(si, sig.Score, sig.MomentumBp, MomentumWeight, sig.GapFlowBp, GapFlowWeight, kst.Ticks, out gov)) return;
+                if (!Govern(si, raw, sig.MomentumBp, MomentumWeight, sig.GapFlowBp, GapFlowWeight, kst.Ticks, out gov)) return;
                 score = gov.AdjustedScore; confidence = gov.Confidence; weightBp = gov.WeightBp;
             }
             else
             {
-                if (sig.Score < EntryScore) return;
-                confidence = Math.Clamp(sig.Score / 100, 0, 100);
+                if (raw < EntryScore) return;
+                confidence = Math.Clamp(raw / 100, 0, 100);
             }
             long tgt = AlignUpCents(s.Ask, TargetBaseBp + TargetPerConfidenceBp * confidence);
             long stp = AlignDownCents(s.Ask, -StopBp);
@@ -430,13 +536,57 @@ namespace StockManager.Engines.Arena.Us
             long budget = Math.Min(b.Cash, Equity(b) * weightBp / 10000);
             long qty = budget * 100_000 / (s.Ask * (100_000 + FeePer100k));
             if (qty <= 0) return;
-            if (Buy(b, si, qty, out long bought) != UsArenaReject.None) return;
+            long aiEquity = Equity(b);
+            if (Buy(b, si, qty, s.Ask, out long bought) != UsArenaReject.None) return;
             ref Pos np = ref b.Positions[FindPos(b, s.Symbol)];
             np.Target = tgt; np.Stop = stp; np.RiskRewardX100 = rrX100;
             if (gov.Governed) np.Memo = Memo(in gov, kst.Ticks, np.Cost);
-            Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, s.Ask, kst.Ticks, sig.Dominant, score, confidence,
+            if (dominant == ArenaTrigger.OpeningGapFill) _gapFills++;
+            Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, s.Ask, kst.Ticks, dominant, score, confidence,
                 tgt, stp, rrX100, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, 0, ArenaCurrency.Usd, in news, in val, 0, 0, in gov));
+            if (Volatile.Read(ref _copyAuto)) MirrorEntry(si, bought, aiEquity);
         }
+
+        /// <summary>[v12.18.71-DEV] 자동 미러링 진입(같은 쓰기 창 · AI 체결가 = 체결가 · 진입 직전 자본 비례 수량 · 예수금 부족 = Fail-Closed).</summary>
+        private void MirrorEntry(int si, long aiQty, long aiEquity)
+        {
+            ref Sym s = ref _syms[si];
+            var h = _books[ArenaSide.Human];
+            long qty = ArenaCopyMath.ScaleQty(aiQty, aiEquity, Equity(h), Volatile.Read(ref _copyRatioBp));
+            long filled = 0;
+            int rc = qty <= 0 ? ArenaCopyCode.ZeroQty : CopyCode(Buy(h, si, qty, s.Ask, out filled));
+            if (rc == ArenaCopyCode.None) h.Positions[FindPos(h, s.Symbol)].CopiedQty += filled;
+            else h.Rejects++;
+            _copy.Record(ArenaCopyKind.Mirror, rc, 1, s.Symbol, filled);
+        }
+
+        /// <summary>[v12.18.71-DEV] AI 청산 동반 청산(휴먼 복제 보유분 × AI 청산 비율 · 복제분 없음 = 무동작).</summary>
+        private void MirrorExit(int si, long aiSold, long aiHeldBefore)
+        {
+            ref Sym s = ref _syms[si];
+            var h = _books[ArenaSide.Human];
+            int pi = FindPos(h, s.Symbol);
+            if (pi < 0 || h.Positions[pi].CopiedQty <= 0) return;
+            long qty = ArenaCopyMath.CompanionQty(h.Positions[pi].CopiedQty, h.Positions[pi].Qty, aiSold, aiHeldBefore);
+            if (qty <= 0) return;
+            int rc = CopyCode(Sell(h, si, qty, s.Bid, out long filled, out _));
+            if (rc != ArenaCopyCode.None) h.Rejects++;
+            _copy.Record(ArenaCopyKind.Companion, rc, -1, s.Symbol, filled);
+        }
+
+        /// <summary>[v12.18.71-DEV] 아레나 거부 코드 → 복제 결과 코드(ArenaCopyCode).</summary>
+        public static int CopyCode(int reject) => reject switch
+        {
+            UsArenaReject.None => ArenaCopyCode.None,
+            UsArenaReject.InsufficientCash => ArenaCopyCode.InsufficientCash,
+            UsArenaReject.InsufficientPosition => ArenaCopyCode.InsufficientPosition,
+            UsArenaReject.SessionClosed => ArenaCopyCode.SessionClosed,
+            UsArenaReject.NoQuote => ArenaCopyCode.NoQuote,
+            UsArenaReject.NoLiquidity => ArenaCopyCode.NoLiquidity,
+            UsArenaReject.QueueFull => ArenaCopyCode.QueueFull,
+            UsArenaReject.Invalid => ArenaCopyCode.Invalid,
+            _ => ArenaCopyCode.Rejected,
+        };
 
         /// <summary>가격(센트) × (1 + bp) 를 $0.01 격자로 올림(UsTickAligner · raw 10^8 경유 · 무효 = 0).</summary>
         public static long AlignUpCents(long cents, int bp)
@@ -454,30 +604,82 @@ namespace StockManager.Engines.Arena.Us
 
         private void DrainHuman()
         {
-            var b = _books[ArenaSide.Human];
-            while (TryDequeue(out long symbol, out int side, out long qty))
+            bool open = _phase == UsSessionPhase.ContinuousTrading;
+            if (!open && !_preOpen) PurgeAuction();
+            while (TryDequeue(out var o))
             {
-                int rc;
-                int si = UsTechUniverse.IndexOf(symbol);
-                if (_phase != UsSessionPhase.ContinuousTrading) rc = UsArenaReject.SessionClosed;
-                else if (si < 0 || _syms[si].Seen == 0) rc = UsArenaReject.NoQuote;
-                else if (side > 0) rc = Buy(b, si, qty, out _);
-                else
+                int si = UsTechUniverse.IndexOf(o.Symbol);
+                bool auction = !open && _preOpen && si >= 0 && _syms[si].Seen > 0 && !_syms[si].Gate.Opened;
+                if (auction && _auctionCount < MarketOpenAuctionGate.AuctionCapacity)
                 {
-                    int pi = FindPos(b, symbol);
-                    rc = pi < 0 || b.Positions[pi].Qty < qty ? UsArenaReject.InsufficientPosition : Sell(b, si, qty, out _, out _);
+                    _auction[_auctionCount++] = o;                          // [v12.18.71-DEV] 동시호가 접수 → 개장 틱 단일가 체결
+                    continue;
                 }
-                if (rc != UsArenaReject.None) b.Rejects++;
+                if (!open) Reject(in o, auction ? UsArenaReject.QueueFull : UsArenaReject.SessionClosed);
+                else if (si < 0 || _syms[si].Seen == 0) Reject(in o, UsArenaReject.NoQuote);
+                else FillHuman(in o, si, _syms[si].Ask, _syms[si].Bid);
             }
         }
 
-        private int Buy(Book b, int si, long qty, out long filled)
+        /// <summary>[v12.18.71-DEV] 휴먼 주문 거부 1건(거부 계수 · 복제 주문 = 복제 원장 기록).</summary>
+        private void Reject(in ArenaAuctionOrder o, int reject)
+        {
+            _books[ArenaSide.Human].Rejects++;
+            if (o.Flags == MarketOpenAuctionGate.FlagCopy) _copy.Record(ArenaCopyKind.Follow, CopyCode(reject), o.Side, o.Symbol, 0);
+        }
+
+        /// <summary>[v12.18.71-DEV] 동시호가 창 밖 · 세션 종료 = 미체결 경매 주문 전량 거부(SessionClosed · 이월 0).</summary>
+        private void PurgeAuction()
+        {
+            for (int i = 0; i < _auctionCount; i++)
+            {
+                Reject(in _auction[i], UsArenaReject.SessionClosed);
+                _auctionRejects++;
+                _auction[i] = default;
+            }
+            _auctionCount = 0;
+        }
+
+        /// <summary>
+        /// [v12.18.71-DEV] 휴먼 주문 1건 체결(buyPx/sellPx = 최우선 호가 · 개장 단일가) + 거부 기록. 일반 매도 = 보유 미만 거부(기존 규칙) ·
+        /// 복제 주문 = 기준가 대비 불리한 슬리피지 20bp 초과 취소 · 매도 = 보유 상한(보유 0 = InsufficientPosition) · 매수 체결 = 복제 보유분 가산.
+        /// </summary>
+        private int FillHuman(in ArenaAuctionOrder o, int si, long buyPx, long sellPx)
+        {
+            var b = _books[ArenaSide.Human];
+            bool copy = o.Flags == MarketOpenAuctionGate.FlagCopy;
+            int pi = FindPos(b, o.Symbol);
+            long qty = o.Qty, filled;
+            int rc;
+            if (o.Side < 0 && (pi < 0 || (!copy && b.Positions[pi].Qty < qty))) rc = UsArenaReject.InsufficientPosition;
+            else if (copy && ArenaCopyMath.SlippageExceeded(o.Side, o.RefPx, o.Side > 0 ? buyPx : sellPx))
+            {
+                b.Rejects++;
+                _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.SlippageExceeded, o.Side, o.Symbol, 0);
+                return SlippageCancelled;
+            }
+            else if (o.Side > 0)
+            {
+                rc = Buy(b, si, qty, buyPx, out filled);
+                if (rc == UsArenaReject.None && copy) b.Positions[FindPos(b, o.Symbol)].CopiedQty += filled;
+                if (rc == UsArenaReject.None && copy) _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.None, 1, o.Symbol, filled);
+            }
+            else
+            {
+                rc = Sell(b, si, Math.Min(qty, b.Positions[pi].Qty), sellPx, out filled, out _);
+                if (rc == UsArenaReject.None && copy) _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.None, -1, o.Symbol, filled);
+            }
+            if (rc != UsArenaReject.None) Reject(in o, rc);
+            return rc;
+        }
+
+        private int Buy(Book b, int si, long qty, long px, out long filled)
         {
             filled = 0;
             ref Sym s = ref _syms[si];
             qty = Math.Min(qty, s.AskQty);
             if (qty <= 0) return UsArenaReject.NoLiquidity;
-            long notional = qty * s.Ask;
+            long notional = qty * px;
             long fee = notional * FeePer100k / 100_000;
             long cost = notional + fee;
             if (cost > b.Cash) return UsArenaReject.InsufficientCash;
@@ -497,7 +699,7 @@ namespace StockManager.Engines.Arena.Us
             return UsArenaReject.None;
         }
 
-        private int Sell(Book b, int si, long qty, out long filled, out long pnl)
+        private int Sell(Book b, int si, long qty, long px, out long filled, out long pnl)
         {
             filled = 0; pnl = 0;
             ref Sym s = ref _syms[si];
@@ -506,13 +708,14 @@ namespace StockManager.Engines.Arena.Us
             ref Pos p = ref b.Positions[pi];
             qty = Math.Min(Math.Min(qty, p.Qty), s.BidQty);
             if (qty <= 0) return UsArenaReject.NoLiquidity;
-            long notional = qty * s.Bid;
+            long notional = qty * px;
             long fee = notional * FeePer100k / 100_000;
             long sec = notional * SecFeePer10M / 10_000_000;
             long net = notional - fee - sec;
             long basis = p.Cost * qty / p.Qty;
             pnl = net - basis;
             p.Cost -= basis; p.Qty -= qty; p.TradePnl += pnl;
+            if (p.CopiedQty > p.Qty) p.CopiedQty = p.Qty;                  // [v12.18.71-DEV] 복제 보유분 ≤ 보유(휴먼 수동 매도 반영)
             b.Cash += net; b.Realized += pnl; b.Fees += fee; b.SecFees += sec; b.Fills++;
             filled = qty;
             if (p.Qty == 0)
@@ -585,6 +788,8 @@ namespace StockManager.Engines.Arena.Us
         private void PublishSnapshot()
         {
             _govSnap = new PlutoGovernorStats(_governed, in _sizer, _govApproved, _govPanic, _govCooldown, _govVeto);
+            _copySnap = _copy;
+            _auctionSnap = new ArenaAuctionStats(_preOpen, _auctionCount, _auctionFills, _auctionRejects, _gapVetoes, _gapFills);
             var ai = Stats(_books[ArenaSide.Ai]);
             var human = Stats(_books[ArenaSide.Human]);
             _snap = new UsArenaSnapshot(_ticks, _dropped, _rationaleCount, _lastKstTicks, _phase,

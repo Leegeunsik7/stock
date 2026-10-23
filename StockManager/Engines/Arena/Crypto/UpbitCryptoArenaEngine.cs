@@ -24,6 +24,8 @@
 //   ★단일 작성자: OnQuote/OnTrade/Drain/SetCapital 은 정산 스레드 1개만. ★liveArmed:false — 업비트 주문/인증 API 참조 0(순수 인메모리 가상 대결).
 //   [v12.18.67-DEV] 플루토 거버넌스(EnableGovernance · 선택): 마켓별 국면 판정(매 유효 호가 · Int128 EWMA) → AI 진입 직전 PlutoCognitiveGovernor(국면 재가중 · 패닉 차단 ·
 //     연패 쿨다운(엔진 KST 시각) · 악마의 변호인 · 동적 비중 5~25%) · 청산 = 자가 회고 + 연패 집계 · 근거 Governance 원자 게시. 정지(기본) = 기존 동작 동일.
+//   [v12.18.71-DEV] 플루토 카피 트레이딩: SubmitFollow(기준가 = AI 체결가(슬리피지 반영) 대비 불리한 괴리 20bp 초과 = 취소 · 매도 = 보유 상한) ·
+//     SetAutoCopy(비례 미러링 · 예수금 부족/최소 주문 미만 = Fail-Closed · 복제분 동반 청산). 24/7 시장 = 시초가 개장 게이트 없음. 정지(기본) = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
@@ -94,8 +96,11 @@ namespace StockManager.Engines.Arena.Crypto
         private const int QueueMask = HumanQueueCapacity - 1;
 
         private struct Sym { public long Symbol, Bid, Ask, BidQty, AskQty, QuoteUtc, EmaMid, LastMid, BuyFlow, SellFlow; public int VolX16, Seen; public PlutoRegimeState Regime; }
-        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl; public int SymIdx, RiskRewardX100; public PlutoEntryMemo Memo; }
-        private struct HumanCell { public long Seq, Symbol, Qty; public int Side; }
+        private struct Pos { public long Symbol, Qty, AvgPx, Cost, Target, Stop, TradePnl, CopiedQty; public int SymIdx, RiskRewardX100; public PlutoEntryMemo Memo; }
+        private struct HumanCell { public long Seq, Symbol, Qty, RefPx; public int Side, Flags; }
+        private bool _copyAuto;                                                   // [v12.18.71-DEV] 플루토 자동 미러링
+        private int _copyRatioBp = ArenaCopyMath.DefaultRatioBp;
+        private ArenaCopyLedger _copy, _copySnap;
 
         private sealed class Book
         {
@@ -153,6 +158,7 @@ namespace StockManager.Engines.Arena.Crypto
             _govApproved = _govPanic = _govCooldown = _govVeto = 0;
             _rationaleCount = 0;
             for (int i = 0; i < MaxSymbols; i++) _syms[i] = new Sym { Symbol = CryptoArenaUniverse.Symbol(i) };
+            _copy = default;                          // [v12.18.71-DEV] 복제 계수 초기화(자동 미러링 설정은 유지)
             _ticks = _trades = _dropped = 0;
             PublishSnapshot();
             EndWrite();
@@ -214,7 +220,40 @@ namespace StockManager.Engines.Arena.Crypto
         // ── 휴먼 주문 큐(Vyukov 유계 MPSC · 할당 0) ──────────────────────────────────
 
         /// <summary>휴먼 시장가 주문 적재(side +1 매수 · −1 매도 · 수량 = 코인 raw 10^8). 반환 = CryptoArenaReject(접수 단계).</summary>
-        public int SubmitHuman(long symbol, int side, long qtyRaw)
+        public int SubmitHuman(long symbol, int side, long qtyRaw) => Enqueue(symbol, side, qtyRaw, 0, 0);
+
+        /// <summary>[v12.18.71-DEV] 1-클릭 복제 주문(refPxRaw = AI 체결가 · 체결 시 불리한 슬리피지 20bp 초과 = 취소 · 매도 = 보유 상한). 반환 = CryptoArenaReject(접수 단계).</summary>
+        public int SubmitFollow(long symbol, int side, long qtyRaw, long refPxRaw)
+            => refPxRaw <= 0 || refPxRaw > MaxPriceRaw ? CryptoArenaReject.Invalid : Enqueue(symbol, side, qtyRaw, refPxRaw, MarketOpenAuctionGate.FlagCopy);
+
+        /// <summary>[v12.18.71-DEV] 플루토 자동 미러링 가동/정지(배율 bp 0.1x~3.0x · 다음 정산부터 · 범위 밖 = false · 무변경).</summary>
+        public bool SetAutoCopy(bool enabled, int ratioBp)
+        {
+            if (!ArenaCopyMath.ValidRatio(ratioBp)) return false;
+            Volatile.Write(ref _copyRatioBp, ratioBp);
+            Volatile.Write(ref _copyAuto, enabled);
+            return true;
+        }
+
+        public bool AutoCopyEnabled => Volatile.Read(ref _copyAuto);
+        public int AutoCopyRatioBp => Volatile.Read(ref _copyRatioBp);
+
+        /// <summary>[v12.18.71-DEV] 복제 계수 판독(seqlock · 경합 상한 초과 = false).</summary>
+        public bool TryReadCopy(out ArenaCopyLedger ledger)
+        {
+            for (int k = 0; k < SeqlockRetries; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                ledger = _copySnap;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return true;
+            }
+            ledger = default;
+            return false;
+        }
+
+        private int Enqueue(long symbol, int side, long qtyRaw, long refPx, int flags)
         {
             if (CryptoArenaUniverse.IndexOf(symbol) < 0 || (side != 1 && side != -1) || qtyRaw <= 0 || qtyRaw > MaxOrderQtyRaw) return CryptoArenaReject.Invalid;
             long pos = Volatile.Read(ref _hqEnq);
@@ -226,7 +265,7 @@ namespace StockManager.Engines.Arena.Crypto
                 {
                     if (Interlocked.CompareExchange(ref _hqEnq, pos + 1, pos) == pos)
                     {
-                        c.Symbol = symbol; c.Side = side; c.Qty = qtyRaw;
+                        c.Symbol = symbol; c.Side = side; c.Qty = qtyRaw; c.RefPx = refPx; c.Flags = flags;
                         Volatile.Write(ref c.Seq, pos + 1);
                         return CryptoArenaReject.None;
                     }
@@ -237,12 +276,12 @@ namespace StockManager.Engines.Arena.Crypto
             }
         }
 
-        private bool TryDequeue(out long symbol, out int side, out long qty)
+        private bool TryDequeue(out ArenaAuctionOrder o)
         {
             long pos = _hqDeq;
             ref HumanCell c = ref _hq[pos & QueueMask];
-            if (Volatile.Read(ref c.Seq) != pos + 1) { symbol = 0; side = 0; qty = 0; return false; }
-            symbol = c.Symbol; side = c.Side; qty = c.Qty;
+            if (Volatile.Read(ref c.Seq) != pos + 1) { o = default; return false; }
+            o = new ArenaAuctionOrder { Symbol = c.Symbol, Side = c.Side, Qty = c.Qty, RefPx = c.RefPx, Flags = c.Flags };
             Volatile.Write(ref c.Seq, pos + HumanQueueCapacity);
             _hqDeq = pos + 1;
             return true;
@@ -391,12 +430,14 @@ namespace StockManager.Engines.Arena.Crypto
                 long entry = p.AvgPx;                                       // [v12.18.70-DEV] 청산 진입가(Sell 전 판독 · 전량 청산 시 슬롯 회수)
                 long sellQty = ExitQty(p.Qty, s.BidQty, s.Bid);
                 if (sellQty <= 0) return;                                   // 매수1 잔량 부족 — 먼지 잔량 대신 다음 호가 대기
+                long heldBefore = p.Qty;
                 if (Sell(b, si, sellQty, out long filled, out long exitPx, out long pnl) != CryptoArenaReject.None) return;
                 int conf = exit == ArenaTrigger.SignalReversal ? Math.Clamp(-sig.Score / 100, 0, 100) : 100;
                 var exitGov = GovernExit(in memo, exit, si, priorPnl + pnl, FindPos(b, s.Symbol) < 0, kst);
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, exitPx, kst, exit, sig.Score, conf,
                     target, stop, rr, sig.KimchiVolBp, sig.ImbalanceBp, sig.FlowBp, sig.MomentumBp, pnl, ArenaCurrency.Crypto,
                     default, default, bidDepth, askDepth, in exitGov, entry));
+                if (Volatile.Read(ref _copyAuto)) MirrorExit(si, filled, heldBefore);
                 return;
             }
             if (b.Count >= MaxAiPositions) return;
@@ -422,6 +463,7 @@ namespace StockManager.Engines.Arena.Crypto
             if (budget <= 0) return;
             long qty = Math.Min(s.AskQty, (long)Int128.Min((Int128)budget * Scale * 10000 / ((Int128)fillPx * (10000 + FeeBp) + 1), long.MaxValue));
             if (qty <= 0 || (Int128)qty * fillPx / Scale < CryptoPaperExchange.MinOrderKrwRaw * 2) return;   // 매도1 잔량 상한 · 진입 대금 ≥ 최소 주문 2배(먼지 포지션 방지)
+            long aiEquity = Equity(b);
             if (Buy(b, si, qty, out long bought, out long px) != CryptoArenaReject.None) return;
             ref Pos np = ref b.Positions[FindPos(b, s.Symbol)];
             np.Target = tgt; np.Stop = stp; np.RiskRewardX100 = rrX100;
@@ -429,7 +471,49 @@ namespace StockManager.Engines.Arena.Crypto
             Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, px, kst, sig.Dominant, score, confidence,
                 tgt, stp, rrX100, sig.KimchiVolBp, sig.ImbalanceBp, sig.FlowBp, sig.MomentumBp, 0, ArenaCurrency.Crypto,
                 default, default, bidDepth, askDepth, in gov));
+            if (Volatile.Read(ref _copyAuto)) MirrorEntry(si, bought, aiEquity);
         }
+
+        /// <summary>[v12.18.71-DEV] 자동 미러링 진입(같은 쓰기 창 · 같은 호가 · 진입 직전 자본 비례 수량 · 예수금 부족/최소 주문 미만 = Fail-Closed).</summary>
+        private void MirrorEntry(int si, long aiQty, long aiEquity)
+        {
+            ref Sym s = ref _syms[si];
+            var h = _books[ArenaSide.Human];
+            long qty = ArenaCopyMath.ScaleQty(aiQty, aiEquity, Equity(h), Volatile.Read(ref _copyRatioBp));
+            long filled = 0;
+            int rc = qty <= 0 ? ArenaCopyCode.ZeroQty : CopyCode(Buy(h, si, qty, out filled, out _));
+            if (rc == ArenaCopyCode.None) h.Positions[FindPos(h, s.Symbol)].CopiedQty += filled;
+            else h.Rejects++;
+            _copy.Record(ArenaCopyKind.Mirror, rc, 1, s.Symbol, filled);
+        }
+
+        /// <summary>[v12.18.71-DEV] AI 청산 동반 청산(휴먼 복제 보유분 × AI 청산 비율 · 복제분 없음 = 무동작).</summary>
+        private void MirrorExit(int si, long aiSold, long aiHeldBefore)
+        {
+            ref Sym s = ref _syms[si];
+            var h = _books[ArenaSide.Human];
+            int pi = FindPos(h, s.Symbol);
+            if (pi < 0 || h.Positions[pi].CopiedQty <= 0) return;
+            long qty = ArenaCopyMath.CompanionQty(h.Positions[pi].CopiedQty, h.Positions[pi].Qty, aiSold, aiHeldBefore);
+            if (qty <= 0) return;
+            int rc = CopyCode(Sell(h, si, qty, out long filled, out _, out _));
+            if (rc != ArenaCopyCode.None) h.Rejects++;
+            _copy.Record(ArenaCopyKind.Companion, rc, -1, s.Symbol, filled);
+        }
+
+        /// <summary>[v12.18.71-DEV] 아레나 거부 코드 → 복제 결과 코드(ArenaCopyCode).</summary>
+        public static int CopyCode(int reject) => reject switch
+        {
+            CryptoArenaReject.None => ArenaCopyCode.None,
+            CryptoArenaReject.InsufficientKrw => ArenaCopyCode.InsufficientCash,
+            CryptoArenaReject.InsufficientCoin => ArenaCopyCode.InsufficientPosition,
+            CryptoArenaReject.SessionInvalid => ArenaCopyCode.SessionClosed,
+            CryptoArenaReject.NoQuote or CryptoArenaReject.StaleQuote => ArenaCopyCode.NoQuote,
+            CryptoArenaReject.NoLiquidity => ArenaCopyCode.NoLiquidity,
+            CryptoArenaReject.QueueFull => ArenaCopyCode.QueueFull,
+            CryptoArenaReject.Invalid => ArenaCopyCode.Invalid,
+            _ => ArenaCopyCode.Rejected,
+        };
 
         /// <summary>
         /// AI 청산 수량(δ=0): 매수1 잔량이 보유 전량을 받으면 전량 · 부분 청산이면 잔여 보유가 최소 주문의 2배(10,000원 · 손절 −1.5% 이후에도 최소 주문 이상) 이상 남도록 축소
@@ -465,21 +549,51 @@ namespace StockManager.Engines.Arena.Crypto
         private void DrainHuman(long utcMicros)
         {
             var b = _books[ArenaSide.Human];
-            while (TryDequeue(out long symbol, out int side, out long qty))
+            while (TryDequeue(out var o))
             {
                 int rc;
-                int si = CryptoArenaUniverse.IndexOf(symbol);
+                int si = CryptoArenaUniverse.IndexOf(o.Symbol);
+                bool copy = o.Flags == MarketOpenAuctionGate.FlagCopy;
                 if (_phase != CryptoSessionPhase.ContinuousTrading) rc = CryptoArenaReject.SessionInvalid;
                 else if (si < 0 || _syms[si].Seen == 0) rc = CryptoArenaReject.NoQuote;
                 else if (utcMicros < _syms[si].QuoteUtc || utcMicros - _syms[si].QuoteUtc > MaxQuoteAgeMicros) rc = CryptoArenaReject.StaleQuote;
-                else if (side > 0) rc = Buy(b, si, qty, out _, out _);
+                else if (copy && CopySlipped(in o, si))
+                {
+                    b.Rejects++;                                                // [v12.18.71-DEV] 복제 슬리피지 20bp 초과 = 취소
+                    _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.SlippageExceeded, o.Side, o.Symbol, 0);
+                    continue;
+                }
+                else if (o.Side > 0)
+                {
+                    rc = Buy(b, si, o.Qty, out long bought, out _);
+                    if (rc == CryptoArenaReject.None && copy)
+                    {
+                        b.Positions[FindPos(b, o.Symbol)].CopiedQty += bought;
+                        _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.None, 1, o.Symbol, bought);
+                    }
+                }
                 else
                 {
-                    int pi = FindPos(b, symbol);
-                    rc = pi < 0 || b.Positions[pi].Qty < qty ? CryptoArenaReject.InsufficientCoin : Sell(b, si, qty, out _, out _, out _);
+                    int pi = FindPos(b, o.Symbol);
+                    if (pi < 0 || (!copy && b.Positions[pi].Qty < o.Qty)) rc = CryptoArenaReject.InsufficientCoin;
+                    else
+                    {
+                        rc = Sell(b, si, Math.Min(o.Qty, b.Positions[pi].Qty), out long sold, out _, out _);
+                        if (rc == CryptoArenaReject.None && copy) _copy.Record(ArenaCopyKind.Follow, ArenaCopyCode.None, -1, o.Symbol, sold);
+                    }
                 }
-                if (rc != CryptoArenaReject.None) b.Rejects++;
+                if (rc == CryptoArenaReject.None) continue;
+                b.Rejects++;
+                if (copy) _copy.Record(ArenaCopyKind.Follow, CopyCode(rc), o.Side, o.Symbol, 0);
             }
+        }
+
+        /// <summary>[v12.18.71-DEV] 복제 주문 예상 체결가(슬리피지 반영 시장가) vs 기준가 — 불리한 괴리 20bp 초과 = true(가격 산출 불가 = true · fail-closed).</summary>
+        private bool CopySlipped(in ArenaAuctionOrder o, int si)
+        {
+            ref Sym s = ref _syms[si];
+            var st = CryptoPaperExchange.SlippedMarketPrice(o.Side > 0 ? CryptoOrderSide.Buy : CryptoOrderSide.Sell, s.Bid, s.Ask, SlippageBp, out long px);
+            return st != CryptoPaperStatus.Filled || ArenaCopyMath.SlippageExceeded(o.Side, o.RefPx, px);
         }
 
         private static int MapStatus(CryptoPaperStatus st) => st switch
@@ -534,6 +648,7 @@ namespace StockManager.Engines.Arena.Crypto
             long basis = (long)((Int128)ps.Cost * qty / ps.Qty);
             pnl = net - basis;
             ps.Cost -= basis; ps.Qty -= qty; ps.TradePnl += pnl;
+            if (ps.CopiedQty > ps.Qty) ps.CopiedQty = ps.Qty;              // [v12.18.71-DEV] 복제 보유분 ≤ 보유(휴먼 수동 매도 반영)
             b.Cash += net; b.Realized += pnl; b.Fees += fee; b.Fills++;
             filled = qty; px = p;
             if (ps.Qty == 0)
@@ -606,6 +721,7 @@ namespace StockManager.Engines.Arena.Crypto
         private void PublishSnapshot()
         {
             _govSnap = new PlutoGovernorStats(_governed, in _sizer, _govApproved, _govPanic, _govCooldown, _govVeto);
+            _copySnap = _copy;
             var ai = Stats(_books[ArenaSide.Ai]);
             var human = Stats(_books[ArenaSide.Human]);
             _snap = new CryptoArenaSnapshot(_ticks, _trades, _dropped, _rationaleCount, _lastKstTicks, _lastUtc, _phase,
