@@ -12,6 +12,7 @@
 //   최소 주문 5,000원 미만 · 예수금 부족 · 미보유/보유 초과 매도 · 산술 범위 초과 · ★동시 라이터(CAS 실패 = 대기/재시도 없이 즉시 거부 — 중복 체결 방지).
 //  동시성: 라이터(UpdateQuote · Submit · Reset)는 CAS 진입권 1개 · 판독(Snapshot)은 seqlock(짝=안정 · 홀=기입 중) 재시도 — 락 0 · 할당 0.
 //  시각: 자체 시계 없음 — 호출자가 UTC 유닉스 마이크로초를 넘긴다(결정론 테스트 · 리플레이 동일 결과).
+//  [v12.18.66-DEV] 체결가/대금/수수료 산식을 순수 정적 함수(SlippedMarketPrice · NotionalWithFee)로 분리 — UpbitCryptoArenaEngine 듀얼 원장이 같은 매칭 산식을 공유(동작 불변).
 // ============================================================================
 using System;
 using System.Threading;
@@ -172,36 +173,60 @@ namespace StockManager.Engines.Brokers.Crypto
             if (now < s.QuoteUtcMicros || now - s.QuoteUtcMicros > _maxQuoteAgeMicros) return CryptoPaperStatus.StaleQuote;
             if (side == CryptoOrderSide.Sell && qty > s.BtcRaw) return CryptoPaperStatus.InsufficientBtc;
 
-            if (side == CryptoOrderSide.Buy)
-            {
-                if (type == CryptoOrderType.Limit && limit < s.AskRaw) return CryptoPaperStatus.NotMarketable;
-                Int128 slip = ((Int128)s.AskRaw * (BpDenominator + _slippageBp) + (BpDenominator - 1)) / BpDenominator;   // 올림
-                if (slip > long.MaxValue) return CryptoPaperStatus.Overflow;
-                long p = UpbitTickAligner.AlignUp((long)slip);
-                if (p <= 0) return CryptoPaperStatus.Overflow;
-                px = type == CryptoOrderType.Limit && limit < p ? limit : p;
-            }
-            else
-            {
-                if (type == CryptoOrderType.Limit && limit > s.BidRaw) return CryptoPaperStatus.NotMarketable;
-                long slip = (long)((Int128)s.BidRaw * (BpDenominator - _slippageBp) / BpDenominator);                     // 내림
-                long p = UpbitTickAligner.AlignDown(slip);
-                if (p <= 0) return CryptoPaperStatus.InvalidPrice;
-                px = type == CryptoOrderType.Limit && limit > p ? limit : p;
-            }
+            if (side == CryptoOrderSide.Buy && type == CryptoOrderType.Limit && limit < s.AskRaw) return CryptoPaperStatus.NotMarketable;
+            if (side == CryptoOrderSide.Sell && type == CryptoOrderType.Limit && limit > s.BidRaw) return CryptoPaperStatus.NotMarketable;
+            var st = SlippedMarketPrice(side, s.BidRaw, s.AskRaw, _slippageBp, out long p);
+            if (st != CryptoPaperStatus.Filled) return st;
+            if (side == CryptoOrderSide.Buy) px = type == CryptoOrderType.Limit && limit < p ? limit : p;
+            else px = type == CryptoOrderType.Limit && limit > p ? limit : p;
 
-            Int128 prod = (Int128)px * qty;
-            Int128 n = side == CryptoOrderSide.Buy ? (prod + (Scale - 1)) / Scale : prod / Scale;                         // 매수 올림 · 매도 내림
-            if (n > NotionalCap) return CryptoPaperStatus.Overflow;
-            if (n < MinOrderKrwRaw) return CryptoPaperStatus.BelowMinimumOrder;
-            Int128 f = (n * _feeBp + (BpDenominator - 1)) / BpDenominator;                                                // 수수료 올림
-            notional = (long)n; fee = (long)f;
+            st = NotionalWithFee(side, px, qty, _feeBp, out notional, out fee);
+            if (st != CryptoPaperStatus.Filled) return st;
 
             if (side == CryptoOrderSide.Buy)
             {
                 if ((Int128)notional + fee > s.KrwRaw) return CryptoPaperStatus.InsufficientKrw;
             }
             else if ((Int128)s.KrwRaw + notional - fee > long.MaxValue) return CryptoPaperStatus.Overflow;
+            return CryptoPaperStatus.Filled;
+        }
+
+        /// <summary>
+        /// [v12.18.66-DEV] 시장가 슬리피지 체결가(순수 · δ=0 · 업비트 아레나 공용): 매수 = AlignUp(매도1 × (1 + bp) 올림) · 매도 = AlignDown(매수1 × (1 − bp) 내림).
+        /// 매수 산술 범위 초과/정렬 0 = Overflow · 매도 정렬 0 = InvalidPrice · 성공 = Filled.
+        /// </summary>
+        public static CryptoPaperStatus SlippedMarketPrice(CryptoOrderSide side, long bidRaw, long askRaw, int slippageBp, out long priceRaw)
+        {
+            priceRaw = 0;
+            if (side == CryptoOrderSide.Buy)
+            {
+                Int128 slip = ((Int128)askRaw * (BpDenominator + slippageBp) + (BpDenominator - 1)) / BpDenominator;   // 올림
+                if (slip > long.MaxValue) return CryptoPaperStatus.Overflow;
+                long p = UpbitTickAligner.AlignUp((long)slip);
+                if (p <= 0) return CryptoPaperStatus.Overflow;
+                priceRaw = p;
+                return CryptoPaperStatus.Filled;
+            }
+            long down = (long)((Int128)bidRaw * (BpDenominator - slippageBp) / BpDenominator);                         // 내림
+            long q = UpbitTickAligner.AlignDown(down);
+            if (q <= 0) return CryptoPaperStatus.InvalidPrice;
+            priceRaw = q;
+            return CryptoPaperStatus.Filled;
+        }
+
+        /// <summary>
+        /// [v12.18.66-DEV] 대금(매수 올림 · 매도 내림 · 원 미만 raw) + 수수료(대금 × bp 올림) — 순수 · δ=0 · 업비트 아레나 공용.
+        /// 대금 상한 초과 = Overflow · 최소 주문 5,000원 미만 = BelowMinimumOrder · 성공 = Filled.
+        /// </summary>
+        public static CryptoPaperStatus NotionalWithFee(CryptoOrderSide side, long priceRaw, long qtyRaw, int feeBp, out long notionalRaw, out long feeRaw)
+        {
+            notionalRaw = 0; feeRaw = 0;
+            Int128 prod = (Int128)priceRaw * qtyRaw;
+            Int128 n = side == CryptoOrderSide.Buy ? (prod + (Scale - 1)) / Scale : prod / Scale;                         // 매수 올림 · 매도 내림
+            if (n > NotionalCap) return CryptoPaperStatus.Overflow;
+            if (n < MinOrderKrwRaw) return CryptoPaperStatus.BelowMinimumOrder;
+            Int128 f = (n * feeBp + (BpDenominator - 1)) / BpDenominator;                                                 // 수수료 올림
+            notionalRaw = (long)n; feeRaw = (long)f;
             return CryptoPaperStatus.Filled;
         }
 

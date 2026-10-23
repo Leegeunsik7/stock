@@ -697,6 +697,7 @@ namespace StockManager.Tests.Cognitive
             using var ctx = new Bunit.TestContext();
             ctx.Services.AddSingleton<IKrxArenaPort>(new KrxArenaPortAdapter(e, f));
             ctx.Services.AddSingleton<IUsArenaPort>(new UsArenaPortAdapter(new UsTechArenaEngine()));
+            ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new StockManager.Engines.Arena.Crypto.UpbitCryptoArenaEngine()));   // [v12.18.66-DEV]
             var cut = ctx.RenderComponent<DualArenaPage>();
 
             var strip = cut.Find(".da-cats");

@@ -12,6 +12,9 @@
 //     진입 사유 NewsCatalyst(12 · 뉴스 기여 최대) · 청산 사유 NewsShock(13 · 치명적 구조적 악재 긴급 청산). 요약 끝에 플루토 진단 문장 결속.
 //   [v12.18.65-DEV] 플루토 밸류에이션(Valuation · PlutoValuationTag 값 타입): 체결 호가로 재판정한 등급 · 점수 · 안전마진 · Fwd PER · PBR · 적정가.
 //     진입 사유 ValuationDiscount(14 · 밸류에이션 기여 최대) · 청산 사유 ValuationBubble(15 · 극심한 과열 조기 청산). 요약 끝에 재무 근거 문장 결속.
+//   [v12.18.66-DEV] 통화 Crypto(업비트 가상자산 아레나): 가격 = 원 raw 10^8 · 수량 = 코인 raw 10^8(1 = 0.00000001) · 손익 = 원 raw 10^8.
+//     구성요소 슬롯 = ImbalanceBp ← L2 오더북 불균형 · MomentumBp ← 24시간 체결 모멘텀 · SurgeBp ← 테이커 체결 강도 · MacroBp ← 김치프리미엄/변동성 감응.
+//     진입 사유 TradeFlowMomentum(16) · KimchiVolatility(17)(오더북 불균형 주도 = OrderbookImbalance 공용). 오더북 두께(BidDepthWon · AskDepthWon = 최우선 잔량 원화 환산) 결속.
 // ============================================================================
 using System;
 using System.Globalization;
@@ -39,6 +42,8 @@ namespace StockManager.Engines.Arena.Common
         NewsShock = 13,            // [v12.18.63-DEV] 플루토 치명적 구조적 악재 긴급 청산
         ValuationDiscount = 14,    // [v12.18.65-DEV] 플루토 밸류에이션 저평가 주도 진입
         ValuationBubble = 15,      // [v12.18.65-DEV] 플루토 극심한 과열 조기 청산
+        TradeFlowMomentum = 16,    // [v12.18.66-DEV] 업비트 24시간 체결 모멘텀 주도 진입
+        KimchiVolatility = 17,     // [v12.18.66-DEV] 김치프리미엄/변동성 감응 주도 진입
     }
 
     /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
@@ -46,13 +51,15 @@ namespace StockManager.Engines.Arena.Common
     {
         Krw = 0,
         Usd = 1,
+        Crypto = 2,                // [v12.18.66-DEV] 원 raw 10^8 · 코인 수량 raw 10^8
     }
 
     public static class ArenaTriggerText
     {
         public static bool IsEntry(ArenaTrigger t) => t is >= ArenaTrigger.OrderbookImbalance and <= ArenaTrigger.MomentumBreakout
                                                           or >= ArenaTrigger.EtfBeta and <= ArenaTrigger.PremarketGapFlow
-                                                          or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount;
+                                                          or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount
+                                                          or ArenaTrigger.TradeFlowMomentum or ArenaTrigger.KimchiVolatility;
         public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock
                                                          or ArenaTrigger.ValuationBubble;
 
@@ -73,6 +80,8 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.NewsShock => "플루토 구조적 악재 긴급 청산",
             ArenaTrigger.ValuationDiscount => "플루토 밸류에이션 저평가",
             ArenaTrigger.ValuationBubble => "플루토 극심한 과열 조기 청산",
+            ArenaTrigger.TradeFlowMomentum => "24시간 체결 모멘텀",
+            ArenaTrigger.KimchiVolatility => "김치프리미엄/변동성 감응",
             _ => "미분류",
         };
     }
@@ -102,12 +111,15 @@ namespace StockManager.Engines.Arena.Common
         public readonly PlutoNewsTag News;
         /// <summary>[v12.18.65-DEV] 체결 시점 플루토 밸류에이션(default = 판정 없음).</summary>
         public readonly PlutoValuationTag Valuation;
+        /// <summary>[v12.18.66-DEV] 체결 시점 최우선 매수/매도 잔량의 원화 환산(원 · Crypto 전용 · 그 밖 = 0).</summary>
+        public readonly long BidDepthWon, AskDepthWon;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
             int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw,
-            in PlutoNewsTag news = default, in PlutoValuationTag valuation = default)
+            in PlutoNewsTag news = default, in PlutoValuationTag valuation = default, long bidDepthWon = 0, long askDepthWon = 0)
         {
+            BidDepthWon = bidDepthWon; AskDepthWon = askDepthWon;
             Currency = currency;
             News = news;
             Valuation = valuation;
@@ -138,7 +150,8 @@ namespace StockManager.Engines.Arena.Common
             && (TriggerType != ArenaTrigger.NewsShock || News.IsShock)
             && Valuation.IsWellFormed && (Valuation.Factor.Symbol == 0 || Valuation.Factor.Symbol == Symbol)
             && (TriggerType != ArenaTrigger.ValuationDiscount || Valuation.Score > 0)
-            && (TriggerType != ArenaTrigger.ValuationBubble || Valuation.IsBubble);
+            && (TriggerType != ArenaTrigger.ValuationBubble || Valuation.IsBubble)
+            && BidDepthWon >= 0 && AskDepthWon >= 0;
 
         /// <summary>한국어 설명 요약(콜드 경로 — 호출마다 문자열 조립).</summary>
         public string HumanReadableSummary => AiRationaleText.Compose(in this);
@@ -155,7 +168,12 @@ namespace StockManager.Engines.Arena.Common
 
         public static string Compose(in AiTradeRationale r)
         {
-            string core = r.Currency == ArenaCurrency.Usd ? ComposeUsd(in r) : ComposeKrw(in r);
+            string core = r.Currency switch
+            {
+                ArenaCurrency.Usd => ComposeUsd(in r),
+                ArenaCurrency.Crypto => ComposeCrypto(in r),
+                _ => ComposeKrw(in r),
+            };
             if (r.News.HasCatalyst) core += " " + ComposeNews(in r.News);
             return r.Valuation.HasValuation ? core + " " + ComposeValuation(in r.Valuation) : core;
         }
@@ -219,6 +237,46 @@ namespace StockManager.Engines.Arena.Common
             return r.Side > 0
                 ? $"{head} — 주도 근거: {label}. {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. {plan}."
                 : $"{head} — 청산 사유: {label}. 실현손익 {SignedUsd(r.RealizedPnlWon)} · {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. 진입 계획: {plan}.";
+        }
+
+        /// <summary>[v12.18.66-DEV] 원 raw 10^8 → "152,345,000원" · 원 미만 = 소수(최대 8자리 · 끝 0 제거).</summary>
+        public static string WonRaw(long raw)
+        {
+            const long Scale = 100_000_000L;
+            long a = Math.Abs(raw);
+            string won = (a / Scale).ToString("N0", Inv);
+            long frac = a % Scale;
+            string f = frac == 0 ? "" : "." + frac.ToString("D8", Inv).TrimEnd('0');
+            return (raw < 0 ? "-" : "") + won + f + "원";
+        }
+
+        private static string SignedWonRaw(long raw) => (raw > 0 ? "+" : "") + WonRaw(raw);
+
+        /// <summary>[v12.18.66-DEV] 코인 수량 raw 10^8 → "0.01234567"(끝 0 제거).</summary>
+        public static string CoinQty(long raw)
+        {
+            const long Scale = 100_000_000L;
+            long a = Math.Abs(raw);
+            long frac = a % Scale;
+            string f = frac == 0 ? "" : "." + frac.ToString("D8", Inv).TrimEnd('0');
+            return (raw < 0 ? "-" : "") + (a / Scale).ToString("N0", Inv) + f;
+        }
+
+        /// <summary>[v12.18.66-DEV] 업비트 가상자산 근거 요약(가격 = 원 raw 10^8 · 수량 = 코인 raw 10^8 · 오더북 두께 문장 결속).</summary>
+        private static string ComposeCrypto(in AiTradeRationale r)
+        {
+            string market = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.Label(r.Symbol);
+            string coin = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.CoinOf(r.Symbol);
+            string head = $"[AI {(r.Side > 0 ? "매수" : "매도")}] {market} {CoinQty(r.Qty)} {coin} @ {WonRaw(r.PriceWon)}";
+            string factors = $"L2 오더북 불균형 {Signed(r.ImbalanceBp)}bp · 24시간 체결 모멘텀 {Signed(r.MomentumBp)}bp(테이커 체결 강도 {Signed(r.SurgeBp)}bp) · 김치프리미엄/변동성 감응 {Signed(r.MacroBp)}bp";
+            string plan = string.Create(Inv, $"목표가 {WonRaw(r.TargetPrice)} · 손절가 {WonRaw(r.StopLossPrice)} · 손익비 {r.RiskRewardRatio:F2}");
+            long depth = r.BidDepthWon + r.AskDepthWon;
+            string thick = depth <= 0 ? "오더북 두께 정보 없음"
+                : string.Create(Inv, $"오더북 두께: 매수1 잔량 {r.BidDepthWon:N0}원 vs 매도1 잔량 {r.AskDepthWon:N0}원(매수 비중 {r.BidDepthWon * 100 / depth}%)");
+            string label = ArenaTriggerText.Label(r.TriggerType);
+            return r.Side > 0
+                ? $"{head} — 주도 근거: {label}. {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. {plan}. {thick}."
+                : $"{head} — 청산 사유: {label}. 실현손익 {SignedWonRaw(r.RealizedPnlWon)} · {factors} → 감성 {Signed(r.SentimentScore)} · 확신도 {r.ConfidenceScore}/100. 진입 계획: {plan}. {thick}.";
         }
     }
 }

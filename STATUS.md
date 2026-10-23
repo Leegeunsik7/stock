@@ -1,15 +1,14 @@
 # Current Project Status
-
-- **Active Milestone**: v12.18.65-DEV — 플루토 밸류에이션 엔진(적정가치 · 안전마진 · 등급/점수) · 아레나 핫패스 무할당 결속
-- **Build Status**: 오중 빌드 Release 0W/0E · 전체 스위트 5,174 통과 6 건너뜀(옵트인) · 실패 0 · infra 0 · 래칫 40/40
+- **Active Milestone**: v12.18.66-DEV — 업비트 가상자산 24/7 AI 아레나(UpbitCryptoArenaEngine) · /dualarena 3번째 탭
+- **Build Status**: 오중 빌드 Release 0W/0E · 전체 스위트 5,200 통과 6 건너뜀(옵트인) · 실패 0 · infra 0 · 래칫 40/40
 - **Updated At**: 2026-10-23
 
 ## Completed Deliverables
-- PlutoFundamentalProfile(정수 스케일 재무 · 5년 PER/PBR 밴드 · 컨센서스) · 시드 10종(국내 5 · 미국 5 · 근사 예시치 · 180일 만료)
-- PlutoValuationMath: 적정가(PER/PBR 혼합 · 적자 PBR 단독) · 안전마진 bp · 5등급 매트릭스 · 서프라이즈 가감 · 순수 정수 함수
-- PlutoValuationFactor/Tag(체결 호가 재판정 · fail-closed) · PlutoValuationBuffer(다중 작성자 seqlock · Stale 거부) · PlutoValuationEngine
-- KRX/US 아레나 결속: ValuationDiscount 진입 · 고평가 진입 보류 · ValuationBubble 조기 청산 · 근거 요약에 PER/PBR/ROE/안전마진/적정가
-- PlutoValuationEngineTests 41건(오라클 일치 · 10만 회 δ=0B · 찢김 0 · 결함 주입 검출) · HANDOVER §171
+- UpbitCryptoArenaEngine: KRW-BTC/ETH/XRP/SOL · 진영별 1억 원 독립 원장(raw 10^8 · Int128) · 24/7 세션(CryptoContinuousSession) · seqlock · MPSC 휴먼 큐
+- 크립토 팩터: 오더북 불균형 40 · 24h 체결 모멘텀 30 · 김프/변동성 30 → 진입/익절/손절/반전 · AiTradeRationale(Crypto · 오더북 두께) 1:1
+- 체결 = CryptoPaperExchange 산식 공유(슬리피지 2bp · 수수료 0.05% · 최소 5,000원) · 호가 2초 지연 거부 · AI 먼지 잔량 방지
+- CryptoArenaQuoteFeeder: 업비트 WebSocket tap(KRW-BTC) · 합성 24/7 데모 · 허브 50ms 펌프 · 스트림 = 설정 Arena.UpbitStreamEnabled(기본 꺼짐)
+- ICryptoArenaPort + CryptoArenaPortAdapter + DI · DualArenaPage [₿ 가상자산 (Upbit ₿)] 탭 · UpbitCryptoArenaEngineTests 26건 · HANDOVER §172
 
 ## Next Milestone
-- 실 재무/컨센서스 피드(DART 재무제표 · SEC XBRL) 결선 · 밸류에이션 UI 배지 · 업종 평균 PER 동적 산출
+- 업비트 다중 마켓 구독(ETH/XRP/SOL 실시간) · 해외 BTC 시세 결선(실 김치프리미엄) · L2 다단 호가 · 실 스트림 장시간 소크

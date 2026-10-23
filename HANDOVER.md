@@ -4022,3 +4022,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 재무 수치는 시드 근사 예시치(실 DART/SEC 재무 · 컨센서스 피드 미결선 · 투자 판단 근거 아님 — 요약에 '시드 프로필' 표기) · 시드 기준일 + 180일(2027-03-30) 경과 시 자동 만료 →
   아레나 밸류 기여 0 · 업종 평균 PER 은 종목별 고정 상수 · PEG · DCF 미구현 · 합성 시세가 시작가에서 크게 이탈하면 등급이 실제와 무관하게 변동(호가 재판정이므로 의도된 동작) · UI 배지/포트 노출 없음(근거 요약 문장만).
 - 불변: liveArmed:false(밸류 → 가상 시그널 · 주문/브로커 경로 0) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · -NoPeer · 래칫 ≤40(Razor/포트 변경 0) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 172. v12.18.66-DEV — 업비트 가상자산 24/7 AI 아레나(UpbitCryptoArenaEngine) · 크립토 플루토 팩터 · 설명 가능한 원화 근거(오더북 두께) · /dualarena 3번째 탭 (2026-10-23)
+
+- 오더 전제 검증: UpbitWebSocketFeedAdapter · CryptoPaperExchange 실재(단 KRW-BTC 단일 자산 · 단일 원장) · `Crypto24x7Session` 부재 → 기존 CryptoContinuousSession(유닉스 µs > 0 = ContinuousTrading)으로 대체(중복 세션 타입 신설 0).
+- 신규 StockManager/Engines/Arena/Crypto/:
+  · CryptoArenaUniverse: KRW-BTC · ETH · XRP · SOL(마켓 코드 ASCII → long 키) · 글로벌 베타/김프 감응 ×100 · 합성 시작가(원 · 격자 정렬).
+  · UpbitCryptoArenaEngine: 진영별 1억 원 독립 원장(원/가격/수량 raw 10^8 · Int128 중간값) · 24/7(장 마감 청산 없음) · 단일 작성자 정산 + seqlock 게시 + Vyukov MPSC 휴먼 큐(US 엔진과 같은 구조).
+    팩터: L2 오더북 불균형 40 · 24시간 체결 모멘텀 30(중간가 vs EWMA α=1/64 × 20 + 테이커 체결 강도 EWMA)/2 · 김치프리미엄/변동성 30(글로벌 BTC 24h × 베타 × 10 − 김프 × 감응 × 5 − 초과 변동성(|Δ중간가| EWMA − 15bp) × 100).
+    점수 ≥ 3000 진입(목표 +(200+4·확신도)bp · 손절 −150bp · UpbitTickAligner 정렬) · 익절/손절/점수 ≤ −2000 청산 · AI 체결 1건 = AiTradeRationale(Crypto) 1건.
+    체결 = CryptoPaperExchange 산식 공유(슬리피지 2bp · 대금 매수 올림/매도 내림 · 수수료 0.05% 올림 · 최소 주문 5,000원) · 수량 상한 = 최우선 잔량 · 휴먼 = 호가 2초 초과/미래 시각 StaleQuote 거부.
+    AI 먼지 방지: 진입 대금 ≥ 최소 주문 2배 · 부분 청산(ExitQty)은 잔여 ≥ 최소 주문 2배 · 청산분 ≥ 최소 주문(미충족 = 다음 호가 대기) — 개발 중 δ=0 테스트가 '먼지 잔량 → AI 슬롯 영구 고착' 결함을 검출해 반영.
+  · CryptoArenaQuoteFeeder: 슬롯별 다중 작성자 seqlock(호가 = 최신값 · 체결 = 테이커 누적량 차분) · OnUpbitFrame = UpbitFrameTap 서명(어댑터 수신 스레드 동기 · δ=0) · 엔진 시각 = 펌프 로컬 UTC(거래소 시계 편차 무관) ·
+    합성 데모(4종 · 추세 국면 · 잔량 기울기 · 테이커 편향 · 가상 1시간마다 김프/글로벌 재추첨 · ×20) · 출처 전환 = 원장 초기화.
+- CryptoPaperExchange: 체결가/대금/수수료 산식을 정적 SlippedMarketPrice · NotionalWithFee 로 분리(동작 불변 · 기존 테스트 무변경 통과).
+- AiTradeRationale: ArenaCurrency.Crypto(2) · ArenaTrigger.TradeFlowMomentum(16) · KimchiVolatility(17)(오더북 주도 = OrderbookImbalance 공용) · BidDepthWon/AskDepthWon(최우선 잔량 원화 환산) ·
+  요약 "[AI 매수] KRW-BTC 0.199… BTC @ 150,132,000원 — 주도 근거 … 목표가/손절가(원) … 오더북 두께: 매수1 잔량 …원 vs 매도1 잔량 …원(매수 비중 n%)". 기존 KRW/USD 요약 불변.
+- 포트/UI: MS2E.UI.Portable/Ports/Trading/CryptoArenaPort.cs(ICryptoArenaPort · 순수 DTO · 무장/브로커/송출 멤버 0) · StockManager/Adapters/CryptoArenaPortAdapter(ReturnBp = Int128 재계산 — 원 raw × 10000 long 초과) ·
+  DualArenaPage 3번째 탭 [₿ 가상자산 (Upbit ₿)](24/7 뱃지 · 김프/글로벌 · 스트림 연결 상태 · 원화 스코어보드 · 코인 소수 8자리 티켓 · 근거 카드 팩터 4종 + 오더북 두께) · NavMenu 라벨 '(국내 · 미국 · 코인)'.
+- 호스트: BlazorHomeForm DI(엔진 · 주입기 · 포트 싱글턴) · DashboardSnapshotHub.AttachCryptoArena + 50ms 펌프. 업비트 스트림은 `Arena.UpbitStreamEnabled`(기본 false · 네트워크 호출 0) 일 때만 기동(tap = OnUpbitFrame) — 꺼짐 = UI '스트림 미결선' 정직 렌더.
+- 테스트 UpbitCryptoArenaEngineTests 26건(24/7 주말/공휴일 · 시각 무효 fail-closed · 진입/익절/손절 근거 · 수수료 · 무작위 1:1 · 팩터 경계 · CryptoPaperExchange 체결 동일성 · 휴먼 거부 5종 · 큐 포화 · 먼지 방지 ·
+  어댑터 tap 프레임 주입 · 합성 24/7 + 출처 전환 · 허브 · 4 생산자 찢김 0 · δ=0 엔진 10만 0B(측정 구간 AI 체결 발생) · 스트림/합성 피드 10만 0B · IL 할당 0 · 포트 표면 · 어댑터 투영 · DI · bUnit 3번째 탭) +
+  기존 페이지 테스트 3종 갱신(탭 2→3 · 주입 포트 목록 + ICryptoArenaPort).
+  결함 주입: 호가 신선도 판정 제거 + ExitQty 먼지 가드 제거 → 3건 실패 검출(사보타주 빌드 오류 0 확인) 후 원복.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E · infra-scan 0(기준 117) · 래칫 coupled=40/40(total 85 · shell 45) · 전체 스위트 5,200 통과 + 6 건너뜀 · 실패 0 · 3분 57초.
+- 한계(정직): 실시간 스트림 = 기존 어댑터 구독 KRW-BTC 만(ETH · XRP · SOL = 합성 전용 · 다중 마켓 구독 미구현) · 김치프리미엄/글로벌 등락 = SetMarketContext 주입 API 만(실 해외 시세 피드 미결선 · 합성은 난수) ·
+  L2 는 최우선 1단만 사용 · 플루토 뉴스/밸류에이션 미결속(가상자산 재무 없음) · 실 업비트 스트림 장시간 소크 미실시 · 결과는 투자 판단 근거 아님.
+- 불변: liveArmed:false(업비트 주문/인증 API 참조 0 · 송출 = 공개 스트림 구독/PING 뿐 · 기본 꺼짐) · 인터락 30(0x800000001FFFFFFF) 무변경 · 래칫 ≤40 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

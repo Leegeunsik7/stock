@@ -9,14 +9,18 @@
      렌더 펌프는 활성 모드 포트의 게시 버전만 폴링. 미국 모드 주문 목적지 = IUsArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
    [v12.18.64-DEV] 플루토 뉴스 촉매 배지(포트 Catalyst · 아레나 정산 시각 기준 감쇄): 수신 종목 촉매 띠 · 보유 표 종목 칸 · AI 근거 카드 머리에
      호재 = 녹색 [호재 +점수] + 반감기 진행 막대 · 치명적 악재 = 점멸 적색 [긴급 악재 −점수](진입 금지/청산 경고) · 그 밖 악재 = 적색 테두리 · 노이즈/중립 = 생략.
-     호버 툴팁 = 64B 헤드라인 + 출처 + 경과/반감기. 판독 전용(주문 경로 무변경). *@
+     호버 툴팁 = 64B 헤드라인 + 출처 + 경과/반감기. 판독 전용(주문 경로 무변경).
+   [v12.18.66-DEV] 3번째 모드 탭 [가상자산 (Upbit ₿)] — ICryptoArenaPort(KRW-BTC · ETH · XRP · SOL · 원 raw 10^8 → 원 표기 · 코인 수량 소수 8자리 ·
+     24/7 연속매매 뱃지 · 김치프리미엄/글로벌 등락 · 업비트 스트림 연결 상태 · 스코어보드 · 휴먼 코인 티켓 · AI 근거 카드(오더북 불균형 · 체결 모멘텀 ·
+     김프/변동성 · 오더북 두께)). 크립토 모드 주문 목적지 = ICryptoArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐. *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
+@inject ICryptoArenaPort CryptoPort
 
 <div class="top">
     <div class="hello">
-        <h1>🥊 휴먼 vs AI 대결 · @(_mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
+        <h1>🥊 휴먼 vs AI 대결 · @(_mode == ModeCrypto ? CryptoPort.ModeName : _mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
         <p>같은 자본금 · 같은 호가로 휴먼과 AI 가 가상 매매를 겨룹니다. AI 는 매 체결마다 근거(수급 · 거시 · 기술적 타점 · 손익비)를 남깁니다. 증권사로 나가는 주문은 없습니다.</p>
     </div>
 </div>
@@ -24,9 +28,147 @@
 <div class="ar-mode da-modes" role="tablist">
     <button class="da-mode-tab @(_mode == ModeKrx ? "on" : "")" role="tab" data-mode="krx" @onclick="() => SetMode(ModeKrx)">🇰🇷 국내 대형주 (KRW ₩)</button>
     <button class="da-mode-tab @(_mode == ModeUs ? "on" : "")" role="tab" data-mode="us" @onclick="() => SetMode(ModeUs)">🇺🇸 미국 빅테크 (USD $)</button>
+    <button class="da-mode-tab @(_mode == ModeCrypto ? "on" : "")" role="tab" data-mode="crypto" @onclick="() => SetMode(ModeCrypto)">₿ 가상자산 (Upbit ₿)</button>
 </div>
 
-@if (_mode == ModeUs)
+@if (_mode == ModeCrypto)
+{
+    <div class="da-crypto">
+    @{
+        var cf = CryptoPort.Feed;
+        bool cHas = CryptoPort.TryRead(out var c);
+        System.Threading.Volatile.Write(ref _drawn, c.Version);
+    }
+
+    <div class="da-feed">
+        <div class="ar-mode" role="tablist">
+            <button class="ar-tab @(cf.Requested == CryptoArenaFeed.UpbitStream ? "on" : "")" role="tab" @onclick="() => SelectCrypto(CryptoArenaFeed.UpbitStream)">📡 업비트 실시간</button>
+            <button class="ar-tab @(cf.Requested == CryptoArenaFeed.Synthetic ? "on" : "")" role="tab" @onclick="() => SelectCrypto(CryptoArenaFeed.Synthetic)">🧪 합성 시세(데모)</button>
+        </div>
+        <span class="da-badge @CryptoFeedCss(cf, c)">@CryptoFeedText(cf, c)</span>
+        @if (cHas && c.SessionKst is { } ckst)
+        {
+            <span class="da-badge da-phase @(c.Tradable ? "ok" : "bad")" data-phase="@(c.Tradable ? "24x7" : "invalid")">@(c.Tradable ? "24/7 연속매매 가동" : "세션 시각 무효(fail-closed)") · @ckst.ToString("MM-dd HH:mm:ss") KST</span>
+            <span class="da-badge">김치프리미엄 <b class="@Css(c.KimchiPremiumBp)">@Bp(c.KimchiPremiumBp)</b> · 글로벌 BTC 24h <b class="@Css(c.GlobalChangeBp)">@Bp(c.GlobalChangeBp)</b></span>
+        }
+    </div>
+
+    @if (!cf.Pumped)
+    {
+        <div class="ar-card ar-note da-empty">정산 펌프 미결선 — 호스트 대시보드 허브가 결선되지 않아 대결을 진행할 수 없습니다(가짜 손익을 표시하지 않습니다).</div>
+    }
+    else if (!cHas || c.Ticks == 0)
+    {
+        <div class="ar-card ar-note da-empty">
+            @if (cf.Applied == CryptoArenaFeed.UpbitStream)
+            {
+                <span>시세 미수신 — @(StreamWaitText(cf)) (스트림 수신 @(cf.StreamUpdates)건). 스트림이 없는 환경이면 '합성 시세(데모)'를 선택하세요.</span>
+            }
+            else
+            {
+                <span>합성 시세 준비 중 — 다음 정산 회차부터 데모 호가가 공급됩니다.</span>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="ar-lead">
+            <b>@ArenaLeader.Label(c.Leader)</b>
+            <span class="ar-sub">AI @Bp(c.Ai.ReturnBp) · 휴먼 @Bp(c.Human.ReturnBp) · 정산 틱 @c.Ticks.ToString("N0") · 체결 @c.Trades.ToString("N0") · AI 근거 @c.RationaleCount.ToString("N0")건</span>
+        </div>
+
+        <div class="ar-grid da-score">
+            @foreach (int side in new[] { ArenaSide.Ai, ArenaSide.Human })
+            {
+                var b = c.Side(side);
+                long pnl = b.EquityRaw - b.CapitalRaw;
+                <div class="ar-card da-book" data-side="@side">
+                    <h3>@(side == ArenaSide.Ai ? "🤖 AI" : "🧑 휴먼") <small>자본금 @KrwRaw(b.CapitalRaw)</small></h3>
+                    <div class="ar-pnl @Css(pnl)">@KrwRaw(b.EquityRaw) <small>@SignedKrwRaw(pnl) · @Bp(b.ReturnBp)</small></div>
+                    <table class="ar-tbl">
+                        <tr><td>원화 예수금</td><td>@KrwRaw(b.CashRaw)</td><td>보유 종목</td><td>@b.OpenPositions</td></tr>
+                        <tr><td>실현손익</td><td class="@Css(b.RealizedRaw)">@SignedKrwRaw(b.RealizedRaw)</td><td>평가손익</td><td class="@Css(b.UnrealizedRaw)">@SignedKrwRaw(b.UnrealizedRaw)</td></tr>
+                        <tr><td>MDD</td><td class="ar-down">@Bp(-b.MddBp)</td><td>승률</td><td>@WinRate(b.Wins, b.Losses, b.WinRateBp)</td></tr>
+                        <tr><td>체결 / 거부</td><td>@b.Fills.ToString("N0") / @b.Rejects.ToString("N0")</td><td>수수료(0.05%)</td><td>@KrwRaw(b.FeesRaw)</td></tr>
+                    </table>
+                    @{ var cpos = CryptoPort.Positions(side); }
+                    @if (cpos.Count == 0)
+                    {
+                        <div class="ar-sub da-nopos">보유 없음</div>
+                    }
+                    else
+                    {
+                        <table class="ar-tbl da-pos">
+                            <tr><th>마켓</th><th>수량</th><th>평단</th><th>현재</th><th>평가손익</th>@if (side == ArenaSide.Ai) { <th>목표 / 손절</th> }</tr>
+                            @foreach (var p in cpos)
+                            {
+                                <tr>
+                                    <td>@p.Market</td><td>@CoinQty(p.QtyRaw) @p.Coin</td><td>@PriceRaw(p.AvgPriceRaw)</td><td>@PriceRaw(p.MarkRaw)</td>
+                                    <td class="@Css(p.PnlRaw)">@SignedKrwRaw(p.PnlRaw)</td>
+                                    @if (side == ArenaSide.Ai) { <td>@PriceRaw(p.TargetPriceRaw) / @PriceRaw(p.StopLossPriceRaw)</td> }
+                                </tr>
+                            }
+                        </table>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="ar-card ar-ticket da-ticket">
+            <h3>🧑 휴먼 코인 시장가 티켓 <small>최우선 호가 · 잔량 한도 · 수수료 0.05% · 최소 5,000원 · 24/7 · 다음 정산 회차 가상 체결</small></h3>
+            @{ var cq = CryptoPort.Quotes(); }
+            <div class="ar-ctl">
+                <select class="da-mkt" @bind="_market">
+                    @foreach (var q in cq)
+                    {
+                        <option value="@q.Market">@q.Market · 매수 @PriceRaw(q.BidRaw) / 매도 @PriceRaw(q.AskRaw) · 잔량 @CoinQty(q.BidQtyRaw) / @CoinQty(q.AskQtyRaw) @q.Coin</option>
+                    }
+                </select>
+                <input class="da-cqty" type="number" min="0.00000001" step="0.0001" @bind="_coinQty" />
+                <span>코인</span>
+                <button class="ar-btn buy" disabled="@(cq.Count == 0)" @onclick="() => SubmitCrypto(1)">매수</button>
+                <button class="ar-btn sell" disabled="@(cq.Count == 0)" @onclick="() => SubmitCrypto(-1)">매도</button>
+                @if (_cryptoMsg is not null) { <span class="ar-msg da-msg">@_cryptoMsg</span> }
+            </div>
+        </div>
+    }
+
+    <div class="ar-card da-timeline">
+        <h3>🧠 AI 가상자산 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
+        @{ var ccards = cHas && c.RationaleCount > 0 ? CryptoPort.RecentRationales(MaxCards) : System.Array.Empty<CryptoRationaleView>(); }
+        @if (ccards.Count == 0)
+        {
+            <div class="ar-sub da-nocard">아직 AI 체결이 없습니다 — 근거 카드는 실제 가상 체결이 일어날 때만 생성됩니다.</div>
+        }
+        @foreach (var r in ccards)
+        {
+            <div class="da-card @(r.Side > 0 ? "buy" : "sell")" data-seq="@r.Seq">
+                <div class="da-card-head">
+                    <span class="ar-act @(r.Side > 0 ? "a1" : "a2")">@(r.Side > 0 ? "매수" : "매도")</span>
+                    <b>@r.Market</b> @CoinQty(r.QtyRaw) @r.Coin @@ @PriceRaw(r.PriceRaw)
+                    <span class="da-trigger">@r.Trigger</span>
+                    <span class="ar-sub">#@r.Seq · @r.AtKst.ToString("MM-dd HH:mm:ss") KST</span>
+                </div>
+                <div class="da-metrics">
+                    <span class="da-conf">확신도 <i class="bar"><i style="width:@(r.ConfidenceScore)%"></i></i> @(r.ConfidenceScore)/100</span>
+                    <span>감성 <b class="@Css(r.SentimentScore)">@Signed(r.SentimentScore)</b></span>
+                    <span>목표 <b class="ar-up da-tgt">@PriceRaw(r.TargetPriceRaw)</b> · 손절 <b class="ar-down da-stop">@PriceRaw(r.StopLossPriceRaw)</b> · 손익비 <b>@r.RiskRewardRatio.ToString("F2")</b></span>
+                    @if (r.Side < 0) { <span>실현 <b class="@Css(r.RealizedPnlRaw)">@SignedKrwRaw(r.RealizedPnlRaw)</b></span> }
+                </div>
+                <div class="da-metrics da-factors">
+                    <span>오더북 불균형 <b class="@Css(r.ImbalanceBp)">@SignedBp(r.ImbalanceBp)</b></span>
+                    <span>체결 모멘텀 <b class="@Css(r.MomentumBp)">@SignedBp(r.MomentumBp)</b></span>
+                    <span>테이커 강도 <b class="@Css(r.FlowBp)">@SignedBp(r.FlowBp)</b></span>
+                    <span>김프/변동성 <b class="@Css(r.KimchiVolBp)">@SignedBp(r.KimchiVolBp)</b></span>
+                    <span class="da-depth">오더북 두께 매수1 <b class="ar-up">@r.BidDepthWon.ToString("N0")원</b> / 매도1 <b class="ar-down">@r.AskDepthWon.ToString("N0")원</b></span>
+                </div>
+                <div class="da-summary">@r.Summary</div>
+            </div>
+        }
+    </div>
+    </div>
+}
+else if (_mode == ModeUs)
 {
     <div class="da-us">
     @{
@@ -315,7 +457,7 @@ else
 
 @code {
     public const int RenderPumpMs = 100, MaxCards = 30;
-    public const int ModeKrx = 0, ModeUs = 1;
+    public const int ModeKrx = 0, ModeUs = 1, ModeCrypto = 2;
 
     private int _mode = ModeKrx;
     private long _symbol;
@@ -325,6 +467,10 @@ else
     private string? _ticker;
     private long _usQty = 10;
     private string? _usMsg;
+    // 크립토 모드 전용 상태(국내 · 미국 티켓 · 메시지와 분리)
+    private string? _market;
+    private decimal _coinQty = 0.001m;
+    private string? _cryptoMsg;
     private long _drawn = -1;
     private int _renderInFlight;
     private System.Threading.Timer? _timer;
@@ -348,7 +494,7 @@ else
     // 모드 전환 = 표시 대상 포트만 바꾼다(각 원장은 자기 엔진에 그대로 · 그려진 버전 무효화 → 새 모드 첫 폴링에서 다시 그린다).
     private void SetMode(int mode)
     {
-        if (mode == _mode || (mode != ModeKrx && mode != ModeUs)) return;
+        if (mode == _mode || (mode != ModeKrx && mode != ModeUs && mode != ModeCrypto)) return;
         System.Threading.Volatile.Write(ref _mode, mode);
         System.Threading.Volatile.Write(ref _drawn, -1);
     }
@@ -368,6 +514,50 @@ else
             ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결(USD)"
             : "접수 거부: " + UsArenaReject.Label(r);
     }
+
+    private void SelectCrypto(int source)
+    {
+        if (CryptoPort.Feed.Requested == source) return;
+        _cryptoMsg = CryptoPort.SelectSource(source) ? CryptoArenaFeed.Label(source) + " 선택 — 다음 정산에서 양 진영 원장 초기화 후 적용" : "출처 선택 불가(주입기 미결선)";
+    }
+
+    private void SubmitCrypto(int side)
+    {
+        string? mkt = _market;
+        if (string.IsNullOrEmpty(mkt)) { var q = CryptoPort.Quotes(); mkt = q.Count > 0 ? q[0].Market : null; }
+        long qtyRaw = _coinQty <= 0 || _coinQty > 1_000_000_000m ? 0 : (long)decimal.Truncate(_coinQty * CryptoArenaUnits.Scale);
+        int r = CryptoPort.SubmitHuman(mkt ?? "", side, qtyRaw);
+        _cryptoMsg = r == CryptoArenaReject.None
+            ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결(KRW)"
+            : "접수 거부: " + CryptoArenaReject.Label(r);
+    }
+
+    private static string StreamWaitText(CryptoArenaFeedStatus f)
+        => !f.StreamAttached ? "업비트 스트림 미결선(설정 Arena.UpbitStreamEnabled 꺼짐)"
+         : f.StreamConnected ? "업비트 스트림 연결됨 · 첫 호가를 기다리는 중입니다" : "업비트 스트림 재연결 대기 중입니다";
+
+    private static string CryptoFeedText(CryptoArenaFeedStatus f, CryptoArenaView v)
+    {
+        if (!f.Pumped) return "정산 펌프 미결선";
+        if (f.Switching) return "출처 전환 중…";
+        if (f.Applied == CryptoArenaFeed.Synthetic) return "🧪 " + CryptoArenaFeed.Label(CryptoArenaFeed.Synthetic);
+        if (!f.StreamAttached) return "📡 업비트 스트림 미결선";
+        if (!f.StreamConnected) return "📡 업비트 스트림 재연결 대기";
+        return v.Ticks > 0 ? "📡 " + CryptoArenaFeed.Label(CryptoArenaFeed.UpbitStream) : "📡 업비트 호가 대기";
+    }
+
+    private static string CryptoFeedCss(CryptoArenaFeedStatus f, CryptoArenaView v)
+        => !f.Pumped ? "bad" : f.Switching ? "wait" : f.Applied == CryptoArenaFeed.Synthetic ? "syn" : !f.StreamAttached ? "bad" : f.StreamConnected && v.Ticks > 0 ? "ok" : "wait";
+
+    // 원 raw 10^8 → 원 표기(금액 = 정수 원 내림 · 가격 = 원 미만 호가는 소수 유지 · 코인 = 소수 8자리 끝 0 제거 · 문화권 무관).
+    private static string KrwRaw(long raw) => (raw < 0 ? "-" : "") + (Math.Abs(raw) / CryptoArenaUnits.Scale).ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "원";
+    private static string SignedKrwRaw(long raw) => (raw > 0 ? "+" : "") + KrwRaw(raw);
+    private static string PriceRaw(long raw)
+    {
+        decimal d = raw / (decimal)CryptoArenaUnits.Scale;
+        return d.ToString(raw % CryptoArenaUnits.Scale == 0 ? "N0" : "#,##0.########", System.Globalization.CultureInfo.InvariantCulture) + "원";
+    }
+    private static string CoinQty(long raw) => (raw / (decimal)CryptoArenaUnits.Scale).ToString("#,##0.########", System.Globalization.CultureInfo.InvariantCulture);
 
     private static string UsFeedText(UsArenaFeedStatus f, UsArenaView v)
     {
@@ -445,7 +635,8 @@ else
     // 레벨 트리거 렌더 펌프(타이머 스레드): 활성 모드 포트의 그려진 버전 ≠ 현재 버전 ∧ 진행 중 렌더 없음 → InvokeAsync 1건.
     private void RenderPump()
     {
-        long current = System.Threading.Volatile.Read(ref _mode) == ModeUs ? UsPort.Version : Port.Version;
+        int mode = System.Threading.Volatile.Read(ref _mode);
+        long current = mode == ModeCrypto ? CryptoPort.Version : mode == ModeUs ? UsPort.Version : Port.Version;
         if (current == System.Threading.Volatile.Read(ref _drawn)) return;
         if (System.Threading.Interlocked.CompareExchange(ref _renderInFlight, 1, 0) != 0) return;
         try { _ = InvokeAsync(StateHasChanged); }
@@ -467,6 +658,8 @@ else
     .da-modes { margin: 0 0 8px; }
     .da-mode-tab { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 8px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
     .da-mode-tab.on { background: #1d2230; color: #fff; border-color: #4dd0e1; }
+    .da-ticket select.da-mkt { min-width: 420px; }
+    .da-ticket input.da-cqty { width: 130px; }
     .da-factors { font-size: 11.5px; color: var(--sub); margin-top: 0; }
     .da-empty { margin-bottom: 10px; }
     .da-pos { margin-top: 8px; } .da-pos th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; }

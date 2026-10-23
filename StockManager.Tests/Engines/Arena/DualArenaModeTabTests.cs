@@ -41,6 +41,7 @@ namespace StockManager.Tests.Engines.Arena
             var ctx = new Bunit.TestContext();
             ctx.Services.AddSingleton(krx);
             ctx.Services.AddSingleton(us);
+            ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new StockManager.Engines.Arena.Crypto.UpbitCryptoArenaEngine()));   // [v12.18.66-DEV] 3번째 탭 포트(미사용)
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 
@@ -71,9 +72,10 @@ namespace StockManager.Tests.Engines.Arena
             using (ctx)
             {
                 var tabs = cut.FindAll(".da-mode-tab");
-                Assert.Equal(2, tabs.Count);
+                Assert.Equal(3, tabs.Count);   // [v12.18.66-DEV] 가상자산 탭 추가
                 Assert.Contains("국내 대형주 (KRW ₩)", tabs[0].TextContent);
                 Assert.Contains("미국 빅테크 (USD $)", tabs[1].TextContent);
+                Assert.Contains("가상자산 (Upbit ₿)", tabs[2].TextContent);
                 Assert.Contains("on", tabs[0].ClassList);
                 Assert.Single(cut.FindAll(".da-krx"));
                 Assert.Empty(cut.FindAll(".da-us"));
