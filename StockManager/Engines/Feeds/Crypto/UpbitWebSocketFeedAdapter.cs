@@ -23,6 +23,11 @@
 //  ★fail-closed: 단절 중 IsConnected = false · 호가 갱신 정지 → CryptoPaperExchange 가 호가 지연(기본 2초) 초과로 가상 주문을 StaleQuote 거부.
 //   전송/파서/콜백 예외는 루프 밖으로 새지 않는다(Faults 카운터 · 재접속). 시각: 체결/호가 판정은 업비트 프레임 시각(자체 시계 미사용) ·
 //   침묵 판정만 Environment.TickCount64(무할당 단조 시계).
+//  [v12.18.74-DEV] 다중 마켓 결선: UpbitMarketSet(콜드 생성 · 1~8 마켓 · 코드 형식/중복 검증 → 구독 페이로드 1건 생성) — UpbitFeedOptions.Markets
+//   (기본 = KRW-BTC 단독 · 기존 페이로드 바이트 동일). 파서 = code → 표 인덱스(ValueTextEquals 순차 · 표 밖 = Invalid · 할당 0) ·
+//   시장 상태 = 마켓별 seqlock 1개(시각 역행/재전송 판정이 마켓마다 독립) · 거래소(CryptoPaperExchange) = 인덱스 0(주 마켓)만 투영.
+//   marketTap(인덱스 · 프레임) = 시장 상태가 '수용'한 프레임만 통지 — 재접속 SNAPSHOT 의 직전 체결 재전송(같은 시각 · 같은 sequential_id)이
+//   소비자 누적 체결량에 이중 가산되지 않는다. 기존 tap = 인덱스 0 프레임만(다른 마켓을 주 마켓으로 오인 통지 0 · 기존 의미 유지).
 // ============================================================================
 using System;
 using System.Net.WebSockets;
@@ -77,8 +82,20 @@ namespace StockManager.Engines.Feeds.Crypto
 
         /// <summary>프레임 1개 판독. 반환 = 종류(Orderbook/Trade 일 때만 f 유효 · 그 외 f = default).</summary>
         public static UpbitStreamKind TryParse(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, out UpbitStreamFrame f)
+            => Parse(frame, market, null, out _, out f);
+
+        /// <summary>다중 마켓 판독. marketIndex = 표 인덱스(Orderbook/Trade 일 때만 ≥ 0 · 그 외 −1).</summary>
+        public static UpbitStreamKind TryParse(ReadOnlySpan<byte> frame, UpbitMarketSet markets, out int marketIndex, out UpbitStreamFrame f)
+        {
+            ArgumentNullException.ThrowIfNull(markets);
+            return Parse(frame, default, markets, out marketIndex, out f);
+        }
+
+        private static UpbitStreamKind Parse(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, UpbitMarketSet? set, out int marketIndex, out UpbitStreamFrame f)
         {
             f = default;
+            marketIndex = -1;
+            int idx = -1;
             const byte TypeNone = 0, TypeOrderbook = 1, TypeTrade = 2, TypeOther = 3;
             byte type = TypeNone;
             bool codeSeen = false, codeOk = false, tsSeen = false, unitsSeen = false, statusSeen = false, errorSeen = false;
@@ -117,7 +134,7 @@ namespace StockManager.Engines.Feeds.Crypto
                                 else if (r.ValueTextEquals("code"u8))
                                 {
                                     if (codeSeen || !r.Read() || r.TokenType != JsonTokenType.String) return UpbitStreamKind.Invalid;
-                                    codeSeen = true; codeOk = r.ValueTextEquals(market);
+                                    codeSeen = true; idx = set is null ? (r.ValueTextEquals(market) ? 0 : -1) : set.IndexOf(ref r); codeOk = idx >= 0;
                                 }
                                 else if (r.ValueTextEquals("timestamp"u8)) { if (tsSeen || !ReadMillis(ref r, out ts)) return UpbitStreamKind.Invalid; tsSeen = true; }
                                 else if (r.ValueTextEquals("orderbook_units"u8))
@@ -166,10 +183,12 @@ namespace StockManager.Engines.Feeds.Crypto
             {
                 if (!tsSeen || units < 1 || !askSeen || !bidSeen || !askSzSeen || !bidSzSeen || bid <= 0 || ask <= 0 || bid >= ask) return UpbitStreamKind.Invalid;
                 f = new UpbitStreamFrame(UpbitStreamKind.Orderbook, ts, bid, ask, bidSz, askSz, 0, 0, UpbitTradeSide.None, 0);
+                marketIndex = idx;
                 return UpbitStreamKind.Orderbook;
             }
             if (!tpSeen || !tvSeen || !ttsSeen || !sideSeen || tp <= 0 || tv <= 0) return UpbitStreamKind.Invalid;
             f = new UpbitStreamFrame(UpbitStreamKind.Trade, tts, 0, 0, 0, 0, tp, tv, side, seq);
+            marketIndex = idx;
             return UpbitStreamKind.Trade;
         }
 
@@ -195,6 +214,62 @@ namespace StockManager.Engines.Feeds.Crypto
         {
             ms = 0;
             return r.Read() && r.TokenType == JsonTokenType.Number && r.TryGetInt64(out ms) && ms > 0 && ms <= MaxTimestampMs;
+        }
+    }
+
+    /// <summary>
+    /// 구독 마켓 표(콜드 생성 · 불변). 코드 = ASCII 대문자/숫자 + '-' 1개(앞 1~8 · 뒤 1~10자 · 예 "KRW-BTC") · 1~8개 · 중복 = 예외.
+    /// 인덱스 = 생성 순서(구독 페이로드 codes 순서 동일). 판독 = 표 순차 ValueTextEquals(할당 0).
+    /// </summary>
+    public sealed class UpbitMarketSet
+    {
+        public const int MaxMarkets = 8;
+        private readonly byte[][] _codes;
+        private readonly string[] _markets;
+        private readonly byte[] _subscribe;
+
+        /// <summary>KRW-BTC 단독(기본 · 페이로드 = UpbitStreamProtocol.SubscribePayload 바이트 동일).</summary>
+        public static UpbitMarketSet KrwBtc { get; } = new("KRW-BTC");
+
+        public UpbitMarketSet(params string[] markets)
+        {
+            ArgumentNullException.ThrowIfNull(markets);
+            if (markets.Length is < 1 or > MaxMarkets) throw new ArgumentOutOfRangeException(nameof(markets), "마켓 1~8개");
+            _markets = new string[markets.Length];
+            _codes = new byte[markets.Length][];
+            for (int i = 0; i < markets.Length; i++)
+            {
+                string m = markets[i] ?? throw new ArgumentNullException(nameof(markets));
+                if (!IsValidCode(m)) throw new ArgumentException("업비트 마켓 코드 형식 위반: " + m, nameof(markets));
+                for (int j = 0; j < i; j++)
+                    if (string.Equals(_markets[j], m, StringComparison.Ordinal)) throw new ArgumentException("중복 마켓: " + m, nameof(markets));
+                _markets[i] = m;
+                _codes[i] = System.Text.Encoding.ASCII.GetBytes(m);
+            }
+            string codes = "\"" + string.Join("\",\"", _markets) + "\"";      // 형식 검증 통과 = 따옴표/역슬래시 없음(주입 0)
+            _subscribe = System.Text.Encoding.ASCII.GetBytes(
+                "[{\"ticket\":\"SM-UPBIT-STREAM\"},{\"type\":\"orderbook\",\"codes\":[" + codes + "]},{\"type\":\"trade\",\"codes\":[" + codes + "]}]");
+        }
+
+        public int Count => _codes.Length;
+        public string Market(int index) => _markets[index];
+        public ReadOnlyMemory<byte> SubscribePayload => _subscribe;
+
+        /// <summary>현재 문자열 토큰 → 표 인덱스(표 밖 = −1 · δ=0).</summary>
+        internal int IndexOf(ref Utf8JsonReader r)
+        {
+            for (int i = 0; i < _codes.Length; i++) if (r.ValueTextEquals(_codes[i])) return i;
+            return -1;
+        }
+
+        public static bool IsValidCode(string? code)
+        {
+            if (code is null) return false;
+            int dash = code.IndexOf('-');
+            if (dash < 1 || dash > 8 || dash != code.LastIndexOf('-') || code.Length - dash - 1 is < 1 or > 10) return false;
+            foreach (char ch in code)
+                if (ch != '-' && !(ch >= 'A' && ch <= 'Z') && !(ch >= '0' && ch <= '9')) return false;
+            return true;
         }
     }
 
@@ -307,21 +382,30 @@ namespace StockManager.Engines.Feeds.Crypto
         public TimeSpan KeepAliveTick { get; init; } = TimeSpan.FromSeconds(1);
         public TimeSpan SilenceTimeout { get; init; } = TimeSpan.FromSeconds(10);
         public TimeSpan PingInterval { get; init; } = TimeSpan.FromSeconds(60);
+        /// <summary>[v12.18.74-DEV] 구독 마켓 표(기본 = KRW-BTC 단독). 인덱스 0 = 주 마켓(거래소 투영 · 기존 tap 대상).</summary>
+        public UpbitMarketSet Markets { get; init; } = UpbitMarketSet.KrwBtc;
     }
 
     /// <summary>판독 직후 관찰 지점(Orderbook/Trade 만 · 수신 스레드 동기 호출 · 무할당 구현 책임 = 호출자).</summary>
     public delegate void UpbitFrameTap(in UpbitStreamFrame frame);
+
+    /// <summary>[v12.18.74-DEV] 다중 마켓 관찰 지점 — 시장 상태가 수용한 Orderbook/Trade 만(재전송 · 시각 역행 = 통지 0) · 수신 스레드 동기 호출.</summary>
+    public delegate void UpbitMarketFrameTap(int marketIndex, in UpbitStreamFrame frame);
 
     public sealed class UpbitWebSocketFeedAdapter
     {
         public const int RxBufferBytes = 64 * 1024;
 
         private readonly UpbitMarketState _state;
+        private readonly UpbitMarketSet _markets;
+        private readonly UpbitMarketState[] _states;                                   // 마켓별(인덱스 0 = _state)
+        private readonly long[] _marketQuotes, _marketTrades;                          // 마켓별 수용 계수
         private readonly CryptoPaperExchange? _exchange;
         private readonly Func<IUpbitWsTransport> _factory;
         private readonly Func<TimeSpan, CancellationToken, Task> _delay;
         private readonly UpbitFeedOptions _opt;
         private readonly UpbitFrameTap? _tap;
+        private readonly UpbitMarketFrameTap? _marketTap;
         private readonly byte[] _rx = GC.AllocateArray<byte>(RxBufferBytes, pinned: true);
         private CancellationTokenSource? _conn;
         private int _connected;
@@ -333,7 +417,8 @@ namespace StockManager.Engines.Feeds.Crypto
         /// <param name="factory">null = UpbitClientWebSocketTransport.</param>
         /// <param name="delay">백오프 대기(null = Task.Delay · 테스트 = 기록형).</param>
         public UpbitWebSocketFeedAdapter(UpbitMarketState state, CryptoPaperExchange? exchange = null, Func<IUpbitWsTransport>? factory = null,
-                                         UpbitFeedOptions? options = null, Func<TimeSpan, CancellationToken, Task>? delay = null, UpbitFrameTap? tap = null)
+                                         UpbitFeedOptions? options = null, Func<TimeSpan, CancellationToken, Task>? delay = null, UpbitFrameTap? tap = null,
+                                         UpbitMarketFrameTap? marketTap = null)
         {
             _state = state ?? throw new ArgumentNullException(nameof(state));
             _exchange = exchange;
@@ -341,11 +426,23 @@ namespace StockManager.Engines.Feeds.Crypto
             _opt = options ?? new UpbitFeedOptions();
             if (_opt.InitialBackoff <= TimeSpan.Zero || _opt.MaxBackoff < _opt.InitialBackoff) throw new ArgumentOutOfRangeException(nameof(options));
             if (_opt.ConnectTimeout <= TimeSpan.Zero || _opt.SilenceTimeout <= TimeSpan.Zero || _opt.PingInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(options));
+            _markets = _opt.Markets ?? throw new ArgumentOutOfRangeException(nameof(options));
+            _states = new UpbitMarketState[_markets.Count];
+            _states[0] = _state;
+            for (int i = 1; i < _states.Length; i++) _states[i] = new UpbitMarketState();
+            _marketQuotes = new long[_markets.Count];
+            _marketTrades = new long[_markets.Count];
             _delay = delay ?? Task.Delay;
             _tap = tap;
+            _marketTap = marketTap;
         }
 
         public UpbitMarketState State => _state;
+        public UpbitMarketSet Markets => _markets;
+        /// <summary>마켓별 시장 상태(인덱스 = Markets 순서 · 0 = State).</summary>
+        public UpbitMarketState StateOf(int marketIndex) => _states[marketIndex];
+        public long QuotesOf(int marketIndex) => Interlocked.Read(ref _marketQuotes[marketIndex]);   // 시장 상태 수용 호가
+        public long TradesOf(int marketIndex) => Interlocked.Read(ref _marketTrades[marketIndex]);   // 시장 상태 수용 체결
         public bool IsConnected => Volatile.Read(ref _connected) != 0;
         public long FramesIn => Interlocked.Read(ref _framesIn);
         public long QuotesFed => Interlocked.Read(ref _quotesFed);              // 시장 상태 + 거래소 반영
@@ -370,16 +467,24 @@ namespace StockManager.Engines.Feeds.Crypto
         public UpbitStreamKind OnFrame(ReadOnlySpan<byte> frame)
         {
             Interlocked.Increment(ref _framesIn);
-            var kind = UpbitStreamProtocol.TryParse(frame, UpbitStreamProtocol.MarketKrwBtc, out var f);
+            var kind = UpbitStreamProtocol.TryParse(frame, _markets, out int m, out var f);
+            bool accepted = false;
             switch (kind)
             {
                 case UpbitStreamKind.Orderbook:
-                    if (_state.TryPublishQuote(in f) != UpbitPublishResult.Accepted) { Interlocked.Increment(ref _quotesDropped); break; }
-                    if (_exchange is null || _exchange.UpdateQuote(f.BidRaw, f.AskRaw, f.TimestampMs * 1000)) Interlocked.Increment(ref _quotesFed);
+                    if (_states[m].TryPublishQuote(in f) != UpbitPublishResult.Accepted) { Interlocked.Increment(ref _quotesDropped); break; }
+                    accepted = true;
+                    Interlocked.Increment(ref _marketQuotes[m]);
+                    if (m != 0 || _exchange is null || _exchange.UpdateQuote(f.BidRaw, f.AskRaw, f.TimestampMs * 1000)) Interlocked.Increment(ref _quotesFed);
                     else Interlocked.Increment(ref _quotesRejected);
                     break;
                 case UpbitStreamKind.Trade:
-                    if (_state.TryPublishTrade(in f) == UpbitPublishResult.Accepted) Interlocked.Increment(ref _trades);
+                    if (_states[m].TryPublishTrade(in f) == UpbitPublishResult.Accepted)
+                    {
+                        accepted = true;
+                        Interlocked.Increment(ref _trades);
+                        Interlocked.Increment(ref _marketTrades[m]);
+                    }
                     else Interlocked.Increment(ref _tradesDropped);
                     break;
                 case UpbitStreamKind.Status: Interlocked.Increment(ref _status); break;
@@ -387,7 +492,8 @@ namespace StockManager.Engines.Feeds.Crypto
                 case UpbitStreamKind.Unsupported: Interlocked.Increment(ref _unsupported); break;
                 default: Interlocked.Increment(ref _malformed); break;
             }
-            if (_tap is not null && (kind == UpbitStreamKind.Orderbook || kind == UpbitStreamKind.Trade)) _tap(in f);
+            if (_tap is not null && m == 0 && (kind == UpbitStreamKind.Orderbook || kind == UpbitStreamKind.Trade)) _tap(in f);
+            if (accepted && _marketTap is not null) _marketTap(m, in f);
             return kind;
         }
 
@@ -455,7 +561,7 @@ namespace StockManager.Engines.Feeds.Crypto
                         connectTo.CancelAfter(_opt.ConnectTimeout);
                         await t.ConnectAsync(UpbitStreamProtocol.Endpoint, connectTo.Token).ConfigureAwait(false);
                     }
-                    await t.SendTextAsync(UpbitStreamProtocol.SubscribePayload, conn.Token).ConfigureAwait(false);
+                    await t.SendTextAsync(_markets.SubscribePayload, conn.Token).ConfigureAwait(false);
                     connected = true;
                     Interlocked.Increment(ref _connects);
                     Volatile.Write(ref _lastFrameTicks, Environment.TickCount64);

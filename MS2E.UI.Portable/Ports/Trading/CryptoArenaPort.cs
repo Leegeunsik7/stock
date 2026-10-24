@@ -35,7 +35,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         public const int UpbitStream = 1, Synthetic = 2;
         public static string Label(int f) => f switch
         {
-            UpbitStream => "업비트 공개 WebSocket(KRW-BTC 호가/체결)", Synthetic => "합성 시세(데모 · 24/7 ×20)", _ => "?",
+            UpbitStream => "업비트 공개 WebSocket(KRW-BTC · ETH · XRP · SOL 호가/체결)", Synthetic => "합성 시세(데모 · 24/7 ×20)", _ => "?",
         };
     }
 

@@ -3,7 +3,8 @@
 //
 //   종목 키 = 업비트 마켓 코드 ASCII 1~8자("KRW-BTC")를 상위 바이트부터 채운 long(Pack) — 핫패스는 정수 비교만(문자열 0). Unpack/Label = 콜드 경로.
 //   민감도(×100): 글로벌 BTC 24시간 등락 베타 · 김치프리미엄 감응(프리미엄 +1bp 당 음의 기여 배율 · 과열 회귀).
-//   ★표 밖 마켓 = 엔진/주입기 폐기(fail-closed). ★실시간 업비트 스트림(UpbitWebSocketFeedAdapter)은 KRW-BTC 만 구독 — 나머지는 합성 데모 전용.
+//   ★표 밖 마켓 = 엔진/주입기 폐기(fail-closed). [v12.18.74-DEV] 실시간 업비트 스트림 = StreamMarkets(표 4종 · 같은 순서)를 연결 1개로 구독 —
+//    어댑터 마켓 인덱스 = 표 인덱스 = 주입기 슬롯(변환 0).
 // ============================================================================
 using System;
 
@@ -17,6 +18,8 @@ namespace StockManager.Engines.Arena.Crypto
         private static readonly string[] s_markets = { "KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-SOL" };
         private static readonly string[] s_coins = { "BTC", "ETH", "XRP", "SOL" };
         private static readonly long[] s_symbols = { Pack("KRW-BTC"), Pack("KRW-ETH"), Pack("KRW-XRP"), Pack("KRW-SOL") };
+        /// <summary>업비트 공개 WebSocket 구독 표(인덱스 = 표 인덱스).</summary>
+        public static readonly StockManager.Engines.Feeds.Crypto.UpbitMarketSet StreamMarkets = new(s_markets);
         private static readonly int[] s_globalBetaX100 = { 100, 120, 140, 150 };
         private static readonly int[] s_kimchiSensX100 = { 100, 110, 130, 120 };
         /// <summary>합성 데모 시작가(원 · 업비트 호가 격자 정렬).</summary>

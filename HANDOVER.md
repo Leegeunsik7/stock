@@ -4310,3 +4310,27 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 플루토 기술적 팩터(볼린저 스퀴즈 · 거래량 프로파일 POC/VA) 3대 아레나 결속 포함 · 자동 미러링 기본 꺼짐 · 국내 휴장일 캘린더 미반영 · 합성 시세는 데모 전용.
 - 한계(정직): 실 앱 아레나 근거 카드 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 185. v12.18.74-DEV — 업비트 실시간 WebSocket 4종(KRW-BTC · ETH · XRP · SOL) 결선 + 가상 24시간 무할당 소크 · 실 스트림 6분 소크 (2026-10-25)
+
+- 오더 전제 검증: 스트림 어댑터(v12.18.56) · 아레나 주입기(v12.18.66)는 이미 존재 · 호스트 결선 = `Arena.UpbitStreamEnabled`(기본 꺼짐) · ★구독 = KRW-BTC 단독(ETH/XRP/SOL = 합성 전용) ·
+  재접속 SNAPSHOT 의 직전 체결 재전송이 기존 tap(판독 직후 · 수용 여부 무관)을 거쳐 주입기 누적 체결량에 이중 가산될 수 있는 경로 확인 → 이번에 함께 봉쇄.
+- UpbitWebSocketFeedAdapter: UpbitMarketSet(콜드 · 1~8 마켓 · 코드 형식 [A-Z0-9]{1,8}-[A-Z0-9]{1,10} · 중복 = 예외 · 따옴표/역슬래시 불가 = 페이로드 주입 0) → 구독 페이로드 1건 ·
+  UpbitFeedOptions.Markets(기본 = KRW-BTC 단독 · 페이로드 = 기존 SubscribePayload 바이트 동일) · 파서 다중 마켓 오버로드(code → 표 인덱스 · 표 밖 = Invalid · δ=0 · 기존 서명 무변경) ·
+  마켓별 seqlock 시장 상태(시각 역행/재전송 판정 마켓별 독립 · StateOf · QuotesOf · TradesOf) · 거래소 투영 = 인덱스 0 만 · 기존 tap = 인덱스 0 만 ·
+  신규 marketTap(인덱스 · 프레임) = 시장 상태가 수용한 프레임만 통지(재전송 = 통지 0).
+- CryptoArenaUniverse.StreamMarkets(표 4종 · 인덱스 = 슬롯) · CryptoArenaQuoteFeeder.OnUpbitMarketFrame · 호스트 BlazorHomeForm = Markets = StreamMarkets + marketTap(연결 1개) ·
+  포트 출처 라벨 '업비트 공개 WebSocket(KRW-BTC · ETH · XRP · SOL 호가/체결)'. 송출 = 구독 1건 + PING 뿐 · 업비트 인증/주문 경로 0.
+- 테스트 StockManager.Tests/Feeds/UpbitStreamSoakTests.cs 7건: 마켓 표 검증 · 기본 페이로드 바이트 동일 + 4종 원문 · 다중 판독(이스케이프 코드 포함) · 다중 파서 10만 δ=0 ·
+  마켓별 독립 투영/주 마켓 한정 거래소·tap · 재접속 재전송 이중 가산 0(4 슬롯 → 엔진 Ticks 4 · Trades 2) ·
+  ★가상 24시간 소크 = 실 RunAsync(연결 24 · 509B 조각 · 연결마다 재전송 8 + PING 응답 + 잘림 + 표 밖 마켓 + 70KB 초과) → 4종 상태 → 주입기 → 엔진 정산(8 프레임마다 펌프):
+  프레임 1,037,056(정상 1,036,800 = 24h × 12/s) · 계수 정확값 · 재전송 체결 92 전량 폐기 · 마켓별 최종 상태 = 생성기 최종값 · 체결량 무손실/무중복 ·
+  δ=0 = 같은 연결 일정에서 프레임만 다른 두 실행의 할당 차 0B(연결당 콜드 비용 상쇄) · 실측 약 2.2초.
+  사보타주 검증(오류 0 빌드 확인): marketTap 수용 필터 제거 + 탭 할당 주입 → 3건 실패(7≠8 · [2,1,0,1]≠[2,2,0,2] · δ 32,864B) → 원복.
+- 실 스트림 옵트인 소크 StockManager.Tests/Integration/UpbitStreamLiveSoakTests.cs(MS2E_UPBIT_SOAK=1 · MS2E_UPBIT_SOAK_MINUTES 1~1440 · 기본 5):
+  6분 실측 = 프레임 9,566 · 호가 8,021 · 체결 1,515 · 판독 실패/초과/오류 0 · 연결 1 · 장애 0 · 침묵 단절 0 · PING 5 · 주입기 폐기 0 · 마켓별 최대 호가 간격 1.5/7.9/3.1/11.7초 ·
+  엔진 Ticks 7,647 · AI 체결 106(근거 1:1) · 정산 스레드 6 창 [0,0,0,0,32,0]B(잡음 1창 허용 규칙 통과 · 32B 원인 미규명) · 프로세스 전체 ≈139B/프레임(TLS/소켓 포함 참고값) · GC 0/0/0.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E · 전체 스위트 5,339 통과 + 7 건너뜀(옵트인 · 신규 실 소크 1) · 실패 0 · 4분 1초 · infra-scan 0(기준 117).
+- 한계(정직): 24시간 소크 = 가상 시각 오프라인(실 스트림은 6분) · 실 24시간 연속 소크 미실시(옵트인으로 실행 가능) · SOL 최대 호가 간격 11.7초 → 엔진 호가 지연 2초 초과 구간은 휴먼 주문 StaleQuote 거부(fail-closed 의도 동작) ·
+  호스트 스트림 기본 꺼짐 유지 · 실 앱 화면 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(시세 수신 · 가상 원장 주입뿐) · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

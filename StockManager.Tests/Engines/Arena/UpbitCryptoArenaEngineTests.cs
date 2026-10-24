@@ -614,7 +614,7 @@ namespace StockManager.Tests.Engines.Arena
                 (typeof(UpbitCryptoArenaEngine), new[] { "OnQuote", "OnTrade", "Drain", "Clock", "Evaluate", "StepAi", "DrainHuman", "Buy", "Sell", "Record",
                     "Equity", "Stats", "PublishSnapshot", "SubmitHuman", "TryDequeue", "TryReadSnapshot", "CopyPositions", "CopyQuotes", "CopyRationales",
                     "FindPos", "AlignUpRaw", "AlignDownRaw", "DepthWon", "ExitQty", "PhaseAt", "KstTicksOf", "MapStatus", "SetMarketContext" }),
-                (typeof(CryptoArenaQuoteFeeder), new[] { "OnUpbitFrame", "OnFrame", "OnBook", "Lock", "Pump", "TryReadSlot", "MarkAllSeen", "StepSynthetic", "UtcMicrosOf" }),
+                (typeof(CryptoArenaQuoteFeeder), new[] { "OnUpbitFrame", "OnUpbitMarketFrame", "OnFrame", "OnBook", "Lock", "Pump", "TryReadSlot", "MarkAllSeen", "StepSynthetic", "UtcMicrosOf" }),
                 (typeof(CryptoArenaUniverse), new[] { "IndexOf", "Symbol", "GlobalBetaX100", "KimchiSensX100", "SyntheticStartWon" }),
                 (typeof(CryptoPaperExchange), new[] { "SlippedMarketPrice", "NotionalWithFee" }),
             };
@@ -737,7 +737,8 @@ namespace StockManager.Tests.Engines.Arena
             Assert.Contains("services.AddSingleton<MS2E.UI.Portable.Ports.Trading.ICryptoArenaPort>(new StockManager.Adapters.CryptoArenaPortAdapter(cryptoArena, cryptoArenaFeeder));", form);
             Assert.Contains("dashHub.AttachCryptoArena(cryptoArenaFeeder);", form);
             Assert.Contains("if (cfg.GetBool(\"Arena.UpbitStreamEnabled\", false))", form);   // 기본 꺼짐 = 네트워크 호출 0
-            Assert.Contains("tap: cryptoArenaFeeder.OnUpbitFrame", form);
+            Assert.Contains("Markets = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.StreamMarkets", form);   // 4종 연결 1개
+            Assert.Contains("marketTap: cryptoArenaFeeder.OnUpbitMarketFrame", form);
         }
 
         // ── §8 /dualarena 3번째 탭 ──────────────────────────────────────────────

@@ -1726,7 +1726,7 @@ namespace StockManager.Blazor
             services.AddSingleton(usArenaFeeder);
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IUsArenaPort>(new StockManager.Adapters.UsArenaPortAdapter(usArena, usArenaFeeder));
             // [v12.18.66-DEV] 업비트 가상자산 24/7 아레나(KRW-BTC · ETH · XRP · SOL · 가상 1억 원 듀얼 원장 · 수수료 0.05%) — 순수 인메모리 · 업비트 주문/인증 경로 0.
-            //   시세 = 업비트 공개 WebSocket(KRW-BTC 호가/체결 · 인증 0 · 송출 = 구독/PING 뿐) 또는 합성 데모(24/7 ×20) — 허브 50ms 펌프가 엔진에 주입(단일 작성자).
+            //   시세 = 업비트 공개 WebSocket(KRW-BTC · ETH · XRP · SOL 호가/체결 · 연결 1개 · 인증 0 · 송출 = 구독/PING 뿐 · v12.18.74-DEV 4종 결선) 또는 합성 데모(24/7 ×20) — 허브 50ms 펌프가 엔진에 주입(단일 작성자).
             //   스트림은 `Arena.UpbitStreamEnabled`(기본 꺼짐 · 네트워크 호출 0) 일 때만 기동 — 꺼짐 = UI '스트림 미결선' 정직 렌더.
             var cryptoArena = new StockManager.Engines.Arena.Crypto.UpbitCryptoArenaEngine();
             var cryptoArenaFeeder = new StockManager.Engines.Arena.Crypto.CryptoArenaQuoteFeeder(cryptoArena);
@@ -1750,7 +1750,9 @@ namespace StockManager.Blazor
             StockManager.Adapters.ArenaPreferenceAdapter.RestoreAutoCopy(cfg, MS2E.UI.Portable.Ports.Trading.ArenaPreferenceArena.Crypto, cryptoArena.SetAutoCopy);
             if (cfg.GetBool("Arena.UpbitStreamEnabled", false))
             {
-                var upbitStream = new StockManager.Engines.Feeds.Crypto.UpbitWebSocketFeedAdapter(new StockManager.Engines.Feeds.Crypto.UpbitMarketState(), tap: cryptoArenaFeeder.OnUpbitFrame);
+                var upbitStream = new StockManager.Engines.Feeds.Crypto.UpbitWebSocketFeedAdapter(new StockManager.Engines.Feeds.Crypto.UpbitMarketState(),
+                    options: new StockManager.Engines.Feeds.Crypto.UpbitFeedOptions { Markets = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.StreamMarkets },
+                    marketTap: cryptoArenaFeeder.OnUpbitMarketFrame);
                 cryptoArenaFeeder.AttachStream(upbitStream);
                 var upbitStreamCts = new System.Threading.CancellationTokenSource();
                 _ = Task.Run(() => upbitStream.RunAsync(upbitStreamCts.Token));

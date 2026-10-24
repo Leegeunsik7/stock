@@ -5,7 +5,9 @@
 //      호가 = 최신값만 의미(상태) · 체결 = 테이커 매수/매도 누적량(소비자가 차분) — 큐잉 · 재시도 0 · 무효 값 = 폐기 계수.
 //      OnUpbitFrame(in UpbitStreamFrame) = UpbitFrameTap 서명 — UpbitWebSocketFeedAdapter(KRW-BTC 구독) 수신 스레드가 판독 직후 동기 호출(δ=0).
 //        Orderbook = L1 매수1/매도1 가격 · 잔량(raw 10^8 · 호가 격자 정렬 · 0 < 매수 < 매도) · Trade = 체결가 · 체결량 · ask_bid(BID = 매수 테이커).
-//      OnFrame(index, frame) = 같은 판독을 임의 마켓 슬롯에(향후 다중 마켓 구독 · 테스트) · OnBook(index, …) = 호가 직접 주입.
+//      OnFrame(index, frame) = 같은 판독을 임의 마켓 슬롯에 · OnBook(index, …) = 호가 직접 주입.
+//      [v12.18.74-DEV] OnUpbitMarketFrame(index, in frame) = UpbitMarketFrameTap 서명 — 어댑터가 CryptoArenaUniverse.StreamMarkets(4종 · 표 순서 = 슬롯 순서)를
+//        구독하고 시장 상태가 수용한 프레임만 통지(재접속 직전 체결 재전송 = 누적 체결량 이중 가산 0).
 //   ② 소비자(정산 스레드 = 대시보드 허브 50ms 펌프 1개): Pump(utcTicks) — 버전이 바뀐 슬롯만 엔진 OnTrade(누적 차분) · OnQuote ·
 //      갱신 0 = Drain(휴먼 큐 · 신선도 판정). 엔진 시각 = 펌프 시각(로컬 UTC 마이크로초 — 거래소 시계 편차 무관 · 무수신 2초 = StaleQuote).
 //   ③ 합성 데모 시세(SelectSource(Synthetic)): 스트림 미결선 PC 에서도 24/7 대결을 시연하는 결정론 난수 보행(4종 · 업비트 호가 격자 ·
@@ -87,6 +89,9 @@ namespace StockManager.Engines.Arena.Crypto
 
         /// <summary>UpbitFrameTap 서명 — 업비트 어댑터(KRW-BTC 구독) 판독 프레임 → KRW-BTC 슬롯.</summary>
         public void OnUpbitFrame(in UpbitStreamFrame frame) => OnFrame(CryptoArenaUniverse.Btc, in frame);
+
+        /// <summary>UpbitMarketFrameTap 서명 — 어댑터 마켓 인덱스(= CryptoArenaUniverse.StreamMarkets 순서 = 슬롯) → 슬롯.</summary>
+        public void OnUpbitMarketFrame(int marketIndex, in UpbitStreamFrame frame) => OnFrame(marketIndex, in frame);
 
         /// <summary>판독된 업비트 프레임 → 슬롯(Orderbook = L1 호가 · Trade = 테이커 누적량). 무효 = 폐기(false).</summary>
         public bool OnFrame(int index, in UpbitStreamFrame f)
