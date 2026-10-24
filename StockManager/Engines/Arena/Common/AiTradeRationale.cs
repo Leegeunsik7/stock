@@ -18,11 +18,15 @@
 //   [v12.18.67-DEV] 플루토 거버넌스(Governance · PlutoGovernanceTag 값 타입): 진입 = 국면 뱃지 · 악마의 변호인 감점 내역 · 원/최종 확신도 · 동적 비중 ·
 //     청산 = 청산 국면 · 연패 · 자가 회고(PlutoPostMortem · 진입 근거 순번 1:1). 진입 ConfidenceScore = 감점 후 확신도. 요약 끝에 국면/감점/회고 문장 결속.
 //   [v12.18.70-DEV] 청산 진입가(EntryPrice): 매도 근거 = 청산 직전 포지션 평균단가(가격 단위 동일 · 매수 = 0) — UI 실현손익 체결 내역(진입가 → 청산가 · 수익률).
+//   [v12.18.73-DEV] 플루토 기술적 팩터(Technical · PlutoTechnicalFactor 값 타입): 체결 시점 볼린저 스퀴즈 국면 · 밴드폭 · POC/밸류 에어리어 · 프로파일 점수.
+//     진입 사유 VolatilitySqueezeBreakout(19 · 기술적 기여 최대 ∧ 응축 후 상단 돌파) · VolumeProfileSupport(20 · 기술적 기여 최대 ∧ 프로파일 점수 양수).
+//     요약 끝에 뱃지([🌀 스퀴즈 응축] · [⚡ 볼밴 상단 돌파] · [🧱 POC 매물대 지지] 등) + 분석 문장 결속.
 // ============================================================================
 using System;
 using System.Globalization;
 using StockManager.Engines.Cognitive.Governance;
 using StockManager.Engines.Cognitive.News;
+using StockManager.Engines.Cognitive.Technical;
 using StockManager.Engines.Cognitive.Valuation;
 
 namespace StockManager.Engines.Arena.Common
@@ -49,6 +53,8 @@ namespace StockManager.Engines.Arena.Common
         TradeFlowMomentum = 16,    // [v12.18.66-DEV] 업비트 24시간 체결 모멘텀 주도 진입
         KimchiVolatility = 17,     // [v12.18.66-DEV] 김치프리미엄/변동성 감응 주도 진입
         OpeningGapFill = 18,       // [v12.18.71-DEV] 시초가 갭 하락 메우기(개장 창 · 매수 수급 우위) 진입
+        VolatilitySqueezeBreakout = 19,   // [v12.18.73-DEV] 플루토 볼린저 스퀴즈 응축 후 상단 돌파 주도 진입
+        VolumeProfileSupport = 20,        // [v12.18.73-DEV] 플루토 매물대(POC) 프로파일 우위 주도 진입
     }
 
     /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
@@ -65,7 +71,8 @@ namespace StockManager.Engines.Arena.Common
                                                           or >= ArenaTrigger.EtfBeta and <= ArenaTrigger.PremarketGapFlow
                                                           or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount
                                                           or ArenaTrigger.TradeFlowMomentum or ArenaTrigger.KimchiVolatility
-                                                          or ArenaTrigger.OpeningGapFill;
+                                                          or ArenaTrigger.OpeningGapFill or ArenaTrigger.VolatilitySqueezeBreakout
+                                                          or ArenaTrigger.VolumeProfileSupport;
         public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock
                                                          or ArenaTrigger.ValuationBubble;
 
@@ -89,6 +96,8 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.TradeFlowMomentum => "24시간 체결 모멘텀",
             ArenaTrigger.KimchiVolatility => "김치프리미엄/변동성 감응",
             ArenaTrigger.OpeningGapFill => "시초가 갭 메우기",
+            ArenaTrigger.VolatilitySqueezeBreakout => "플루토 볼린저 스퀴즈 상단 돌파",
+            ArenaTrigger.VolumeProfileSupport => "플루토 POC 매물대 프로파일",
             _ => "미분류",
         };
     }
@@ -124,13 +133,16 @@ namespace StockManager.Engines.Arena.Common
         public readonly PlutoGovernanceTag Governance;
         /// <summary>[v12.18.70-DEV] 청산 근거 = 청산 직전 포지션 평균단가(가격 단위 동일) · 매수 근거 = 0.</summary>
         public readonly long EntryPrice;
+        /// <summary>[v12.18.73-DEV] 체결 시점 플루토 기술적 팩터(스퀴즈 · 매물대 · default = 미가동/판정 없음).</summary>
+        public readonly PlutoTechnicalFactor Technical;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
             int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw,
             in PlutoNewsTag news = default, in PlutoValuationTag valuation = default, long bidDepthWon = 0, long askDepthWon = 0,
-            in PlutoGovernanceTag governance = default, long entryPrice = 0)
+            in PlutoGovernanceTag governance = default, long entryPrice = 0, in PlutoTechnicalFactor technical = default)
         {
+            Technical = technical;
             EntryPrice = entryPrice;
             Governance = governance;
             BidDepthWon = bidDepthWon; AskDepthWon = askDepthWon;
@@ -151,6 +163,7 @@ namespace StockManager.Engines.Arena.Common
         /// 손절가 &lt; 목표가 · 손익비 &gt; 0 · 매수는 손절가 &lt; 체결가 &lt; 목표가.
         /// [v12.18.63-DEV] 뉴스 태그 무결 · 뉴스 종목 = 체결 종목(뉴스 있을 때) · NewsCatalyst = 실효 양수 · NewsShock = 충격 수준 악재.
         /// [v12.18.65-DEV] 밸류에이션 태그 무결 · 판정 종목 = 체결 종목 · ValuationDiscount = 점수 양수 · ValuationBubble = 극심한 과열.
+        /// [v12.18.73-DEV] 기술적 팩터 무결 · 판정 종목 = 체결 종목 · VolatilitySqueezeBreakout = 상단 돌파 · VolumeProfileSupport = 프로파일 점수 양수.
         /// [v12.18.67-DEV] 거버넌스 태그 무결 · 가동 시 매수 = 회고 없음 ∧ 확신도 = 감점 후 확신도 · 매도 = 회고 있음 ∧ 회고 청산 사유 = 체결 사유.
         /// </summary>
         public bool IsWellFormed =>
@@ -167,6 +180,9 @@ namespace StockManager.Engines.Arena.Common
             && (TriggerType != ArenaTrigger.ValuationDiscount || Valuation.Score > 0)
             && (TriggerType != ArenaTrigger.ValuationBubble || Valuation.IsBubble)
             && BidDepthWon >= 0 && AskDepthWon >= 0
+            && Technical.IsWellFormed && (Technical.Symbol == 0 || Technical.Symbol == Symbol)
+            && (TriggerType != ArenaTrigger.VolatilitySqueezeBreakout || Technical.IsBreakoutUp)
+            && (TriggerType != ArenaTrigger.VolumeProfileSupport || Technical.VolumeProfileScore > 0)
             && Governance.IsWellFormed
             && (!Governance.Governed || (Side == 1
                 ? !Governance.PostMortem.HasReview && Governance.Confidence == ConfidenceScore
@@ -195,6 +211,7 @@ namespace StockManager.Engines.Arena.Common
             };
             if (r.News.HasCatalyst) core += " " + ComposeNews(in r.News);
             if (r.Valuation.HasValuation) core += " " + ComposeValuation(in r.Valuation);
+            if (r.Technical.HasTechnical) core += " " + ComposeTechnical(in r.Technical, r.Currency);
             return r.Governance.Governed ? core + " " + PlutoGovernanceText.Compose(in r.Governance) : core;
         }
 
@@ -218,6 +235,29 @@ namespace StockManager.Engines.Arena.Common
             return $"플루토 밸류에이션: {ValuationText.Label(r.Grade)} {Signed(r.Score)}점 · {per} · {pbr} · ROE {Pct(f.RoeBps)} · " +
                    $"안전마진 {Pct(r.MarginOfSafetyBps)}(적정가 {fair}) · {surprise} · 선행 EPS {Pct(f.EpsGrowthBps)} · {ValuationText.SourceLabel(f.Source)}.";
         }
+
+        /// <summary>[v12.18.73-DEV] 플루토 기술적 팩터 뱃지 + 분석 문장(가격 = 근거 통화).</summary>
+        public static string ComposeTechnical(in PlutoTechnicalFactor t, ArenaCurrency currency)
+        {
+            string badges = PlutoTechnicalText.Badges(in t);
+            string squeeze = t.SqueezePhase == PlutoSqueezePhase.Unknown
+                ? "볼린저 스퀴즈 워밍업(20봉 미만)"
+                : $"볼린저(20, 2σ) {PlutoTechnicalText.PhaseLabel(t.SqueezePhase)} · 밴드폭 {Pct(t.BandWidthBps).TrimStart('+')} · 상단 {Px(t.UpperBand, currency)} / 하단 {Px(t.LowerBand, currency)} · " +
+                  $"켈트너(20, 1.5 ATR) {Px(t.KeltnerUpper, currency)} / {Px(t.KeltnerLower, currency)}" +
+                  (t.SqueezeBars > 0 ? $" · 응축 {t.SqueezeBars.ToString(Inv)}봉" : "") + $" · 스퀴즈 {Signed(t.SqueezeScore)}점";
+            string profile = t.ProfileZone == PlutoProfileZone.None
+                ? "매물대 프로파일 표본 부족"
+                : $"매물대 POC {Px(t.PocPrice, currency)}(점유 {Pct(t.PocShareBp).TrimStart('+')}) · 밸류 에어리어 {Px(t.ValueAreaLow, currency)}~{Px(t.ValueAreaHigh, currency)} · " +
+                  $"{PlutoTechnicalText.ZoneLabel(t.ProfileZone)} {Signed(t.VolumeProfileScore)}점";
+            return $"{(badges.Length > 0 ? badges + " " : "")}플루토 기술적 분석: {squeeze} · {profile} → 기술 점수 {Signed(t.TechnicalScore)}점.";
+        }
+
+        private static string Px(long price, ArenaCurrency currency) => currency switch
+        {
+            ArenaCurrency.Usd => Usd(price),
+            ArenaCurrency.Crypto => WonRaw(price),
+            _ => string.Create(Inv, $"{price:N0}원"),
+        };
 
         private static string X10(int v) => $"{(v / 10).ToString(Inv)}.{(v % 10).ToString(Inv)}";
 

@@ -31,6 +31,9 @@
 //     (거버너 가동 시) 개장 창 갭 상승 ≥ 3% 추격 금지 · 갭 하락 ≤ −5% 패닉 차단 · −5%~−3% ∧ 갭/수급 우위 = OpeningGapFill 진입.
 //     동시호가 접수 창(프리마켓 09:00~09:30 ET) 휴먼 주문 = 경매 장부 적재(32건) → 개장 틱 단일 시초가($0.01 내림 중간가) 일괄 체결.
 //   [v12.18.71-DEV] 플루토 카피 트레이딩: SubmitFollow(슬리피지 20bp 보호) · SetAutoCopy(비례 미러링 · 예수금 부족 Fail-Closed · 복제분 동반 청산). 정지(기본) = 기존 동작 동일.
+//   [v12.18.73-DEV] 플루토 기술적 팩터(EnableTechnical · 선택): 매 유효 호가 = 티커별 1분 봉(중간가) + 매물대 프로파일 갱신(δ=0) — 피드에 체결량 없음 →
+//     호가 1틱 = 가중 1(시간-가격 TPO 근사 · 정직 표기). 팩터 게시(TryReadTechnical) · 가동 시 점수 × 100bp 를 TechnicalWeight(20)로 가산 ·
+//     기술적 기여 최대 = VolatilitySqueezeBreakout / VolumeProfileSupport 진입 · POC 매물벽 = 악마의 변호인 반대 논리(거버너 가동 시). 정지(기본) = 기존 동작 동일.
 // ============================================================================
 using System;
 using System.Threading;
@@ -39,6 +42,7 @@ using StockManager.Engines.Arena.Common;
 using StockManager.Engines.Cognitive.Governance;
 using StockManager.Engines.Cognitive.News;
 using StockManager.Engines.Cognitive.Regime;
+using StockManager.Engines.Cognitive.Technical;
 using MarketRegime = StockManager.Engines.Cognitive.Regime.MarketRegime;   // MS2E.Core.MarketRegime(전역 using) 동명 타입과 구분
 using StockManager.Engines.Cognitive.Valuation;
 using StockManager.Engines.Feeds;
@@ -49,13 +53,14 @@ namespace StockManager.Engines.Arena.Us
     /// <summary>US 알파 시그널 1회 평가 결과(bp). Dominant = 점수 방향으로 가장 크게 기여한 구성요소.</summary>
     public readonly struct UsAlphaSignal
     {
-        public readonly int Score, EtfBetaBp, RateBp, GapFlowBp, MomentumBp, NewsBp, ValuationBp;
+        public readonly int Score, EtfBetaBp, RateBp, GapFlowBp, MomentumBp, NewsBp, ValuationBp, TechnicalBp;
         public readonly ArenaTrigger Dominant;
 
-        public UsAlphaSignal(int score, int etfBetaBp, int rateBp, int gapFlowBp, int momentumBp, ArenaTrigger dominant, int newsBp = 0, int valuationBp = 0)
+        public UsAlphaSignal(int score, int etfBetaBp, int rateBp, int gapFlowBp, int momentumBp, ArenaTrigger dominant, int newsBp = 0, int valuationBp = 0,
+            int technicalBp = 0)
         {
             Score = score; EtfBetaBp = etfBetaBp; RateBp = rateBp; GapFlowBp = gapFlowBp; MomentumBp = momentumBp; Dominant = dominant; NewsBp = newsBp;
-            ValuationBp = valuationBp;
+            ValuationBp = valuationBp; TechnicalBp = technicalBp;
         }
     }
 
@@ -90,6 +95,7 @@ namespace StockManager.Engines.Arena.Us
         public const int EtfWeight = 25, RateWeight = 20, GapFlowWeight = 30, MomentumWeight = 25;
         public const int NewsWeight = 30;        // [v12.18.63-DEV] 플루토 뉴스 가산 가중(실효 ±100 → 점수 ±3000)
         public const int ValuationWeight = 20;   // [v12.18.65-DEV] 플루토 밸류에이션 가산 가중(점수 ±100 → 점수 ±2000)
+        public const int TechnicalWeight = 20;   // [v12.18.73-DEV] 플루토 기술적 팩터 가산 가중(점수 ±100 → 점수 ±2000)
         public const int EtfGain = 10, RateGain = 100, GapGain = 10, MomentumGain = 20;
         public const int StopBp = 150, TargetBaseBp = 150, TargetPerConfidenceBp = 4, PositionWeightBp = 2000;
         public static readonly long AiCutoffBeforeCloseTicks = TimeSpan.FromMinutes(10).Ticks;
@@ -123,6 +129,9 @@ namespace StockManager.Engines.Arena.Us
         private long _ticks, _dropped, _lastKstTicks, _etDay;
         private PlutoSentimentBuffer? _pluto;
         private PlutoValuationBuffer? _valuation;
+        private readonly PlutoTechnicalState[] _tech = new PlutoTechnicalState[MaxSymbols];      // [v12.18.73-DEV] 인덱스 = UsTechUniverse 인덱스
+        private readonly PlutoTechnicalFactor[] _techLast = new PlutoTechnicalFactor[MaxSymbols];
+        private bool _technical;
         private bool _governed;
         private int _govUs10yBp, _govDxyBp;
         private PlutoSizerState _sizer;
@@ -171,6 +180,8 @@ namespace StockManager.Engines.Arena.Us
             _govApproved = _govPanic = _govCooldown = _govVeto = 0;
             _rationaleCount = 0;
             for (int i = 0; i < MaxSymbols; i++) _syms[i] = new Sym { Symbol = UsTechUniverse.Symbol(i) };
+            Array.Clear(_tech);                       // [v12.18.73-DEV] 봉 · 매물대 프로파일 · 게시 팩터 동반 초기화
+            Array.Clear(_techLast);
             Array.Clear(_auction);                    // [v12.18.71-DEV] 경매 장부 · 개장 게이트 · 복제 계수 초기화(자동 미러링 설정은 유지)
             _auctionCount = 0;
             _auctionFills = _auctionRejects = _gapVetoes = _gapFills = 0;
@@ -200,6 +211,27 @@ namespace StockManager.Engines.Arena.Us
         public void AttachValuation(PlutoValuationBuffer buffer) => Volatile.Write(ref _valuation, buffer ?? throw new ArgumentNullException(nameof(buffer)));
 
         public bool ValuationAttached => Volatile.Read(ref _valuation) is not null;
+
+        /// <summary>[v12.18.73-DEV] 플루토 기술적 팩터 시그널 가산 가동/정지(봉 · 프로파일 갱신과 팩터 게시는 상시 · 다음 정산부터 · 정지 = 기존 동작 동일).</summary>
+        public void EnableTechnical(bool enabled) => Volatile.Write(ref _technical, enabled);
+
+        public bool TechnicalEnabled => Volatile.Read(ref _technical);
+
+        /// <summary>[v12.18.73-DEV] 티커 최신 기술적 팩터(직전 정산 중간가 판정 · seqlock · δ=0 · 표 밖/경합 상한 초과 = false).</summary>
+        public bool TryReadTechnical(long symbol, out PlutoTechnicalFactor factor)
+        {
+            int i = UsTechUniverse.IndexOf(symbol);
+            for (int k = 0; k < SeqlockRetries && i >= 0; k++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                factor = _techLast[i];
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return true;
+            }
+            factor = default;
+            return false;
+        }
 
         /// <summary>[v12.18.67-DEV] 플루토 거버넌스 가동/정지(국면 · 악마의 변호인 · 동적 사이징 · 자가 회고 · 다음 정산부터 · 정지 = 기존 동작 동일).</summary>
         public void EnableGovernance(bool enabled) => Volatile.Write(ref _governed, enabled);
@@ -411,6 +443,11 @@ namespace StockManager.Engines.Arena.Us
                 ref Sym s = ref _syms[si];
                 s.Bid = bidCents; s.Ask = askCents; s.BidQty = bidQty; s.AskQty = askQty;
                 PlutoRegimeClassifier.Update(ref s.Regime, bidCents, askCents, bidQty, askQty);
+                long midTech = bidCents + (askCents - bidCents) / 2;
+                PlutoTechnicalAnalyzer.OnPrice(ref _tech[si], midTech, kst.Ticks);
+                PlutoTechnicalAnalyzer.OnVolume(ref _tech[si], midTech, 1);                 // 체결량 미제공 피드 = TPO(호가 1틱 = 1)
+                _techLast[si] = PlutoTechnicalAnalyzer.Assess(in _tech[si], symbol, midTech);
+                PlutoTechnicalFactor tech = Volatile.Read(ref _technical) ? _techLast[si] : default;
                 long midX2 = bidCents + askCents;
                 long midFx = midX2 << (Fx - 1);
                 if (_phase == UsSessionPhase.PreMarket && s.PrevCloseX2 > 0)
@@ -424,7 +461,8 @@ namespace StockManager.Engines.Arena.Us
                 var valuation = Volatile.Read(ref _valuation);
                 if (valuation is not null && valuation.TryRead(symbol, out var vf)) val = new PlutoValuationTag(in vf, s.Ask, kst.Ticks - PlutoClock.KstOffsetTicks);
                 var sig = s.Seen >= WarmupTicks
-                    ? Evaluate(si, Volatile.Read(ref _qqqBp), Volatile.Read(ref _soxxBp), Volatile.Read(ref _us10yBp), s.GapBp, bidQty, askQty, midFx, s.EmaMidFx, news.NewsBp, val.ValuationBp)
+                    ? Evaluate(si, Volatile.Read(ref _qqqBp), Volatile.Read(ref _soxxBp), Volatile.Read(ref _us10yBp), s.GapBp, bidQty, askQty, midFx, s.EmaMidFx, news.NewsBp, val.ValuationBp,
+                        tech.TechnicalBp, tech.IsBreakoutUp)
                     : default;
                 if (s.Seen == 0) s.EmaMidFx = midFx;
                 else s.EmaMidFx += (midFx - s.EmaMidFx) >> EmaShift;
@@ -432,7 +470,7 @@ namespace StockManager.Engines.Arena.Us
 
                 if (_phase == UsSessionPhase.ContinuousTrading && MarketOpenAuctionGate.OnRegularTick(ref s.Gate, midX2)) Uncross(si);
                 DrainHuman();
-                if (_phase == UsSessionPhase.ContinuousTrading) StepAi(si, in sig, in news, in val, kst);
+                if (_phase == UsSessionPhase.ContinuousTrading) StepAi(si, in sig, in news, in val, in tech, kst);
             }
             PublishSnapshot();
             EndWrite();
@@ -454,8 +492,10 @@ namespace StockManager.Engines.Arena.Us
         }
 
         /// <summary>순수 시그널 평가(할당 0). index = UsTechUniverse 인덱스 · midFx/emaMidFx = 중간가 ×1024 고정소수점.</summary>
-        public static UsAlphaSignal Evaluate(int index, int qqqBp, int soxxBp, int us10yChangeBp, int gapBp, long bidQty, long askQty, long midFx, long emaMidFx, int newsBp = 0, int valuationBp = 0)
+        public static UsAlphaSignal Evaluate(int index, int qqqBp, int soxxBp, int us10yChangeBp, int gapBp, long bidQty, long askQty, long midFx, long emaMidFx, int newsBp = 0, int valuationBp = 0,
+            int technicalBp = 0, bool squeezeBreakout = false)
         {
+            int technical = Math.Clamp(technicalBp, -10000, 10000);
             if ((uint)index >= MaxSymbols) return default;
             int news = Math.Clamp(newsBp, -10000, 10000);
             int valuation = Math.Clamp(valuationBp, -10000, 10000);
@@ -467,8 +507,8 @@ namespace StockManager.Engines.Arena.Us
             int gapFlow = ((int)Math.Clamp((long)Math.Clamp(gapBp, -10000, 10000) * GapGain, -10000, 10000) + obi) / 2;
             int mom = emaMidFx <= 0 ? 0 : (int)Math.Clamp((midFx - emaMidFx) * 10000 / emaMidFx * MomentumGain, -10000, 10000);
             long cEtf = (long)etf * EtfWeight, cRate = (long)rate * RateWeight, cGap = (long)gapFlow * GapFlowWeight, cMom = (long)mom * MomentumWeight;
-            long cNews = (long)news * NewsWeight, cVal = (long)valuation * ValuationWeight;
-            int score = (int)Math.Clamp((cEtf + cRate + cGap + cMom + cNews + cVal) / 100, -10000, 10000);
+            long cNews = (long)news * NewsWeight, cVal = (long)valuation * ValuationWeight, cTech = (long)technical * TechnicalWeight;
+            int score = (int)Math.Clamp((cEtf + cRate + cGap + cMom + cNews + cVal + cTech) / 100, -10000, 10000);
             int sign = score >= 0 ? 1 : -1;
             var dom = ArenaTrigger.PremarketGapFlow;
             long best = cGap * sign;
@@ -476,11 +516,12 @@ namespace StockManager.Engines.Arena.Us
             if (cMom * sign > best) { best = cMom * sign; dom = ArenaTrigger.MomentumBreakout; }
             if (cRate * sign > best) { best = cRate * sign; dom = ArenaTrigger.RateSensitivity; }
             if (cNews * sign > best) { best = cNews * sign; dom = ArenaTrigger.NewsCatalyst; }
-            if (cVal * sign > best) dom = ArenaTrigger.ValuationDiscount;
-            return new UsAlphaSignal(score, etf, rate, gapFlow, mom, dom, news, valuation);
+            if (cVal * sign > best) { best = cVal * sign; dom = ArenaTrigger.ValuationDiscount; }
+            if (cTech * sign > best) dom = squeezeBreakout ? ArenaTrigger.VolatilitySqueezeBreakout : ArenaTrigger.VolumeProfileSupport;
+            return new UsAlphaSignal(score, etf, rate, gapFlow, mom, dom, news, valuation, technical);
         }
 
-        private void StepAi(int si, in UsAlphaSignal sig, in PlutoNewsTag news, in PlutoValuationTag val, DateTime kst)
+        private void StepAi(int si, in UsAlphaSignal sig, in PlutoNewsTag news, in PlutoValuationTag val, in PlutoTechnicalFactor tech, DateTime kst)
         {
             var b = _books[ArenaSide.Ai];
             ref Sym s = ref _syms[si];
@@ -506,7 +547,7 @@ namespace StockManager.Engines.Arena.Us
                          : exit == ArenaTrigger.ValuationBubble ? Math.Clamp(-val.Score, 0, 100) : 100;
                 var exitGov = GovernExit(in memo, exit, si, priorPnl + pnl, FindPos(b, s.Symbol) < 0, kst.Ticks);
                 Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, -1, filled, s.Bid, kst.Ticks, exit, sig.Score, conf,
-                    target, stop, rr, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, pnl, ArenaCurrency.Usd, in news, in val, 0, 0, in exitGov, entry));
+                    target, stop, rr, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, pnl, ArenaCurrency.Usd, in news, in val, 0, 0, in exitGov, entry, in tech));
                 if (Volatile.Read(ref _copyAuto)) MirrorExit(si, filled, heldBefore);
                 return;
             }
@@ -520,7 +561,7 @@ namespace StockManager.Engines.Arena.Us
             PlutoGovernanceTag gov = default;
             if (governed)
             {
-                if (!Govern(si, raw, sig.MomentumBp, MomentumWeight, sig.GapFlowBp, GapFlowWeight, kst.Ticks, out gov)) return;
+                if (!Govern(si, raw, sig.MomentumBp, MomentumWeight, sig.GapFlowBp, GapFlowWeight, kst.Ticks, out gov, tech.IsPocResistance)) return;
                 score = gov.AdjustedScore; confidence = gov.Confidence; weightBp = gov.WeightBp;
             }
             else
@@ -543,7 +584,7 @@ namespace StockManager.Engines.Arena.Us
             if (gov.Governed) np.Memo = Memo(in gov, kst.Ticks, np.Cost);
             if (dominant == ArenaTrigger.OpeningGapFill) _gapFills++;
             Record(new AiTradeRationale(_rationaleCount + 1, s.Symbol, 1, bought, s.Ask, kst.Ticks, dominant, score, confidence,
-                tgt, stp, rrX100, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, 0, ArenaCurrency.Usd, in news, in val, 0, 0, in gov));
+                tgt, stp, rrX100, sig.RateBp, sig.GapFlowBp, sig.EtfBetaBp, sig.MomentumBp, 0, ArenaCurrency.Usd, in news, in val, 0, 0, in gov, 0, in tech));
             if (Volatile.Read(ref _copyAuto)) MirrorEntry(si, bought, aiEquity);
         }
 
@@ -752,11 +793,12 @@ namespace StockManager.Engines.Arena.Us
         }
 
         /// <summary>[v12.18.67-DEV] AI 신규 진입 거버넌스 승인(δ=0 · 차단 사유별 계수).</summary>
-        private bool Govern(int si, int score, int momentumBp, int momentumWeight, int imbalanceBp, int imbalanceWeight, long nowTicks, out PlutoGovernanceTag gov)
+        private bool Govern(int si, int score, int momentumBp, int momentumWeight, int imbalanceBp, int imbalanceWeight, long nowTicks, out PlutoGovernanceTag gov,
+            bool pocResistance = false)
         {
             ref Sym s = ref _syms[si];
             var r = PlutoCognitiveGovernor.Approve(in s.Regime, score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, EntryScore, s.BidQty, s.AskQty,
-                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov);
+                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance);
             switch (r)
             {
                 case PlutoBlockReason.None: _govApproved++; return true;

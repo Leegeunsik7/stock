@@ -57,6 +57,7 @@ namespace StockManager.Adapters
                 if ((g.Theses & CounterThesis.Overheat) != 0) list.Add(new ArenaPenaltyTag("과열", PlutoDevilsAdvocateFilter.OverheatPenalty));
                 if ((g.Theses & CounterThesis.OverheadSupplyWall) != 0) list.Add(new ArenaPenaltyTag("매도벽", PlutoDevilsAdvocateFilter.WallPenalty));
                 if ((g.Theses & CounterThesis.MacroHeadwind) != 0) list.Add(new ArenaPenaltyTag("거시역풍", PlutoDevilsAdvocateFilter.MacroPenalty));
+                if ((g.Theses & CounterThesis.PocResistance) != 0) list.Add(new ArenaPenaltyTag("매물벽(POC)", PlutoDevilsAdvocateFilter.PocPenalty));   // [v12.18.73-DEV]
                 tags = list;
             }
             return new ArenaGovernanceCard(regime, tags, g.RawConfidence, g.Confidence, g.WeightBp, g.LossStreak, g.StreakCut, null, false);

@@ -4266,3 +4266,28 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 자동 미러링 선호(아레나별 활성 · 배율) 영속화 + 기동 복원 포함 · 자동 미러링 기본 꺼짐 · 국내 휴장일 캘린더 미반영 · 합성 시세는 데모 전용.
 - 한계(정직): 실 앱 화면 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 183. v12.18.73-DEV — 플루토 브레인 3단계: 볼린저 밴드 스퀴즈 + 매물대(POC) 거래량 프로파일 기술적 팩터(3대 아레나 결속 · δ=0) (2026-10-24)
+
+- 착수 전 v12.18.72-GM 봉인 읽기 전용 재수검(재봉인 없음 · 리포트 = 세션 임시 폴더 · release/ 쓰기 0): --verify-zip(38 · masterSeal E431010A…) · --verify-live-armed · --verify-interlocks(30 · 0x800000001FFFFFFF) · --verify-tighten(6) 전부 exit 0.
+- 오더 전제 검증: 봉 피드 없음(아레나 입력 = 최우선 호가 · KRX 틱 거래량 · Upbit 체결) → 아레나가 자기 호가로 종목별 1분 시간 봉(중간가 · 결측 분 채움 없음)을 정산 스레드에서 구성.
+  US 아레나 OnQuote 에 체결량 없음 → 프로파일 = 호가 1틱 가중 1(시간-가격 TPO 근사 · 코드 머리말 정직 표기). Upbit = OnTrade 체결가 · 체결 수량(raw 10^8).
+- 신규 StockManager/Engines/Cognitive/Technical/:
+  · PlutoVolatilitySqueezeAnalyzer — InlineArray 20 봉 링 · SMA20 · σ(Int128 분산 · 정수 제곱근 내림) · 볼린저 ±2σ · ATR20(TR 단순 평균) · 켈트너 ±1.5 ATR(같은 중심선 · TTM) ·
+    스퀴즈 = 4σ < 3 ATR · 연속 응축 봉 · 해제 후 5 봉 창 · 확립(≥3 봉) ∧ 상단 초과 = 상방 돌파 +20 + min(20, 2 × (봉 − 3)) = +20~+40 · 하단 미만 = 대칭 −20~−40 · 밴드폭 bp = 4σ/중심.
+  · PlutoVolumeProfileScanner — InlineArray 32 구간 · 폭 = 첫 가격 25bp · 격자 이동(내림 나눗셈) · 32 구간 점프 = 재격자 · 1건 상한 2^48 · 구간 2^56 초과 = 전 구간 절반 · 봉마다 15/16 감쇄 · 표본 30 전 = 판정 없음 ·
+    POC(최대 구간 중앙) · 밸류 에어리어 70%(인접 큰 쪽 확장) · 구역: POC 균형(|d|<0.25폭 · 0) · POC 상단 지지(+100→+50) · 밸류 상단부 +30 · 상단 이탈 +50 · POC 매물벽 직하(−100→−50) · 하단부 −30 · 하단 이탈 −50 ×
+    집중도(50 + 점유bp/40 · 50~100%).
+  · PlutoTechnicalFactor(불변 값 타입 · 정수 필드: IsSqueezing · BandWidthBps · PocPrice · VolumeProfileScore −100~+100 · 스퀴즈 국면/점수 · 밴드 · VA) · 합성 = clamp(스퀴즈 + 프로파일/2, ±100) · IsWellFormed(재계산 · 부호 · 밴드/VA 순서) ·
+    PlutoTechnicalState/Analyzer(1분 봉 시계 · 봉 완성 = Push + 감쇄) · PlutoTechnicalText(뱃지 [🌀 스퀴즈 응축] [⚡ 볼밴 상단 돌파] [🔻 볼밴 하단 이탈] [🧱 POC 매물대 지지] [🧱 POC 매물벽 저항]).
+- 아레나 결속(KrxArenaEngine · UsTechArenaEngine · UpbitCryptoArenaEngine): 종목 상태/팩터 배열 = 정산 스레드 단일 작성자 · 매 유효 호가 갱신 + 재판정 → 같은 seqlock 쓰기 창 게시(TryReadTechnical · δ=0) ·
+  EnableTechnical(기본 정지 = 기존 동작 동일 · 팩터 게시는 상시) · 가동 = 점수 × 100bp × TechnicalWeight 20 가산 · 기술적 기여 최대 = 진입 사유 VolatilitySqueezeBreakout(19 · 상단 돌파) / VolumeProfileSupport(20) ·
+  SetCapital = 봉 · 프로파일 · 팩터 초기화. 호스트 BlazorHomeForm = 3대 아레나 EnableTechnical(true)(외부 피드 · 네트워크 0).
+- 악마의 변호인 ④ CounterThesis.PocResistance(8 · −20 · 'POC 매물벽 저항') — Assess/Approve 선택 인자(기존 호출 무변경) · 2종 이상 = 거부권 · 거버넌스 태그 무결성 기대 감점 · 문장 루프 4비트 · UI 감점 태그 '매물벽(POC)'.
+- AiTradeRationale.Technical(값 타입) · 무결성(판정 종목 = 체결 종목 · 사유-팩터 일치) · 요약 끝 뱃지 + '플루토 기술적 분석' 문장(통화별 가격 표기). 핫패스는 필드 복사만(문자열 = 판독 시 콜드).
+- 테스트 StockManager.Tests/Cognitive/PlutoTechnicalFactorTests.cs 51건: 정수 제곱근(Int128) · 밴드/켈트너/ATR/밴드폭 정확값 · 응축/비응축 · 무효 봉 · 돌파 가산점 표 · 상/하방 돌파 · 해제 창 만료 · 가상자산 raw 스케일 ·
+  격자/POC/VA/점유율 정확값 · 구역 행렬 · 경계 연속성 · 분산 프로파일 VA ≥ 70% · 표본 부족 · 격자 상/하 이동 · 재격자 · 감쇄/포화 · 1분 봉 시계 · 합성 점수 · 무결성 스윕(40×1,500) · 악마의 변호인/거버너 ·
+  3대 Evaluate 가산/주도 사유 · KRX 응축 → 돌파 시나리오(정지 엔진 대비 감성 상승 = 기여량 · 근거 뱃지) · US TPO · Upbit 체결 프로파일 · δ=0 분석 10만 · KRX 정산 10만(기술+거버너 가동) · 판독 10만 = 0B.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,331 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 31초(기존 5,280 + 신규 51) · infra-scan 0(기준 117) · 래칫/PureShell 테스트 통과(≤40).
+- 한계(정직): 봉 = 아레나 수신 호가 기반 1분 봉(거래소 공식 분봉 아님 · 결측 분 미보간) · US 프로파일 = TPO 근사(실 체결량 아님) · 가중치 20 은 설계값(백테스트 최적화 아님) · 실 앱 화면 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(팩터 = 가상 대결 시그널 입력 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

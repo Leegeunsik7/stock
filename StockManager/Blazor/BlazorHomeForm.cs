@@ -1795,6 +1795,11 @@ namespace StockManager.Blazor
             usArena.AttachValuation(plutoValuationBuffer);
             services.AddSingleton(plutoValuationBuffer);
             services.AddSingleton(plutoValuation);
+            // [v12.18.73-DEV] 플루토 브레인 3단계 — 볼린저 스퀴즈 + 매물대(POC) 프로파일: 각 아레나가 자기 호가/체결로 종목별 1분 봉 · 프로파일을 정산 스레드에서 갱신(δ=0) →
+            //   팩터 시그널 가산 가동(3대 아레나). 외부 피드 · 네트워크 0 · 주문 수단 0(liveArmed:false). US = 체결량 미제공 피드 → TPO 근사.
+            krxArena.EnableTechnical(true);
+            usArena.EnableTechnical(true);
+            cryptoArena.EnableTechnical(true);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));
