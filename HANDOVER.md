@@ -4291,3 +4291,22 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,331 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 31초(기존 5,280 + 신규 51) · infra-scan 0(기준 117) · 래칫/PureShell 테스트 통과(≤40).
 - 한계(정직): 봉 = 아레나 수신 호가 기반 1분 봉(거래소 공식 분봉 아님 · 결측 분 미보간) · US 프로파일 = TPO 근사(실 체결량 아님) · 가중치 20 은 설계값(백테스트 최적화 아님) · 실 앱 화면 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false(팩터 = 가상 대결 시그널 입력 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 184. v12.18.73-GM — 플루토 브레인 3단계(볼린저 스퀴즈 + 매물대 POC) 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-24)
+
+- v12.18.73-DEV(§183) = a14496c. 12.18.72 → 12.18.73(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/줄바꿈 유지) =
+  97c9e21(4파일 · 11/11 줄) · 태그 v12.18.73-GM -f. 빌드 서버 종료(가용 메모리 약 10.8GB) 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,331 통과 + 6 건너뜀(옵트인) · 실패 0 · 4분 11초(Offline_1M 스위트 내 통과) · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40(2/2) ·
+  [6/11] liveArmed:false 소스 가드(이중키 조회 16 · 마스터 플래그 1) · [7/11] 동결 검증 21/21 · 봉인 38 아티팩트 · verify-seal 앵커 일치 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal 22187970… ·
+  verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 28844 · HWND 0x850B38 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 산출물: release-v12.18.73-GM.zip(CA27AD05…) · StockManager-v12.18.73-Standalone-win-x64.zip(6F120E6B…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig 외 15종.
+  사후 독립 대조: 봉인 zip 항목 40(바이너리 38) ↔ 배포본 zip 동명 항목 SHA-256 38/38 일치 · 불일치/누락 0.
+- 이관: 메인 release/ 의 v12.18.72-GM 15종 → release/superseded-v12.18.72-GM/. 신규 15종 메인 release/ 복사(zip SHA-256 2종 = .sha256 기록 일치).
+- 태그 빌드 CLI 독립 재수검(동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그/매니페스트 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 플루토 기술적 팩터(볼린저 스퀴즈 · 거래량 프로파일 POC/VA) 3대 아레나 결속 포함 · 자동 미러링 기본 꺼짐 · 국내 휴장일 캘린더 미반영 · 합성 시세는 데모 전용.
+- 한계(정직): 실 앱 아레나 근거 카드 육안 미확인 · 미설치 PC 배포본 실기 미확인 · 실 스트림 장시간 소크 미확인.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
