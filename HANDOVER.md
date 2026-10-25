@@ -4592,3 +4592,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   볼린저 대역폭 · 장단기 금리차는 실시간 관측 파이프에 필드가 없어 차원 제외(매칭 불가 차원 추가 안 함). 실 거시 피드 미결선이면 판정 전(편향 0).
   편향된 진입의 엄격도는 보정기 표본(진입 당시 엄격도 = 학습 가중치만)에 반영되지 않음 — 섀도우 재생에서 상수 오프셋으로 근사.
   liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 198. v12.18.82-GM — 플루토 12대 역사적 국면 벡터 레이크 + 무할당 seqlock 국면 판정기 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-25)
+
+- v12.18.82-DEV(§197) = ee4440d. 12.18.81 → 12.18.82(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/줄바꿈 유지) =
+  9b20b8a(4파일 · 11/11 줄) · 태그 v12.18.82-GM -f. 빌드 서버 종료 후 착수(잔여 dotnet 6 = VSCode C# Dev Kit · serena 언어 서버 소유 → 미종료) · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,550 통과 + 9 건너뜀(옵트인) · 실패 0 · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40(2/2) ·
+  [6/11] liveArmed:false 소스 가드(마스터 플래그 1) · [7/11] 봉인 38 아티팩트 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal 5AE194EA… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 32140 · HWND 0x5E0D48 실측.
+- 산출물: release-v12.18.82-GM.zip(E9E88392…) · StockManager-v12.18.82-Standalone-win-x64.zip(922BCF67…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig 외 15종.
+  사후 독립 대조: 봉인 항목 40(바이너리 38) ↔ 배포본 동명 항목 SHA-256 38/38 일치 · 불일치/누락 0.
+- 이관: 메인 release/ 의 v12.18.81-GM 15종 → release/superseded-v12.18.81-GM/. 신규 15종 메인 release/ 복사(zip SHA-256 2종 .sha256 기록 일치).
+- 태그 빌드 CLI 독립 재수검(스크립트와 같은 인자 · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 12대 국면 판정기 포함 · 실 거시 피드 미결선(Pluto.MacroFeedUrl 기본 빈 값) → 국면 뱃지 '판정 전'(편향 0) · 국면 원값 = 문헌 대표치 근사 ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
