@@ -5,7 +5,8 @@
 //   ③ 소스(US): 센트 변환(반올림) · 오래된 것부터 · 미등재 티커 = NoData(송신 0) · 게이트 거부 = RateLimited · 시장 불일치 = Faulted · 라벨.
 //   ④ 스웜: US 레인 Live(가격 센트) · KRX/US 동시 부착 · 호스트 결선(페이서 공유) 문자열.
 //   ⑤ [보정] 송신 간격 1,150ms(해외 VTS EGW00201 마진): 기본/호스트 페이서 = MinRequestInterval · 연속 3회 실측 ≥ 2.3초 · ms 생성자 범위 · 라벨.
-//   (스텁 핸들러 · 실 네트워크 0 · 주문/POST 0)
+//   ⑥ [보정] 완료 기준 간격: 토큰 POST 수신 → GET1 · GET1 수신 → GET2 각 ≥ 1,150ms · 공유 페이서 KRX/US 동시 워커 중첩 0 · 토큰 실패 = Faulted(슬롯 반납) · 취소 = 송신 0.
+//   (스텁 핸들러 · 실 네트워크 0 · 주문 0 · POST = 토큰 발급 스텁만)
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -259,6 +260,97 @@ namespace StockManager.Tests.Cognitive
             Assert.Equal(PlutoFetchOutcome.Ok, src.Fetch(UsEntry("JPM"), new PlutoAssetSample(), CancellationToken.None));
             Assert.True(sw.ElapsedMilliseconds >= 1149, "2회 조회 " + sw.ElapsedMilliseconds + "ms < 1,150ms");
             Assert.Equal(2, h.Requests.Count);
+        }
+
+        // ── ⑥ 완료 기준 간격(응답 수신 → 다음 송신 ≥ 1,150ms · 토큰 POST 포함) ─────────────
+
+        /// <summary>응답 지연 스텁 — 송신 시작/응답 완료 Stopwatch 시각을 POST/GET 구분 없이 순서대로 기록.</summary>
+        private sealed class TimedHandler : HttpMessageHandler
+        {
+            public readonly List<(string Kind, long Start, long End)> Sends = new();
+            public int DelayMs = 300;
+            public bool FailToken;
+            public string DailyBody = "{}";
+
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+            {
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                await Task.Delay(DelayMs, ct);
+                bool token = req.RequestUri!.AbsolutePath.EndsWith("/oauth2/tokenP", StringComparison.Ordinal);
+                var res = token
+                    ? new HttpResponseMessage(FailToken ? HttpStatusCode.Forbidden : HttpStatusCode.OK) { Content = new StringContent(FailToken ? "{\"error_code\":\"EGW00133\"}" : "{\"access_token\":\"t\"}", Encoding.UTF8, "application/json") }
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(DailyBody, Encoding.UTF8, "application/json") };
+                lock (Sends) Sends.Add((token ? "POST" : "GET", start, System.Diagnostics.Stopwatch.GetTimestamp()));
+                return res;
+            }
+        }
+
+        private static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+        private static void AssertCompletionSpacing(TimedHandler h, int expectedSends)
+        {
+            List<(string Kind, long Start, long End)> s;
+            lock (h.Sends) s = new(h.Sends);
+            Assert.Equal(expectedSends, s.Count);
+            s.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+            for (int i = 1; i < s.Count; i++)
+            {
+                Assert.True(s[i].Start >= s[i - 1].End, "송신 중첩 " + s[i - 1].Kind + "→" + s[i].Kind);
+                double gap = Ms(s[i].Start - s[i - 1].End);
+                Assert.True(gap >= 1150, s[i - 1].Kind + " 수신 → " + s[i].Kind + " 송신 " + gap.ToString("F1", CultureInfo.InvariantCulture) + "ms < 1,150ms");
+            }
+        }
+
+        [Fact]
+        public void Source_Token_Post_Then_Two_Gets_Each_Spaced_1150ms_From_Previous_Response()
+        {
+            var h = new TimedHandler { DailyBody = Daily(Row(DateTime.Now.Date, "1", "2", "1", "2", "1")) };
+            var kis = new KisProvider(new KisConfig { AppKey = "k", AppSecret = "s", IsPaper = true }, new HttpClient(h));
+            var src = new KisDailyBarSource(kis, null, PlutoScreenMarket.Us);
+            Assert.False(kis.HasFreshToken);
+            Assert.Equal(PlutoFetchOutcome.Ok, src.Fetch(UsEntry("AAPL"), new PlutoAssetSample(), CancellationToken.None));
+            Assert.Equal(PlutoFetchOutcome.Ok, src.Fetch(UsEntry("JPM"), new PlutoAssetSample(), CancellationToken.None));
+            Assert.True(kis.HasFreshToken);
+            Assert.Equal(new[] { "POST", "GET", "GET" }, h.Sends.ConvertAll(static x => x.Kind).ToArray());
+            AssertCompletionSpacing(h, 3);                                          // 토큰 수신 → GET1 ≥ 1,150 · GET1 수신 → GET2 ≥ 1,150
+        }
+
+        [Fact]
+        public async Task Shared_Pacer_Krx_And_Us_Workers_Never_Send_Within_1150ms_Of_A_Response()
+        {
+            var h = new TimedHandler { DelayMs = 200, DailyBody = Daily(Row(DateTime.Now.Date, "1", "2", "1", "2", "1")) };
+            var kis = new KisProvider(new KisConfig { AppKey = "k", AppSecret = "s", IsPaper = true }, new HttpClient(h));
+            var pacer = new PlutoRequestPacer(KisDailyBarSource.MinRequestInterval);
+            var us = new KisDailyBarSource(kis, pacer, PlutoScreenMarket.Us);
+            var krx = new KisDailyBarSource(kis, pacer);
+            var krxEntry = PlutoMultiAssetUniverseCatalog.Of(PlutoScreenMarket.Krx)[0];
+            using var go = new ManualResetEventSlim(false);
+            var a = Task.Run(() => { go.Wait(); for (int i = 0; i < 2; i++) us.Fetch(UsEntry(i == 0 ? "AAPL" : "JPM"), new PlutoAssetSample(), CancellationToken.None); });
+            var b = Task.Run(() => { go.Wait(); for (int i = 0; i < 2; i++) krx.Fetch(krxEntry, new PlutoAssetSample(), CancellationToken.None); });
+            go.Set();
+            await Task.WhenAll(a, b);
+            Assert.True(h.Sends.Count >= 5);                                       // GET 4 + 토큰 POST 1(동시 진입 시 HasFreshToken 경합 = POST 도 슬롯 경유)
+            AssertCompletionSpacing(h, h.Sends.Count);
+        }
+
+        [Fact]
+        public void Source_Token_Failure_Faulted_Releases_Slot_And_Cancel_Sends_Nothing()
+        {
+            var h = new TimedHandler { DelayMs = 1, FailToken = true };
+            var kis = new KisProvider(new KisConfig { AppKey = "k", AppSecret = "s", IsPaper = true }, new HttpClient(h));
+            var pacer = new PlutoRequestPacer(TimeSpan.FromMilliseconds(50));
+            var src = new KisDailyBarSource(kis, pacer, PlutoScreenMarket.Us);
+            Assert.Equal(PlutoFetchOutcome.Faulted, src.Fetch(UsEntry("AAPL"), new PlutoAssetSample(), CancellationToken.None));
+            Assert.Equal(PlutoFetchOutcome.Faulted, src.Fetch(UsEntry("AAPL"), new PlutoAssetSample(), CancellationToken.None));   // 독점 해제 확인(교착 0)
+            Assert.Equal(2, h.Sends.Count);
+            Assert.All(h.Sends, static x => Assert.Equal("POST", x.Kind));          // 토큰 실패 = GET 0
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            Assert.False(pacer.WaitExclusive(cts.Token));
+            Assert.Throws<OperationCanceledException>(() => src.Fetch(UsEntry("AAPL"), new PlutoAssetSample(), cts.Token));
+            Assert.Equal(2, h.Sends.Count);                                         // 취소 = 송신 0
+            Assert.True(pacer.WaitExclusive(CancellationToken.None));               // 취소 경로도 슬롯 반납
+            pacer.Complete();
         }
 
         // ── ④ 스웜 결선 ──────────────────────────────────────────────────────

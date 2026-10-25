@@ -188,6 +188,16 @@ namespace MS2E.Infrastructure
             finally { _tokenLock.Release(); }
         }
 
+        /// <summary>[v12.18.81-DEV] 캐시 토큰 유효 여부(false = 다음 조회가 oauth2/tokenP POST 를 먼저 송신).</summary>
+        public bool HasFreshToken => _accessToken != null && DateTime.Now < _tokenExpiry;
+
+        /// <summary>[v12.18.81-DEV] 토큰 선발급(호출자 페이서가 POST 수신 완료 ↔ 첫 GET 간격을 강제하도록 분리) · 실패 = false(재시도 0) · 호출자 취소 = 전파.</summary>
+        public async Task<bool> EnsureTokenAsync(CancellationToken ct = default)
+        {
+            try { await GetTokenAsync(ct); return true; }
+            catch (Exception ex) when (!ct.IsCancellationRequested) { Log.Warn($"[KIS] 토큰 발급 실패: {ex.Message}"); return false; }
+        }
+
         public async Task<Quote?> GetQuoteAsync(string symbol, Market market, CancellationToken ct = default)
         {
             try

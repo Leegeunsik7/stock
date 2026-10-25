@@ -5,12 +5,14 @@
 //   KIS App Key/Secret(OAuth2) 미구성 호스트 = 이 소스 미부착 → 스웜 KRX/US 레인 '실피드 연결 대기'(합성 점수 0).
 //   종목 1건 = 일봉 1회(최근 150일 · 최대 200봉 · 해외는 응답 1회 최대 100봉) · 송신 간격 = PlutoRequestPacer 최소 1,150ms(MinRequestInterval) —
 //   [v12.18.81-DEV] 해외 VTS 실측(600ms 간격 = 6번째 EGW00201 거부 · 1.1초 통과) 대비 마진 확보.
+//   [v12.18.81-DEV 보정] 간격 기준 = 직전 응답 수신(완료) 시각(WaitExclusive/Complete · 송신 1건 독점) — 토큰 미보유 시 tokenP POST 를 먼저 별도 슬롯으로 송신해 수신 완료 + 1,150ms 후 첫 GET.
 //   ★KRX/US 두 레인이 같은 KisProvider 게이트(초당 5회 · 실시간 시세와 공유)를 쓰므로 호스트는 페이서 1개를 두 소스에 공유한다(합산 1,150ms 간격).
 //   KisProvider 게이트 거부(RateGated 증가) = RateLimited(스윕 중단 · 재시도 0) · 빈 응답 = NoData · 예외 = Faulted.
 //   가격 = KRX 원(정수) · US 센트(달러 × 100 반올림) · 거래량 = 주. 호가/체결 방향 없음 → 미시구조 판독 없음(0점 · 날조 0) · 밸류에이션 = 스웜 레인 PlutoValuationBuffer.
 //   ★liveArmed:false — 시세 GET 만.
 // ============================================================================
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using MS2E.Infrastructure;
@@ -63,10 +65,20 @@ namespace StockManager.Adapters
                 market = us;
             }
             else market = entry.Segment == PlutoUniverseSegment.Kosdaq ? MS2E.Infrastructure.Market.KRX_KOSDAQ : MS2E.Infrastructure.Market.KRX_KOSPI;
-            if (!_pacer.Wait(ct)) { ct.ThrowIfCancellationRequested(); return PlutoFetchOutcome.Faulted; }
+            if (!_kis.HasFreshToken)                                                 // 토큰 POST 도 송신 1건 — 수신 완료 + 간격 후 첫 GET
+            {
+                if (!_pacer.WaitExclusive(ct)) { ct.ThrowIfCancellationRequested(); return PlutoFetchOutcome.Faulted; }
+                bool issued;
+                try { issued = _kis.EnsureTokenAsync(ct).GetAwaiter().GetResult(); }
+                finally { _pacer.Complete(); }
+                if (!issued) return PlutoFetchOutcome.Faulted;
+            }
+            if (!_pacer.WaitExclusive(ct)) { ct.ThrowIfCancellationRequested(); return PlutoFetchOutcome.Faulted; }
             long gatedBefore = _kis.RateGated;
             var to = DateTime.Now.Date;
-            var candles = _kis.GetHistoryAsync(entry.Code, market, to.AddDays(-LookbackDays), to, ct).GetAwaiter().GetResult();
+            List<Candle> candles;
+            try { candles = _kis.GetHistoryAsync(entry.Code, market, to.AddDays(-LookbackDays), to, ct).GetAwaiter().GetResult(); }
+            finally { _pacer.Complete(); }                                           // 다음 송신 = 이 응답 수신 + 간격 이후
             if (_kis.RateGated != gatedBefore) return PlutoFetchOutcome.RateLimited;
             if (candles.Count == 0) return PlutoFetchOutcome.NoData;
             candles.Sort(static (a, b) => a.Date.CompareTo(b.Date));            // 오래된 것부터

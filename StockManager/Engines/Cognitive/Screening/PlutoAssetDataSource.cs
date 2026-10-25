@@ -123,8 +123,8 @@ namespace StockManager.Engines.Cognitive.Screening
                 slot = Math.Max(now, _next);
                 _next = slot + _intervalTicks;
             }
-            long waitTicks = slot - Stopwatch.GetTimestamp();
-            if (waitTicks > 0)
+            long waitTicks;
+            while ((waitTicks = slot - Stopwatch.GetTimestamp()) > 0)             // 타이머 조기 기상 = 재대기(간격 미달 0)
             {
                 int ms = (int)Math.Min(int.MaxValue, (waitTicks * 1000 + Stopwatch.Frequency - 1) / Stopwatch.Frequency);
                 if (ct.WaitHandle.WaitOne(ms)) return false;
@@ -132,6 +132,26 @@ namespace StockManager.Engines.Cognitive.Screening
             if (ct.IsCancellationRequested) return false;
             Interlocked.Increment(ref _granted);
             return true;
+        }
+
+        // [v12.18.81-DEV] 완료 기준 간격 — 송신 1건 독점(공유 페이서의 다른 워커는 Complete 까지 대기) · 다음 송신 = 직전 응답 수신 + 간격 이후.
+        private readonly SemaphoreSlim _inflight = new(1, 1);
+
+        /// <summary>독점 송신 슬롯 획득(직전 송신 시작 + 간격 ∧ 직전 응답 수신 + 간격 이후). true = 반드시 Complete 1회 · 취소 = false(송신 0 · 슬롯 반납).</summary>
+        public bool WaitExclusive(CancellationToken ct)
+        {
+            try { _inflight.Wait(ct); }
+            catch (OperationCanceledException) { return false; }
+            if (Wait(ct)) return true;
+            _inflight.Release();
+            return false;
+        }
+
+        /// <summary>응답 수신(성공/실패/예외 무관) 시각 기록 → 다음 슬롯 = 지금 + 간격 이후 · 독점 해제.</summary>
+        public void Complete()
+        {
+            lock (_gate) _next = Math.Max(_next, Stopwatch.GetTimestamp() + _intervalTicks);
+            _inflight.Release();
         }
     }
 
