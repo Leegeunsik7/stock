@@ -4631,3 +4631,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 정직: 실 키 미보유 상태라 실 FRED 응답 실측 미수행(스텁 기반 검증 · 옵트인 테스트 = 조건 미충족 즉시 반환). 키 미설정 출하 = 국면 뱃지 '판정 전'(편향 0) 유지.
   DTWEXBGS = 광의 무역가중 달러지수(ICE DXY 아님). 감성 필드 미제공. liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 ·
   타 세션 파일 3종(.claude headroom 2종 · LiveWireKisLongSoakTests) 미스테이징 · 원격 푸시 없음.
+
+## 200. v12.18.83-GM — 플루토 공식 거시 피드(FRED 공식 REST API) + 키 미설정 정직 대기 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-26)
+
+- v12.18.83-DEV(§199) = 2fa40f9. 12.18.82 → 12.18.83(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/줄바꿈 유지) =
+  0cbf5cf(4파일 · 11/11 줄) · 태그 v12.18.83-GM -f. 빌드 서버 종료 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,581 통과 + 9 건너뜀(옵트인) · 실패 0 · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40(2/2) ·
+  [6/11] liveArmed:false 소스 가드(마스터 플래그 1) · [7/11] 봉인 38 아티팩트 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal B0C2FF3C… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 21424 · HWND 0x93095E 실측.
+- 산출물: release-v12.18.83-GM.zip(1DB2EF25…) · StockManager-v12.18.83-Standalone-win-x64.zip(E94EF914…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig 외 15종.
+  사후 독립 대조: 봉인 항목 40(바이너리 38) ↔ 배포본 동명 항목 SHA-256 38/38 일치 · 불일치/누락 0.
+- 이관: 메인 release/ 의 v12.18.82-GM 15종 → release/superseded-v12.18.82-GM/. 신규 15종 메인 release/ 복사(zip SHA-256 2종 .sha256 기록 일치).
+- 태그 빌드 CLI 독립 재수검(스크립트와 같은 인자 · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): FRED 공식 REST API 거시 피드 포함 · 기본 키 미설정(Pluto.FredApiKey/MS2E_FRED_API_KEY 빈 값) → HTTP 0건 · '거시 피드: FRED API 키 미설정 · 관측 대기' ·
+  국면 뱃지 '판정 전'(편향 0) · 실 FRED 응답 실측 미수행 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
