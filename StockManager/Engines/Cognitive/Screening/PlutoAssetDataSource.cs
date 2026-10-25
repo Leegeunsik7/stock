@@ -94,9 +94,22 @@ namespace StockManager.Engines.Cognitive.Screening
             if (perSecond is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(perSecond));
             PerSecond = perSecond;
             _intervalTicks = (Stopwatch.Frequency + perSecond - 1) / perSecond;   // 올림 — 초당 N회 초과 0
+            MinIntervalMs = (1000 + perSecond - 1) / perSecond;
+        }
+
+        /// <summary>[v12.18.81-DEV] 최소 송신 간격(ms) 지정 — 초당 정수 회로 표현 못 하는 간격(예 KIS 해외 VTS 1,150ms)용. PerSecond = 1000 ÷ 간격(내림 · 1초 초과 = 0).</summary>
+        public PlutoRequestPacer(TimeSpan minInterval)
+        {
+            long ms = (long)Math.Ceiling(minInterval.TotalMilliseconds);
+            if (ms is < 1 or > 60_000) throw new ArgumentOutOfRangeException(nameof(minInterval));
+            MinIntervalMs = ms;
+            PerSecond = (int)(1000 / ms);
+            _intervalTicks = (ms * Stopwatch.Frequency + 999) / 1000;              // 올림 — 간격 미달 0
         }
 
         public int PerSecond { get; }
+        /// <summary>송신 간 최소 간격(ms · 올림).</summary>
+        public long MinIntervalMs { get; }
         public long Granted => Interlocked.Read(ref _granted);
         private long _granted;
 

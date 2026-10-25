@@ -1866,8 +1866,8 @@ namespace StockManager.Blazor
                     plutoSwarm.Attach(new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared));
                     if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisForSwarm)
                     {
-                        // [v12.18.81-DEV] US = KIS 해외 일봉(HHDFS76240000 · 상장 거래소 표) · KRX/US 페이서 공유(같은 KisProvider 게이트 · 합산 초당 1회)
-                        var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(1);
+                        // [v12.18.81-DEV] US = KIS 해외 일봉(HHDFS76240000 · 상장 거래소 표) · KRX/US 페이서 공유(같은 KisProvider 게이트 · 합산 간격 1,150ms — 해외 VTS EGW00201 마진)
+                        var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(StockManager.Adapters.KisDailyBarSource.MinRequestInterval);
                         plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer);
                         plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), plutoValuationBuffer);
                     }

@@ -4546,3 +4546,11 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   infra-scan 0 · 래칫 ≤40(PureShellFitness 스위트 내 통과).
 - 정직: 실 KIS 해외 일봉 라이브 실측 미실시(스텁 응답 형태 검증뿐 · VTS 의 HHDFS76240000 지원/응답 형태 실측 필요) · 호가/체결 방향 없음 → US 미시구조 0점 ·
   liveArmed:false(시세 GET 만) · 인터락 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+- [보완 · 간격 보정] KIS 일봉 송신 최소 간격 1.0초 → 1,150ms(KisDailyBarSource.MinRequestInterval · 해외 VTS 실측 600ms = 6번째 EGW00201 · 1.1초 통과 대비 마진).
+  PlutoRequestPacer(TimeSpan) ms 생성자 추가(MinIntervalMs 올림 · 1~60,000ms · 기존 초당 생성자 무변경). 호스트 KRX/US 공유 페이서 = MinRequestInterval(합산 1,150ms 간격).
+  라벨 '간격 1,150ms 이상'. 테스트 +3(간격 상수/생성자 범위 · 연속 3회 ≥ 2.3초 · 기본 페이서 2회 조회 ≥ 1,150ms · ConcurrencyStress). 사보타주(1,000ms) = 4건 실패 확인 후 원복.
+- [보완 · 옵트인 실측] Integration/KisOverseasDailyBarLiveTests: MS2E_KIS_OVERSEAS_LIVE=1 + portfolio.db(PaperOverseas 키)일 때만 송신(미충족 = Skip · 기존 MS2E_KIS_VTS_OVERSEAS 와 분리).
+  AAPL(NAS) · JPM(NYS) = 토큰 1 + 일봉 2 · 송출 허용 목록 핸들러(VTS 29443 · tokenP POST · dailyprice GET + tr_id HHDFS76240000 1개 외 = 송신 전 예외 · 실도메인/주문/잔고 패킷 0).
+  검증 = 원문 rt_cd 0 · output2 배열 · 행 필드 6종 문자열 · 소스 Ok · 봉 ≥ 60 · 시간 순 · $10~$10,000 · 게이트 거부/EGW00201 0 · 송신 3. 오프라인 3건(옵트인 사유 · 허용 목록 · 핸들러 패킷 0) 상시 실행.
+  ★실측 미실시(이 세션은 옵트인 미설정) — 실 VTS 의 HHDFS76240000 지원/응답 형태는 사용자 실행으로 확정 필요. 토큰 1분 1회(EGW00133) → 다른 해외 실측 직후면 70초 후 실행.
+- [보완 · 검증] Default · WebOnly Release -warnaserror 0W/0E · 전체 스위트 5,537 통과 / 9 건너뜀(옵트인 +1) / 0 실패 · infra-scan 0 · 래칫 ≤40.

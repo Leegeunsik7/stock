@@ -4,6 +4,7 @@
 //   ② KisProvider 해외 일봉: GET 1회 · 경로/tr_id/EXCD(NAS · NYS · AMS)/GUBN=0/MODP=1/BYMD · 봉 판독 · 범위 밖 제외 · rt_cd ≠ 0 / output2 부재 / HTTP 오류 = 빈 목록 · 미지원 시장 = 송신 0.
 //   ③ 소스(US): 센트 변환(반올림) · 오래된 것부터 · 미등재 티커 = NoData(송신 0) · 게이트 거부 = RateLimited · 시장 불일치 = Faulted · 라벨.
 //   ④ 스웜: US 레인 Live(가격 센트) · KRX/US 동시 부착 · 호스트 결선(페이서 공유) 문자열.
+//   ⑤ [보정] 송신 간격 1,150ms(해외 VTS EGW00201 마진): 기본/호스트 페이서 = MinRequestInterval · 연속 3회 실측 ≥ 2.3초 · ms 생성자 범위 · 라벨.
 //   (스텁 핸들러 · 실 네트워크 0 · 주문/POST 0)
 // ============================================================================
 using System;
@@ -23,6 +24,7 @@ using Xunit;
 
 namespace StockManager.Tests.Cognitive
 {
+    [Collection("ConcurrencyStress")]
     public sealed class KisOverseasDailyBarSourceTests
     {
         private sealed class StubHandler : HttpMessageHandler
@@ -216,6 +218,47 @@ namespace StockManager.Tests.Cognitive
             Assert.StartsWith("KIS 일봉 REST", new KisDailyBarSource(kis).Label);
             Assert.Equal(PlutoScreenMarket.Krx, new KisDailyBarSource(kis).Market);
             Assert.Throws<ArgumentOutOfRangeException>(() => new KisDailyBarSource(kis, null, PlutoScreenMarket.Crypto));
+            Assert.EndsWith("(인증 구성 · 간격 1,150ms 이상)", new KisDailyBarSource(kis, null, PlutoScreenMarket.Us).Label);
+        }
+
+        // ── ⑤ 송신 간격 보정(1,150ms) ─────────────────────────────────────────
+
+        [Fact]
+        public void Pacer_Interval_Is_1150ms_And_Ms_Constructor_Bounds()
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(1150), KisDailyBarSource.MinRequestInterval);
+            var p = new PlutoRequestPacer(KisDailyBarSource.MinRequestInterval);
+            Assert.Equal((1150L, 0), (p.MinIntervalMs, p.PerSecond));
+            Assert.Equal((125L, 8), (new PlutoRequestPacer(8).MinIntervalMs, new PlutoRequestPacer(8).PerSecond));   // 기존 초당 생성자 무변경
+            Assert.Equal((334L, 2), (new PlutoRequestPacer(TimeSpan.FromMilliseconds(333.2)).MinIntervalMs, new PlutoRequestPacer(TimeSpan.FromMilliseconds(333.2)).PerSecond));   // 올림
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PlutoRequestPacer(TimeSpan.Zero));
+            Assert.Throws<ArgumentOutOfRangeException>(() => new PlutoRequestPacer(TimeSpan.FromMinutes(2)));
+        }
+
+        [Fact]
+        public void Pacer_1150ms_Three_Consecutive_Sends_Span_At_Least_2300ms()
+        {
+            var p = new PlutoRequestPacer(KisDailyBarSource.MinRequestInterval);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Assert.True(p.Wait(CancellationToken.None));                         // 1회 = 즉시
+            long first = sw.ElapsedMilliseconds;
+            Assert.True(p.Wait(CancellationToken.None));
+            Assert.True(p.Wait(CancellationToken.None));
+            Assert.True(first < 500, "첫 송신 지연 " + first + "ms");
+            Assert.True(sw.ElapsedMilliseconds >= 2 * 1150 - 1, "3회 송신 " + sw.ElapsedMilliseconds + "ms < 2,300ms");   // 간격 미달 0
+            Assert.Equal(3, p.Granted);
+        }
+
+        [Fact]
+        public void Source_Default_Pacer_Spaces_Two_Us_Fetches_By_1150ms()
+        {
+            var h = new StubHandler { Body = () => Daily(Row(DateTime.Now.Date, "1", "2", "1", "2", "1")) };
+            var src = new KisDailyBarSource(MakeKis(h), null, PlutoScreenMarket.Us);   // 기본 페이서 = MinRequestInterval
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Equal(PlutoFetchOutcome.Ok, src.Fetch(UsEntry("AAPL"), new PlutoAssetSample(), CancellationToken.None));
+            Assert.Equal(PlutoFetchOutcome.Ok, src.Fetch(UsEntry("JPM"), new PlutoAssetSample(), CancellationToken.None));
+            Assert.True(sw.ElapsedMilliseconds >= 1149, "2회 조회 " + sw.ElapsedMilliseconds + "ms < 1,150ms");
+            Assert.Equal(2, h.Requests.Count);
         }
 
         // ── ④ 스웜 결선 ──────────────────────────────────────────────────────
@@ -258,7 +301,7 @@ namespace StockManager.Tests.Cognitive
             Assert.NotNull(dir);
             string Read(params string[] p) => System.IO.File.ReadAllText(System.IO.Path.Combine(dir!.FullName, System.IO.Path.Combine(p)));
             string form = Read("StockManager", "Blazor", "BlazorHomeForm.cs");
-            int pacer = form.IndexOf("var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(1);", StringComparison.Ordinal);
+            int pacer = form.IndexOf("var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(StockManager.Adapters.KisDailyBarSource.MinRequestInterval);", StringComparison.Ordinal);
             Assert.True(pacer > 0);
             Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
             Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
