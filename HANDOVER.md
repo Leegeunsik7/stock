@@ -4530,3 +4530,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 플루토 병렬 스웜 + 업비트 공개 REST 실데이터 레인 포함 · KRX 레인은 KIS 구성 시에만 · US 레인 실피드 미결선('실피드 연결 대기') · liveArmed:false ·
   인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 195. v12.18.81-DEV — 플루토 스웜 US 레인 실피드 결선(KIS 해외 일봉 HHDFS76240000 · 상장 거래소 표 100종 · KRX/US 페이서 공유) (2026-10-25)
+
+- KisProvider.GetHistoryAsync 해외 분기(GetOverseasDailyAsync): GET /uapi/overseas-price/v1/quotations/dailyprice · tr_id HHDFS76240000 · 시세 계열 EXCD(NAS/NYS/AMS) ·
+  GUBN=0(일) · MODP=1(수정주가) · BYMD=to(최근 100봉). xymd · open/high/low/clos · tvol 판독 · [from, to] 밖/빈 날짜 제외. 기존 SendGatedAsync(초당 5 · 429/EGW00201 백오프) 경유.
+  rt_cd ≠ 0 · output2 부재/비배열 · HTTP 오류 · 비 JSON = 빈 목록(날조 0) · 미지원 시장(CRYPTO) = 송신 0.
+- UsListingExchange(신규 · Engines/Brokers/Kis): US 카탈로그 100종 → 상장 거래소(나스닥 51 · NYSE 49 · LIN/PLTR/WMT 나스닥 이전 반영). 미등재 = None → 조회 0.
+  ★정적 스냅샷 — 표 오류 시 KIS 빈 봉 → 슬롯 NoData(다른 거래소 재시도 0). 향후 상장 이전 = 표 갱신.
+- KisDailyBarSource KRX/US 겸용(market 인자 · 기본 Krx): US = 달러 → 센트(AwayFromZero) · 미등재 티커 = NoData(페이서 소비 0) · 시장 불일치 = Faulted · 라벨 'KIS 해외 일봉 REST'.
+- 호스트: KIS 구성 시 KRX/US 두 소스 부착 · PlutoRequestPacer(1) 공유(같은 KisProvider 게이트 → 합산 초당 1회). KIS 미구성 = US 레인 '실피드 연결 대기' 유지.
+- 테스트: KisOverseasDailyBarSourceTests 28건(표 전수 · 요청 형태 · fail-closed · 센트 변환 · 게이트 거부 RateLimited · 스웜 Live · 호스트 결선) + 기존 결선 단언 갱신.
+  카탈로그 전수 단언이 PFE 누락을 실검출 → 수정. 사보타주(tr_id 변조 · 빌드 오류 0) = 3건 실패 확인 후 원복.
+- 검증: Default(sln: Host · Tests · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · WebOnly Release -warnaserror 0W/0E · 전체 스위트 5,531 통과 / 8 건너뜀 / 0 실패 ·
+  infra-scan 0 · 래칫 ≤40(PureShellFitness 스위트 내 통과).
+- 정직: 실 KIS 해외 일봉 라이브 실측 미실시(스텁 응답 형태 검증뿐 · VTS 의 HHDFS76240000 지원/응답 형태 실측 필요) · 호가/체결 방향 없음 → US 미시구조 0점 ·
+  liveArmed:false(시세 GET 만) · 인터락 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

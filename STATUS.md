@@ -1,12 +1,11 @@
 # STATUS
 
-- **Active Milestone**: v12.18.80-GM — 플루토 병렬 학습 스웜 + 실데이터 우선 420슬롯 레이크 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 Release -warnaserror 0W/0E · 5,503 통과 / 8 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40 · release-package [0/11]~[11/11] exit 0
+- **Active Milestone**: v12.18.81-DEV — 플루토 스웜 US 레인 실피드 결선(KIS 해외 일봉 HHDFS76240000 · 상장 거래소 표 100종)
+- **Build Status**: 오중 Release -warnaserror 0W/0E · 5,531 통과 / 8 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-25
 - **Completed Deliverables**:
-  - 버전 12.18.80 승격(4파일 · 32d6af7) · 태그 v12.18.80-GM · 클린 worktree 패키징 후 제거
-  - release-v12.18.80-GM.zip(F056DE6E…) · StockManager-v12.18.80-Standalone-win-x64.zip(3377D35F…) · masterSeal 5BBF67E8…
-  - 봉인 38 바이너리 ↔ 배포본 SHA-256 38/38 일치 · 격리 기동 HWND 실측
-  - CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) exit 0 · liveArmed:false
-  - v12.18.76-GM 15종 → release/superseded-v12.18.76-GM/ · HANDOVER §194
-- **Next Milestone**: US 실피드(KIS 해외 일봉 · 거래소 코드 매핑) 결선
+  - KisProvider 해외 일봉(EXCD NAS/NYS/AMS · 수정주가 · 레이트 게이트 경유 · fail-closed 빈 목록)
+  - UsListingExchange(나스닥 51 · NYSE 49 · 미등재 = 조회 0)
+  - KisDailyBarSource KRX/US 겸용(센트 변환) · 호스트 KRX/US 페이서 공유(합산 초당 1회)
+  - 신규 테스트 28건 · 사보타주 검출 확인 · HANDOVER §195
+- **Next Milestone**: KIS 해외 일봉 VTS 라이브 실측(옵트인) 또는 v12.18.81-GM 출하

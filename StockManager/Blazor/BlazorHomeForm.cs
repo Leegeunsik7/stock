@@ -1854,7 +1854,7 @@ namespace StockManager.Blazor
                 var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,
                     () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status));
                 // [v12.18.80-DEV] 병렬 학습 스웜 — 3대 자산 레인(시장별 전용 스레드 BelowNormal · CPU 듀티 25% · Channels) → 420슬롯 매트릭스 + 데이터 레이크.
-                //   업비트 = 공개 REST(키 불필요 · 초당 8회 이하 · 429 = 스윕 중단/쿨다운 · 재시도 0) · KRX = KIS 일봉(인증 구성 시에만) · US = 소스 미결선(KIS 해외 일봉 미지원).
+                //   업비트 = 공개 REST(키 불필요 · 초당 8회 이하 · 429 = 스윕 중단/쿨다운 · 재시도 0) · KRX = KIS 일봉 · US = KIS 해외 일봉(인증 구성 시에만 · v12.18.81-DEV).
                 //   미결선 레인 = '감시 중 · 실피드 연결 대기'(합성 점수 0). `Pluto.SwarmEnabled`(기본 켜짐) · 시세 GET 만(liveArmed:false).
                 //   아레나 보조 유니버스 = 실 피드 출처 적용 중일 때만(합성 데모 시세 = 추천 점수 제외 · PlutoUniverseMerge.When).
                 var plutoMatrix = new StockManager.Engines.Cognitive.Screening.PlutoUniverseMatrixBoard();
@@ -1865,7 +1865,12 @@ namespace StockManager.Blazor
                         new StockManager.Engines.Cognitive.Screening.PlutoMultiAssetDataLake(plutoMatrix));
                     plutoSwarm.Attach(new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared));
                     if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisForSwarm)
-                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm), plutoValuationBuffer);
+                    {
+                        // [v12.18.81-DEV] US = KIS 해외 일봉(HHDFS76240000 · 상장 거래소 표) · KRX/US 페이서 공유(같은 KisProvider 게이트 · 합산 초당 1회)
+                        var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(1);
+                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer);
+                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), plutoValuationBuffer);
+                    }
                     plutoSwarm.Start(TimeSpan.FromSeconds(60));
                     var swarmForShutdown = plutoSwarm;
                     FormClosed += (_, _) => ShutdownTrace.Step("plutoSwarm", swarmForShutdown.Dispose);

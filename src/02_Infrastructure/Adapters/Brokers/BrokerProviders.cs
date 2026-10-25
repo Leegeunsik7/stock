@@ -289,7 +289,11 @@ namespace MS2E.Infrastructure
         {
             var candles = new List<Candle>();
             bool isKorean = market == Market.KRX_KOSPI || market == Market.KRX_KOSDAQ;
-            if (!isKorean) return candles; // 해외 히스토리는 별도 엔드포인트 필요
+            if (!isKorean)
+            {
+                if (market != Market.US_NYSE && market != Market.US_NASDAQ && market != Market.US_AMEX) return candles;
+                return await GetOverseasDailyAsync(symbol, market, from, to, candles, ct);
+            }
 
             try
             {
@@ -324,6 +328,48 @@ namespace MS2E.Infrastructure
                 }
             }
             catch (Exception ex) { Log.Warn($"[KIS] {symbol} 히스토리 실패: {ex.Message}"); }
+            return candles;
+        }
+
+        // [v12.18.81-DEV] 해외 일봉 — HHDFS76240000(overseas-price dailyprice · 시세 계열 EXCD NAS/NYS/AMS · GUBN=0 일 · MODP=1 수정주가 · BYMD=to 기준 최근 100봉).
+        //   output2[].xymd(현지 거래일) · open/high/low/clos(달러 문자열) · tvol(주). [from, to] 밖 · 빈 날짜 = 제외. rt_cd ≠ 0 ∨ output2 부재 = 빈 목록(날조 0).
+        //   같은 레이트 게이트/백오프 경유(거부 = 빈 목록 · 재시도 0). ★시세 GET 만(liveArmed:false).
+        private async Task<List<Candle>> GetOverseasDailyAsync(string symbol, Market market, DateTime from, DateTime to, List<Candle> candles, CancellationToken ct)
+        {
+            try
+            {
+                var token = await GetTokenAsync(ct);
+                var excd = market == Market.US_NYSE ? "NYS" : market == Market.US_NASDAQ ? "NAS" : "AMS";
+                var req = new HttpRequestMessage(HttpMethod.Get,
+                    $"{BaseUrl}/uapi/overseas-price/v1/quotations/dailyprice" +
+                    $"?AUTH=&EXCD={excd}&SYMB={Uri.EscapeDataString(symbol)}&GUBN=0&BYMD={to:yyyyMMdd}&MODP=1");
+                req.Headers.Add("tr_id", "HHDFS76240000");
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                req.Headers.Add("appkey", _config.AppKey);
+                req.Headers.Add("appsecret", _config.AppSecret);
+
+                var res = await SendGatedAsync(req, ct);
+                if (res is null) return candles;                                // 레이트 게이트 거부 — 즉시 실패
+                res.EnsureSuccessStatusCode();
+                var json = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                if (Safe.JsonStr(json, "rt_cd") != "0" || !json.TryGetProperty("output2", out var rows) || rows.ValueKind != JsonValueKind.Array) return candles;
+                foreach (var e in rows.EnumerateArray())
+                {
+                    var ds = Safe.JsonStr(e, "xymd");
+                    if (!DateTime.TryParseExact(ds, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) continue;
+                    if (d < from.Date || d > to.Date) continue;
+                    candles.Add(new Candle
+                    {
+                        Date = d,
+                        Open = ParseDec(Safe.JsonStr(e, "open")),
+                        High = ParseDec(Safe.JsonStr(e, "high")),
+                        Low = ParseDec(Safe.JsonStr(e, "low")),
+                        Close = ParseDec(Safe.JsonStr(e, "clos")),
+                        Volume = ParseLong(Safe.JsonStr(e, "tvol"))
+                    });
+                }
+            }
+            catch (Exception ex) { Log.Warn($"[KIS] {symbol} 해외 일봉 실패: {ex.Message}"); }
             return candles;
         }
 
