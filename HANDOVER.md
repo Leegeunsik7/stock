@@ -4334,3 +4334,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 24시간 소크 = 가상 시각 오프라인(실 스트림은 6분) · 실 24시간 연속 소크 미실시(옵트인으로 실행 가능) · SOL 최대 호가 간격 11.7초 → 엔진 호가 지연 2초 초과 구간은 휴먼 주문 StaleQuote 거부(fail-closed 의도 동작) ·
   호스트 스트림 기본 꺼짐 유지 · 실 앱 화면 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false(시세 수신 · 가상 원장 주입뿐) · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 186. v12.18.75-DEV — 플루토 브레인 4단계: 체결강도 누적 델타(CVD) + 10호가 지수 가중 뎁스 불균형 미시구조 팩터(3대 아레나 결속 · δ=0) (2026-10-25)
+
+- 오더 전제 검증: 체결 방향 = 업비트만 실측(ask_bid → OnTrade side) · KRX/US 피드 = 체결 방향 없음(US 는 체결량도 없음) → 틱 룰(중간가 상승 = 매수 · 하락 = 매도 · 보합 = 직전) 근사.
+  ★3대 아레나 OnQuote 입력 = L1(최우선 1호가 잔량)뿐 · 10호가 피드 미결선 → 분석기는 10호가를 완전 지원하되 아레나에서는 제공 범위(1호가) 비례 가중 · 벽/허매수 판정은 3호가 이상 피드에서만(정직 표기).
+- 신규 StockManager/Engines/Cognitive/Microstructure/:
+  · PlutoCumulativeVolumeDelta — CVD 포화 누적(±long.MaxValue) · 1분 봉(델타 · 거래량 · 종가) InlineArray 10 봉 링 · 완성 3 봉부터 판독 ·
+    CvdSlopeBps = 창 Σ델타/Σ거래량(±10000) · PriceChangeBps = 현재가 vs 창 최고(最古) 봉 종가 ·
+    강세 다이버전스 = 가격 ≤ +10bp ∧ 기울기 ≥ +2500 → +20~+35(선형) · 약세 다이버전스 = 가격 ≥ +20bp ∧ 기울기 ≤ −2500 → −25 · 그 밖 = 기울기/1000(±10).
+  · PlutoOrderbookDepthAnalyzer — 10호가 가중 ‰(3호가마다 절반: 1000·794·630·500·397·315·250·198·157·125) · 공통 제공 범위 n = min(매수, 매도, 10) · DepthRatioBps ·
+    벽 = 최대 잔량 ≥ 나머지 평균 × 4(n ≥ 3) · 매수벽 지지(근접 < 3호가 · +10) · 매도벽(−15) · 허매수(원거리 매수벽 ∧ 원잔량 50% 이상 · 양수 박탈 후 −10) · 점수 ±50 · 음수 잔량 = 판정 없음.
+  · PlutoMicrostructureFactor(불변 값 타입 · 정수 필드: CvdSlopeBps · DepthRatioBps · DivergenceType(byte) · MicrostructureScore −100~+100 = clamp(CVD + 뎁스)) · IsWellFormed(재계산 · 문턱-부호 일치 · 벽 3호가 이상 · 지지/허매수 배타) ·
+    PlutoMicrostructureAnalyzer(OnTrade 실측 · OnTickRuleTrade · OnDepth · OnL1 스택 span) · 뱃지 [📊 CVD 매수우위] [📈 강세 다이버전스] [📉 약세 다이버전스] [🛡️ 10호가 매수벽 지지] [🧱 10호가 매도벽] [🪤 허매수 의심].
+- 아레나 결속(KRX = 틱 룰 × 틱 거래량 · US = 틱 룰 × 호가 1틱(틱 카운트) · Upbit = 실측 테이커 방향 × 체결 수량 raw): 정산 스레드 단일 작성자 · 같은 seqlock 쓰기 창 게시(TryReadMicrostructure · δ=0) ·
+  EnableMicrostructure(기본 정지 = 기존 동작 동일 · 팩터 게시는 상시) · 가동 = 점수 × 100bp × MicrostructureWeight 20 가산 · 미시구조 기여 최대 = 진입 사유 CvdBullishDivergence(21) / OrderbookDepthSupport(22) ·
+  Evaluate 선택 인자 추가(기존 호출 무변경) · SetCapital = CVD · 뎁스 · 팩터 초기화 · 호스트 BlazorHomeForm = 3대 아레나 EnableMicrostructure(true)(외부 피드 · 네트워크 추가 0).
+- 악마의 변호인 ⑤ CvdBearishDivergence(16 · −25) · ⑥ DepthTrap(32 · 매도벽 ∨ 허매수 · −20) — Assess/Approve 선택 인자 · 2종 이상 = 거부권 · 태그 무결성 기대 감점 · 문장 루프 6비트 · UI 감점 태그 '약세 다이버전스(CVD)' · '매도벽/허매수(10호가)'.
+- AiTradeRationale.Microstructure(값 타입) · 무결성(판정 종목 = 체결 종목 · 사유-팩터 일치) · 요약 끝 뱃지 + '플루토 미시구조' 수치 문장(CVD 누적 · 순공격 매수 비중 · 가격 변화 · 다이버전스 · n호가 가중 뎁스 · 점수).
+- 테스트 StockManager.Tests/Cognitive/PlutoMicrostructureTests.cs 34건: 포화 덧셈 · 틱 룰 · 방향별 누적/봉 확정/무효 입력 · 강세/약세 다이버전스 정확값 · 문턱 경계 표 8 · 10봉 창 · 점수 선형/포화 ·
+  가중표 2^(−i/3) · 무작위 3,000 회 가중합/비율 기준식 대조 · 근접 > 원거리 · 제공 범위 비례/길이 불일치/3호가 미만 · fail-closed · 매수벽 · 허매수(50% 경계) · 매도벽 · 무결성 스윕(40×400) ·
+  악마의 변호인 ⑤⑥ 감점/거부권 · 거버너 태그/문장 · 3대 Evaluate 가산/주도 사유 · 근거 무결성 · KRX 틱 룰 강세 다이버전스 시나리오(정지 엔진 = 같은 틱 미진입) · KRX 거버너 약세 다이버전스 감점 동반 ·
+  US 틱 카운트 · Upbit 실측 방향 약세 다이버전스 · δ=0 분석 10만 · KRX 정산 10만(미시구조+기술+거버너) · Upbit 정산 10만 · 판독 10만 = 전부 0B(MinAllocated · Release).
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,373 통과 + 7 건너뜀(옵트인) · 실패 0 · 4분 30초(기존 5,339 + 신규 34) ·
+  infra-scan 0(기준 117) · 래칫/PureShell 테스트 통과(≤40 · UI 이주 없음).
+- 한계(정직): 아레나 뎁스 = L1(10호가 피드 미결선 → 벽/허매수는 아레나에서 미발화) · KRX/US CVD = 틱 룰 근사(US = 틱 카운트) · 봉 = 아레나 수신 기준 1분 봉 · 가중치/문턱은 설계값(백테스트 최적화 아님) ·
+  실 앱 화면 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(팩터 = 가상 대결 시그널 입력 · 송출 경로 0) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

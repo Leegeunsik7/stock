@@ -58,6 +58,8 @@ namespace StockManager.Adapters
                 if ((g.Theses & CounterThesis.OverheadSupplyWall) != 0) list.Add(new ArenaPenaltyTag("매도벽", PlutoDevilsAdvocateFilter.WallPenalty));
                 if ((g.Theses & CounterThesis.MacroHeadwind) != 0) list.Add(new ArenaPenaltyTag("거시역풍", PlutoDevilsAdvocateFilter.MacroPenalty));
                 if ((g.Theses & CounterThesis.PocResistance) != 0) list.Add(new ArenaPenaltyTag("매물벽(POC)", PlutoDevilsAdvocateFilter.PocPenalty));   // [v12.18.73-DEV]
+                if ((g.Theses & CounterThesis.CvdBearishDivergence) != 0) list.Add(new ArenaPenaltyTag("약세 다이버전스(CVD)", PlutoDevilsAdvocateFilter.CvdBearishPenalty));   // [v12.18.75-DEV]
+                if ((g.Theses & CounterThesis.DepthTrap) != 0) list.Add(new ArenaPenaltyTag("매도벽/허매수(10호가)", PlutoDevilsAdvocateFilter.DepthTrapPenalty));
                 tags = list;
             }
             return new ArenaGovernanceCard(regime, tags, g.RawConfidence, g.Confidence, g.WeightBp, g.LossStreak, g.StreakCut, null, false);

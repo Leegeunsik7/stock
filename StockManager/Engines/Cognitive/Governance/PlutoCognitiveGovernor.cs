@@ -82,7 +82,8 @@ namespace StockManager.Engines.Cognitive.Governance
                         && WeightBp == 0 && LossStreak == 0 && !PostMortem.HasReview && PostMortem.IsWellFormed;
                 if (!MarketRegimeText.IsDefined(Regime) || Rsi is < 0 or > 100 || LossStreak < 0 || AtrCbp < 0 || !PostMortem.IsWellFormed) return false;
                 int expected = PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.Overheat) + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.OverheadSupplyWall)
-                             + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.MacroHeadwind) + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.PocResistance);
+                             + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.MacroHeadwind) + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.PocResistance)
+                             + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.CvdBearishDivergence) + PlutoDevilsAdvocateFilter.PenaltyOf(Theses & CounterThesis.DepthTrap);
                 if (PostMortem.HasReview) return Theses == CounterThesis.None && Penalty == 0 && WeightBp == 0;
                 return Penalty == expected && RawConfidence is >= 0 and <= 100 && Confidence == Math.Max(0, RawConfidence + Penalty)
                     && WeightBp >= PlutoDynamicSizer.MinWeightBp * PlutoDynamicSizer.StreakCutPct / 100 && WeightBp <= PlutoDynamicSizer.MaxWeightBp;
@@ -94,18 +95,19 @@ namespace StockManager.Engines.Cognitive.Governance
     {
         /// <summary>
         /// AI 신규 진입 승인(δ=0). 승인 = None + tag(국면 · 감점 · 비중). 차단 = 사유(tag = default).
-        /// momentum/imbalance = 엔진 점수 산식의 모멘텀 · 호가 불균형 구성요소(bp)와 가중(%). pocResistance = [v12.18.73-DEV] POC 매물벽(악마의 변호인 ④).
+        /// momentum/imbalance = 엔진 점수 산식의 모멘텀 · 호가 불균형 구성요소(bp)와 가중(%). pocResistance = [v12.18.73-DEV] POC 매물벽(악마의 변호인 ④) ·
+        /// cvdBearish/depthTrap = [v12.18.75-DEV] CVD 약세 다이버전스(⑤) · 10호가 매도벽/허매수(⑥).
         /// </summary>
         public static PlutoBlockReason Approve(in PlutoRegimeState regime, int score, int momentumBp, int momentumWeight, int imbalanceBp, int imbalanceWeight,
             int entryScore, long bidQty, long askQty, int us10yChangeBp, int dollarIndexChangeBp, in PlutoSizerState sizer, long nowTicks, out PlutoGovernanceTag tag,
-            bool pocResistance = false)
+            bool pocResistance = false, bool cvdBearish = false, bool depthTrap = false)
         {
             tag = default;
             if (MarketRegimeText.BlocksEntry(regime.Regime)) return score >= entryScore ? PlutoBlockReason.PanicRegime : PlutoBlockReason.BelowEntryScore;
             int adjusted = PlutoRegimeClassifier.Reweight(score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, regime.Regime);
             if (adjusted < entryScore) return PlutoBlockReason.BelowEntryScore;
             if (sizer.InCooldown(nowTicks)) return PlutoBlockReason.Cooldown;
-            var v = PlutoDevilsAdvocateFilter.Assess(adjusted / 100, regime.Rsi, regime.DisparityX100, bidQty, askQty, us10yChangeBp, dollarIndexChangeBp, pocResistance);
+            var v = PlutoDevilsAdvocateFilter.Assess(adjusted / 100, regime.Rsi, regime.DisparityX100, bidQty, askQty, us10yChangeBp, dollarIndexChangeBp, pocResistance, cvdBearish, depthTrap);
             if (v.Blocked) return PlutoBlockReason.CounterThesisVeto;
             int weight = PlutoDynamicSizer.WeightBp(v.Confidence, regime.AtrCbp, sizer.LossStreak);
             tag = PlutoGovernanceTag.ForEntry(in regime, in v, adjusted, weight, sizer.LossStreak);
@@ -131,7 +133,7 @@ namespace StockManager.Engines.Cognitive.Governance
             {
                 devil = "악마의 변호인:";
                 string sep = " ";
-                for (int bit = 0; bit < 4; bit++)
+                for (int bit = 0; bit < 6; bit++)
                 {
                     var t = (CounterThesis)(1 << bit);
                     if ((g.Theses & t) == 0) continue;

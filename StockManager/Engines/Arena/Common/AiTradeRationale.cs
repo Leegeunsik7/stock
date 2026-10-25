@@ -21,10 +21,14 @@
 //   [v12.18.73-DEV] 플루토 기술적 팩터(Technical · PlutoTechnicalFactor 값 타입): 체결 시점 볼린저 스퀴즈 국면 · 밴드폭 · POC/밸류 에어리어 · 프로파일 점수.
 //     진입 사유 VolatilitySqueezeBreakout(19 · 기술적 기여 최대 ∧ 응축 후 상단 돌파) · VolumeProfileSupport(20 · 기술적 기여 최대 ∧ 프로파일 점수 양수).
 //     요약 끝에 뱃지([🌀 스퀴즈 응축] · [⚡ 볼밴 상단 돌파] · [🧱 POC 매물대 지지] 등) + 분석 문장 결속.
+//   [v12.18.75-DEV] 플루토 미시구조 팩터(Microstructure · PlutoMicrostructureFactor 값 타입): 체결 시점 CVD · 창 기울기 · 다이버전스 · 10호가 가중 뎁스 비율 · 벽/허매수.
+//     진입 사유 CvdBullishDivergence(21 · 미시구조 기여 최대 ∧ 강세 다이버전스) · OrderbookDepthSupport(22 · 미시구조 기여 최대 ∧ 미시구조 점수 양수).
+//     요약 끝에 뱃지([📊 CVD 매수우위] · [📈 강세 다이버전스] · [🛡️ 10호가 매수벽 지지] 등) + 수치 문장 결속.
 // ============================================================================
 using System;
 using System.Globalization;
 using StockManager.Engines.Cognitive.Governance;
+using StockManager.Engines.Cognitive.Microstructure;
 using StockManager.Engines.Cognitive.News;
 using StockManager.Engines.Cognitive.Technical;
 using StockManager.Engines.Cognitive.Valuation;
@@ -55,6 +59,8 @@ namespace StockManager.Engines.Arena.Common
         OpeningGapFill = 18,       // [v12.18.71-DEV] 시초가 갭 하락 메우기(개장 창 · 매수 수급 우위) 진입
         VolatilitySqueezeBreakout = 19,   // [v12.18.73-DEV] 플루토 볼린저 스퀴즈 응축 후 상단 돌파 주도 진입
         VolumeProfileSupport = 20,        // [v12.18.73-DEV] 플루토 매물대(POC) 프로파일 우위 주도 진입
+        CvdBullishDivergence = 21,        // [v12.18.75-DEV] 플루토 CVD 강세 다이버전스 주도 진입
+        OrderbookDepthSupport = 22,       // [v12.18.75-DEV] 플루토 미시구조(CVD + 10호가 뎁스) 우위 주도 진입
     }
 
     /// <summary>[v12.18.61-DEV] 근거 가격 통화(Krw = 원 · Usd = 센트).</summary>
@@ -72,7 +78,8 @@ namespace StockManager.Engines.Arena.Common
                                                           or ArenaTrigger.NewsCatalyst or ArenaTrigger.ValuationDiscount
                                                           or ArenaTrigger.TradeFlowMomentum or ArenaTrigger.KimchiVolatility
                                                           or ArenaTrigger.OpeningGapFill or ArenaTrigger.VolatilitySqueezeBreakout
-                                                          or ArenaTrigger.VolumeProfileSupport;
+                                                          or ArenaTrigger.VolumeProfileSupport or ArenaTrigger.CvdBullishDivergence
+                                                          or ArenaTrigger.OrderbookDepthSupport;
         public static bool IsExit(ArenaTrigger t) => t is >= ArenaTrigger.TakeProfit and <= ArenaTrigger.SessionClose or ArenaTrigger.NewsShock
                                                          or ArenaTrigger.ValuationBubble;
 
@@ -98,6 +105,8 @@ namespace StockManager.Engines.Arena.Common
             ArenaTrigger.OpeningGapFill => "시초가 갭 메우기",
             ArenaTrigger.VolatilitySqueezeBreakout => "플루토 볼린저 스퀴즈 상단 돌파",
             ArenaTrigger.VolumeProfileSupport => "플루토 POC 매물대 프로파일",
+            ArenaTrigger.CvdBullishDivergence => "플루토 CVD 강세 다이버전스",
+            ArenaTrigger.OrderbookDepthSupport => "플루토 미시구조 수급 우위(CVD · 10호가 뎁스)",
             _ => "미분류",
         };
     }
@@ -135,13 +144,17 @@ namespace StockManager.Engines.Arena.Common
         public readonly long EntryPrice;
         /// <summary>[v12.18.73-DEV] 체결 시점 플루토 기술적 팩터(스퀴즈 · 매물대 · default = 미가동/판정 없음).</summary>
         public readonly PlutoTechnicalFactor Technical;
+        /// <summary>[v12.18.75-DEV] 체결 시점 플루토 미시구조 팩터(CVD · 다이버전스 · 10호가 뎁스 · default = 미가동/판정 없음).</summary>
+        public readonly PlutoMicrostructureFactor Microstructure;
 
         public AiTradeRationale(long seq, long symbol, int side, long qty, long priceWon, long kstTicks, ArenaTrigger triggerType,
             int sentimentScore, int confidenceScore, long targetPrice, long stopLossPrice, int riskRewardX100,
             int macroBp, int imbalanceBp, int surgeBp, int momentumBp, long realizedPnlWon, ArenaCurrency currency = ArenaCurrency.Krw,
             in PlutoNewsTag news = default, in PlutoValuationTag valuation = default, long bidDepthWon = 0, long askDepthWon = 0,
-            in PlutoGovernanceTag governance = default, long entryPrice = 0, in PlutoTechnicalFactor technical = default)
+            in PlutoGovernanceTag governance = default, long entryPrice = 0, in PlutoTechnicalFactor technical = default,
+            in PlutoMicrostructureFactor microstructure = default)
         {
+            Microstructure = microstructure;
             Technical = technical;
             EntryPrice = entryPrice;
             Governance = governance;
@@ -164,6 +177,7 @@ namespace StockManager.Engines.Arena.Common
         /// [v12.18.63-DEV] 뉴스 태그 무결 · 뉴스 종목 = 체결 종목(뉴스 있을 때) · NewsCatalyst = 실효 양수 · NewsShock = 충격 수준 악재.
         /// [v12.18.65-DEV] 밸류에이션 태그 무결 · 판정 종목 = 체결 종목 · ValuationDiscount = 점수 양수 · ValuationBubble = 극심한 과열.
         /// [v12.18.73-DEV] 기술적 팩터 무결 · 판정 종목 = 체결 종목 · VolatilitySqueezeBreakout = 상단 돌파 · VolumeProfileSupport = 프로파일 점수 양수.
+        /// [v12.18.75-DEV] 미시구조 팩터 무결 · 판정 종목 = 체결 종목 · CvdBullishDivergence = 강세 다이버전스 · OrderbookDepthSupport = 미시구조 점수 양수.
         /// [v12.18.67-DEV] 거버넌스 태그 무결 · 가동 시 매수 = 회고 없음 ∧ 확신도 = 감점 후 확신도 · 매도 = 회고 있음 ∧ 회고 청산 사유 = 체결 사유.
         /// </summary>
         public bool IsWellFormed =>
@@ -183,6 +197,9 @@ namespace StockManager.Engines.Arena.Common
             && Technical.IsWellFormed && (Technical.Symbol == 0 || Technical.Symbol == Symbol)
             && (TriggerType != ArenaTrigger.VolatilitySqueezeBreakout || Technical.IsBreakoutUp)
             && (TriggerType != ArenaTrigger.VolumeProfileSupport || Technical.VolumeProfileScore > 0)
+            && Microstructure.IsWellFormed && (Microstructure.Symbol == 0 || Microstructure.Symbol == Symbol)
+            && (TriggerType != ArenaTrigger.CvdBullishDivergence || Microstructure.IsBullishDivergence)
+            && (TriggerType != ArenaTrigger.OrderbookDepthSupport || Microstructure.MicrostructureScore > 0)
             && Governance.IsWellFormed
             && (!Governance.Governed || (Side == 1
                 ? !Governance.PostMortem.HasReview && Governance.Confidence == ConfidenceScore
@@ -212,6 +229,7 @@ namespace StockManager.Engines.Arena.Common
             if (r.News.HasCatalyst) core += " " + ComposeNews(in r.News);
             if (r.Valuation.HasValuation) core += " " + ComposeValuation(in r.Valuation);
             if (r.Technical.HasTechnical) core += " " + ComposeTechnical(in r.Technical, r.Currency);
+            if (r.Microstructure.HasMicrostructure) core += " " + ComposeMicrostructure(in r.Microstructure);
             return r.Governance.Governed ? core + " " + PlutoGovernanceText.Compose(in r.Governance) : core;
         }
 
@@ -250,6 +268,20 @@ namespace StockManager.Engines.Arena.Common
                 : $"매물대 POC {Px(t.PocPrice, currency)}(점유 {Pct(t.PocShareBp).TrimStart('+')}) · 밸류 에어리어 {Px(t.ValueAreaLow, currency)}~{Px(t.ValueAreaHigh, currency)} · " +
                   $"{PlutoTechnicalText.ZoneLabel(t.ProfileZone)} {Signed(t.VolumeProfileScore)}점";
             return $"{(badges.Length > 0 ? badges + " " : "")}플루토 기술적 분석: {squeeze} · {profile} → 기술 점수 {Signed(t.TechnicalScore)}점.";
+        }
+
+        /// <summary>[v12.18.75-DEV] 플루토 미시구조 뱃지 + 수치 문장(CVD · 다이버전스 · 10호가 가중 뎁스).</summary>
+        public static string ComposeMicrostructure(in PlutoMicrostructureFactor m)
+        {
+            string badges = PlutoMicrostructureText.Badges(in m);
+            string cvd = !m.CvdReady
+                ? string.Create(Inv, $"CVD 워밍업(완성 봉 {m.CvdBars}/{PlutoCumulativeVolumeDelta.MinBars})")
+                : string.Create(Inv, $"CVD 누적 {Signed(m.Cvd)} · 최근 {m.CvdBars}봉 순공격 매수 비중 {Pct(m.CvdSlopeBps)} · 가격 변화 {Pct(m.PriceChangeBps)} · ")
+                  + $"{PlutoMicrostructureText.DivergenceLabel(m.DivergenceType)} {Signed(m.CvdScore)}점";
+            string depth = m.DepthTiers == 0
+                ? "호가 뎁스 정보 없음"
+                : string.Create(Inv, $"{m.DepthTiers}호가 지수 가중 뎁스 매수 {m.WeightedBidDepth:N0} vs 매도 {m.WeightedAskDepth:N0}(불균형 {Pct(m.DepthRatioBps)}) {Signed(m.DepthScore)}점");
+            return $"{(badges.Length > 0 ? badges + " " : "")}플루토 미시구조: {cvd} · {depth} → 미시구조 점수 {Signed(m.MicrostructureScore)}점.";
         }
 
         private static string Px(long price, ArenaCurrency currency) => currency switch

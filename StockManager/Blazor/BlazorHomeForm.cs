@@ -1802,6 +1802,11 @@ namespace StockManager.Blazor
             krxArena.EnableTechnical(true);
             usArena.EnableTechnical(true);
             cryptoArena.EnableTechnical(true);
+            // [v12.18.75-DEV] 플루토 브레인 4단계 — 체결강도 누적 델타(CVD) + 10호가 가중 뎁스: 업비트 = 실측 ask_bid 방향 · KRX/US = 틱 룰 근사 ·
+            //   현 피드 = L1(최우선 1호가) → 제공 범위 비례 가중(벽/허매수 판정은 3호가 이상 피드부터). 외부 피드 · 네트워크 추가 0 · 주문 수단 0(liveArmed:false).
+            krxArena.EnableMicrostructure(true);
+            usArena.EnableMicrostructure(true);
+            cryptoArena.EnableMicrostructure(true);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));
