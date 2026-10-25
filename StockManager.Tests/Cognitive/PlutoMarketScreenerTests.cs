@@ -155,9 +155,10 @@ namespace StockManager.Tests.Cognitive
             Assert.Equal(new long[] { 1001, 1005, 1000, 1007, 1008 }, System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(krx, r => r.Symbol)));
             Assert.Equal(new[] { 79, 77, 77, 71, 65 }, System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(krx, r => r.Score.Total)));
             Assert.Equal(new[] { 1, 2, 3, 4, 5 }, System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(krx, r => r.Rank)));
-            Assert.Equal(new PlutoScreenTally(9, 1, 1, 1), snap.TallyOf(PlutoScreenMarket.Krx));
-            Assert.Empty(snap.Of(PlutoScreenMarket.Us));                           // 미등록 시장 = 빈 목록
-            Assert.Equal(default(PlutoScreenTally), snap.TallyOf(PlutoScreenMarket.Us));
+            // [v12.18.79-DEV] Monitored = 감시 카탈로그(KRX 200) · Passed = 기준 통과 6(Top 5 절단 전)
+            Assert.Equal(new PlutoScreenTally(9, 1, 1, 1, PlutoMultiAssetUniverseCatalog.KrxCount, 6), snap.TallyOf(PlutoScreenMarket.Krx));
+            Assert.Empty(snap.Of(PlutoScreenMarket.Us));                           // 미등록 시장 = 빈 목록(감시 수만 집계)
+            Assert.Equal(new PlutoScreenTally(0, 0, 0, 0, PlutoMultiAssetUniverseCatalog.UsCount, 0), snap.TallyOf(PlutoScreenMarket.Us));
             Assert.Equal(1, snap.Generation);
             Assert.Equal(T0, snap.UpdatedUtcTicks);
             Assert.Same(snap, s.Board.Current);

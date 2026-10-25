@@ -13,13 +13,14 @@ namespace MS2E.UI.Portable.Ports.Trading
 {
     public static class PlutoRecoMarket
     {
-        public const int Krx = 0, Us = 1;
+        public const int Krx = 0, Us = 1, Crypto = 2;   // [v12.18.79-DEV] Crypto = 업비트 KRW(3대 자산)
 
-        public static string Label(int m) => m == Us ? "🇺🇸 미국" : "🇰🇷 국내";
+        public static string Label(int m) => m switch { Us => "🇺🇸 미국", Crypto => "🪙 가상자산 (업비트)", _ => "🇰🇷 국내" };
     }
 
     /// <summary>
-    /// 추천 카드 1건. Symbol = KRX 종목 코드 정수(US = 엔진 내부 키 · 티켓 바인딩은 Code) · Code = KRX 6자리/US 티커 ·
+    /// 추천 카드 1건. Symbol = KRX 종목 코드 정수(US · 코인 = 엔진 내부 키 · 티켓 바인딩은 Code) · Code = KRX 6자리/US 티커/업비트 마켓("KRW-BTC") ·
+    /// 4대 팩터 점수 = 주식(안전마진 · 기술 · 수급 · 거시) · 코인(유동성 · 볼밴 스퀴즈 · CVD · 15호가 뎁스벽) · RecommendedQty = 주(코인 = 코인 × 10^8 raw) ·
     /// MarginOfSafetyBps = 목표 안전마진(HasValuation false = 판독 없음) · CounterCount/CounterText = 악마의 변호인 판정(0~1건만 노출 · 2건 이상 = 목록 탈락).
     /// </summary>
     public sealed record PlutoRecommendationCard(
@@ -33,23 +34,50 @@ namespace MS2E.UI.Portable.Ports.Trading
 
         public string ScoreLabel => Score >= 75 ? "강력 추천" : Score >= 60 ? "추천" : "관심";
 
-        public string MosText => HasValuation
+        public string MosText => Market == PlutoRecoMarket.Crypto
+            ? "🎯 가상자산 = 재무 안전마진 해당 없음(유동성 · 스퀴즈 · CVD · 뎁스 4대 팩터 평가)"
+            : HasValuation
             ? "🎯 목표 안전마진 " + (MarginOfSafetyBps >= 0 ? "+" : "") + (MarginOfSafetyBps / 100m).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "% · 적정가 " + FairPriceText + (SeedProfile ? "(시드 프로필)" : "")
             : "🎯 안전마진 판독 없음(재무 프로필 미보유)";
+
+        /// <summary>[v12.18.79-DEV] 코인 단위("KRW-BTC" → "BTC" · 주식 = "").</summary>
+        public string Coin => Market == PlutoRecoMarket.Crypto && Code.StartsWith("KRW-", StringComparison.Ordinal) ? Code[4..] : "";
+
+        /// <summary>[v12.18.79-DEV] 추천 수량 표기(주식 "271주" · 코인 raw 10^8 → "0.0123 BTC").</summary>
+        public string QtyText => Market == PlutoRecoMarket.Crypto
+            ? (RecommendedQty / 100_000_000m).ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) + " " + Coin
+            : RecommendedQty.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "주";
     }
 
-    /// <summary>시장 1개 추천 목록 + 스캔 집계(Scanned = 유니버스 · Vetoed = 악마의 변호인 탈락 · Insufficient = 판독 전무 · BelowThreshold = 50점 미만).</summary>
-    public sealed record PlutoRecoMarketView(IReadOnlyList<PlutoRecommendationCard> Cards, int Scanned, int Vetoed, int Insufficient, int BelowThreshold)
+    /// <summary>시장 1개 추천 목록 + 스캔 집계(Scanned = 피드 판독 종목 · Vetoed = 악마의 변호인 탈락 · Insufficient = 판독 전무 · BelowThreshold = 50점 미만 ·
+    /// [v12.18.79-DEV] Monitored = 감시 카탈로그 종목 수 · Passed = 추천 기준 통과).</summary>
+    public sealed record PlutoRecoMarketView(IReadOnlyList<PlutoRecommendationCard> Cards, int Scanned, int Vetoed, int Insufficient, int BelowThreshold,
+        int Monitored = 0, int Passed = 0)
     {
         public static readonly PlutoRecoMarketView None = new(Array.Empty<PlutoRecommendationCard>(), 0, 0, 0, 0);
+
+        /// <summary>감시 중이지만 피드 판독이 아직 없는 종목 수(점수 산출 0 · 정직 집계).</summary>
+        public int AwaitingFeed => Math.Max(0, Monitored - Scanned);
     }
 
-    /// <summary>추천 보드 전체. Generation 0 = 첫 스캔 전 · UpdatedUtc null = 스캔 이력 없음.</summary>
+    /// <summary>추천 보드 전체. Generation 0 = 첫 스캔 전 · UpdatedUtc null = 스캔 이력 없음 · [v12.18.79-DEV] Crypto = 업비트 KRW 슬롯(미지정 = None).</summary>
     public sealed record PlutoRecoBoardView(bool Running, long Generation, DateTime? UpdatedUtc, PlutoRecoMarketView Krx, PlutoRecoMarketView Us)
     {
         public static readonly PlutoRecoBoardView None = new(false, 0, null, PlutoRecoMarketView.None, PlutoRecoMarketView.None);
 
-        public PlutoRecoMarketView Of(int market) => market == PlutoRecoMarket.Us ? Us : Krx;
+        public PlutoRecoMarketView Crypto { get; init; } = PlutoRecoMarketView.None;
+
+        public PlutoRecoMarketView Of(int market) => market switch { PlutoRecoMarket.Us => Us, PlutoRecoMarket.Crypto => Crypto, _ => Krx };
+
+        /// <summary>[v12.18.79-DEV] 3대 시장 전수 감시 합계 · 피드 판독 합계 · 추천 기준 통과 합계.</summary>
+        public int TotalMonitored => Krx.Monitored + Us.Monitored + Crypto.Monitored;
+        public int TotalScanned => Krx.Scanned + Us.Scanned + Crypto.Scanned;
+        public int TotalPassed => Krx.Passed + Us.Passed + Crypto.Passed;
+
+        /// <summary>상태 뱃지 "📡 3대 시장 전수 감시 중: KRX 200개 | US 100개 | Upbit 120개".</summary>
+        public string MonitorBadgeText => "📡 3대 시장 전수 감시 중: KRX " + Krx.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "개 | US " + Us.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "개 | Upbit " + Crypto.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture) + "개";
     }
 
     /// <summary>플루토 AI 추천 종목 판독 포트(호스트 필수 등록 · 스크리너 비활성 = UnwiredPlutoRecommendationPort).</summary>

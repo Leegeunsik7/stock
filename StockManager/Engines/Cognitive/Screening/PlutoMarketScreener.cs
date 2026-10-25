@@ -9,12 +9,16 @@
 //     ⑤ 불변 스냅샷 → PlutoRecommendationBoard.Publish(원자 참조 교체 · 세대 +1).
 //   Start = PeriodicTimer 루프(예외 = Faulted 계수 · 루프 지속 · 체결 스레드 무간섭) · Dispose = 취소.
 //   ★유니버스 = 아레나가 실제로 시세를 받는 종목만(시장 전 종목 아님 · 피드 밖 종목 날조 0). ★liveArmed:false · QuantumVault/피어 접근 0.
+//   [v12.18.79-DEV] 3대 자산(KRX · US · 업비트 KRW) — 가상자산 유니버스(PlutoArenaUniverse.Crypto · 코인 4대 팩터) 추가.
+//    감시 카탈로그(PlutoMultiAssetUniverseCatalog · KRX 200 · US 100 · 업비트 120) = 집계 Monitored(감시 수) — 피드 판독이 없는 카탈로그 종목은 점수 산출 0
+//    ('피드 판독 대기'로 정직 집계 · 시세/재무 날조 0). Passed = 추천 기준 통과(Top 5 절단 전). 코인 추천 수량 = 코인 × 10^8 raw.
 // ============================================================================
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using StockManager.Engines.Arena.Common;
+using StockManager.Engines.Arena.Crypto;
 using StockManager.Engines.Arena.Domestic;
 using StockManager.Engines.Arena.Us;
 using StockManager.Engines.Cognitive.Governance;
@@ -60,11 +64,11 @@ namespace StockManager.Engines.Cognitive.Screening
         public long Faulted => Interlocked.Read(ref _faulted);
         public bool Running => Volatile.Read(ref _loop) is { IsCompleted: false };
 
-        /// <summary>시장 유니버스 등록(같은 시장 재등록 = 교체). capital = 추천 수량 산정 기준 자본(KRX 원 · US 센트).</summary>
+        /// <summary>시장 유니버스 등록(같은 시장 재등록 = 교체). capital = 추천 수량 산정 기준 자본(KRX 원 · US 센트 · 코인 원).</summary>
         public void AddUniverse(PlutoScreenMarket market, PlutoUniverseScanner scan, long capital)
         {
             ArgumentNullException.ThrowIfNull(scan);
-            if (market is not (PlutoScreenMarket.Krx or PlutoScreenMarket.Us)) throw new ArgumentOutOfRangeException(nameof(market));
+            if (market is not (PlutoScreenMarket.Krx or PlutoScreenMarket.Us or PlutoScreenMarket.Crypto)) throw new ArgumentOutOfRangeException(nameof(market));
             if (capital <= 0) throw new ArgumentOutOfRangeException(nameof(capital));
             lock (_stepGate) _universes[(int)market] = new Universe(scan, capital);
         }
@@ -77,7 +81,8 @@ namespace StockManager.Engines.Cognitive.Screening
                 var macro = _macro();
                 var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, out var krxTally);
                 var us = ScanMarket(PlutoScreenMarket.Us, in macro, out var usTally);
-                var snap = new PlutoRecommendationSnapshot(++_generation, _utcNow(), krx, krxTally, us, usTally);
+                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, out var cryptoTally);
+                var snap = new PlutoRecommendationSnapshot(++_generation, _utcNow(), krx, krxTally, us, usTally, crypto, cryptoTally);
                 _board.Publish(snap);
                 Interlocked.Increment(ref _cycles);
                 return snap;
@@ -87,7 +92,8 @@ namespace StockManager.Engines.Cognitive.Screening
         private PlutoRecommendation[] ScanMarket(PlutoScreenMarket market, in PlutoScreenMacro macro, out PlutoScreenTally tally)
         {
             var u = _universes[(int)market];
-            if (u is null) { tally = default; return Array.Empty<PlutoRecommendation>(); }
+            int monitored = PlutoMultiAssetUniverseCatalog.CountOf(market);
+            if (u is null) { tally = new PlutoScreenTally(0, 0, 0, 0, monitored, 0); return Array.Empty<PlutoRecommendation>(); }
             int n = Math.Clamp(u.Scan(_scratch), 0, _scratch.Length);
             var picks = new List<(int Index, PlutoDiscoveryScore Score)>(n);
             int scanned = 0, vetoed = 0, insufficient = 0, below = 0;
@@ -118,9 +124,9 @@ namespace StockManager.Engines.Cognitive.Screening
                 ref readonly var x = ref _scratch[idx];
                 result[r] = new PlutoRecommendation(market, r + 1, x.Symbol, CodeOf(market, x.Symbol), x.Price, s,
                     Array.AsReadOnly(PlutoDiscoveryScorer.Reasons(in x, in macro, in s)), x.HasValuation, x.MarginOfSafetyBps, x.FairPrice, x.SeedProfile,
-                    RecommendedQty(u.Capital, s.Total, x.Price), PlutoDiscoveryScorer.RiskText(s.Risks));
+                    RecommendedQty(market, u.Capital, s.Total, x.Price), PlutoDiscoveryScorer.RiskText(s.Risks, market));
             }
-            tally = new PlutoScreenTally(scanned, vetoed, insufficient, below);
+            tally = new PlutoScreenTally(scanned, vetoed, insufficient, below, Math.Max(monitored, scanned), picks.Count);
             return result;
         }
 
@@ -132,8 +138,21 @@ namespace StockManager.Engines.Cognitive.Screening
             return budget / price;
         }
 
-        public static string CodeOf(PlutoScreenMarket m, long symbol)
-            => m == PlutoScreenMarket.Us ? UsTechUniverse.Unpack(symbol) : symbol.ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
+        /// <summary>[v12.18.79-DEV] 시장별 추천 수량 — 코인 = 원 자본 × 비중 ÷ 가격 raw → 코인 × 10^8 raw(내림 · 1 raw 미만 = 0) · 주식 = 주.</summary>
+        public static long RecommendedQty(PlutoScreenMarket market, long capital, int score, long price)
+        {
+            if (market != PlutoScreenMarket.Crypto) return RecommendedQty(capital, score, price);
+            if (capital <= 0 || price <= 0) return 0;
+            Int128 budgetWon = (Int128)capital * PlutoDynamicSizer.WeightBp(score, 0, 0) / 10000;
+            return (long)Int128.Min(budgetWon * PlutoDiscoveryScorer.CryptoScale * PlutoDiscoveryScorer.CryptoScale / price, long.MaxValue);
+        }
+
+        public static string CodeOf(PlutoScreenMarket m, long symbol) => m switch
+        {
+            PlutoScreenMarket.Us => UsTechUniverse.Unpack(symbol),
+            PlutoScreenMarket.Crypto => CryptoArenaUniverse.Unpack(symbol),
+            _ => symbol.ToString("D6", System.Globalization.CultureInfo.InvariantCulture),
+        };
 
         /// <summary>백그라운드 스캔 루프 기동(중복 기동 = 무시).</summary>
         public void Start(TimeSpan interval)
@@ -193,6 +212,15 @@ namespace StockManager.Engines.Cognitive.Screening
                 engine.TryReadTechnical, engine.TryReadMicrostructure, engine.RegimeOf);
         }
 
+        /// <summary>[v12.18.79-DEV] 업비트 아레나 → 가상자산 유니버스(가격 = 매도 1호가 raw · 매수 1호가 = 스프레드 유동성 · 밸류에이션 없음).</summary>
+        public static PlutoUniverseScanner Crypto(UpbitCryptoArenaEngine engine)
+        {
+            ArgumentNullException.ThrowIfNull(engine);
+            var quotes = new DuelQuote[UpbitCryptoArenaEngine.MaxSymbols];
+            return dest => Fill(dest, quotes, engine.CopyQuotes(quotes), PlutoScreenMarket.Crypto, null, 0,
+                engine.TryReadTechnical, engine.TryReadMicrostructure, engine.RegimeOf);
+        }
+
         private delegate bool TechReader(long symbol, out PlutoTechnicalFactor factor);
         private delegate bool MicroReader(long symbol, out PlutoMicrostructureFactor factor);
 
@@ -208,7 +236,7 @@ namespace StockManager.Engines.Cognitive.Screening
                 if (valuation is not null && valuation.TryRead(q.Symbol, out var vf)) val = new PlutoValuationTag(in vf, q.AskWon, nowUtc);
                 if (!tech(q.Symbol, out var tf)) tf = default;
                 if (!micro(q.Symbol, out var mf)) mf = default;
-                dest[k++] = PlutoScreenInputs.From(market, q.Symbol, q.AskWon, in val, in tf, in mf, regime(q.Symbol));
+                dest[k++] = PlutoScreenInputs.From(market, q.Symbol, q.AskWon, in val, in tf, in mf, regime(q.Symbol), q.BidWon);
             }
             return k;
         }

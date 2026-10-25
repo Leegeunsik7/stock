@@ -40,7 +40,7 @@ namespace StockManager.Adapters
             ArgumentNullException.ThrowIfNull(s);
             return new PlutoRecoBoardView(running, s.Generation,
                 s.Generation == 0 ? null : new DateTime(s.UpdatedUtcTicks, DateTimeKind.Utc),
-                MapMarket(s, PlutoScreenMarket.Krx), MapMarket(s, PlutoScreenMarket.Us));
+                MapMarket(s, PlutoScreenMarket.Krx), MapMarket(s, PlutoScreenMarket.Us)) { Crypto = MapMarket(s, PlutoScreenMarket.Crypto) };
         }
 
         private static PlutoRecoMarketView MapMarket(PlutoRecommendationSnapshot s, PlutoScreenMarket m)
@@ -49,14 +49,14 @@ namespace StockManager.Adapters
             var cards = new List<PlutoRecommendationCard>(src.Count);
             foreach (var r in src) cards.Add(Map(r));
             var t = s.TallyOf(m);
-            return new PlutoRecoMarketView(cards.AsReadOnly(), t.Scanned, t.Vetoed, t.Insufficient, t.BelowThreshold);
+            return new PlutoRecoMarketView(cards.AsReadOnly(), t.Scanned, t.Vetoed, t.Insufficient, t.BelowThreshold, t.Monitored, t.Passed);
         }
 
         public static PlutoRecommendationCard Map(PlutoRecommendation r)
         {
             ArgumentNullException.ThrowIfNull(r);
-            int market = r.Market == PlutoScreenMarket.Us ? PlutoRecoMarket.Us : PlutoRecoMarket.Krx;
-            string name = StockDisplayNameResolver.NameOrCode(r.Code);
+            int market = r.Market switch { PlutoScreenMarket.Us => PlutoRecoMarket.Us, PlutoScreenMarket.Crypto => PlutoRecoMarket.Crypto, _ => PlutoRecoMarket.Krx };
+            string name = StockDisplayNameResolver.Name(r.Code) ?? PlutoMultiAssetUniverseCatalog.NameOf(r.Market, r.Symbol) ?? r.Code;   // 미등록 = 코드(날조 0)
             var sc = r.Score;
             return new PlutoRecommendationCard(market, r.Rank, r.Symbol, r.Code, name, sc.Total,
                 sc.ValuationPts, sc.TechnicalPts, sc.MicroPts, sc.MacroPts, r.Reasons,

@@ -29,7 +29,9 @@
    [v12.18.77-DEV] 플루토 지속 학습: 거버너 바에 [🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 이름 n%)] 뱃지 + 학습 세대 · 가중치 칩.
      IPlutoLearningPort 직접 주입(학습 비활성 호스트 = UnwiredPlutoLearningPort → '학습 엔진 미결선' 정직 렌더). 판독 전용(주문 경로 무변경).
    [v12.18.78-DEV] [🌟 플루토 오늘의 AI 추천 종목] 패널: 국내/미국 탭 · 카드(종목명/코드 · 점수 뱃지 · 4대 팩터 칩 · 핵심 근거 3줄 · 악마의 변호인 판정 · 목표 안전마진) ·
-     [👤 1-Click 아레나 담기] = 해당 모드로 전환 + 휴먼 티켓 종목 · 추천 수량만 채움(접수 = 기존 매수 버튼 → SubmitHuman). IPlutoRecommendationPort 직접 주입(미결선 = 정직 렌더). *@
+     [👤 1-Click 아레나 담기] = 해당 모드로 전환 + 휴먼 티켓 종목 · 추천 수량만 채움(접수 = 기존 매수 버튼 → SubmitHuman). IPlutoRecommendationPort 직접 주입(미결선 = 정직 렌더).
+   [v12.18.79-DEV] 3대 자산 체제: [🪙 가상자산 (업비트)] 탭(코인 4대 팩터 칩 💧🌀📊🧱 · 수량 = 코인 단위) · 상단 [📡 3대 시장 전수 감시 중: KRX n개 | US n개 | Upbit n개] 뱃지 +
+     피드 판독/통과 합계 · 탭별 감시/판독 대기/통과 집계. 코인 1-Click = 크립토 모드 전환 + 마켓 · 코인 수량 바인딩만(접수 = 기존 매수 버튼). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -73,17 +75,25 @@
 
 @{
     var rb = Reco.Current;
-    int rtab = _recoTab >= 0 ? _recoTab : _mode == ModeUs ? PlutoRecoMarket.Us : PlutoRecoMarket.Krx;
+    int rtab = _recoTab >= 0 ? _recoTab : _mode == ModeUs ? PlutoRecoMarket.Us : _mode == ModeCrypto ? PlutoRecoMarket.Crypto : PlutoRecoMarket.Krx;
     var rm = rb.Of(rtab);
 }
 <div class="ar-card da-reco" data-reco="@(Reco.IsWired ? "wired" : "unwired")">
     <div class="da-reco-head">
-        <h3>🌟 플루토 오늘의 AI 추천 종목 <small>안전마진 · 스퀴즈/POC · CVD/뎁스 · 거시 적합도 4대 팩터 0~100점 · 반대 논리 2건 이상 자동 탈락 · 가상 원장 전용</small></h3>
+        <h3>🌟 플루토 오늘의 AI 추천 종목 <small>주식 = 안전마진 · 스퀴즈/POC · CVD/뎁스 · 거시 적합도 · 코인 = 유동성 · 볼밴 스퀴즈 · CVD · 15호가 뎁스벽 — 4대 팩터 0~100점 · 반대 논리 2건 이상 자동 탈락 · 가상 원장 전용</small></h3>
         <div class="da-reco-tabs" role="tablist">
             <button class="da-reco-tab @(rtab == PlutoRecoMarket.Krx ? "on" : "")" role="tab" data-reco-tab="krx" @onclick="() => _recoTab = PlutoRecoMarket.Krx">@PlutoRecoMarket.Label(PlutoRecoMarket.Krx) (@(rb.Krx.Cards.Count))</button>
             <button class="da-reco-tab @(rtab == PlutoRecoMarket.Us ? "on" : "")" role="tab" data-reco-tab="us" @onclick="() => _recoTab = PlutoRecoMarket.Us">@PlutoRecoMarket.Label(PlutoRecoMarket.Us) (@(rb.Us.Cards.Count))</button>
+            <button class="da-reco-tab @(rtab == PlutoRecoMarket.Crypto ? "on" : "")" role="tab" data-reco-tab="crypto" @onclick="() => _recoTab = PlutoRecoMarket.Crypto">@PlutoRecoMarket.Label(PlutoRecoMarket.Crypto) (@(rb.Crypto.Cards.Count))</button>
         </div>
     </div>
+    @if (Reco.IsWired && rb.Generation > 0)
+    {
+        <div class="da-reco-monitor" data-monitored="@rb.TotalMonitored" data-passed="@rb.TotalPassed">
+            <span class="da-badge da-reco-watch">@rb.MonitorBadgeText</span>
+            <span class="ar-sub">피드 판독 @(rb.TotalScanned)종목 · 추천 기준 통과 @(rb.TotalPassed)종목 — 피드 판독이 없는 감시 종목은 점수를 내지 않습니다(판독 대기)</span>
+        </div>
+    }
     @if (!Reco.IsWired)
     {
         <div class="ar-sub da-reco-empty">추천 엔진 미결선 — 스크리너가 가동되지 않은 호스트입니다(설정 Pluto.ScreenerEnabled).</div>
@@ -95,6 +105,7 @@
     else
     {
         <div class="ar-sub da-reco-tally" data-gen="@rb.Generation">스캔 @(rm.Scanned)종목 · 😈 악마의 변호인 탈락 @(rm.Vetoed) · 판독 부족 @(rm.Insufficient) · 기준(50점) 미달 @(rm.BelowThreshold) · 세대 #@(rb.Generation)@(rb.UpdatedUtc is { } ru ? " · " + ru.AddHours(9).ToString("HH:mm:ss") + " KST" : "")</div>
+        <div class="ar-sub da-reco-cover" data-awaiting="@rm.AwaitingFeed">감시 @(rm.Monitored)종목 · 피드 판독 대기 @(rm.AwaitingFeed) · 통과 @(rm.Passed)</div>
         @if (rm.Cards.Count == 0)
         {
             <div class="ar-sub da-reco-empty">추천 기준을 통과한 종목이 없습니다 — 근거 없는 추천은 내지 않습니다.</div>
@@ -109,14 +120,21 @@
                     <span class="da-badge da-reco-score @rc.ScoreCss" data-score="@rc.Score">@(rc.Score)점 · @rc.ScoreLabel</span>
                 </div>
                 <div class="da-reco-pts">
-                    <span title="펀더멘털 안전마진">💎 @(rc.ValuationPts)</span><span title="볼밴 스퀴즈 · POC">📐 @(rc.TechnicalPts)</span><span title="CVD · 호가 뎁스">📊 @(rc.MicroPts)</span><span title="국면 · 과거 유사 국면">🌐 @(rc.MacroPts)</span>
+                    @if (rc.Market == PlutoRecoMarket.Crypto)
+                    {
+                        <span title="유동성(스프레드 · 뎁스 호가 수)">💧 @(rc.ValuationPts)</span><span title="볼밴 스퀴즈">🌀 @(rc.TechnicalPts)</span><span title="CVD 다이버전스">📊 @(rc.MicroPts)</span><span title="15호가 뎁스벽">🧱 @(rc.MacroPts)</span>
+                    }
+                    else
+                    {
+                        <span title="펀더멘털 안전마진">💎 @(rc.ValuationPts)</span><span title="볼밴 스퀴즈 · POC">📐 @(rc.TechnicalPts)</span><span title="CVD · 호가 뎁스">📊 @(rc.MicroPts)</span><span title="국면 · 과거 유사 국면">🌐 @(rc.MacroPts)</span>
+                    }
                 </div>
                 <ol class="da-reco-reasons">
                     @foreach (var reason in rc.Reasons) { <li>@reason</li> }
                 </ol>
                 <div class="da-reco-mos">@rc.MosText</div>
                 <div class="da-reco-devil @(rc.CounterCount == 0 ? "pass" : "watch")" data-devil="@rc.CounterCount">@rc.CounterText</div>
-                <button class="ar-btn da-reco-load" disabled="@(rc.RecommendedQty <= 0)" @onclick="() => LoadReco(rc)">👤 1-Click 아레나 담기 (@(rc.RecommendedQty.ToString("N0"))주)</button>
+                <button class="ar-btn da-reco-load" disabled="@(rc.RecommendedQty <= 0)" @onclick="() => LoadReco(rc)">👤 1-Click 아레나 담기 (@rc.QtyText)</button>
             </div>
         }
         </div>
@@ -628,10 +646,18 @@ else
     }
 
     // [v12.18.78-DEV] 1-Click 아레나 담기 = 해당 모드 전환 + 휴먼 티켓 종목 · 추천 수량 바인딩만(접수 0 — 사용자가 매수 버튼으로 확정).
+    // [v12.18.79-DEV] 코인 = 크립토 모드 전환 + 마켓 코드 · 코인 수량(raw 10^8 → 코인) 바인딩.
     private void LoadReco(PlutoRecommendationCard c)
     {
         if (c.RecommendedQty <= 0) { _recoMsg = "담기 불가: 추천 수량 0주(자본 대비 1주 가격 초과)"; return; }
-        if (c.Market == PlutoRecoMarket.Us)
+        if (c.Market == PlutoRecoMarket.Crypto)
+        {
+            SetMode(ModeCrypto);
+            _market = c.Code;
+            _coinQty = c.RecommendedQty / (decimal)CryptoArenaUnits.Scale;
+            _cryptoMsg = "🌟 플루토 추천 담기: " + c.Code + " " + c.QtyText + " — 매수 버튼으로 접수";
+        }
+        else if (c.Market == PlutoRecoMarket.Us)
         {
             SetMode(ModeUs);
             _ticker = c.Code;
@@ -646,7 +672,7 @@ else
             _msg = "🌟 플루토 추천 담기: " + c.Name + " " + c.RecommendedQty.ToString("N0") + "주 — 매수 버튼으로 접수";
         }
         _recoTab = c.Market;
-        _recoMsg = "🌟 " + c.Name + "(" + c.Code + ") " + c.RecommendedQty.ToString("N0") + "주 → " + PlutoRecoMarket.Label(c.Market) + " 휴먼 티켓에 담았습니다";
+        _recoMsg = "🌟 " + c.Name + "(" + c.Code + ") " + c.QtyText + " → " + PlutoRecoMarket.Label(c.Market) + " 휴먼 티켓에 담았습니다";
     }
 
     // 모드 전환 = 표시 대상 포트만 바꾼다(각 원장은 자기 엔진에 그대로 · 그려진 버전 무효화 → 새 모드 첫 폴링에서 다시 그린다).

@@ -4465,3 +4465,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 유니버스 = 아레나 시세 종목뿐(KRX 아레나 · US 5종 · 코스닥/나스닥 전 종목 스캔 아님) · 안전마진 = 시드 재무 프로필 10종(그 외 종목 = 판독 없음 0점) · 기술/수급 = 워밍업 전 0점 →
   기동 직후 추천이 비거나 적을 수 있음('근거 없는 추천은 내지 않습니다' 정직 렌더) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false(추천 = UI 카드 · 담기 = 티켓 상태만) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.
+
+## 192. v12.18.79-DEV — 플루토 3대 자산 감시 스크리너(KRX 200 · US 100 · 업비트 KRW 120) + 가상자산 4대 팩터 + 🪙 코인 추천 탭(δ=0) (2026-10-25)
+
+- 오더 전제 검증: PlutoMultiAssetUniverseCatalog 부재 → 신규(Engines/Cognitive/Screening/). PlutoDiscoveryScorer · PlutoRecommendationBoard · DualArenaPage = §191 확장. ★아레나 시세 유니버스 실체 = KRX 합성 5종/브리지 · US 5종 · 업비트 4종(KRW-BTC/ETH/XRP/SOL)
+  — 400여 종목 전부에 시세/재무가 들어오지는 않음 → 카탈로그 = 메타데이터(코드 · 이름 · 계열)만, 점수는 피드 판독이 있는 종목만 산출, 나머지는 '피드 판독 대기'로 정직 집계(시세/재무 날조 0).
+- 카탈로그: 코스피 200 주요 140 + 코스닥 150 주요 60 = KRX 200 · S&P 100 82 + 나스닥 100 비중복 18 = US 100 · 업비트 KRW 120 = 총 420. 키 = 아레나와 같은 인코딩(KRX 정수 · UsTechUniverse.Pack · CryptoArenaUniverse.Pack) ·
+  정렬 long[] 이분 탐색 Contains(δ=0). 9자 이상 마켓(KRW-PUNDIX/RENDER/VIRTUAL) = 키 0(감시 수에만 포함). 정적 스냅샷 — 지수 정기 변경/상장 폐지 반영은 표 갱신 필요(런타임 네트워크 0).
+- 코인 스코어러(PlutoScreenMarket.Crypto · 각 0~25): 유동성(최우선 스프레드 ≤5bp 20/≤10 16/≤25 10/<50 4 + 뎁스 호가 수 ≥15 5/≥10 3/≥5 1 · 매수 1호가 미판독 = 0) · 볼밴 스퀴즈(SqueezeScore 투영) · CVD(CvdScore) · 15호가 뎁스벽(DepthScore).
+  밸류에이션 무시 · 판독 2종(기술 · 미시구조) 전무 = 판독 부족. 악마의 변호인 6종 공통 — 1번 게이트 = 주식 고평가 / 코인 '호가 스프레드 과대(≥ 50bp)' · 2건 이상 탈락. 근거 3줄 = 코인 전용 문구(💧🌀📊🧱).
+- 스냅샷: Markets 3 · Crypto 슬롯(방어 복사 · TryFind) · PlutoScreenTally +Monitored(카탈로그 수)/Passed(Top 5 절단 전 통과) · TotalMonitored/Scanned/Passed = 생성자 합산(판독 = 필드 · δ=0). 2시장 생성자 유지(하위 호환).
+- 스크리너: Step = KRX → US → Crypto · 미등록 시장도 Monitored 집계 · 코인 추천 수량 = 원 자본 × 사이저 비중 × 10^16 ÷ 가격 raw → 코인 raw 10^8(내림 · Int128). PlutoArenaUniverse.Crypto(업비트 엔진 · 매수 1호가 전달).
+- 호스트: 같은 스크리너에 AddUniverse(Crypto, PlutoArenaUniverse.Crypto(cryptoArena), cryptoArena.CapitalWon). 네트워크/주문 경로 추가 0.
+- UI(Pure RCL): PlutoRecoMarket.Crypto · PlutoRecoMarketView +Monitored/Passed/AwaitingFeed · PlutoRecoBoardView.Crypto(init) + MonitorBadgeText · 카드 Coin/QtyText.
+  DualArenaPage 3탭(국내/미국/🪙 가상자산 (업비트)) · 상단 '📡 3대 시장 전수 감시 중: KRX 200개 | US 100개 | Upbit 120개' + 판독/통과 합계 · 탭별 감시/판독 대기/통과 · 코인 팩터 칩 · 코인 1-Click = 크립토 모드 + 마켓 · 코인 수량 바인딩만(접수 = 기존 매수 버튼).
+- 테스트 StockManager.Tests/Cognitive/PlutoMultiAssetScreenerTests.cs 23건(Theory 9 포함): 카탈로그 수/계열/형식/중복/아레나 종목 포함/이름 · 유동성 점수표 · 코인 4팩터/밸류에이션 무시/판독 부족/매수호가 미판독 ·
+  스프레드+CVD 약세 탈락/문구 · 코인 근거/가격 표기 · 코인 Top/raw 수량 내림/집계/합계/TryFind · 2시장 생성자 호환 · 업비트 아레나 유니버스 · 어댑터 · 3탭/뱃지/코인 1-Click · 호스트 문자열 ·
+  δ=0: 3대 시장 동시 게시 중 TryFind+합계 10만 회 = 0B · 찢어진 판독 0 · 카탈로그 Contains 10만 회 = 0B. 기존 PlutoMarketScreenerTests 집계 단언 갱신(Monitored/Passed).
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,475 통과 + 7 건너뜀 · 실패 0 · 4분 15초(기존 5,452 + 신규 23) · infra-scan 0(기준 117) · 래칫/PureShell 통과(≤40 · 신규 결합 0).
+- 한계(정직): 점수 산출 = 아레나 시세 종목(KRX 5 · US 5 · 코인 4)뿐 · 카탈로그 나머지는 감시 수 표기만(실 피드 확장 = 업비트 StreamMarkets/엔진 MaxSymbols 확대 · KIS 해외 시세 결선 필요) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault/피어 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.

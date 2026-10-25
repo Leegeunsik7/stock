@@ -1857,6 +1857,9 @@ namespace StockManager.Blazor
                     StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer), krxArena.CapitalWon);
                 plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us,
                     StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Us(usArena, plutoValuationBuffer), usArena.CapitalCents);
+                // [v12.18.79-DEV] 3대 자산 — 업비트 아레나 시세 유니버스 × 코인 4대 팩터(유동성 · 볼밴 스퀴즈 · CVD · 15호가 뎁스벽) · 감시 카탈로그(KRX 200 · US 100 · 업비트 120) 집계.
+                plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Crypto,
+                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Crypto(cryptoArena), cryptoArena.CapitalWon);
                 plutoScreener.Start(TimeSpan.FromSeconds(30));
                 FormClosed += (_, _) => ShutdownTrace.Step("plutoScreener", plutoScreener.Dispose);
                 services.AddSingleton(plutoRecoBoard);
