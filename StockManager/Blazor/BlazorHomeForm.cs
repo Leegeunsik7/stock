@@ -1798,8 +1798,10 @@ namespace StockManager.Blazor
                 var plutoIngestor = new StockManager.Engines.Cognitive.Learning.PlutoGlobalDataIngestor();
                 var plutoMemory = new StockManager.Engines.Cognitive.Learning.PlutoEpisodicMemoryStore();
                 plutoMemory.SeedDefaults();
+                // [v12.18.82-DEV] 12대 역사적 국면 판정기 — 스웜이 관측마다 게시 · 3대 아레나 정산 스레드 δ=0 판독(유사도 ≥ 60% 국면 전략 → 가중치 편향 · 근거 카드 뱃지).
+                var plutoRegime = new StockManager.Engines.Cognitive.Learning.PlutoRegimeMatcher();
                 var plutoSwarm = new StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm(plutoIngestor, plutoMemory,
-                    new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator(), plutoWeights);
+                    new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator(), plutoWeights, regime: plutoRegime);
                 plutoSwarm.AddArena("krx", krxArena.CopyRationales);
                 plutoSwarm.AddArena("us", usArena.CopyRationales);
                 plutoSwarm.AddArena("crypto", cryptoArena.CopyRationales);
@@ -1807,6 +1809,9 @@ namespace StockManager.Blazor
                 krxArena.AttachLearning(plutoWeights);
                 usArena.AttachLearning(plutoWeights);
                 cryptoArena.AttachLearning(plutoWeights);
+                krxArena.AttachRegimeMatcher(plutoRegime);
+                usArena.AttachRegimeMatcher(plutoRegime);
+                cryptoArena.AttachRegimeMatcher(plutoRegime);
                 plutoSwarm.Start(TimeSpan.FromSeconds(5));
                 var macroCts = new System.Threading.CancellationTokenSource();
                 StockManager.Adapters.PlutoHttpMacroSource? macroSource = null;
@@ -1820,6 +1825,7 @@ namespace StockManager.Blazor
                 services.AddSingleton(plutoWeights);
                 services.AddSingleton(plutoIngestor);
                 services.AddSingleton(plutoMemory);
+                services.AddSingleton(plutoRegime);
                 services.AddSingleton(plutoSwarm);
                 services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm));
                 plutoLearningRef = plutoSwarm;

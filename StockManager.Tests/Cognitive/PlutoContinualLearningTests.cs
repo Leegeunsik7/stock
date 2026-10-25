@@ -4,7 +4,7 @@
 //   ① 가중치 · seqlock: 중립 default · tilt/엄격도 산식 · 범위 · 섀도우 불통과/범위 밖 = 스왑 거부 · 세대 증가.
 //   ② 거버너 결속: 엄격도 +20 = 확신도 거부권 · 모멘텀 tilt +50 = 진입 점수 통과 · 태그 무결성 불변.
 //   ③ 글로벌 인제스천: JSON 파싱 · 헤드라인 감성 지수 · 형식 오류/범위 밖 = 거부 + 직전 안정값 유지 · 필드 병합 · Stale · 수집원 장애 Fail-Safe.
-//   ④ 에피소딕 기억: 시드 8종 · 동일 특성 = 100% · 거리 단조 · 차원 부족 = 판정 불가 · 용량.
+//   ④ 에피소딕 기억: 시드 12종(v12.18.82 레이크) · 동일 특성 = 100% · 거리 단조 · 차원 부족 = 판정 불가 · 용량.
 //   ⑤ 보정기: 표본 부족 = 제안 없음 · 교훈 압력 방향 · 세대당 상한 · 섀도우 통과/승률 악화/홀드아웃 부족.
 //   ⑥ 스웜: 근거 링 수확(중복 0) · 진입 확신도 결합 · 국면 매칭 · 거시 역풍 주입 · 핫스왑 · 포트 투영 · DualArenaPage 뱃지(결선/미결선) · 호스트 결선 문자열.
 //   ⑦ δ=0: 핫스왑 경합 중 10만 회 판독 · 거버너 10만 회 · 학습 결속 KRX 정산 10만 회 = 0B(MinAllocated · Release) + 찢어진 판독 0.
@@ -266,14 +266,14 @@ namespace StockManager.Tests.Cognitive
             Assert.False(mem.FindNearest(in AiRally).Found);
             mem.SeedDefaults();
             mem.SeedDefaults();                                                  // 재시드 = 생략
-            Assert.Equal(8, mem.Count);
+            Assert.Equal(PlutoRegimeVectorLake.Count, mem.Count);                  // [v12.18.82-DEV] 12대 역사적 국면 레이크 시드
 
             var m = mem.FindNearest(in AiRally);
             Assert.True(m.Found);
             Assert.Equal(100, m.SimilarityPct);
             Assert.Equal(6, m.Dimensions);
             var e = mem.Get(m.EpisodeId)!;
-            Assert.Equal("2024 AI 랠리", e.Name);
+            Assert.Equal("2024 AI 유동성 랠리", e.Name);
             Assert.Equal(PlutoEpisodeKind.Bull, e.Kind);
             Assert.True(e.IsSeed);
 
@@ -488,7 +488,7 @@ namespace StockManager.Tests.Cognitive
             Assert.Equal(12, cal.Observed);
             Assert.Equal(PlutoIngestHealth.Live, st.Health);
             Assert.True(st.Match.Found);
-            Assert.Equal("2024 AI 랠리", st.Episode!.Name);
+            Assert.Equal("2024 AI 유동성 랠리", st.Episode!.Name);
             Assert.Equal(100, st.Match.SimilarityPct);
             Assert.Equal(5, sinkUs);
             Assert.Equal(50, sinkDxy);
@@ -500,9 +500,9 @@ namespace StockManager.Tests.Cognitive
             // 포트 투영
             var view = PlutoLearningPortAdapter.Map(swarm.Status, running: true);
             Assert.Equal(PlutoLearningHealth.Live, view.Health);
-            Assert.Equal("2024 AI 랠리", view.EpisodeName);
+            Assert.Equal("2024 AI 유동성 랠리", view.EpisodeName);
             Assert.Equal(100, view.SimilarityPct);
-            Assert.Equal("🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 2024 AI 랠리(시드 근사) 100%)", view.BadgeText);
+            Assert.Equal("🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 2024 AI 유동성 랠리(시드 근사) 100%)", view.BadgeText);
             var none = PlutoLearningPortAdapter.Map(null, running: false);
             Assert.Equal("🧠 글로벌 학습 상태: 학습 엔진 정지 (과거 국면 유사도: 판정 전)", none.BadgeText);
         }
@@ -565,7 +565,7 @@ namespace StockManager.Tests.Cognitive
             swarm.Step();
             foreach (var (port, expected, css) in new (IPlutoLearningPort, string, string)[]
             {
-                (new PlutoLearningPortAdapter(swarm), "🧠 글로벌 학습 상태: 학습 엔진 정지 (과거 국면 유사도: 2024 AI 랠리(시드 근사) 100%)", "none"),
+                (new PlutoLearningPortAdapter(swarm), "🧠 글로벌 학습 상태: 학습 엔진 정지 (과거 국면 유사도: 2024 AI 유동성 랠리(시드 근사) 100%)", "none"),
                 (UnwiredPlutoLearningPort.Instance, "🧠 글로벌 학습 상태: 학습 엔진 미결선", "unwired"),
             })
             {

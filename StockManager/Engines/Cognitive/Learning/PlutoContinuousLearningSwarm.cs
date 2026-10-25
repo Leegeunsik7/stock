@@ -8,6 +8,7 @@
 //        최종 청산 회고(PostMortem.IsFinal) = 진입 순번으로 확신도 조회(미상 = −1) → PlutoWeightCalibrator.Observe.
 //        엔진 근거 링(128)보다 많이 밀리면 누락분 = 계수(GapSkipped)만(재조회 · 큐잉 0).
 //     ② 글로벌 인제스천 허브 직전 안정값 → 에피소딕 기억창고 유사 국면 탐색(0~100%) · 거시 역풍 입력(미 10년물/달러 변화) 을 아레나에 주입(콜백 · 값 없으면 생략).
+//        [v12.18.82-DEV] 같은 관측 → 12대 역사적 국면 판정기(PlutoRegimeMatcher · 결선 시) 게시 — 3대 아레나 정산 스레드가 δ=0 판독해 거버너 가중치 편향 · 근거 카드 뱃지.
 //     ③ 새 표본 ≥ RecalibrateEvery(10) 누적 시 보정기 제안 → 섀도우 검증 → 통과 시 seqlock 원자 핫스왑(불통과 = 기존 유지 · 판정 기록).
 //     ④ 상태 스냅샷(PlutoLearningStatus · 불변 레코드) 게시 — UI 어댑터가 판독(콜드).
 //   Start = 백그라운드 PeriodicTimer 루프(예외 = Faulted 계수 · 루프 지속 · 체결 스레드 무간섭) · Dispose = 취소.
@@ -28,7 +29,8 @@ namespace StockManager.Engines.Cognitive.Learning
     public sealed record PlutoLearningStatus(
         bool Running, PlutoIngestHealth Health, string? SourceName, PlutoMacroSnapshot Macro,
         PlutoEpisodeMatch Match, PlutoEpisode? Episode, PlutoCognitiveWeights Weights, PlutoShadowVerdict LastVerdict,
-        long Cycles, long Samples, long Swaps, long RejectedSwaps, long IngestAccepted, long IngestRejected, long SourceFailures, long Faulted, long UpdatedUtcTicks);
+        long Cycles, long Samples, long Swaps, long RejectedSwaps, long IngestAccepted, long IngestRejected, long SourceFailures, long Faulted, long UpdatedUtcTicks,
+        PlutoRegimeMatch Regime = default);
 
     public sealed class PlutoContinuousLearningSwarm : IDisposable
     {
@@ -50,6 +52,7 @@ namespace StockManager.Engines.Cognitive.Learning
         private readonly PlutoEpisodicMemoryStore _memory;
         private readonly PlutoWeightCalibrator _calibrator;
         private readonly PlutoCognitiveWeightSeqlock _weights;
+        private readonly PlutoRegimeMatcher? _regime;
         private readonly List<Arena> _arenas = new();
         private readonly AiTradeRationale[] _buf = new AiTradeRationale[CopyCapacity];
         private readonly object _stepGate = new();
@@ -62,19 +65,22 @@ namespace StockManager.Engines.Cognitive.Learning
         private long _cycles, _faulted, _gapSkipped, _samplesAtLastCalibration;
 
         public PlutoContinuousLearningSwarm(PlutoGlobalDataIngestor ingestor, PlutoEpisodicMemoryStore memory, PlutoWeightCalibrator calibrator,
-            PlutoCognitiveWeightSeqlock weights, Func<long>? utcNowTicks = null)
+            PlutoCognitiveWeightSeqlock weights, Func<long>? utcNowTicks = null, PlutoRegimeMatcher? regime = null)
         {
             _ingestor = ingestor ?? throw new ArgumentNullException(nameof(ingestor));
             _memory = memory ?? throw new ArgumentNullException(nameof(memory));
             _calibrator = calibrator ?? throw new ArgumentNullException(nameof(calibrator));
             _weights = weights ?? throw new ArgumentNullException(nameof(weights));
             _utcNow = utcNowTicks ?? (() => DateTime.UtcNow.Ticks);
+            _regime = regime;
         }
 
         public PlutoGlobalDataIngestor Ingestor => _ingestor;
         public PlutoEpisodicMemoryStore Memory => _memory;
         public PlutoWeightCalibrator Calibrator => _calibrator;
         public PlutoCognitiveWeightSeqlock Weights => _weights;
+        /// <summary>[v12.18.82-DEV] 역사적 국면 판정기(미결선 = null).</summary>
+        public PlutoRegimeMatcher? RegimeMatcher => _regime;
         public long Cycles => Interlocked.Read(ref _cycles);
         public long Faulted => Interlocked.Read(ref _faulted);
         public long GapSkipped => Interlocked.Read(ref _gapSkipped);
@@ -103,6 +109,7 @@ namespace StockManager.Engines.Cognitive.Learning
 
                 bool hasMacro = _ingestor.TryRead(out var macro);
                 var match = hasMacro ? _memory.FindNearest(in macro) : default;
+                var regime = hasMacro && _regime is not null ? _regime.Publish(in macro) : default;
                 if (hasMacro && macro.Has(PlutoMacroField.Us10y | PlutoMacroField.Dollar))
                     Volatile.Read(ref _macroSink)?.Invoke(macro.Us10yChangeBp, macro.DollarIndexChangeBp);
 
@@ -122,7 +129,7 @@ namespace StockManager.Engines.Cognitive.Learning
                 long cycles = Interlocked.Increment(ref _cycles);
                 var status = new PlutoLearningStatus(Running, _ingestor.Health, _ingestor.SourceName, macro, match, match.Found ? _memory.Get(match.EpisodeId) : null,
                     live, _lastVerdict, cycles, observed, _weights.Swaps, _weights.RejectedSwaps, _ingestor.Accepted, _ingestor.Rejected, _ingestor.SourceFailures,
-                    Faulted, _utcNow());
+                    Faulted, _utcNow(), regime);
                 Volatile.Write(ref _status, status);
                 return status;
             }

@@ -2,9 +2,9 @@
 // PlutoEpisodicMemoryStore — v12.18.77-DEV: 플루토 지속 학습 Track B — 역사적 시장 국면 에피소딕 기억창고(특성 벡터 · 유사 국면 탐색 · 0~100%)
 //
 //   에피소드 1건 = 이름 · 국면 유형(PlutoEpisodeKind) · 특성 벡터 6차원(VIX×100 · 미 10년물 변화 bp · 달러 인덱스 변화 bp · 원/달러 변화 bp · 지수 추세 bp · 감성 −100~+100).
-//   유사도(현재 관측 vs 에피소드): 관측에 존재하는 차원만(PlutoMacroField 마스크 · 최소 2차원) 차원별 척도로 정규화한 제곱 거리 평균 d² →
-//     유사도 = round(100 · exp(−d²)) (가우시안 커널 · 동일 = 100% · 척도 1배 차이 = 37% · 단조 감소). 차원 2개 미만 = 판정 불가(−1).
-//   시드 에피소드 8종(SeedDefaults) = 대표 국면의 '특성 근사치'(손으로 보정한 정성 시드 · 실측 적합 아님 · IsSeed = true · UI 가 '시드 근사' 로 표기).
+//   [v12.18.82-DEV] 유사도 = PlutoRegimeVectorLake 결합 척도(차원별 −100~+100 정규화 · 코사인 × 유클리드 커널 · 관측 ∩ 에피소드 공통 차원 · 최소 2차원)를
+//     정수 %로 반올림(동일 = 100% · 단조 감소 · 차원 2개 미만 = −1 판정 불가) — 국면 판정기(PlutoRegimeMatcher)와 같은 척도라 UI 두 뱃지가 어긋나지 않는다.
+//   시드 = 12대 역사적 경제 사이클(PlutoRegimeVectorLake · 공개 문헌 대표치의 근사 · 시계열 적합 아님 · IsSeed = true · UI '시드 근사' 표기). id = 레이크 국면 id(1~12).
 //     학습 확장: Remember(이름 · 유형 · 관측) = 현재 국면을 새 에피소드로 저장(용량 32 · 포화 = 거부 · 덮어쓰기 0).
 //   ★Track B 전용 콜드 경로(체결 스레드는 호출하지 않는다). FindNearest 힙 할당 0(고정 배열 · double 연산). 등록은 단일 잠금(쓰기 드묾).
 // ============================================================================
@@ -41,9 +41,7 @@ namespace StockManager.Engines.Cognitive.Learning
 
     public sealed class PlutoEpisodicMemoryStore
     {
-        public const int Capacity = 32, MinDimensions = 2;
-        /// <summary>차원별 정규화 척도(이 만큼 차이 = 1σ).</summary>
-        public const double VixScaleX100 = 1000, Us10yScaleBp = 50, DollarScaleBp = 300, UsdKrwScaleBp = 300, TrendScaleBp = 800, SentimentScale = 40;
+        public const int Capacity = 32, MinDimensions = PlutoRegimeVectorLake.MinDimensions;
 
         private readonly PlutoEpisode?[] _episodes = new PlutoEpisode?[Capacity];
         private readonly object _gate = new();
@@ -71,46 +69,25 @@ namespace StockManager.Engines.Cognitive.Learning
             }
         }
 
-        /// <summary>대표 국면 시드 8종(특성 근사치 · 6차원 전부). 이미 등록된 것이 있으면 생략.</summary>
+        /// <summary>[v12.18.82-DEV] 12대 역사적 국면 시드(PlutoRegimeVectorLake · 6차원 전부 · id = 국면 id). 이미 등록된 것이 있으면 생략.</summary>
         public void SeedDefaults()
         {
             if (Count > 0) return;
-            long t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).Ticks;
-            Seed("2008 금융위기 패닉", PlutoEpisodeKind.Panic, 6000, -80, 600, 1500, -2500, -80, t);
-            Seed("2020 코로나 폭락", PlutoEpisodeKind.Panic, 5500, -100, 300, 600, -3000, -70, t);
-            Seed("2020-21 유동성 장세", PlutoEpisodeKind.Liquidity, 2200, 10, -200, -300, 800, 40, t);
-            Seed("2022 금리 인상 하락장", PlutoEpisodeKind.Bear, 3000, 60, 300, 500, -900, -40, t);
-            Seed("2024 AI 랠리", PlutoEpisodeKind.Bull, 1400, 5, 50, 100, 600, 50, t);
-            Seed("2015-16 박스권", PlutoEpisodeKind.Range, 1800, 0, 0, 50, 0, 0, t);
-            Seed("2018 4분기 급락", PlutoEpisodeKind.Bear, 2800, -20, 100, 200, -1300, -30, t);
-            Seed("2017 저변동 상승", PlutoEpisodeKind.Bull, 1100, 5, -100, -100, 300, 30, t);
+            for (int id = 1; id <= PlutoRegimeVectorLake.Count; id++)
+            {
+                var c = PlutoRegimeVectorLake.Get(id)!;
+                var raw = c.Raw;
+                Remember(c.Name, c.Kind, in raw, isSeed: true);
+            }
         }
 
-        private void Seed(string name, PlutoEpisodeKind kind, int vix, int us10y, int dxy, int krw, int trend, int sentiment, long t) =>
-            Remember(name, kind, new PlutoMacroSnapshot(PlutoMacroField.All, vix, us10y, dxy, krw, trend, sentiment, t), isSeed: true);
-
         /// <summary>
-        /// 관측 vs 에피소드 유사도(0~100). 공통 차원 = 관측 마스크 ∩ 에피소드 마스크 · 2차원 미만 = −1(판정 불가). dims = 사용 차원 수.
+        /// 관측 vs 에피소드 유사도(0~100 · 레이크 결합 척도 % 반올림). 공통 차원 = 관측 마스크 ∩ 에피소드 마스크 · 2차원 미만 = −1(판정 불가). dims = 사용 차원 수.
         /// </summary>
         public static int Similarity(in PlutoMacroSnapshot observed, in PlutoMacroSnapshot episode, out int dims)
         {
-            var common = observed.Fields & episode.Fields;
-            double sum = 0;
-            dims = 0;
-            if ((common & PlutoMacroField.Vix) != 0) { sum += Sq(observed.VixX100 - episode.VixX100, VixScaleX100); dims++; }
-            if ((common & PlutoMacroField.Us10y) != 0) { sum += Sq(observed.Us10yChangeBp - episode.Us10yChangeBp, Us10yScaleBp); dims++; }
-            if ((common & PlutoMacroField.Dollar) != 0) { sum += Sq(observed.DollarIndexChangeBp - episode.DollarIndexChangeBp, DollarScaleBp); dims++; }
-            if ((common & PlutoMacroField.UsdKrw) != 0) { sum += Sq(observed.UsdKrwChangeBp - episode.UsdKrwChangeBp, UsdKrwScaleBp); dims++; }
-            if ((common & PlutoMacroField.EquityTrend) != 0) { sum += Sq(observed.EquityTrendBp - episode.EquityTrendBp, TrendScaleBp); dims++; }
-            if ((common & PlutoMacroField.Sentiment) != 0) { sum += Sq(observed.SentimentIndex - episode.SentimentIndex, SentimentScale); dims++; }
-            if (dims < MinDimensions) return -1;
-            return (int)Math.Round(100 * Math.Exp(-sum / dims));
-        }
-
-        private static double Sq(int diff, double scale)
-        {
-            double z = diff / scale;
-            return z * z;
+            int x10 = PlutoRegimeVectorLake.SimilarityX10(in observed, in episode, out dims, out _, out _);
+            return x10 < 0 ? -1 : (x10 + 5) / 10;
         }
 
         /// <summary>가장 유사한 에피소드(δ=0). 기억 0건 · 공통 차원 부족 = default(Found false). 동률 = 먼저 등록된 에피소드.</summary>

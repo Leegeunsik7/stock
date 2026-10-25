@@ -3,6 +3,7 @@
 //
 //   호스트 어댑터가 학습 스웜 상태 스냅샷을 이 DTO 로 옮긴다. UI 는 엔진을 new 하지 않는다.
 //   수집 상태 코드(PlutoLearningHealth) = 0 미결선/관측 전 · 1 실시간 연동 중 · 2 직전 안정값 유지(지연) — 미상 값 = 미결선(fail-closed 표시).
+//   [v12.18.82-DEV] 12대 역사적 국면 판정(RegimeName · RegimeSimilarityX10(0~1000) · RegimeNote 해설 · RegimeEffect 전략/편향 문구) — 호스트가 한국어 문자열로 옮긴다.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -31,13 +32,22 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>
     /// 학습 상태 1건. Running = 백그라운드 스웜 가동 · Health = PlutoLearningHealth · EpisodeName/SimilarityPct = 최근접 과거 국면(null = 판정 불가) ·
     /// EpisodeIsSeed = 시드 근사 에피소드 · Generation = 가중치 핫스왑 세대(0 = 학습 전 중립) · MomentumTiltPct/DevilStrictnessPts = 현재 학습 가중치 ·
-    /// Samples = 누적 청산 회고 표본 · Swaps/RejectedSwaps = 섀도우 게이트 통과/거부 누계.
+    /// Samples = 누적 청산 회고 표본 · Swaps/RejectedSwaps = 섀도우 게이트 통과/거부 누계 ·
+    /// [v12.18.82-DEV] RegimeName/RegimeSimilarityX10 = 12대 역사적 국면 판정(null/−1 = 판정 전) · RegimeNote = 기간·해설 · RegimeEffect = 전략·가중치 편향 문구.
     /// </summary>
     public readonly record struct PlutoLearningView(
         bool Running, int Health, string? EpisodeName, int SimilarityPct, bool EpisodeIsSeed,
-        long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps)
+        long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps,
+        string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null)
     {
         public bool HasMatch => EpisodeName is not null && SimilarityPct >= 0;
+
+        public bool HasRegime => RegimeName is not null && RegimeSimilarityX10 is >= 0 and <= 1000;
+
+        /// <summary>국면 뱃지: [🧠 과거 국면 매칭: {이름} (유사도 91.4%)] · 판정 전 = "[🧠 과거 국면 매칭: 판정 전]".</summary>
+        public string RegimeBadgeText => HasRegime
+            ? $"[🧠 과거 국면 매칭: {RegimeName} (유사도 {RegimeSimilarityX10 / 10}.{RegimeSimilarityX10 % 10}%)]"
+            : "[🧠 과거 국면 매칭: 판정 전]";
 
         /// <summary>뱃지 문구: 🧠 글로벌 학습 상태: {상태} (과거 국면 유사도: {이름} {n}%).</summary>
         public string BadgeText

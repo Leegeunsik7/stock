@@ -65,6 +65,7 @@
     {
         var lv = Learning.Current;
         <span class="da-badge da-learn @(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" data-learn="@(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" title="표본 @(lv.Samples) · 핫스왑 @(lv.Swaps) · 섀도우 거부 @(lv.RejectedSwaps)">@lv.BadgeText</span>
+        <span class="da-badge da-regime @(lv.HasRegime ? "on" : "none")" data-regime="@(lv.HasRegime ? lv.RegimeSimilarityX10 : -1)" title="@(lv.RegimeNote ?? "관측 2차원 이상 수집 후 12대 역사적 국면 판정")">@(lv.RegimeEffect is null ? lv.RegimeBadgeText : lv.RegimeBadgeText + " " + lv.RegimeEffect)</span>
         <span class="da-badge da-learn-w" data-gen="@lv.Generation">학습 세대 @(lv.Generation) · 모멘텀 @(lv.MomentumTiltPct >= 0 ? "+" : "")@(lv.MomentumTiltPct)% · 엄격도 @(lv.DevilStrictnessPts >= 0 ? "+" : "")@(lv.DevilStrictnessPts)점</span>
     }
     else
@@ -1103,6 +1104,7 @@ else
     .da-copy-persist.none { background: #3a3f4b; color: #bbb; }
     .da-learn.live { background: #1a237e; color: #fff; } .da-learn.stale { background: #4e342e; color: #ffcc80; } .da-learn.none { background: #3a3f4b; color: #bbb; }
     .da-learn-w { background: #212836; color: #b0bec5; font-weight: 400; }
+    .da-regime.on { background: #311b92; color: #ede7f6; } .da-regime.none { background: #3a3f4b; color: #bbb; }
     .da-reco { margin: 8px 0; }
     .da-reco-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .da-reco-tab { background: #212836; color: #b0bec5; border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px 10px; cursor: pointer; }

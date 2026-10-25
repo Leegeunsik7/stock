@@ -1,12 +1,12 @@
 # STATUS
 
-- **Active Milestone**: v12.18.81-GM — 플루토 스웜 US 레인 실피드(KIS 해외 일봉) + 완료 기준 1,150ms 페이싱 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 오중 Release -warnaserror 0W/0E · WebOnly 0W/0E · 5,540 통과 / 9 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.82-DEV — 플루토 에피소딕 기억 고도화(12대 역사적 경제 사이클 레짐 벡터 레이크 + 무할당 seqlock 국면 판정기)
+- **Build Status**: 오중 Release -warnaserror 0W/0E(Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 5,550 통과 / 9 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-25
 - **Completed Deliverables**:
-  - 버전 12.18.81 승격(afd8c01) · 태그 v12.18.81-GM · 클린 worktree release-package.ps1 -NoPeer [0/11]~[11/11] 원패스
-  - 감사 봉인본 release-v12.18.81-GM.zip(F36CD668…) · 배포본 Standalone-win-x64.zip(DF636AC2…) · masterSeal F1D18F7B…
-  - 봉인 바이너리 38 ↔ 배포본 SHA-256 38/38 일치 · 격리 기동 HWND 실측
-  - CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) exit 0 · liveArmed:false
-  - v12.18.80-GM 15종 → release/superseded-v12.18.80-GM/ 이관 · worktree 제거/prune · HANDOVER §196
-- **Next Milestone**: 차기 기능 마일스톤(v12.18.82-DEV) 지시 수령
+  - PlutoRegimeVectorLake: 12대 국면 × 6차원 정규화(−100~+100) · 코사인 × 유클리드 결합 유사도(0.1% 단위)
+  - PlutoRegimeMatcher: 스웜 게시 · 3대 아레나 δ=0 판독 · 유사도 ≥60% 국면 전략 → 거버너 가중치 편향(위험 국면 = 엄격도 강화)
+  - 근거 카드 '[🧠 과거 국면 매칭: … (유사도 nn.n%)]' · DualArenaPage .da-regime 뱃지 · 에피소딕 시드 8 → 12(같은 척도)
+  - 신규 테스트 10건(극단 장세 매칭 · 편향 · δ=0 10만 회 0B · 경합 찢어진 판독 0) · 사보타주 검출 확인 · HANDOVER §197
+  - liveArmed:false · 인터락 30 무변경 · QuantumVault 미접근
+- **Next Milestone**: 실 거시 피드 결선 시 국면 판정 실측 검증 또는 차기 지시 수령

@@ -144,6 +144,7 @@ namespace StockManager.Engines.Arena.Crypto
         private bool _microstructure;
         private int _govUs10yBp, _govDxyBp;
         private PlutoCognitiveWeightSeqlock? _learning;
+        private PlutoRegimeMatcher? _regimeMatcher;                         // [v12.18.82-DEV] 12대 역사적 국면 판정기(Track B 게시 · 정산 스레드 δ=0 판독)
         private PlutoSizerState _sizer;
         private long _govApproved, _govPanic, _govCooldown, _govVeto;
         private PlutoGovernorStats _govSnap;
@@ -205,6 +206,11 @@ namespace StockManager.Engines.Arena.Crypto
         public void AttachLearning(PlutoCognitiveWeightSeqlock weights) => Volatile.Write(ref _learning, weights ?? throw new ArgumentNullException(nameof(weights)));
 
         public bool LearningAttached => Volatile.Read(ref _learning) is not null;
+
+        /// <summary>[v12.18.82-DEV] 역사적 국면 판정기 결속(Track B 스웜이 게시 · 정산 스레드는 seqlock 판독만 · 유사도 ≥ 60% 국면 전략 → 학습 가중치 편향 · δ=0).</summary>
+        public void AttachRegimeMatcher(PlutoRegimeMatcher matcher) => Volatile.Write(ref _regimeMatcher, matcher ?? throw new ArgumentNullException(nameof(matcher)));
+
+        public bool RegimeMatcherAttached => Volatile.Read(ref _regimeMatcher) is not null;
 
         public bool GovernanceEnabled => Volatile.Read(ref _governed);
 
@@ -806,8 +812,11 @@ namespace StockManager.Engines.Arena.Crypto
             ref Sym s = ref _syms[si];
             PlutoCognitiveWeights learned = default;
             Volatile.Read(ref _learning)?.TryRead(out learned);                 // [v12.18.77-DEV] Track A — 학습 가중치 스냅샷 판독(δ=0 · 미결선/경합 = 중립)
+            PlutoRegimeMatch history = default;
+            Volatile.Read(ref _regimeMatcher)?.TryRead(out history);               // [v12.18.82-DEV] 역사적 국면 판독(δ=0 · 미결선/경합 = 판정 전 · 편향 0)
+            learned = history.Bias(in learned);
             var r = PlutoCognitiveGovernor.Approve(in s.Regime, score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, EntryScore, s.BidQty, s.AskQty,
-                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance, cvdBearish, depthTrap, in learned);
+                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance, cvdBearish, depthTrap, in learned, in history);
             switch (r)
             {
                 case PlutoBlockReason.None: _govApproved++; return true;

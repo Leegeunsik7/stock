@@ -257,7 +257,7 @@ namespace StockManager.Tests.Cognitive
             var m = PlutoScreenMacro.FromLearning(swarm.Status);
             Assert.True(m.HasMatch);
             Assert.Equal(PlutoEpisodeKind.Bull, m.Kind);
-            Assert.Equal("2024 AI 랠리", m.EpisodeName);
+            Assert.Equal("2024 AI 유동성 랠리", m.EpisodeName);                // [v12.18.82-DEV] 12대 역사적 국면 레이크 시드
             Assert.Equal(100, m.SimilarityPct);
             Assert.True(m.EpisodeIsSeed);
         }
