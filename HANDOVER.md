@@ -4443,3 +4443,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): 실 거시/뉴스 피드 미결선(수집원 = 주입식 · 기본 네트워크 0 → 실기동 뱃지 = '수집원 미결선') · 에피소드 = 정성 시드(과거 시계열 적합 아님 · '수십 년 학습' 미구현) ·
   모멘텀 tilt 는 섀도우 재생 불가(점수 구성요소 미기록 → 세대당 상한 + 동반 게이트로만 제한) · 학습 가중치 비영속(재기동 = 중립) · 실 앱 뱃지 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false(가상 원장 진입 판정 입력뿐) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.
+
+## 191. v12.18.78-DEV — 플루토 멀티 마켓 스크리너 + AI 추천 종목 레이더(4대 팩터 0~100점 · 악마의 변호인 2건 탈락 · Top 5 불변 스냅샷 · 1-Click 아레나 담기 · δ=0) (2026-10-25)
+
+- 오더 전제 검증: 지명 신규 3종(PlutoMarketScreener · PlutoDiscoveryScorer · PlutoRecommendationSnapshot) · IPlutoRecommendationPort 부재 → 신규 작성(Engines/Cognitive/Screening/ · Ports/Trading/). 4대 팩터 = 기존 브레인 재사용
+  (밸류에이션 버퍼 · Technical 스퀴즈/POC · Microstructure CVD/뎁스 · Regime + Learning 에피소딕). ★'국내/미국 전 종목' 유니버스 실체 = KRX 아레나 시세 유니버스 · US 빅테크 5종(UsTechUniverse) — 시세 미수신 종목 날조 0 · 코스닥 별도 유니버스 없음.
+- 스코어러: 팩터별 0~25점((점수+100)×25/200) · 거시 = 종목 국면(상승 15 · 박스 8 · 판정 전 5 · 하락 2 · 패닉 0) + 에피소드(강세/유동성 5+유사도×5 · 약세/패닉 5−유사도×5 · 그 외 5).
+  ★판독 없는 팩터 = 0점(중립 12 아님 · fail-closed) · 판독 3종 전무 = '판독 부족' 제외 · 50점 미만 = '기준 미달' 제외.
+- 악마의 변호인 6종(고평가 · 볼밴 하단 이탈/POC 저항 · CVD 약세 · 15호가 매도벽/허매수 · 하락/패닉 국면 · 약세 과거 국면 유사도 ≥ 60%) — 2건 이상 = 자동 탈락 · 1건 = '감시 통과' 표기.
+- 스크리너(Track B · 30초 PeriodicTimer · 콜드): 시장별 유니버스 스캐너(PlutoArenaUniverse.Krx/Us = CopyQuotes × TryReadTechnical/Microstructure/RegimeOf × 밸류에이션 태그) →
+  순위(점수 ↓ → 반대 논리 수 ↑ → 종목 ↑ · 결정적) Top 5 → 근거 3줄(점수 높은 팩터 순) · 추천 수량 = 시작 자본 × PlutoDynamicSizer 비중(5~25%) ÷ 매도 1호가(내림) → 불변 스냅샷 원자 참조 교체(세대 +1). 장애 = Faulted 계수 · 직전 스냅샷 유지.
+- 스냅샷/보드: 방어 복사 · 게시 후 변이 0 · TryFind(시장 · 종목) = 최대 5칸 선형 탐색(δ=0 · 잠금 0). 아레나 엔진 정산 경로 무변경(현재 추천 데이터 소비자 = UI 뿐 · 핫패스 조회 API 만 제공·검증).
+- 호스트: `Pluto.ScreenerEnabled`(기본 켜짐 · 순수 인메모리 · 네트워크 0) · 거시 = 학습 스웜 Status(학습 비활성 = 판정 전) · 비활성 = UnwiredPlutoRecommendationPort.
+- UI: IPlutoRecommendationPort(순수 DTO · RCL · 엔진 참조 0) → DualArenaPage [🌟 플루토 오늘의 AI 추천 종목] 패널(국내/미국 탭 · 활성 모드 추종) · 카드 = 종목명/코드 · 점수 뱃지(≥75 강력/≥60 추천/관심) ·
+  4대 팩터 칩 · 근거 3줄 · 목표 안전마진(시드 프로필 표기) · 악마의 변호인 판정 · [👤 1-Click 아레나 담기] = 해당 모드 전환 + 휴먼 티켓 종목 · 추천 수량 바인딩만(접수 = 기존 매수 버튼 → SubmitHuman · 수량 0 = 비활성).
+- 테스트 StockManager.Tests/Cognitive/PlutoMarketScreenerTests.cs 29건(Theory 14 포함): 투영/에피소드 점수 · 판독 없음 0점 · 반대 논리 6종/2건 탈락 · Top5 순위/동점/집계/오배선 · 근거 3줄/자리채움 · 추천 수량 ·
+  루프 장애 생존 · 스냅샷 방어 복사/TryFind · 학습 거시 투영 · KRX 합성 시세×시드 밸류에이션 유니버스(추천 ⊂ 시세) · 어댑터 투영/캐시 · 페이지 결선/미결선/빈 목록 · 1-Click KRX/US 티켓 바인딩 · 호스트 결선 문자열 ·
+  δ=0: 동시 게시 중 TryFind 10만 = 0B · 찢어진 판독 0 · 스크리너 동시 스캔 중 KRX 정산 10만 = 0B(MinAllocated · Release).
+  기존 테스트 갱신: DualArenaPage 주입 목록(+IPlutoRecommendationPort) · bUnit 호스트 10곳 Unwired 등록.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,452 통과 + 7 건너뜀(옵트인) · 실패 0 · 5분 53초(기존 5,423 + 신규 29) · infra-scan 0(기준 117) · 래칫/PureShell 통과(≤40 · 신규 결합 0).
+- 한계(정직): 유니버스 = 아레나 시세 종목뿐(KRX 아레나 · US 5종 · 코스닥/나스닥 전 종목 스캔 아님) · 안전마진 = 시드 재무 프로필 10종(그 외 종목 = 판독 없음 0점) · 기술/수급 = 워밍업 전 0점 →
+  기동 직후 추천이 비거나 적을 수 있음('근거 없는 추천은 내지 않습니다' 정직 렌더) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(추천 = UI 카드 · 담기 = 티켓 상태만) · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.

@@ -27,13 +27,16 @@
    [v12.18.72-DEV] 자동 미러링 영속화: 토글/배율 성공 → IArenaPreferencePort.SaveAutoCopyAsync(모드 = 아레나 식별자 · 비동기 · UI 무차단) → 재기동 시 호스트가
      같은 키로 3대 카피 엔진 복원. 배율 버튼 = 활성 모드 엔진 배율과 동기화(기동 · 모드 전환). 모드별 저장 상태 뱃지(💾 저장됨 / 저장 중 / 저장 실패 / 미결선).
    [v12.18.77-DEV] 플루토 지속 학습: 거버너 바에 [🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 이름 n%)] 뱃지 + 학습 세대 · 가중치 칩.
-     IPlutoLearningPort 직접 주입(학습 비활성 호스트 = UnwiredPlutoLearningPort → '학습 엔진 미결선' 정직 렌더). 판독 전용(주문 경로 무변경). *@
+     IPlutoLearningPort 직접 주입(학습 비활성 호스트 = UnwiredPlutoLearningPort → '학습 엔진 미결선' 정직 렌더). 판독 전용(주문 경로 무변경).
+   [v12.18.78-DEV] [🌟 플루토 오늘의 AI 추천 종목] 패널: 국내/미국 탭 · 카드(종목명/코드 · 점수 뱃지 · 4대 팩터 칩 · 핵심 근거 3줄 · 악마의 변호인 판정 · 목표 안전마진) ·
+     [👤 1-Click 아레나 담기] = 해당 모드로 전환 + 휴먼 티켓 종목 · 추천 수량만 채움(접수 = 기존 매수 버튼 → SubmitHuman). IPlutoRecommendationPort 직접 주입(미결선 = 정직 렌더). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
 @inject ICryptoArenaPort CryptoPort
 @inject IArenaPreferencePort Prefs
 @inject IPlutoLearningPort Learning
+@inject IPlutoRecommendationPort Reco
 
 <div class="top">
     <div class="hello">
@@ -66,6 +69,59 @@
     {
         <span class="da-badge da-learn none" data-learn="unwired">🧠 글로벌 학습 상태: 학습 엔진 미결선</span>
     }
+</div>
+
+@{
+    var rb = Reco.Current;
+    int rtab = _recoTab >= 0 ? _recoTab : _mode == ModeUs ? PlutoRecoMarket.Us : PlutoRecoMarket.Krx;
+    var rm = rb.Of(rtab);
+}
+<div class="ar-card da-reco" data-reco="@(Reco.IsWired ? "wired" : "unwired")">
+    <div class="da-reco-head">
+        <h3>🌟 플루토 오늘의 AI 추천 종목 <small>안전마진 · 스퀴즈/POC · CVD/뎁스 · 거시 적합도 4대 팩터 0~100점 · 반대 논리 2건 이상 자동 탈락 · 가상 원장 전용</small></h3>
+        <div class="da-reco-tabs" role="tablist">
+            <button class="da-reco-tab @(rtab == PlutoRecoMarket.Krx ? "on" : "")" role="tab" data-reco-tab="krx" @onclick="() => _recoTab = PlutoRecoMarket.Krx">@PlutoRecoMarket.Label(PlutoRecoMarket.Krx) (@(rb.Krx.Cards.Count))</button>
+            <button class="da-reco-tab @(rtab == PlutoRecoMarket.Us ? "on" : "")" role="tab" data-reco-tab="us" @onclick="() => _recoTab = PlutoRecoMarket.Us">@PlutoRecoMarket.Label(PlutoRecoMarket.Us) (@(rb.Us.Cards.Count))</button>
+        </div>
+    </div>
+    @if (!Reco.IsWired)
+    {
+        <div class="ar-sub da-reco-empty">추천 엔진 미결선 — 스크리너가 가동되지 않은 호스트입니다(설정 Pluto.ScreenerEnabled).</div>
+    }
+    else if (rb.Generation == 0)
+    {
+        <div class="ar-sub da-reco-empty">첫 스캔 대기 중 — 아레나 시세 유니버스를 30초 주기로 판독합니다.</div>
+    }
+    else
+    {
+        <div class="ar-sub da-reco-tally" data-gen="@rb.Generation">스캔 @(rm.Scanned)종목 · 😈 악마의 변호인 탈락 @(rm.Vetoed) · 판독 부족 @(rm.Insufficient) · 기준(50점) 미달 @(rm.BelowThreshold) · 세대 #@(rb.Generation)@(rb.UpdatedUtc is { } ru ? " · " + ru.AddHours(9).ToString("HH:mm:ss") + " KST" : "")</div>
+        @if (rm.Cards.Count == 0)
+        {
+            <div class="ar-sub da-reco-empty">추천 기준을 통과한 종목이 없습니다 — 근거 없는 추천은 내지 않습니다.</div>
+        }
+        <div class="da-reco-cards">
+        @foreach (var rc in rm.Cards)
+        {
+            <div class="da-reco-card" data-code="@rc.Code">
+                <div class="da-card-head">
+                    <span class="ar-sub">#@(rc.Rank)</span>
+                    <b class="da-name">@rc.Name</b> <span class="ar-sub">@rc.Code · @rc.PriceText</span>
+                    <span class="da-badge da-reco-score @rc.ScoreCss" data-score="@rc.Score">@(rc.Score)점 · @rc.ScoreLabel</span>
+                </div>
+                <div class="da-reco-pts">
+                    <span title="펀더멘털 안전마진">💎 @(rc.ValuationPts)</span><span title="볼밴 스퀴즈 · POC">📐 @(rc.TechnicalPts)</span><span title="CVD · 호가 뎁스">📊 @(rc.MicroPts)</span><span title="국면 · 과거 유사 국면">🌐 @(rc.MacroPts)</span>
+                </div>
+                <ol class="da-reco-reasons">
+                    @foreach (var reason in rc.Reasons) { <li>@reason</li> }
+                </ol>
+                <div class="da-reco-mos">@rc.MosText</div>
+                <div class="da-reco-devil @(rc.CounterCount == 0 ? "pass" : "watch")" data-devil="@rc.CounterCount">@rc.CounterText</div>
+                <button class="ar-btn da-reco-load" disabled="@(rc.RecommendedQty <= 0)" @onclick="() => LoadReco(rc)">👤 1-Click 아레나 담기 (@(rc.RecommendedQty.ToString("N0"))주)</button>
+            </div>
+        }
+        </div>
+    }
+    @if (_recoMsg is not null) { <span class="ar-msg da-reco-msg">@_recoMsg</span> }
 </div>
 
 @if (_copyMsg is not null)
@@ -544,6 +600,9 @@ else
     private string? _market;
     private decimal _coinQty = 0.001m;
     private string? _cryptoMsg;
+    // [v12.18.78-DEV] 추천 패널 상태(탭 −1 = 활성 모드 추종 · 메시지 = 마지막 1-Click 담기 결과)
+    private int _recoTab = -1;
+    private string? _recoMsg;
     // [v12.18.71-DEV] 카피 트레이딩 상태(배율 = 따라하기 · 자동 미러링 공용 · 토스트 = 마지막 1-클릭 결과)
     private decimal _copyRatio = 1.0m;
     private string? _copyMsg;
@@ -566,6 +625,28 @@ else
         _msg = r == KrxArenaReject.None
             ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결"
             : "접수 거부: " + KrxArenaReject.Label(r);
+    }
+
+    // [v12.18.78-DEV] 1-Click 아레나 담기 = 해당 모드 전환 + 휴먼 티켓 종목 · 추천 수량 바인딩만(접수 0 — 사용자가 매수 버튼으로 확정).
+    private void LoadReco(PlutoRecommendationCard c)
+    {
+        if (c.RecommendedQty <= 0) { _recoMsg = "담기 불가: 추천 수량 0주(자본 대비 1주 가격 초과)"; return; }
+        if (c.Market == PlutoRecoMarket.Us)
+        {
+            SetMode(ModeUs);
+            _ticker = c.Code;
+            _usQty = c.RecommendedQty;
+            _usMsg = "🌟 플루토 추천 담기: " + c.Code + " " + c.RecommendedQty.ToString("N0") + "주 — 매수 버튼으로 접수";
+        }
+        else
+        {
+            SetMode(ModeKrx);
+            _symbol = c.Symbol;
+            _qty = c.RecommendedQty;
+            _msg = "🌟 플루토 추천 담기: " + c.Name + " " + c.RecommendedQty.ToString("N0") + "주 — 매수 버튼으로 접수";
+        }
+        _recoTab = c.Market;
+        _recoMsg = "🌟 " + c.Name + "(" + c.Code + ") " + c.RecommendedQty.ToString("N0") + "주 → " + PlutoRecoMarket.Label(c.Market) + " 휴먼 티켓에 담았습니다";
     }
 
     // 모드 전환 = 표시 대상 포트만 바꾼다(각 원장은 자기 엔진에 그대로 · 그려진 버전 무효화 → 새 모드 첫 폴링에서 다시 그린다).
@@ -985,6 +1066,18 @@ else
     .da-copy-persist.none { background: #3a3f4b; color: #bbb; }
     .da-learn.live { background: #1a237e; color: #fff; } .da-learn.stale { background: #4e342e; color: #ffcc80; } .da-learn.none { background: #3a3f4b; color: #bbb; }
     .da-learn-w { background: #212836; color: #b0bec5; font-weight: 400; }
+    .da-reco { margin: 8px 0; }
+    .da-reco-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .da-reco-tab { background: #212836; color: #b0bec5; border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    .da-reco-tab.on { background: #1a237e; color: #fff; border-color: #5c6bc0; }
+    .da-reco-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; margin-top: 6px; }
+    .da-reco-card { background: #1b2030; border: 1px solid #2c3446; border-radius: 8px; padding: 8px 10px; }
+    .da-reco-score.hot { background: #E53935; color: #fff; } .da-reco-score.good { background: #ef6c00; color: #fff; } .da-reco-score.ok { background: #3a3f4b; color: #ddd; }
+    .da-reco-pts span { display: inline-block; margin-right: 10px; color: #b0bec5; }
+    .da-reco-reasons { margin: 6px 0; padding-left: 18px; font-size: 0.92em; }
+    .da-reco-mos { color: #ffcc80; font-size: 0.92em; }
+    .da-reco-devil { font-size: 0.9em; margin: 4px 0; } .da-reco-devil.pass { color: #a5d6a7; } .da-reco-devil.watch { color: #ffcc80; }
+    .da-reco-load { margin-top: 4px; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }

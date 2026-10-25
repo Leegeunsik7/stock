@@ -219,6 +219,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new UpbitCryptoArenaEngine()));
             ctx.Services.AddSingleton(prefs);
             ctx.Services.AddSingleton<IPlutoLearningPort>(UnwiredPlutoLearningPort.Instance);   // [v12.18.77-DEV] 학습 엔진 미결선
+            ctx.Services.AddSingleton<IPlutoRecommendationPort>(UnwiredPlutoRecommendationPort.Instance);   // [v12.18.78-DEV] 추천 엔진 미결선
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 

@@ -1791,6 +1791,7 @@ namespace StockManager.Blazor
             // [v12.18.77-DEV] 플루토 지속 학습 2-트랙 — Track B 스웜(글로벌 거시/감성 수집 → 역사적 국면 연상 → 청산 회고 가중치 자가 보정 → 섀도우 검증 → seqlock 핫스왑) ·
             //   Track A = 3대 아레나 정산 스레드가 AttachLearning seqlock 만 판독(δ=0). `Pluto.LearningEnabled`(기본 켜짐 · 순수 인메모리 · 네트워크 0) ·
             //   `Pluto.MacroFeedUrl`(기본 빈 값 = 수집원 미결선 → UI '수집원 미결선' 정직 렌더 · https 만) — 가상 원장 진입 판정 입력만(송출 경로 0).
+            StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm? plutoLearningRef = null;   // [v12.18.78-DEV] 스크리너 거시 적합도 입력(학습 비활성 = null → 판정 전)
             if (cfg.GetBool("Pluto.LearningEnabled", true))
             {
                 var plutoWeights = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock();
@@ -1821,6 +1822,7 @@ namespace StockManager.Blazor
                 services.AddSingleton(plutoMemory);
                 services.AddSingleton(plutoSwarm);
                 services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm));
+                plutoLearningRef = plutoSwarm;
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);
             // [v12.18.65-DEV] 플루토 밸류에이션(오더상 브레인 2단계 · 피더 2단계 §170 와 별개) — 재무 프로필 → 적정가 · 안전마진 · 등급 평가(콜드 · 부트 1회) → seqlock 버퍼 → 양 아레나 호가 재판정(δ=0).
@@ -1842,6 +1844,26 @@ namespace StockManager.Blazor
             krxArena.EnableMicrostructure(true);
             usArena.EnableMicrostructure(true);
             cryptoArena.EnableMicrostructure(true);
+            // [v12.18.78-DEV] 플루토 멀티 마켓 스크리너 — 국내(KRX 아레나 시세 유니버스) · 미국(US 아레나 유니버스) × 4대 팩터(안전마진 · 스퀴즈/POC · CVD/뎁스 · 거시 적합도) 0~100점 →
+            //   악마의 변호인(반대 논리 ≥ 2 탈락) → 시장별 Top 5 불변 스냅샷(원자 교체 · 핫패스 조회 δ=0). Track B 30초 주기 · 콜드 · 네트워크 0 · 주문 수단 0(liveArmed:false).
+            //   `Pluto.ScreenerEnabled`(기본 켜짐) · 비활성 = UnwiredPlutoRecommendationPort('추천 엔진 미결선' 정직 렌더).
+            if (cfg.GetBool("Pluto.ScreenerEnabled", true))
+            {
+                var plutoRecoBoard = new StockManager.Engines.Cognitive.Screening.PlutoRecommendationBoard();
+                var learningForScreener = plutoLearningRef;
+                var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,
+                    () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status));
+                plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Krx,
+                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer), krxArena.CapitalWon);
+                plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us,
+                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Us(usArena, plutoValuationBuffer), usArena.CapitalCents);
+                plutoScreener.Start(TimeSpan.FromSeconds(30));
+                FormClosed += (_, _) => ShutdownTrace.Step("plutoScreener", plutoScreener.Dispose);
+                services.AddSingleton(plutoRecoBoard);
+                services.AddSingleton(plutoScreener);
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoRecommendationPort>(new StockManager.Adapters.PlutoRecommendationPortAdapter(plutoScreener));
+            }
+            else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoRecommendationPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoRecommendationPort.Instance);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.
             // AI = 정량 시그널 엔진 전용 인스턴스(무장 미결속) · 게시 = 허브 50ms 펌프 요청. 브로커 경로 0.
             var arenaReplay = new StockManager.Engines.Arena.ArenaTickReplayEngine(() => StockManager.Engines.Arena.SyntheticTickSource.Create(1_000_000));

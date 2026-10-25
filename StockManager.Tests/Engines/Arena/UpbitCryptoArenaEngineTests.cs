@@ -755,6 +755,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(e, f));
             ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);   // [v12.18.69-DEV] 토글 영속화 포트(저장소 미결선 null 객체)
             ctx.Services.AddSingleton<IPlutoLearningPort>(UnwiredPlutoLearningPort.Instance);   // [v12.18.77-DEV] 학습 엔진 미결선
+            ctx.Services.AddSingleton<IPlutoRecommendationPort>(UnwiredPlutoRecommendationPort.Instance);   // [v12.18.78-DEV] 추천 엔진 미결선
             var cut = ctx.RenderComponent<MS2E.UI.Portable.Pages.Trading.DualArenaPage>();
             Assert.Empty(cut.FindAll(".da-crypto"));
 

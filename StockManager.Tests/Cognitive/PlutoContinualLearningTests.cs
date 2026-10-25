@@ -578,6 +578,7 @@ namespace StockManager.Tests.Cognitive
                 ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new UpbitCryptoArenaEngine()));
                 ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);
                 ctx.Services.AddSingleton(port);
+                ctx.Services.AddSingleton<IPlutoRecommendationPort>(UnwiredPlutoRecommendationPort.Instance);   // [v12.18.78-DEV] 추천 엔진 미결선
                 var cut = ctx.RenderComponent<DualArenaPage>();
                 var badge = cut.Find(".da-learn");
                 Assert.Equal(expected, badge.TextContent.Trim());
