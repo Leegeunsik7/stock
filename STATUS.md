@@ -1,12 +1,12 @@
 # STATUS
 
-- **Active Milestone**: v12.18.80-DEV — 플루토 병렬 학습 스웜 + 실데이터 우선(업비트 공개 REST 120종 · KIS 구성 시 KRX) + 420슬롯 매트릭스
-- **Build Status**: 오중 Release -warnaserror 0W/0E · 5,503 통과 / 8 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.80-GM — 플루토 병렬 학습 스웜 + 실데이터 우선 420슬롯 레이크 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
+- **Build Status**: 오중 Release -warnaserror 0W/0E · 5,503 통과 / 8 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40 · release-package [0/11]~[11/11] exit 0
 - **Updated At**: 2026-10-25
 - **Completed Deliverables**:
-  - PlutoParallelLearningSwarm(시장별 전용 스레드 BelowNormal · Channels 유계 DropOldest · CPU 듀티 25% · 429 = 스윕 중단/쿨다운 · 재시도 0)
-  - UpbitPublicCandleSource(키 불필요 · 1분봉/체결/15호가 · 초당 8회 이하 · Utf8JsonReader) · KisDailyBarSource(KIS 구성 시에만)
-  - PlutoUniverseMatrixBoard(420슬롯 seqlock · δ=0 조회) · PlutoMultiAssetDataLake(슬롯 × 200봉) · PlutoBarFactorBuilder
-  - 미결선 레인 = '감시 중 · 실피드 연결 대기'(합성 점수 0) · 아레나 합성 데모 시세 추천 제외 게이트
-  - DualArenaPage 스웜 뱃지/레인 칩 · 신규 테스트 26건 + 옵트인 실측 1건(BTC/ETH/XRP 200봉 · 15호가) · HANDOVER §193
-- **Next Milestone**: US 실피드(KIS 해외 일봉 · 거래소 코드 매핑) 결선 또는 v12.18.80-GM 출하
+  - 버전 12.18.80 승격(4파일 · 32d6af7) · 태그 v12.18.80-GM · 클린 worktree 패키징 후 제거
+  - release-v12.18.80-GM.zip(F056DE6E…) · StockManager-v12.18.80-Standalone-win-x64.zip(3377D35F…) · masterSeal 5BBF67E8…
+  - 봉인 38 바이너리 ↔ 배포본 SHA-256 38/38 일치 · 격리 기동 HWND 실측
+  - CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) exit 0 · liveArmed:false
+  - v12.18.76-GM 15종 → release/superseded-v12.18.76-GM/ · HANDOVER §194
+- **Next Milestone**: US 실피드(KIS 해외 일봉 · 거래소 코드 매핑) 결선

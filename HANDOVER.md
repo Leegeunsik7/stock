@@ -4512,3 +4512,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 한계(정직): US 실피드 0(KIS 해외 일봉 · 거래소 코드 매핑 필요) · KRX = KIS 키 구성 PC 에서만 · 업비트 전수 1회 ≈ 117종 × 3 GET ÷ 8/s ≈ 45초 + 스로틀 · CVD = 최근 체결 200건(대형 코인은 3분 미만 → CVD 미성숙 · 뎁스만) ·
   국면 = 판정 전(봉 기반 국면 분류 미구현) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false(시세 GET 만) · 인터락 무변경 · QuantumVault/피어 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미수정/미스테이징 · 원격 푸시 없음.
+
+## 194. v12.18.80-GM — 플루토 병렬 학습 스웜 + 실데이터 우선 420슬롯 레이크 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-25)
+
+- v12.18.80-DEV(§193) = 0048237. 12.18.76 → 12.18.80(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/줄바꿈 유지) =
+  32d6af7(4파일 · 11/11 줄) · 태그 v12.18.80-GM -f. 빌드 서버 종료 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,503 통과 + 8 건너뜀(옵트인) · 실패 0(Offline_1M 스위트 내 통과) · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40(2/2) ·
+  [6/11] liveArmed:false 소스 가드(마스터 플래그 1) · [7/11] 봉인 38 아티팩트 · verify-seal 앵커 일치 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal 5BBF67E8… ·
+  verify-live-armed(조회 지점 21 · Tighten 6 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 2920 · HWND 0xA0BC6 실측(기동 실패 = Remove-ReleaseOutputs 전량 폐기 경로).
+- 산출물: release-v12.18.80-GM.zip(F056DE6E…) · StockManager-v12.18.80-Standalone-win-x64.zip(3377D35F…) · master-seal.txt · RELEASE_MANIFEST.json · manifest.sig 외 15종.
+  사후 독립 대조: 봉인 항목 40(바이너리 38) ↔ 배포본 동명 항목 SHA-256 38/38 일치 · 불일치/누락 0.
+- 이관: 메인 release/ 의 v12.18.76-GM 15종 → release/superseded-v12.18.76-GM/. 신규 15종 메인 release/ 복사(zip SHA-256 2종 .sha256 기록 일치).
+- 태그 빌드 CLI 독립 재수검(동사 args[0] · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 플루토 병렬 스웜 + 업비트 공개 REST 실데이터 레인 포함 · KRX 레인은 KIS 구성 시에만 · US 레인 실피드 미결선('실피드 연결 대기') · liveArmed:false ·
+  인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
