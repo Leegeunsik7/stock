@@ -25,12 +25,15 @@
      AI 근거 카드 [👤 따라사기]/[👤 따라팔기] · 청산 저널 행 [👤 따라팔기] = FollowAiTrade(근거 순번 · 배율) → 결과 토스트 배지(성공/거부 사유) ·
      자동 미러링 최근 결과 배지(CopyTrading). 국내/미국 = 시초가 개장 게이트 배지(동시호가 접수 · 단일가 체결 · 갭 거부권 · 종목 개장 갭). 목적지 = 휴먼 가상 원장뿐.
    [v12.18.72-DEV] 자동 미러링 영속화: 토글/배율 성공 → IArenaPreferencePort.SaveAutoCopyAsync(모드 = 아레나 식별자 · 비동기 · UI 무차단) → 재기동 시 호스트가
-     같은 키로 3대 카피 엔진 복원. 배율 버튼 = 활성 모드 엔진 배율과 동기화(기동 · 모드 전환). 모드별 저장 상태 뱃지(💾 저장됨 / 저장 중 / 저장 실패 / 미결선). *@
+     같은 키로 3대 카피 엔진 복원. 배율 버튼 = 활성 모드 엔진 배율과 동기화(기동 · 모드 전환). 모드별 저장 상태 뱃지(💾 저장됨 / 저장 중 / 저장 실패 / 미결선).
+   [v12.18.77-DEV] 플루토 지속 학습: 거버너 바에 [🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 이름 n%)] 뱃지 + 학습 세대 · 가중치 칩.
+     IPlutoLearningPort 직접 주입(학습 비활성 호스트 = UnwiredPlutoLearningPort → '학습 엔진 미결선' 정직 렌더). 판독 전용(주문 경로 무변경). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
 @inject ICryptoArenaPort CryptoPort
 @inject IArenaPreferencePort Prefs
+@inject IPlutoLearningPort Learning
 
 <div class="top">
     <div class="hello">
@@ -53,6 +56,16 @@
     <span class="ar-sub">국면 판정 · 악마의 변호인 감점 · 동적 비중 5~25% · 연패 쿨다운 — 3대 아레나 동시 적용(다음 정산부터 · 가상 원장 전용)</span>
     <span class="da-badge da-gov-persist @_persistCss" data-persist="@_persistCss">@_persistText</span>
     @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
+    @if (Learning.IsWired)
+    {
+        var lv = Learning.Current;
+        <span class="da-badge da-learn @(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" data-learn="@(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" title="표본 @(lv.Samples) · 핫스왑 @(lv.Swaps) · 섀도우 거부 @(lv.RejectedSwaps)">@lv.BadgeText</span>
+        <span class="da-badge da-learn-w" data-gen="@lv.Generation">학습 세대 @(lv.Generation) · 모멘텀 @(lv.MomentumTiltPct >= 0 ? "+" : "")@(lv.MomentumTiltPct)% · 엄격도 @(lv.DevilStrictnessPts >= 0 ? "+" : "")@(lv.DevilStrictnessPts)점</span>
+    }
+    else
+    {
+        <span class="da-badge da-learn none" data-learn="unwired">🧠 글로벌 학습 상태: 학습 엔진 미결선</span>
+    }
 </div>
 
 @if (_copyMsg is not null)
@@ -970,6 +983,8 @@ else
     .da-copy-persist.ok { background: #263238; color: #a5d6a7; }
     .da-copy-persist.bad { background: #6d4c41; color: #fff; }
     .da-copy-persist.none { background: #3a3f4b; color: #bbb; }
+    .da-learn.live { background: #1a237e; color: #fff; } .da-learn.stale { background: #4e342e; color: #ffcc80; } .da-learn.none { background: #3a3f4b; color: #bbb; }
+    .da-learn-w { background: #212836; color: #b0bec5; font-weight: 400; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }

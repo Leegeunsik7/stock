@@ -1788,6 +1788,41 @@ namespace StockManager.Blazor
             services.AddSingleton(plutoClock);
             services.AddSingleton(plutoBuffer);
             services.AddSingleton(plutoAnalyzer);
+            // [v12.18.77-DEV] 플루토 지속 학습 2-트랙 — Track B 스웜(글로벌 거시/감성 수집 → 역사적 국면 연상 → 청산 회고 가중치 자가 보정 → 섀도우 검증 → seqlock 핫스왑) ·
+            //   Track A = 3대 아레나 정산 스레드가 AttachLearning seqlock 만 판독(δ=0). `Pluto.LearningEnabled`(기본 켜짐 · 순수 인메모리 · 네트워크 0) ·
+            //   `Pluto.MacroFeedUrl`(기본 빈 값 = 수집원 미결선 → UI '수집원 미결선' 정직 렌더 · https 만) — 가상 원장 진입 판정 입력만(송출 경로 0).
+            if (cfg.GetBool("Pluto.LearningEnabled", true))
+            {
+                var plutoWeights = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock();
+                var plutoIngestor = new StockManager.Engines.Cognitive.Learning.PlutoGlobalDataIngestor();
+                var plutoMemory = new StockManager.Engines.Cognitive.Learning.PlutoEpisodicMemoryStore();
+                plutoMemory.SeedDefaults();
+                var plutoSwarm = new StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm(plutoIngestor, plutoMemory,
+                    new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator(), plutoWeights);
+                plutoSwarm.AddArena("krx", krxArena.CopyRationales);
+                plutoSwarm.AddArena("us", usArena.CopyRationales);
+                plutoSwarm.AddArena("crypto", cryptoArena.CopyRationales);
+                plutoSwarm.SetMacroSink((us10y, dxy) => { krxArena.SetMacroHeadwind(us10y, dxy); usArena.SetMacroHeadwind(us10y, dxy); cryptoArena.SetMacroHeadwind(us10y, dxy); });
+                krxArena.AttachLearning(plutoWeights);
+                usArena.AttachLearning(plutoWeights);
+                cryptoArena.AttachLearning(plutoWeights);
+                plutoSwarm.Start(TimeSpan.FromSeconds(5));
+                var macroCts = new System.Threading.CancellationTokenSource();
+                StockManager.Adapters.PlutoHttpMacroSource? macroSource = null;
+                string macroUrl = cfg.GetString("Pluto.MacroFeedUrl", "");
+                if (Uri.TryCreate(macroUrl, UriKind.Absolute, out var macroUri) && macroUri.Scheme == Uri.UriSchemeHttps)
+                {
+                    macroSource = new StockManager.Adapters.PlutoHttpMacroSource(macroUri);
+                    _ = Task.Run(() => plutoIngestor.RunAsync(macroSource, TimeSpan.FromMinutes(5), macroCts.Token));
+                }
+                FormClosed += (_, _) => ShutdownTrace.Step("plutoLearning", () => { macroCts.Cancel(); plutoSwarm.Dispose(); macroSource?.Dispose(); macroCts.Dispose(); });
+                services.AddSingleton(plutoWeights);
+                services.AddSingleton(plutoIngestor);
+                services.AddSingleton(plutoMemory);
+                services.AddSingleton(plutoSwarm);
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm));
+            }
+            else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);
             // [v12.18.65-DEV] 플루토 밸류에이션(오더상 브레인 2단계 · 피더 2단계 §170 와 별개) — 재무 프로필 → 적정가 · 안전마진 · 등급 평가(콜드 · 부트 1회) → seqlock 버퍼 → 양 아레나 호가 재판정(δ=0).
             //   실 재무 피드(DART · SEC EDGAR) 미결선 — 내장 시드 프로필 10종(근거 요약에 '시드 프로필' 표기 · 기준일 + 180일 경과 = 자동 만료 → 아레나 기존 동작).
             var plutoValuationBuffer = new StockManager.Engines.Cognitive.Valuation.PlutoValuationBuffer();

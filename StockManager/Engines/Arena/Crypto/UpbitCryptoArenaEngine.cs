@@ -42,6 +42,7 @@ using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena.Common;
 using StockManager.Engines.Brokers.Crypto;
 using StockManager.Engines.Cognitive.Governance;
+using StockManager.Engines.Cognitive.Learning;
 using StockManager.Engines.Cognitive.Microstructure;
 using StockManager.Engines.Cognitive.Regime;
 using StockManager.Engines.Cognitive.Technical;
@@ -142,6 +143,7 @@ namespace StockManager.Engines.Arena.Crypto
         private readonly PlutoMicrostructureFactor[] _microLast = new PlutoMicrostructureFactor[MaxSymbols];
         private bool _microstructure;
         private int _govUs10yBp, _govDxyBp;
+        private PlutoCognitiveWeightSeqlock? _learning;
         private PlutoSizerState _sizer;
         private long _govApproved, _govPanic, _govCooldown, _govVeto;
         private PlutoGovernorStats _govSnap;
@@ -198,6 +200,11 @@ namespace StockManager.Engines.Arena.Crypto
 
         /// <summary>[v12.18.67-DEV] 플루토 거버넌스 가동/정지(국면 · 악마의 변호인 · 동적 사이징 · 자가 회고 · 다음 정산부터 · 정지 = 기존 동작 동일).</summary>
         public void EnableGovernance(bool enabled) => Volatile.Write(ref _governed, enabled);
+
+        /// <summary>[v12.18.77-DEV] 플루토 지속 학습 가중치 결속(Track B 스웜이 핫스왑 · 정산 스레드는 seqlock 판독만 · δ=0).</summary>
+        public void AttachLearning(PlutoCognitiveWeightSeqlock weights) => Volatile.Write(ref _learning, weights ?? throw new ArgumentNullException(nameof(weights)));
+
+        public bool LearningAttached => Volatile.Read(ref _learning) is not null;
 
         public bool GovernanceEnabled => Volatile.Read(ref _governed);
 
@@ -797,8 +804,10 @@ namespace StockManager.Engines.Arena.Crypto
             bool pocResistance = false, bool cvdBearish = false, bool depthTrap = false)
         {
             ref Sym s = ref _syms[si];
+            PlutoCognitiveWeights learned = default;
+            Volatile.Read(ref _learning)?.TryRead(out learned);                 // [v12.18.77-DEV] Track A — 학습 가중치 스냅샷 판독(δ=0 · 미결선/경합 = 중립)
             var r = PlutoCognitiveGovernor.Approve(in s.Regime, score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, EntryScore, s.BidQty, s.AskQty,
-                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance, cvdBearish, depthTrap);
+                Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance, cvdBearish, depthTrap, in learned);
             switch (r)
             {
                 case PlutoBlockReason.None: _govApproved++; return true;

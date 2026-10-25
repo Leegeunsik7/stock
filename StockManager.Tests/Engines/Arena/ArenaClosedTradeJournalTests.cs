@@ -113,6 +113,7 @@ namespace StockManager.Tests.Engines.Arena
             ctx.Services.AddSingleton(us);
             ctx.Services.AddSingleton(crypto);
             ctx.Services.AddSingleton<IArenaPreferencePort>(UnwiredArenaPreferencePort.Instance);
+            ctx.Services.AddSingleton<IPlutoLearningPort>(UnwiredPlutoLearningPort.Instance);   // [v12.18.77-DEV] 학습 엔진 미결선
             return (ctx, ctx.RenderComponent<DualArenaPage>());
         }
 

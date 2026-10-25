@@ -8,10 +8,12 @@
 //     ④ 악마의 변호인: 원확신도(재가중 점수/100)에 반대 논리 3종 감점 → 확신도 < 30 ∨ 반대 논리 ≥ 2 = CounterThesisVeto 차단.
 //     ⑤ 동적 사이징: 감점 후 확신도 · ATR · 연패 → 진입 비중 bp(5%~25% · 연패 ≥ 2 = 50% 축소).
 //   승인 결과 PlutoGovernanceTag = AiTradeRationale.Governance(국면 뱃지 · 감점 내역 · 비중 · 회고) — 같은 근거 값에 내장되어 seqlock 쓰기 창 안에서 원자 게시.
+//   [v12.18.77-DEV] 지속 학습 가중치(learned · PlutoCognitiveWeights · default = 중립): ② 재가중 점수에 모멘텀 tilt 가산 · ④ 원확신도에서 엄격도 차감(감점 상수/태그 무결성 불변).
 //   ★δ=0: Approve/태그 생성 힙 할당 0. 한국어 문장(PlutoGovernanceText)은 콜드 경로. ★liveArmed:false — 판정일 뿐 주문 수단 0.
 // ============================================================================
 using System;
 using System.Globalization;
+using StockManager.Engines.Cognitive.Learning;
 using StockManager.Engines.Cognitive.Regime;
 using MarketRegime = StockManager.Engines.Cognitive.Regime.MarketRegime;   // MS2E.Core.MarketRegime(전역 using) 동명 타입과 구분
 
@@ -97,17 +99,19 @@ namespace StockManager.Engines.Cognitive.Governance
         /// AI 신규 진입 승인(δ=0). 승인 = None + tag(국면 · 감점 · 비중). 차단 = 사유(tag = default).
         /// momentum/imbalance = 엔진 점수 산식의 모멘텀 · 호가 불균형 구성요소(bp)와 가중(%). pocResistance = [v12.18.73-DEV] POC 매물벽(악마의 변호인 ④) ·
         /// cvdBearish/depthTrap = [v12.18.75-DEV] CVD 약세 다이버전스(⑤) · 10호가 매도벽/허매수(⑥).
+        /// learned = [v12.18.77-DEV] 지속 학습 가중치 스냅샷(모멘텀 tilt → 재가중 점수 · 엄격도 → 원확신도 · default = 중립 = 기존 동작).
         /// </summary>
         public static PlutoBlockReason Approve(in PlutoRegimeState regime, int score, int momentumBp, int momentumWeight, int imbalanceBp, int imbalanceWeight,
             int entryScore, long bidQty, long askQty, int us10yChangeBp, int dollarIndexChangeBp, in PlutoSizerState sizer, long nowTicks, out PlutoGovernanceTag tag,
-            bool pocResistance = false, bool cvdBearish = false, bool depthTrap = false)
+            bool pocResistance = false, bool cvdBearish = false, bool depthTrap = false, in PlutoCognitiveWeights learned = default)
         {
             tag = default;
             if (MarketRegimeText.BlocksEntry(regime.Regime)) return score >= entryScore ? PlutoBlockReason.PanicRegime : PlutoBlockReason.BelowEntryScore;
-            int adjusted = PlutoRegimeClassifier.Reweight(score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, regime.Regime);
+            int adjusted = learned.ApplyMomentumTilt(PlutoRegimeClassifier.Reweight(score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, regime.Regime),
+                momentumBp, momentumWeight);
             if (adjusted < entryScore) return PlutoBlockReason.BelowEntryScore;
             if (sizer.InCooldown(nowTicks)) return PlutoBlockReason.Cooldown;
-            var v = PlutoDevilsAdvocateFilter.Assess(adjusted / 100, regime.Rsi, regime.DisparityX100, bidQty, askQty, us10yChangeBp, dollarIndexChangeBp, pocResistance, cvdBearish, depthTrap);
+            var v = PlutoDevilsAdvocateFilter.Assess(learned.ApplyStrictness(adjusted / 100), regime.Rsi, regime.DisparityX100, bidQty, askQty, us10yChangeBp, dollarIndexChangeBp, pocResistance, cvdBearish, depthTrap);
             if (v.Blocked) return PlutoBlockReason.CounterThesisVeto;
             int weight = PlutoDynamicSizer.WeightBp(v.Confidence, regime.AtrCbp, sizer.LossStreak);
             tag = PlutoGovernanceTag.ForEntry(in regime, in v, adjusted, weight, sizer.LossStreak);

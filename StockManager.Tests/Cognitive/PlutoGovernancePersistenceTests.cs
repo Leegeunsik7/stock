@@ -165,6 +165,7 @@ namespace StockManager.Tests.Cognitive
             ctx.Services.AddSingleton<IUsArenaPort>(new UsArenaPortAdapter(new UsTechArenaEngine()));
             ctx.Services.AddSingleton<ICryptoArenaPort>(new CryptoArenaPortAdapter(new UpbitCryptoArenaEngine()));
             ctx.Services.AddSingleton(prefs ?? UnwiredArenaPreferencePort.Instance);
+            ctx.Services.AddSingleton<IPlutoLearningPort>(UnwiredPlutoLearningPort.Instance);   // [v12.18.77-DEV] 학습 엔진 미결선
             return (ctx, ctx.RenderComponent<DualArenaPage>(), krx);
         }
 

@@ -4418,3 +4418,28 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 업비트 15호가 뎁스 파이프라인 + 매수벽/매도벽/허매수 아레나 결속 포함 · 실 15호가 라이브 소크 미실시(오프라인 프레임 검증뿐) · liveArmed:false ·
   인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 190. v12.18.77-DEV — 플루토 지속 학습 2-트랙(글로벌 인제스천 · 에피소딕 국면 기억 · 회고 기반 가중치 자가 보정 · 섀도우 게이트 · seqlock 원자 핫스왑 · δ=0) (2026-10-25)
+
+- 오더 전제 검증: 'Krx/Us/CryptoArenaEngine' 실체 = KrxArenaEngine · UsTechArenaEngine · UpbitCryptoArenaEngine · 회고/거버너/악마의 변호인 = 기존 Governance/(v12.18.67) 재사용 ·
+  지명 신규 5종(PlutoGlobalDataIngestor · PlutoEpisodicMemoryStore · PlutoWeightCalibrator · PlutoCognitiveWeightSeqlock · PlutoContinuousLearningSwarm) 부재 → 신규 작성(Engines/Cognitive/Learning/).
+- Track A(체결 핫패스): 3대 엔진 AttachLearning(seqlock) → Govern 직전 TryRead 1회(δ=0 · 미결선/경합 = 중립) → PlutoCognitiveGovernor.Approve(learned 선택 인자 · default = 기존 동작).
+  학습 가중치 2종: 모멘텀 tilt(−50~+50% · 재가중 점수에 모멘텀 기여 가산) · 악마의 변호인 엄격도(−10~+20점 · 원확신도 차감). 감점 상수 6종 · 태그 무결성 산식 불변.
+- Track B(백그라운드 스웜 · 5초 주기 · 콜드): ① 3대 엔진 CopyRationales 수확(순번 커서 · 중복 0 · 링 초과 누락 = 계수) — 진입 확신도/당시 엄격도 ↔ 최종 청산 회고 EntrySeq 결합 →
+  ② 보정기(최근 256 링 · 짝수 = 학습 · 홀수 = 홀드아웃): 교훈 압력(반대 논리 무시/외부 충격 패착 ↑ 엄격 · 추세 순응/규율 승리 ↓ · 추세 승리 vs 국면 전환/시그널 약화 패착 = tilt) · 세대당 ±2점/±5% · 표본 ≥ 20 · 10건마다 →
+  ③ 섀도우 게이트(홀드아웃 재생: 후보 엄격도로 확신도 < 30 거래 제외 · 잔존 ≥ 10 ∧ 승률 ≥ 기준 −2%p ∧ 누적 수익률 MDD ≤ 기준 +1%p) → 통과 = seqlock 원자 핫스왑(세대 +1) · 불통과 = 기존 유지 ·
+  ④ 글로벌 인제스천 직전 안정값 → 에피소딕 최근접 국면(6차원 척도 정규화 가우시안 · 0~100% · 공통 차원 ≥ 2) + 미 10년물/달러 변화 → 3대 엔진 SetMacroHeadwind.
+- 인제스천: Utf8JsonReader 타입드 게터(vix · us10y/dxy/usdKrw 변화 bp · equityTrendBp · sentiment · asOfUtc · headlines → 기존 Classify 노이즈 제거 후 확신도 가중 감성) · catch = JsonException(+ 헤드라인 비 UTF-8 지연 검증 InvalidOperationException) ·
+  형식 오류/범위 밖 = 관측 전체 거부 · 부분 관측 = 필드 병합 · 30분 경과 = Stale(값 유지) · 수집원 예외/시간 초과 = 계수 · 직전 안정값 유지(큐잉/재시도 0).
+- 에피소딕 시드 8종(2008 금융위기 · 2020 코로나 · 2020-21 유동성 · 2022 금리 인상 · 2024 AI 랠리 · 2015-16 박스권 · 2018 4Q 급락 · 2017 저변동) = 손으로 보정한 특성 근사치(IsSeed · UI '시드 근사' 표기).
+- 호스트: `Pluto.LearningEnabled`(기본 켜짐 · 순수 인메모리) · `Pluto.MacroFeedUrl`(기본 빈 값 = 미결선 · https 만 · PlutoHttpMacroSource 64KB 상한 · 5분 주기) · 비활성 = UnwiredPlutoLearningPort.
+- UI: IPlutoLearningPort(순수 DTO · RCL) → DualArenaPage 거버너 바 [🧠 글로벌 학습 상태: 실시간 연동 중 (과거 국면 유사도: 이름(시드 근사) n%)] + 학습 세대/가중치 칩 · 미결선 = '학습 엔진 미결선'.
+- 테스트 StockManager.Tests/Cognitive/PlutoContinualLearningTests.cs 31건(Theory 12 포함): 가중치 산식/범위 · 스왑 게이트/세대 · 거버너 엄격도 거부권/tilt 승격/패닉 우선 · JSON 파싱/헤드라인 감성/거부 12 · 병합/Stale ·
+  수집원 장애 Fail-Safe · 시드/100%/단조/차원 부족/용량 · 보정 방향/상한/표본 부족 · 섀도우 통과/승률 악화/홀드아웃 부족/무변화 · 스웜 수확(중복 0)/매칭/거시 주입/핫스왑/루프 · 페이지 뱃지 결선/미결선 · 호스트 결선 문자열 ·
+  δ=0: 동시 핫스왑 중 판독 10만 = 0B · 찢어진 판독 0 · 학습 결속 거버너 10만 = 0B · 학습 결속 KRX 정산 10만 = 0B(MinAllocated · Release · 거버너 경로 실행 확인).
+  기존 테스트 갱신: DualArenaPage 주입 목록(+IPlutoLearningPort) · bUnit 호스트 9곳 Unwired 등록.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,423 통과 + 7 건너뜀(옵트인) · 실패 0 · 4분 51초(기존 5,392 + 신규 31) ·
+  infra-scan 0(기준 117) · 래칫/PureShell 통과(≤40 · 신규 결합 0).
+- 한계(정직): 실 거시/뉴스 피드 미결선(수집원 = 주입식 · 기본 네트워크 0 → 실기동 뱃지 = '수집원 미결선') · 에피소드 = 정성 시드(과거 시계열 적합 아님 · '수십 년 학습' 미구현) ·
+  모멘텀 tilt 는 섀도우 재생 불가(점수 구성요소 미기록 → 세대당 상한 + 동반 게이트로만 제한) · 학습 가중치 비영속(재기동 = 중립) · 실 앱 뱃지 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(가상 원장 진입 판정 입력뿐) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.
