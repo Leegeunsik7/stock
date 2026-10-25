@@ -598,7 +598,7 @@ namespace StockManager.Tests.Cognitive
             Assert.Contains("krxArena.AttachLearning(plutoWeights);", form);
             Assert.Contains("usArena.AttachLearning(plutoWeights);", form);
             Assert.Contains("cryptoArena.AttachLearning(plutoWeights);", form);
-            Assert.Contains("new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm)", form);
+            Assert.Contains("new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText)", form);
             Assert.Contains("MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance", form);
             Assert.Contains("macroUri.Scheme == Uri.UriSchemeHttps", form);
             Assert.DoesNotContain("QuantumVault", form.Substring(form.IndexOf("Pluto.LearningEnabled", StringComparison.Ordinal), 4000));

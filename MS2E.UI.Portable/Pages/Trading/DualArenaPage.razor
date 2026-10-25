@@ -66,6 +66,10 @@
         var lv = Learning.Current;
         <span class="da-badge da-learn @(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" data-learn="@(lv.Running ? PlutoLearningHealth.Css(lv.Health) : "none")" title="표본 @(lv.Samples) · 핫스왑 @(lv.Swaps) · 섀도우 거부 @(lv.RejectedSwaps)">@lv.BadgeText</span>
         <span class="da-badge da-regime @(lv.HasRegime ? "on" : "none")" data-regime="@(lv.HasRegime ? lv.RegimeSimilarityX10 : -1)" title="@(lv.RegimeNote ?? "관측 2차원 이상 수집 후 12대 역사적 국면 판정")">@(lv.RegimeEffect is null ? lv.RegimeBadgeText : lv.RegimeBadgeText + " " + lv.RegimeEffect)</span>
+        @if (lv.MacroFeedText is not null)
+        {
+            <span class="da-badge da-macro @(lv.Health == PlutoLearningHealth.NoData ? "none" : PlutoLearningHealth.Css(lv.Health))" data-macro="@PlutoLearningHealth.Css(lv.Health)">@lv.MacroFeedText</span>
+        }
         <span class="da-badge da-learn-w" data-gen="@lv.Generation">학습 세대 @(lv.Generation) · 모멘텀 @(lv.MomentumTiltPct >= 0 ? "+" : "")@(lv.MomentumTiltPct)% · 엄격도 @(lv.DevilStrictnessPts >= 0 ? "+" : "")@(lv.DevilStrictnessPts)점</span>
     }
     else

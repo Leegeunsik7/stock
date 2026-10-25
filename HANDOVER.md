@@ -4610,3 +4610,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 12대 국면 판정기 포함 · 실 거시 피드 미결선(Pluto.MacroFeedUrl 기본 빈 값) → 국면 뱃지 '판정 전'(편향 0) · 국면 원값 = 문헌 대표치 근사 ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 199. v12.18.83-DEV — 플루토 공식 거시 피드: FRED 공식 REST API(무료 API 키) 결선 + 키 미설정 정직 대기 페일세이프 (2026-10-25)
+
+- 배경: 공개 CSV(fredgraph.csv) 경로는 WAF/User-Agent 차단 위험 → 공식 REST API(api.stlouisfed.org)로 전환. 키 = 누구나 무료 발급(영소문자/숫자 32자).
+- PlutoPublicMacroSource(신규 · Adapters): GET /fred/series/observations?series_id={ID}&api_key={KEY}&file_type=json&sort_order=desc&limit=30 × 5종
+  (VIXCLS · DGS10 · DTWEXBGS · DEXKOUS · SP500 · 병렬). JSON = Utf8JsonReader 타입드 게터(예외 = JsonException 만) · 결측 '.' 건너뜀 ·
+  error_code/비 JSON/내림차순 위반/0 이하/최신 관측 10일 초과 = 그 필드만 누락. 1개월 변화 = 최신값 vs '최신 관측일 − 1개월' 이하 첫 유효 관측
+  (10년물 = 절대 bp · 그 외 = 상대 bp · VIX = 최신 종가 · ±5,000bp 초과 = 이상치 누락) → 기존 인제스터 JSON 스키마 1건(asOfUtc = 수집 시각).
+- 안전: 60초 주기 · 회당 3초 · 무재시도 · 429 = 같은 주기 잔여 요청 즉시 취소 + 예외(다음 주기까지 쿨다운) · 전량 실패 = 예외 → 인제스터 직전 안정값 유지
+  (30분 경과 = '직전 안정값 유지(수집 지연)') · 정상 응답 15분 재사용(FRED 일 1회 갱신 · 송신 억제). 키는 쿼리에만(Name · 예외 메시지 · 관측 JSON 미포함).
+- 키 결선: ResolveApiKey(설정 `Pluto.FredApiKey` 우선 → 환경 변수 MS2E_FRED_API_KEY) · 미설정 = 수집원 미생성(HTTP 0건) · 형식 위반 = 미생성(URL 주입 차단).
+  호스트(BlazorHomeForm): `Pluto.MacroFeedUrl`(사용자 수집원) 우선 → 없으면 `Pluto.PublicMacroEnabled`(기본 켜짐) 시 키 판정 후 Ok 일 때만 RunAsync.
+- UI: PlutoLearningView.MacroFeedText(후행 기본값 · 기존 생성자 호환) · PlutoLearningPortAdapter(swarm, macroFeedText) · DualArenaPage .da-macro 뱃지
+  ('거시 피드: FRED API 키 미설정 · 관측 대기' / '키 형식 오류 · 관측 대기' / 'FRED 공식 API(…)' / '사용자 수집원'). 가짜 관측 날조 0.
+- 테스트: PlutoPublicMacroSourceTests 31건(키 판정 · JSON 판독 fail-closed 16종 · 1개월 기준값/결측 기준일 · 이상치/창 미달 부분 누락 · 공식 쿼리 GET 만 ·
+  15분 재사용 · 429 잔여 4 요청 취소/재시도 0 · 전량 실패 캐시 반환 0 · 국면 판정기 실가동 · 키 미설정 대기 문구/폴링 0 · 3초 시간 초과 직전값 유지 ·
+  호스트 결선 문자열 · δ=0 정산 판독 10만 회 0B · 옵트인 실측 = MS2E_PUBLIC_MACRO_LIVE=1 + 유효 키일 때만). PlutoContinualLearningTests 결선 단언 1줄 갱신.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,581 통과 / 9 건너뜀 / 0 실패(5,590) · infra-scan 0 · 래칫 ≤40.
+- 정직: 실 키 미보유 상태라 실 FRED 응답 실측 미수행(스텁 기반 검증 · 옵트인 테스트 = 조건 미충족 즉시 반환). 키 미설정 출하 = 국면 뱃지 '판정 전'(편향 0) 유지.
+  DTWEXBGS = 광의 무역가중 달러지수(ICE DXY 아님). 감성 필드 미제공. liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 ·
+  타 세션 파일 3종(.claude headroom 2종 · LiveWireKisLongSoakTests) 미스테이징 · 원격 푸시 없음.

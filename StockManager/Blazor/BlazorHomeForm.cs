@@ -1814,12 +1814,31 @@ namespace StockManager.Blazor
                 cryptoArena.AttachRegimeMatcher(plutoRegime);
                 plutoSwarm.Start(TimeSpan.FromSeconds(5));
                 var macroCts = new System.Threading.CancellationTokenSource();
-                StockManager.Adapters.PlutoHttpMacroSource? macroSource = null;
+                IDisposable? macroSource = null;
+                string? macroFeedText = null;
                 string macroUrl = cfg.GetString("Pluto.MacroFeedUrl", "");
                 if (Uri.TryCreate(macroUrl, UriKind.Absolute, out var macroUri) && macroUri.Scheme == Uri.UriSchemeHttps)
                 {
-                    macroSource = new StockManager.Adapters.PlutoHttpMacroSource(macroUri);
-                    _ = Task.Run(() => plutoIngestor.RunAsync(macroSource, TimeSpan.FromMinutes(5), macroCts.Token));
+                    var httpMacro = new StockManager.Adapters.PlutoHttpMacroSource(macroUri);
+                    macroSource = httpMacro;
+                    macroFeedText = "거시 피드: 사용자 수집원";
+                    _ = Task.Run(() => plutoIngestor.RunAsync(httpMacro, TimeSpan.FromMinutes(5), macroCts.Token));
+                }
+                // [v12.18.83-DEV] 사용자 수집원 미설정 = FRED 공식 REST API(무료 키 · `Pluto.FredApiKey` → 환경 변수 MS2E_FRED_API_KEY · GET 만 · 60초 주기 · 회당 3초 ·
+                //   무재시도 · 429 = 그 주기 중단 · 정상 응답 15분 재사용) → VIX · 10년물 · 달러 · 원/달러 · S&P500 1개월 변화 → 국면 판정기 실가동.
+                //   키 미설정/형식 위반 = 수집원 미생성(HTTP 0건) → UI '거시 피드: FRED API 키 미설정 · 관측 대기'. `Pluto.PublicMacroEnabled`(기본 켜짐).
+                else if (cfg.GetBool("Pluto.PublicMacroEnabled", true))
+                {
+                    var keyState = StockManager.Adapters.PlutoPublicMacroSource.ResolveApiKey(cfg.GetString(StockManager.Adapters.PlutoPublicMacroSource.ApiKeyConfigKey, ""),
+                        Environment.GetEnvironmentVariable(StockManager.Adapters.PlutoPublicMacroSource.ApiKeyEnvVar), out var fredKey);
+                    macroFeedText = StockManager.Adapters.PlutoPublicMacroSource.FeedText(keyState);
+                    if (keyState == StockManager.Adapters.FredKeyState.Ok)
+                    {
+                        var publicMacro = new StockManager.Adapters.PlutoPublicMacroSource(fredKey!);
+                        macroSource = publicMacro;
+                        _ = Task.Run(() => plutoIngestor.RunAsync(publicMacro, StockManager.Adapters.PlutoPublicMacroSource.PollInterval, macroCts.Token,
+                            StockManager.Adapters.PlutoPublicMacroSource.FetchTimeout));
+                    }
                 }
                 FormClosed += (_, _) => ShutdownTrace.Step("plutoLearning", () => { macroCts.Cancel(); plutoSwarm.Dispose(); macroSource?.Dispose(); macroCts.Dispose(); });
                 services.AddSingleton(plutoWeights);
@@ -1827,7 +1846,7 @@ namespace StockManager.Blazor
                 services.AddSingleton(plutoMemory);
                 services.AddSingleton(plutoRegime);
                 services.AddSingleton(plutoSwarm);
-                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm));
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText));
                 plutoLearningRef = plutoSwarm;
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);
