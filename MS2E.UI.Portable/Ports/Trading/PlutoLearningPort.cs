@@ -5,6 +5,7 @@
 //   수집 상태 코드(PlutoLearningHealth) = 0 미결선/관측 전 · 1 실시간 연동 중 · 2 직전 안정값 유지(지연) — 미상 값 = 미결선(fail-closed 표시).
 //   [v12.18.82-DEV] 12대 역사적 국면 판정(RegimeName · RegimeSimilarityX10(0~1000) · RegimeNote 해설 · RegimeEffect 전략/편향 문구) — 호스트가 한국어 문자열로 옮긴다.
 //   [v12.18.83-DEV] MacroFeedText = 호스트 거시 피드 결선 문구(예 '거시 피드: FRED API 키 미설정 · 관측 대기' · null = 미표기).
+//   [v12.18.84-DEV] LifetimeEpisodes(재기동 합산 평생 누적 학습 에피소드 · −1 = 영속화 미결선) · PersistState(PlutoLearningPersist 코드) → 영속화 뱃지.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -30,17 +31,44 @@ namespace MS2E.UI.Portable.Ports.Trading
         };
     }
 
+    /// <summary>[v12.18.84-DEV] 학습 가중치 영속화 상태 코드 — 0 미결선 · 1 가동 중 · 2 손상 롤백 복원 · 3 손상 중립 폴백 · 4 저장소 장애(미상 값 = 미결선).</summary>
+    public static class PlutoLearningPersist
+    {
+        public const int Off = 0, Active = 1, RolledBack = 2, NeutralFallback = 3, StoreFailed = 4;
+
+        public static int Normalize(int p) => p is Active or RolledBack or NeutralFallback or StoreFailed ? p : Off;
+
+        public static string Label(int p) => Normalize(p) switch
+        {
+            Active => "영속화 가동 중",
+            RolledBack => "영속화 가동 중 · 손상 체크포인트 건너뜀 → 직전 골든 복원",
+            NeutralFallback => "체크포인트 손상 감지 · 중립 가중치 폴백 · 영속화 가동 중",
+            StoreFailed => "영속화 저장소 장애 · 이번 세션 기록 중지",
+            _ => "영속화 미결선",
+        };
+
+        public static string Css(int p) => Normalize(p) switch
+        {
+            Active => "on",
+            RolledBack or NeutralFallback => "warn",
+            StoreFailed => "fail",
+            _ => "none",
+        };
+    }
+
     /// <summary>
     /// 학습 상태 1건. Running = 백그라운드 스웜 가동 · Health = PlutoLearningHealth · EpisodeName/SimilarityPct = 최근접 과거 국면(null = 판정 불가) ·
     /// EpisodeIsSeed = 시드 근사 에피소드 · Generation = 가중치 핫스왑 세대(0 = 학습 전 중립) · MomentumTiltPct/DevilStrictnessPts = 현재 학습 가중치 ·
     /// Samples = 누적 청산 회고 표본 · Swaps/RejectedSwaps = 섀도우 게이트 통과/거부 누계 ·
     /// [v12.18.82-DEV] RegimeName/RegimeSimilarityX10 = 12대 역사적 국면 판정(null/−1 = 판정 전) · RegimeNote = 기간·해설 · RegimeEffect = 전략·가중치 편향 문구.
     /// [v12.18.83-DEV] MacroFeedText = 거시 피드 결선 문구(null = 미표기).
+    /// [v12.18.84-DEV] LifetimeEpisodes = 평생 누적 학습 에피소드(−1 = 영속화 미결선) · PersistState = PlutoLearningPersist.
     /// </summary>
     public readonly record struct PlutoLearningView(
         bool Running, int Health, string? EpisodeName, int SimilarityPct, bool EpisodeIsSeed,
         long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps,
-        string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null, string? MacroFeedText = null)
+        string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null, string? MacroFeedText = null,
+        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off)
     {
         public bool HasMatch => EpisodeName is not null && SimilarityPct >= 0;
 
@@ -50,6 +78,11 @@ namespace MS2E.UI.Portable.Ports.Trading
         public string RegimeBadgeText => HasRegime
             ? $"[🧠 과거 국면 매칭: {RegimeName} (유사도 {RegimeSimilarityX10 / 10}.{RegimeSimilarityX10 % 10}%)]"
             : "[🧠 과거 국면 매칭: 판정 전]";
+
+        /// <summary>영속화 뱃지: [🧠 누적 학습 세션: N회 누적 (영속화 가동 중)] · 미결선 = "[🧠 누적 학습 세션: 영속화 미결선]".</summary>
+        public string PersistBadgeText => PlutoLearningPersist.Normalize(PersistState) == PlutoLearningPersist.Off || LifetimeEpisodes < 0
+            ? "[🧠 누적 학습 세션: 영속화 미결선]"
+            : $"[🧠 누적 학습 세션: {LifetimeEpisodes}회 누적 ({PlutoLearningPersist.Label(PersistState)})]";
 
         /// <summary>뱃지 문구: 🧠 글로벌 학습 상태: {상태} (과거 국면 유사도: {이름} {n}%).</summary>
         public string BadgeText

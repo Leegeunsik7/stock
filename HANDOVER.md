@@ -4649,3 +4649,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): FRED 공식 REST API 거시 피드 포함 · 기본 키 미설정(Pluto.FredApiKey/MS2E_FRED_API_KEY 빈 값) → HTTP 0건 · '거시 피드: FRED API 키 미설정 · 관측 대기' ·
   국면 뱃지 '판정 전'(편향 0) · 실 FRED 응답 실측 미수행 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 201. v12.18.84-DEV — 플루토 학습 가중치 영속화: SQLite 롤링 체크포인트 레이크 + 기동 안전 복원(손상 롤백 · 중립 폴백) (2026-10-26)
+
+- 배경: PlutoWeightCalibrator → 섀도우 게이트 → seqlock 핫스왑으로 학습된 가중치(모멘텀 tilt −50~+50% · 악마의 변호인 엄격도 −10~+20점)가 인메모리 전용이라 재기동 시 중립으로 초기화.
+- PlutoCheckpointManager(신규 · Engines/Cognitive/Learning · SQL/연결 무지): PlutoLearningCheckpoint(국면 ID · 평생 에피소드 · 세대 · tilt · 엄격도 · 섀도우 승률/MDD/표본 ·
+  보정 시각 · FNV-1a 64 체크섬) · IPlutoLearningStore 경계 · Restore(기동 1회 · 스웜 Start 전 · 최신 순 64행 판독 → 첫 무결 행 = 골든 → seqlock.TryRestore δ=0 원자 주입 ·
+  최신 손상 = 직전 무결 행 롤백(RolledBack) · 전부 손상 = 중립 폴백(CorruptFallback) · 저장소 장애 = 중립 + 그 기동 기록 중지(StoreFailed · 누적 역행 방지)) ·
+  Checkpoint(30초 주기 백그라운드 · 변화 시에만 1행 합체 기록 · 실패 = 계수만 · 재시도/큐잉 0) · Dispose = 루프 정지 후 최종 기록(스웜 Dispose 뒤).
+- 기록 대상 = seqlock 라이브 가중치 = 섀도우 게이트 통과분만(미검증 후보 기록 0). 평생 에피소드 = 복원 기준 + 이번 기동 보정기 Observed.
+  PlutoCognitiveWeightSeqlock.TryRestore(신규): 세대 0(학습 전)에만 주입 · 세대 보존(이후 핫스왑 = 복원 세대 +1) · 범위 위반 거부.
+- PlutoLearningStore(신규 · Adapters): portfolio.db 전용 테이블 PlutoLearningCheckpoints(CREATE IF NOT EXISTS · 기존 스키마 무변경) · Append = 트랜잭션(INSERT + 최근 64행 밖 DELETE) ·
+  LoadRecent = 칸별 typeof 판정 열 + 값 0 투영(문자열/실수 오염 = Corrupt 표식 · DataTable 타입 추론 흔들림 0).
+- 호스트: `Pluto.LearningPersistEnabled`(기본 켜짐) · 스키마 준비 실패 = 경고 로그 후 인메모리 학습 지속. 포트 PlutoLearningView 후행 기본값(LifetimeEpisodes −1 · PersistState) +
+  PlutoLearningPersist 코드 · PlutoLearningPortAdapter(swarm, macroFeedText, checkpoints) · DualArenaPage .da-learn-p 뱃지
+  '[🧠 누적 학습 세션: N회 누적 (영속화 가동 중)]' / 롤백 · 중립 폴백 · 저장소 장애 · 미결선 정직 문구([Inject] 추가 0).
+- 테스트: PlutoLearningPersistenceTests 16건(봉인 · 필드 8종 변조 감지 · TryRestore 세대 계승/덮어쓰기 0 · 재기동 정확 복원 · 무변화 기록 0 · 레이크 64행 ·
+  변조 4종 롤백 · 전부 손상 폴백 후 재개 · 저장소 장애 기록 0 · 저장 실패 후 재개 · 폐기 DB · 백그라운드 루프/최종 기록 · 백그라운드 SQLite 기록 중 핫패스 판독 10만 회 0B/찢김 0 ·
+  포트 문구 · DualArenaPage 렌더 · 호스트 순서/RCL 순수성). 기존 결선 단언 2줄(PlutoContinualLearningTests · PlutoPublicMacroSourceTests) 갱신.
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,597 통과 / 9 건너뜀 / 0 실패(5,606) · infra-scan 0 · 래칫 ≤40.
+- 정직: 보정기는 샤프 지수를 산출하지 않음 → 체크포인트에 섀도우 승률/MDD 만 기록(샤프 날조 0). 가중치는 전역 1벌 — 국면 ID 는 기록 시점 국면(판정 전 −1) 문맥 표기이며
+  국면별 개별 가중치 아님. 보정기 표본 링(256)은 영속화 대상 아님(재기동 후 표본 재축적 · MinSamples 20 이후 재보정). 실 장기 운용 재기동 실측 미수행(테스트 DB 기반).
+  liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

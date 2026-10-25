@@ -359,7 +359,7 @@ namespace StockManager.Tests.Cognitive
             Assert.Contains("new StockManager.Adapters.PlutoPublicMacroSource(fredKey!)", form);
             Assert.Contains("plutoIngestor.RunAsync(publicMacro, StockManager.Adapters.PlutoPublicMacroSource.PollInterval, macroCts.Token,", form);
             Assert.Contains("StockManager.Adapters.PlutoPublicMacroSource.FetchTimeout));", form);
-            Assert.Contains("new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText)", form);
+            Assert.Contains("new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints)", form);
             Assert.Equal(1, form.Split("new StockManager.Adapters.PlutoPublicMacroSource(").Length - 1);   // 키 검증 분기 밖 생성 0
             string src = System.IO.File.ReadAllText(System.IO.Path.Combine(dir.FullName, "StockManager", "Adapters", "PlutoPublicMacroSource.cs"));
             Assert.DoesNotContain("QuantumVault", src.Split("// ====")[^1]);                // 코드 본문 피어 참조 0

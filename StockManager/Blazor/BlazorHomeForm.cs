@@ -1800,8 +1800,9 @@ namespace StockManager.Blazor
                 plutoMemory.SeedDefaults();
                 // [v12.18.82-DEV] 12대 역사적 국면 판정기 — 스웜이 관측마다 게시 · 3대 아레나 정산 스레드 δ=0 판독(유사도 ≥ 60% 국면 전략 → 가중치 편향 · 근거 카드 뱃지).
                 var plutoRegime = new StockManager.Engines.Cognitive.Learning.PlutoRegimeMatcher();
+                var plutoCalibrator = new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator();
                 var plutoSwarm = new StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm(plutoIngestor, plutoMemory,
-                    new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator(), plutoWeights, regime: plutoRegime);
+                    plutoCalibrator, plutoWeights, regime: plutoRegime);
                 plutoSwarm.AddArena("krx", krxArena.CopyRationales);
                 plutoSwarm.AddArena("us", usArena.CopyRationales);
                 plutoSwarm.AddArena("crypto", cryptoArena.CopyRationales);
@@ -1812,6 +1813,21 @@ namespace StockManager.Blazor
                 krxArena.AttachRegimeMatcher(plutoRegime);
                 usArena.AttachRegimeMatcher(plutoRegime);
                 cryptoArena.AttachRegimeMatcher(plutoRegime);
+                // [v12.18.84-DEV] 학습 가중치 영속화 — portfolio.db 전용 테이블(PlutoLearningCheckpoints · 롤링 64행) · 스웜 기동 전 골든 체크포인트 seqlock 원자 복원
+                //   (손상 = 직전 무결 행 롤백 · 전부 손상 = 중립 폴백) · 30초 주기 백그라운드 합체 기록(무변화 = 0 · 체결 핫패스 = seqlock 판독만) · 종료 시 최종 기록.
+                StockManager.Engines.Cognitive.Learning.PlutoCheckpointManager? plutoCheckpoints = null;
+                if (cfg.GetBool("Pluto.LearningPersistEnabled", true))
+                {
+                    try
+                    {
+                        var learningStore = new StockManager.Adapters.PlutoLearningStore(db);
+                        plutoCheckpoints = new StockManager.Engines.Cognitive.Learning.PlutoCheckpointManager(learningStore, plutoWeights, () => plutoCalibrator.Observed,
+                            () => plutoSwarm.Status is { Regime.Found: true } st ? st.Regime.CycleId : StockManager.Engines.Cognitive.Learning.PlutoLearningCheckpoint.NoRegime);
+                        plutoCheckpoints.Restore();
+                        plutoCheckpoints.Start(TimeSpan.FromSeconds(30));
+                    }
+                    catch (Exception ex) { Log.Warn($"[Pluto] 학습 영속화 비활성(스키마 준비 실패 · 인메모리 학습 지속): {ex.Message}"); plutoCheckpoints = null; }
+                }
                 plutoSwarm.Start(TimeSpan.FromSeconds(5));
                 var macroCts = new System.Threading.CancellationTokenSource();
                 IDisposable? macroSource = null;
@@ -1840,13 +1856,14 @@ namespace StockManager.Blazor
                             StockManager.Adapters.PlutoPublicMacroSource.FetchTimeout));
                     }
                 }
-                FormClosed += (_, _) => ShutdownTrace.Step("plutoLearning", () => { macroCts.Cancel(); plutoSwarm.Dispose(); macroSource?.Dispose(); macroCts.Dispose(); });
+                FormClosed += (_, _) => ShutdownTrace.Step("plutoLearning", () => { macroCts.Cancel(); plutoSwarm.Dispose(); plutoCheckpoints?.Dispose(); macroSource?.Dispose(); macroCts.Dispose(); });
                 services.AddSingleton(plutoWeights);
                 services.AddSingleton(plutoIngestor);
                 services.AddSingleton(plutoMemory);
                 services.AddSingleton(plutoRegime);
                 services.AddSingleton(plutoSwarm);
-                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText));
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints));
+                if (plutoCheckpoints is not null) services.AddSingleton(plutoCheckpoints);
                 plutoLearningRef = plutoSwarm;
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);

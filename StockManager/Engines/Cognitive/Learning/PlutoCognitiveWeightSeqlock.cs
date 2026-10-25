@@ -104,5 +104,26 @@ namespace StockManager.Engines.Cognitive.Learning
             Interlocked.Increment(ref _swaps);
             return true;
         }
+
+        /// <summary>
+        /// [v12.18.84-DEV] 기동 시 영속 골든 체크포인트 원자 주입(δ=0 · 세대 보존 = 이후 핫스왑은 복원 세대 +1 부터).
+        /// 학습 전(세대 0)에만 허용 — 이미 핫스왑된 라이브 가중치를 옛 체크포인트로 덮어쓰기 0. 무결성 위반 = 거부(중립 유지).
+        /// </summary>
+        public bool TryRestore(in PlutoCognitiveWeights golden)
+        {
+            if (!golden.IsWellFormed) return false;
+            var spin = new SpinWait();
+            long v;
+            while (true)
+            {
+                v = Volatile.Read(ref _ver);
+                if ((v & 1) == 0 && Interlocked.CompareExchange(ref _ver, v + 1, v) == v) break;
+                spin.SpinOnce(-1);
+            }
+            bool fresh = _w.Generation == 0;
+            if (fresh) _w = golden;
+            Volatile.Write(ref _ver, v + 2);
+            return fresh;
+        }
     }
 }
