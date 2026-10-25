@@ -26,7 +26,7 @@ namespace StockManager.Engines.Cognitive.Governance
         MacroHeadwind = 4,
         PocResistance = 8,         // [v12.18.73-DEV] 상단 최대 매물대(POC) 저항
         CvdBearishDivergence = 16, // [v12.18.75-DEV] 가격 상승 ∧ CVD 급락
-        DepthTrap = 32,            // [v12.18.75-DEV] 10호가 매도벽 ∨ 허매수
+        DepthTrap = 32,            // [v12.18.75-DEV] 15호가(v12.18.76) 매도벽 ∨ 허매수
     }
 
     /// <summary>악마의 변호인 판정(값 타입).</summary>
@@ -102,7 +102,7 @@ namespace StockManager.Engines.Cognitive.Governance
             CounterThesis.MacroHeadwind => "거시 역풍(금리 급등/달러 강세)",
             CounterThesis.PocResistance => "POC 매물벽 저항(상단 최대 매물대)",
             CounterThesis.CvdBearishDivergence => "CVD 약세 다이버전스(가격 상승 · 매도 공격 우위)",
-            CounterThesis.DepthTrap => "10호가 매도벽/허매수 함정",
+            CounterThesis.DepthTrap => "15호가 매도벽/허매수 함정",
             _ => "반대 논리 없음",
         };
     }

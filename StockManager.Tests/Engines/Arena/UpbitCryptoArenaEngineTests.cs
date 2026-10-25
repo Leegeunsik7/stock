@@ -611,10 +611,10 @@ namespace StockManager.Tests.Engines.Arena
             const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
             var targets = new (Type t, string[] names)[]
             {
-                (typeof(UpbitCryptoArenaEngine), new[] { "OnQuote", "OnTrade", "Drain", "Clock", "Evaluate", "StepAi", "DrainHuman", "Buy", "Sell", "Record",
+                (typeof(UpbitCryptoArenaEngine), new[] { "OnQuote", "OnDepthQuote", "ValidDepthTiers", "OnTrade", "Drain", "Clock", "Evaluate", "StepAi", "DrainHuman", "Buy", "Sell", "Record",
                     "Equity", "Stats", "PublishSnapshot", "SubmitHuman", "TryDequeue", "TryReadSnapshot", "CopyPositions", "CopyQuotes", "CopyRationales",
                     "FindPos", "AlignUpRaw", "AlignDownRaw", "DepthWon", "ExitQty", "PhaseAt", "KstTicksOf", "MapStatus", "SetMarketContext" }),
-                (typeof(CryptoArenaQuoteFeeder), new[] { "OnUpbitFrame", "OnUpbitMarketFrame", "OnFrame", "OnBook", "Lock", "Pump", "TryReadSlot", "MarkAllSeen", "StepSynthetic", "UtcMicrosOf" }),
+                (typeof(CryptoArenaQuoteFeeder), new[] { "OnUpbitFrame", "OnUpbitMarketFrame", "OnUpbitMarketDepthFrame", "OnFrame", "OnBook", "OnDepthBook", "Lock", "Pump", "TryReadSlot", "MarkAllSeen", "StepSynthetic", "UtcMicrosOf" }),
                 (typeof(CryptoArenaUniverse), new[] { "IndexOf", "Symbol", "GlobalBetaX100", "KimchiSensX100", "SyntheticStartWon" }),
                 (typeof(CryptoPaperExchange), new[] { "SlippedMarketPrice", "NotionalWithFee" }),
             };
@@ -738,7 +738,7 @@ namespace StockManager.Tests.Engines.Arena
             Assert.Contains("dashHub.AttachCryptoArena(cryptoArenaFeeder);", form);
             Assert.Contains("if (cfg.GetBool(\"Arena.UpbitStreamEnabled\", false))", form);   // 기본 꺼짐 = 네트워크 호출 0
             Assert.Contains("Markets = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.StreamMarkets", form);   // 4종 연결 1개
-            Assert.Contains("marketTap: cryptoArenaFeeder.OnUpbitMarketFrame", form);
+            Assert.Contains("depthTap: cryptoArenaFeeder.OnUpbitMarketDepthFrame", form);   // [v12.18.76-DEV] 15호가 잔량 열 동반
         }
 
         // ── §8 /dualarena 3번째 탭 ──────────────────────────────────────────────

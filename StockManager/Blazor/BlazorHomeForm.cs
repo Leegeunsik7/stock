@@ -1752,7 +1752,7 @@ namespace StockManager.Blazor
             {
                 var upbitStream = new StockManager.Engines.Feeds.Crypto.UpbitWebSocketFeedAdapter(new StockManager.Engines.Feeds.Crypto.UpbitMarketState(),
                     options: new StockManager.Engines.Feeds.Crypto.UpbitFeedOptions { Markets = StockManager.Engines.Arena.Crypto.CryptoArenaUniverse.StreamMarkets },
-                    marketTap: cryptoArenaFeeder.OnUpbitMarketFrame);
+                    depthTap: cryptoArenaFeeder.OnUpbitMarketDepthFrame);   // [v12.18.76-DEV] 15호가 잔량 열 동반(L1 + 매수벽/매도벽/허매수)
                 cryptoArenaFeeder.AttachStream(upbitStream);
                 var upbitStreamCts = new System.Threading.CancellationTokenSource();
                 _ = Task.Run(() => upbitStream.RunAsync(upbitStreamCts.Token));

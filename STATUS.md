@@ -1,11 +1,11 @@
 # STATUS
 
-- **Active Milestone**: v12.18.75-GM — 플루토 브레인 4단계(CVD + 10호가 뎁스 불균형) 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
-- **Build Status**: 클린 worktree release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 · 오중 Release -warnaserror 0W/0E · 5,373 통과 / 7 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.76-DEV — 업비트 15호가(orderbook_units) 무할당 파이프라인 + 매수벽/매도벽/허매수 아레나 실가동
+- **Build Status**: 오중 Release -warnaserror 0W/0E · 5,392 통과 / 7 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-25
 - **Completed Deliverables**:
-  - 버전 12.18.75 승격(cc1c9b9) · 태그 v12.18.75-GM
-  - release-v12.18.75-GM.zip(77F89876…) · StockManager-v12.18.75-Standalone-win-x64.zip(9E58D3B7…) · masterSeal 861F9A90…
-  - 봉인 38 바이너리 ↔ 배포본 SHA-256 38/38 일치 · 격리 기동 HWND 실측
-  - CLI 4종(verify-zip · live-armed · interlocks 30 · tighten 6) exit 0 · v12.18.73-GM 15종 superseded 이관 · HANDOVER §187
-- **Next Milestone**: 10호가 오더북 실 피드 결선(벽/허매수 아레나 발화) 또는 미설치 PC 배포본 실기 확인
+  - UpbitStreamProtocol 15호가 판독(InlineArray 고정 버퍼 · 연속 유효 접두 · fail-closed) · 디코딩 10만 회 0B
+  - depthTap → 피더 슬롯 → Pump → OnDepthQuote → 15호가 뎁스 판독 · 파이프라인 10만 회 0B
+  - 벽 위치 뱃지(n호가 매수벽 / 매도벽 -15 / 허매수 감지) · 악마의 변호인 ⑥ DepthTrap(−20) 실연동
+  - 신규 테스트 19건 · HANDOVER §188
+- **Next Milestone**: v12.18.76-GM 이중 출하(-NoPeer) 또는 실 업비트 15호가 라이브 소크

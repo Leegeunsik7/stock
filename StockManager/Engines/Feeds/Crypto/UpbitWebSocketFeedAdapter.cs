@@ -28,6 +28,11 @@
 //   시장 상태 = 마켓별 seqlock 1개(시각 역행/재전송 판정이 마켓마다 독립) · 거래소(CryptoPaperExchange) = 인덱스 0(주 마켓)만 투영.
 //   marketTap(인덱스 · 프레임) = 시장 상태가 '수용'한 프레임만 통지 — 재접속 SNAPSHOT 의 직전 체결 재전송(같은 시각 · 같은 sequential_id)이
 //   소비자 누적 체결량에 이중 가산되지 않는다. 기존 tap = 인덱스 0 프레임만(다른 마켓을 주 마켓으로 오인 통지 0 · 기존 의미 유지).
+//  [v12.18.76-DEV] 15호가 뎁스: orderbook_units 최대 15단을 UpbitOrderbookDepth(고정 인라인 버퍼 4열 × 15 · 값 타입 · 힙 0)로 판독.
+//   단마다 ask_price · bid_price · ask_size · bid_size(중복 · 비숫자 · 음수 = 프레임 거부 — 첫 단과 같은 규칙).
+//   Tiers = 첫 단부터 '연속 유효' 단 수 — 필드 누락 · 0 < 매수 < 매도 위반 · 매도 비오름 · 매수 비내림 단에서 절단(이후 단 미사용 · fail-closed).
+//   16단 이상 = 형식 검사만 · 미기록. 첫 단 규칙(필수 4종 · 0 < 매수1 < 매도1)과 기존 UpbitStreamFrame 바이트 동일.
+//   depthTap(마켓 인덱스 · 프레임 · 뎁스) = marketTap 과 같은 '수용 프레임' 통지에 뎁스 동반(Trade = Tiers 0).
 // ============================================================================
 using System;
 using System.Net.WebSockets;
@@ -51,6 +56,24 @@ namespace StockManager.Engines.Feeds.Crypto
     }
 
     public enum UpbitTradeSide : byte { None = 0, Bid = 1, Ask = 2 }   // ask_bid: BID = 매수 체결 · ASK = 매도 체결
+
+    /// <summary>[v12.18.76-DEV] 15호가 고정 인라인 버퍼(raw 10^8 · 힙 0).</summary>
+    [InlineArray(UpbitOrderbookDepth.MaxTiers)]
+    public struct UpbitDepthLevels
+    {
+        private long _e0;
+    }
+
+    /// <summary>
+    /// [v12.18.76-DEV] orderbook_units 판독(최대 15호가 · [0] = 최우선 · raw 10^8 · 값 타입 · 힙 0).
+    /// Tiers = 첫 단부터 연속 유효 단 수 — [Tiers..] 원소는 의미 없음(소비자는 Tiers 까지만 판독).
+    /// </summary>
+    public struct UpbitOrderbookDepth
+    {
+        public const int MaxTiers = 15;
+        public int Tiers;
+        public UpbitDepthLevels AskPrice, BidPrice, AskSize, BidSize;
+    }
 
     /// <summary>판독된 프레임(raw 10^8 · 시각 = 유닉스 밀리초). Orderbook = 호가 필드 · Trade = 체결 필드만 유효.</summary>
     public readonly record struct UpbitStreamFrame(UpbitStreamKind Kind, long TimestampMs, long BidRaw, long AskRaw, long BidSizeRaw, long AskSizeRaw,
@@ -82,28 +105,46 @@ namespace StockManager.Engines.Feeds.Crypto
 
         /// <summary>프레임 1개 판독. 반환 = 종류(Orderbook/Trade 일 때만 f 유효 · 그 외 f = default).</summary>
         public static UpbitStreamKind TryParse(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, out UpbitStreamFrame f)
-            => Parse(frame, market, null, out _, out f);
+            => Parse(frame, market, null, out _, out f, out _);
 
         /// <summary>다중 마켓 판독. marketIndex = 표 인덱스(Orderbook/Trade 일 때만 ≥ 0 · 그 외 −1).</summary>
         public static UpbitStreamKind TryParse(ReadOnlySpan<byte> frame, UpbitMarketSet markets, out int marketIndex, out UpbitStreamFrame f)
         {
             ArgumentNullException.ThrowIfNull(markets);
-            return Parse(frame, default, markets, out marketIndex, out f);
+            return Parse(frame, default, markets, out marketIndex, out f, out _);
         }
 
-        private static UpbitStreamKind Parse(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, UpbitMarketSet? set, out int marketIndex, out UpbitStreamFrame f)
+        /// <summary>[v12.18.76-DEV] 다중 마켓 + 15호가 판독. depth = Orderbook 일 때만 Tiers ≥ 1(그 외 Tiers = 0).</summary>
+        public static UpbitStreamKind TryParse(ReadOnlySpan<byte> frame, UpbitMarketSet markets, out int marketIndex, out UpbitStreamFrame f, out UpbitOrderbookDepth depth)
+        {
+            ArgumentNullException.ThrowIfNull(markets);
+            return Parse(frame, default, markets, out marketIndex, out f, out depth);
+        }
+
+        private static UpbitStreamKind Parse(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, UpbitMarketSet? set, out int marketIndex, out UpbitStreamFrame f,
+                                             out UpbitOrderbookDepth book)
         {
             f = default;
+            book = default;
             marketIndex = -1;
+            var kind = ParseCore(frame, market, set, ref marketIndex, ref f, ref book);
+            if (kind != UpbitStreamKind.Orderbook) book.Tiers = 0;                    // 뎁스 = 수용 호가 프레임 한정(부분 판독 노출 0)
+            return kind;
+        }
+
+        private static UpbitStreamKind ParseCore(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> market, UpbitMarketSet? set, ref int marketIndex, ref UpbitStreamFrame f,
+                                                 ref UpbitOrderbookDepth book)
+        {
             int idx = -1;
             const byte TypeNone = 0, TypeOrderbook = 1, TypeTrade = 2, TypeOther = 3;
+            const int AskPx = 1, BidPx = 2, AskSz = 4, BidSz = 8, AllUnit = AskPx | BidPx | AskSz | BidSz;
             byte type = TypeNone;
             bool codeSeen = false, codeOk = false, tsSeen = false, unitsSeen = false, statusSeen = false, errorSeen = false;
-            bool askSeen = false, bidSeen = false, askSzSeen = false, bidSzSeen = false;
             bool tpSeen = false, tvSeen = false, ttsSeen = false, sideSeen = false, seqSeen = false;
-            long ts = 0, bid = 0, ask = 0, bidSz = 0, askSz = 0, tp = 0, tv = 0, tts = 0, seq = 0;
+            long ts = 0, tp = 0, tv = 0, tts = 0, seq = 0;
             UpbitTradeSide side = UpbitTradeSide.None;
-            int units = 0;
+            int units = 0, unitMask = 0, firstMask = 0;
+            bool depthOpen = true;                                                         // 연속 유효 단 진행 중(절단 후 = 미기록)
             try
             {
                 // isFinalBlock = false: 잘린 프레임 = Read() false(예외 · 할당 0) → depth ≠ 0 = Invalid. 루트 종료 즉시 판독 중단 → 잔여 = 공백만 허용.
@@ -116,10 +157,22 @@ namespace StockManager.Engines.Feeds.Crypto
                     {
                         case JsonTokenType.StartObject:
                             depth++;
-                            if (inUnits && depth == 3) units++;
+                            if (inUnits && depth == 3) { units++; unitMask = 0; }
                             break;
                         case JsonTokenType.StartArray: depth++; break;
-                        case JsonTokenType.EndObject: depth--; break;
+                        case JsonTokenType.EndObject:
+                            if (inUnits && depth == 3)                                         // 단 1개 종료 → 연속 유효 판정
+                            {
+                                int t = units - 1;
+                                if (t == 0) firstMask = unitMask;
+                                if (depthOpen && t < UpbitOrderbookDepth.MaxTiers)
+                                {
+                                    long a = book.AskPrice[t], b = book.BidPrice[t];
+                                    if (unitMask == AllUnit && b > 0 && a > b && (t == 0 || (a > book.AskPrice[t - 1] && b < book.BidPrice[t - 1]))) book.Tiers = t + 1;
+                                    else depthOpen = false;
+                                }
+                            }
+                            depth--; break;
                         case JsonTokenType.EndArray:
                             if (inUnits && depth == 2) inUnits = false;
                             depth--; break;
@@ -160,12 +213,23 @@ namespace StockManager.Engines.Feeds.Crypto
                                 else if (r.ValueTextEquals("status"u8)) { if (statusSeen) return UpbitStreamKind.Invalid; statusSeen = true; }
                                 else if (r.ValueTextEquals("error"u8)) { if (errorSeen) return UpbitStreamKind.Invalid; errorSeen = true; }
                             }
-                            else if (depth == 3 && inUnits && units == 1)                        // 최우선 단(첫 원소)만
+                            else if (depth == 3 && inUnits && units >= 1)                        // [v12.18.76-DEV] 모든 단(15단까지 기록)
                             {
-                                if (r.ValueTextEquals("ask_price"u8)) { if (askSeen || !ReadRaw(ref r, out ask)) return UpbitStreamKind.Invalid; askSeen = true; }
-                                else if (r.ValueTextEquals("bid_price"u8)) { if (bidSeen || !ReadRaw(ref r, out bid)) return UpbitStreamKind.Invalid; bidSeen = true; }
-                                else if (r.ValueTextEquals("ask_size"u8)) { if (askSzSeen || !ReadRaw(ref r, out askSz)) return UpbitStreamKind.Invalid; askSzSeen = true; }
-                                else if (r.ValueTextEquals("bid_size"u8)) { if (bidSzSeen || !ReadRaw(ref r, out bidSz)) return UpbitStreamKind.Invalid; bidSzSeen = true; }
+                                int bit = r.ValueTextEquals("ask_price"u8) ? AskPx : r.ValueTextEquals("bid_price"u8) ? BidPx
+                                        : r.ValueTextEquals("ask_size"u8) ? AskSz : r.ValueTextEquals("bid_size"u8) ? BidSz : 0;
+                                if (bit != 0)
+                                {
+                                    if ((unitMask & bit) != 0 || !ReadRaw(ref r, out long v)) return UpbitStreamKind.Invalid;
+                                    unitMask |= bit;
+                                    int t = units - 1;
+                                    if (depthOpen && t < UpbitOrderbookDepth.MaxTiers)
+                                    {
+                                        if (bit == AskPx) book.AskPrice[t] = v;
+                                        else if (bit == BidPx) book.BidPrice[t] = v;
+                                        else if (bit == AskSz) book.AskSize[t] = v;
+                                        else book.BidSize[t] = v;
+                                    }
+                                }
                             }
                             break;
                     }
@@ -181,8 +245,9 @@ namespace StockManager.Engines.Feeds.Crypto
             if (!codeOk) return UpbitStreamKind.Invalid;
             if (type == TypeOrderbook)
             {
-                if (!tsSeen || units < 1 || !askSeen || !bidSeen || !askSzSeen || !bidSzSeen || bid <= 0 || ask <= 0 || bid >= ask) return UpbitStreamKind.Invalid;
-                f = new UpbitStreamFrame(UpbitStreamKind.Orderbook, ts, bid, ask, bidSz, askSz, 0, 0, UpbitTradeSide.None, 0);
+                long bid = book.BidPrice[0], ask = book.AskPrice[0];
+                if (!tsSeen || units < 1 || firstMask != AllUnit || bid <= 0 || ask <= 0 || bid >= ask) return UpbitStreamKind.Invalid;
+                f = new UpbitStreamFrame(UpbitStreamKind.Orderbook, ts, bid, ask, book.BidSize[0], book.AskSize[0], 0, 0, UpbitTradeSide.None, 0);
                 marketIndex = idx;
                 return UpbitStreamKind.Orderbook;
             }
@@ -392,6 +457,9 @@ namespace StockManager.Engines.Feeds.Crypto
     /// <summary>[v12.18.74-DEV] 다중 마켓 관찰 지점 — 시장 상태가 수용한 Orderbook/Trade 만(재전송 · 시각 역행 = 통지 0) · 수신 스레드 동기 호출.</summary>
     public delegate void UpbitMarketFrameTap(int marketIndex, in UpbitStreamFrame frame);
 
+    /// <summary>[v12.18.76-DEV] UpbitMarketFrameTap + 15호가 뎁스(같은 수용 프레임 · Trade = Tiers 0) · 수신 스레드 동기 호출.</summary>
+    public delegate void UpbitMarketDepthTap(int marketIndex, in UpbitStreamFrame frame, in UpbitOrderbookDepth depth);
+
     public sealed class UpbitWebSocketFeedAdapter
     {
         public const int RxBufferBytes = 64 * 1024;
@@ -406,6 +474,7 @@ namespace StockManager.Engines.Feeds.Crypto
         private readonly UpbitFeedOptions _opt;
         private readonly UpbitFrameTap? _tap;
         private readonly UpbitMarketFrameTap? _marketTap;
+        private readonly UpbitMarketDepthTap? _depthTap;
         private readonly byte[] _rx = GC.AllocateArray<byte>(RxBufferBytes, pinned: true);
         private CancellationTokenSource? _conn;
         private int _connected;
@@ -418,7 +487,7 @@ namespace StockManager.Engines.Feeds.Crypto
         /// <param name="delay">백오프 대기(null = Task.Delay · 테스트 = 기록형).</param>
         public UpbitWebSocketFeedAdapter(UpbitMarketState state, CryptoPaperExchange? exchange = null, Func<IUpbitWsTransport>? factory = null,
                                          UpbitFeedOptions? options = null, Func<TimeSpan, CancellationToken, Task>? delay = null, UpbitFrameTap? tap = null,
-                                         UpbitMarketFrameTap? marketTap = null)
+                                         UpbitMarketFrameTap? marketTap = null, UpbitMarketDepthTap? depthTap = null)
         {
             _state = state ?? throw new ArgumentNullException(nameof(state));
             _exchange = exchange;
@@ -435,6 +504,7 @@ namespace StockManager.Engines.Feeds.Crypto
             _delay = delay ?? Task.Delay;
             _tap = tap;
             _marketTap = marketTap;
+            _depthTap = depthTap;
         }
 
         public UpbitMarketState State => _state;
@@ -467,7 +537,7 @@ namespace StockManager.Engines.Feeds.Crypto
         public UpbitStreamKind OnFrame(ReadOnlySpan<byte> frame)
         {
             Interlocked.Increment(ref _framesIn);
-            var kind = UpbitStreamProtocol.TryParse(frame, _markets, out int m, out var f);
+            var kind = UpbitStreamProtocol.TryParse(frame, _markets, out int m, out var f, out var book);
             bool accepted = false;
             switch (kind)
             {
@@ -494,6 +564,7 @@ namespace StockManager.Engines.Feeds.Crypto
             }
             if (_tap is not null && m == 0 && (kind == UpbitStreamKind.Orderbook || kind == UpbitStreamKind.Trade)) _tap(in f);
             if (accepted && _marketTap is not null) _marketTap(m, in f);
+            if (accepted && _depthTap is not null) _depthTap(m, in f, in book);
             return kind;
         }
 

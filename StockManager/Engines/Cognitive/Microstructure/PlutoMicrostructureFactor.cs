@@ -1,5 +1,5 @@
 // ============================================================================
-// PlutoMicrostructureFactor — v12.18.75-DEV: 플루토 브레인 4단계 — 미시구조 팩터(CVD 다이버전스 + 10호가 뎁스 불균형 합성 · 불변 값 타입 · 정수 필드 · 할당 0)
+// PlutoMicrostructureFactor — v12.18.75-DEV: 플루토 브레인 4단계 — 미시구조 팩터(CVD 다이버전스 + 15호가 뎁스 불균형 합성 · 불변 값 타입 · 정수 필드 · 할당 0)
 //
 //   상태(PlutoMicrostructureState · 엔진 종목별 값 타입 · 정산 스레드 단일 작성자):
 //     CVD(PlutoCvdState · 체결 방향 누적 · 1분 봉 링) + 직전 뎁스 판독(PlutoDepthReading · 호가 수신마다 교체).
@@ -7,9 +7,11 @@
 //     합성 점수 = clamp(CVD 점수 + 뎁스 점수, ±100) · 시그널 = 점수 × 100bp(아레나 MicrostructureWeight 가중).
 //   게시: 아레나 정산 1회의 seqlock 쓰기 창 안에서 종목 슬롯에 기록 → TryReadMicrostructure(같은 버전 검증 · δ=0).
 //   악마의 변호인: 약세 다이버전스 = ⑤ CvdBearishDivergence(−25) · 매도벽/허매수 = ⑥ DepthTrap(−20).
+//   [v12.18.76-DEV] 업비트 15호가 실측(OnDepth) → 벽 위치(BidWallTier/AskWallTier) 게시 · 뱃지 = [🛡️ 3호가 매수벽] · [🧱 5호가 매도벽 -15] · [⚠️ 8호가 허매수 감지].
 //   ★liveArmed:false — 팩터는 가상 대결 시그널 입력일 뿐 주문 수단 0. ★QuantumVault · 피어 · 외부 네트워크 접근 0.
 // ============================================================================
 using System;
+using System.Globalization;
 
 namespace StockManager.Engines.Cognitive.Microstructure
 {
@@ -70,6 +72,8 @@ namespace StockManager.Engines.Cognitive.Microstructure
         public readonly long WeightedBidDepth, WeightedAskDepth;
         public readonly PlutoDepthFlags DepthFlags;
         public readonly int MicrostructureScore;
+        /// <summary>[v12.18.76-DEV] 벽 위치(1 = 최우선 · 0 = 없음).</summary>
+        public readonly int BidWallTier, AskWallTier;
 
         public PlutoMicrostructureFactor(long symbol, long price, in PlutoCvdReading cvd, in PlutoDepthReading depth)
         {
@@ -78,6 +82,7 @@ namespace StockManager.Engines.Cognitive.Microstructure
             DivergenceType = cvd.Divergence;
             DepthTiers = depth.Tiers; DepthRatioBps = depth.DepthRatioBps; DepthScore = depth.Score;
             WeightedBidDepth = depth.WeightedBid; WeightedAskDepth = depth.WeightedAsk; DepthFlags = depth.Flags;
+            BidWallTier = depth.BidWallTier; AskWallTier = depth.AskWallTier;
             MicrostructureScore = PlutoMicrostructureAnalyzer.Combine(cvd.Score, depth.Score);
         }
 
@@ -105,7 +110,8 @@ namespace StockManager.Engines.Cognitive.Microstructure
                 if (Symbol == 0)
                     return Price == 0 && Cvd == 0 && !CvdReady && CvdBars == 0 && CvdSlopeBps == 0 && PriceChangeBps == 0 && CvdScore == 0
                         && DivergenceType == PlutoDivergenceType.None && DepthTiers == 0 && DepthRatioBps == 0 && DepthScore == 0
-                        && WeightedBidDepth == 0 && WeightedAskDepth == 0 && DepthFlags == PlutoDepthFlags.None && MicrostructureScore == 0;
+                        && WeightedBidDepth == 0 && WeightedAskDepth == 0 && DepthFlags == PlutoDepthFlags.None && MicrostructureScore == 0
+                        && BidWallTier == 0 && AskWallTier == 0;
                 if (Symbol < 0 || Price <= 0) return false;
                 if (MicrostructureScore != PlutoMicrostructureAnalyzer.Combine(CvdScore, DepthScore)) return false;
                 if (!CvdReady)
@@ -126,10 +132,16 @@ namespace StockManager.Engines.Cognitive.Microstructure
                     };
                     if (!ok) return false;
                 }
-                if (DepthTiers == 0) return DepthRatioBps == 0 && DepthScore == 0 && DepthFlags == PlutoDepthFlags.None && WeightedBidDepth == 0 && WeightedAskDepth == 0;
+                if (DepthTiers == 0) return DepthRatioBps == 0 && DepthScore == 0 && DepthFlags == PlutoDepthFlags.None && WeightedBidDepth == 0 && WeightedAskDepth == 0
+                                           && BidWallTier == 0 && AskWallTier == 0;
                 if (DepthTiers > PlutoOrderbookDepthAnalyzer.MaxTiers || DepthRatioBps is < -10000 or > 10000 || WeightedBidDepth < 0 || WeightedAskDepth < 0) return false;
                 if (DepthFlags != PlutoDepthFlags.None && DepthTiers < PlutoOrderbookDepthAnalyzer.WallMinTiers) return false;
                 if (HasBidSupportWall && IsBidSpoof) return false;
+                int near = PlutoOrderbookDepthAnalyzer.NearTiers;                       // [v12.18.76-DEV] 벽 위치 ↔ 플래그 일치
+                if (HasBidSupportWall ? BidWallTier is < 1 || BidWallTier > near
+                    : IsBidSpoof ? BidWallTier <= near || BidWallTier > DepthTiers
+                    : BidWallTier != 0) return false;
+                if (HasAskWall ? AskWallTier < 1 || AskWallTier > DepthTiers : AskWallTier != 0) return false;
                 return DepthScore == PlutoOrderbookDepthAnalyzer.ScoreOf(DepthRatioBps, DepthFlags);
             }
         }
@@ -139,7 +151,12 @@ namespace StockManager.Engines.Cognitive.Microstructure
     public static class PlutoMicrostructureText
     {
         public const string CvdBuyBadge = "[📊 CVD 매수우위]", BullishBadge = "[📈 강세 다이버전스]", BearishBadge = "[📉 약세 다이버전스]";
-        public const string BidWallBadge = "[🛡️ 10호가 매수벽 지지]", AskWallBadge = "[🧱 10호가 매도벽]", SpoofBadge = "[🪤 허매수 의심]";
+
+        /// <summary>[v12.18.76-DEV] 벽 뱃지(벽 위치 호가 · 매도벽 = 뎁스 감점 표기).</summary>
+        public static string BidWallBadge(int tier) => "[🛡️ " + tier.ToString(CultureInfo.InvariantCulture) + "호가 매수벽]";
+        public static string AskWallBadge(int tier) => "[🧱 " + tier.ToString(CultureInfo.InvariantCulture) + "호가 매도벽 "
+                                                       + PlutoOrderbookDepthAnalyzer.AskWallPenalty.ToString(CultureInfo.InvariantCulture) + "]";
+        public static string SpoofBadge(int tier) => "[⚠️ " + tier.ToString(CultureInfo.InvariantCulture) + "호가 허매수 감지]";
 
         /// <summary>뱃지 열(해당 없음 = 빈 문자열).</summary>
         public static string Badges(in PlutoMicrostructureFactor f)
@@ -149,9 +166,9 @@ namespace StockManager.Engines.Cognitive.Microstructure
             if (f.IsCvdBuyDominant) b += CvdBuyBadge;
             if (f.IsBullishDivergence) b += (b.Length > 0 ? " " : "") + BullishBadge;
             if (f.IsBearishDivergence) b += (b.Length > 0 ? " " : "") + BearishBadge;
-            if (f.HasBidSupportWall) b += (b.Length > 0 ? " " : "") + BidWallBadge;
-            if (f.HasAskWall) b += (b.Length > 0 ? " " : "") + AskWallBadge;
-            if (f.IsBidSpoof) b += (b.Length > 0 ? " " : "") + SpoofBadge;
+            if (f.HasBidSupportWall) b += (b.Length > 0 ? " " : "") + BidWallBadge(f.BidWallTier);
+            if (f.HasAskWall) b += (b.Length > 0 ? " " : "") + AskWallBadge(f.AskWallTier);
+            if (f.IsBidSpoof) b += (b.Length > 0 ? " " : "") + SpoofBadge(f.BidWallTier);
             return b;
         }
 

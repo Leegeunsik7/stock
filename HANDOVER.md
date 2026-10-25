@@ -4380,3 +4380,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 플루토 미시구조 팩터(CVD · 10호가 뎁스 불균형) 3대 아레나 결속 포함 · 10호가 오더북 실 피드 미결선(벽/허매수 아레나 발화 미확인) · 자동 미러링 기본 꺼짐 · 합성 시세는 데모 전용.
 - 한계(정직): 실 앱 아레나 근거 카드 육안 미확인 · 미설치 PC 배포본 실기 미확인.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 188. v12.18.76-DEV — 업비트 15호가(orderbook_units) 무할당 파이프라인 + 매수벽/매도벽/허매수 아레나 실가동(악마의 변호인 ⑥ 실연동 · δ=0) (2026-10-25)
+
+- 오더 전제 검증: 'UpbitWebSocketParser' 클래스명 부재 → 실체 = UpbitStreamProtocol(UpbitWebSocketFeedAdapter.cs) · 'UpdateDepth' 부재 → 실체 = PlutoMicrostructureAnalyzer.OnDepth(span).
+  기존 파서는 orderbook_units[0]만 판독 · 분석기 MaxTiers = 10 → 15로 확장(가중 ‰ 2^(−i/3) 연장: …125 · 99 · 79 · 63 · 50 · 39).
+- 파서: UpbitOrderbookDepth(Tiers + InlineArray(15) 4열 AskPrice/BidPrice/AskSize/BidSize · 값 타입) · TryParse(…, out depth) 오버로드(기존 오버로드 = 동일 동작) ·
+  모든 단 필드 = 첫 단과 같은 규칙(중복/비숫자/음수 = 프레임 거부) · Tiers = 연속 유효 접두(필드 누락 · 0<매수<매도 위반 · 매도 비오름 · 매수 비내림 단에서 절단) · 16단+ = 형식 검사만 · 비호가 프레임 = 0단.
+- 결속: 어댑터 depthTap(UpbitMarketDepthTap · 수용 프레임만) → CryptoArenaQuoteFeeder.OnUpbitMarketDepthFrame/OnDepthBook(슬롯 seqlock 쓰기 창에 L1 + 잔량 열 원자 기록) →
+  Pump → UpbitCryptoArenaEngine.OnDepthQuote(OnQuote = 빈 열 위임) → ValidDepthTiers([0] = L1 잔량 일치 · 0~상한 접두 · 불일치 = L1 판독 fail-closed) → OnDepth(15호가).
+  호스트 BlazorHomeForm marketTap → depthTap 교체(Arena.UpbitStreamEnabled 게이트 유지 · 기본 꺼짐).
+- 판독/근거: PlutoDepthReading/PlutoMicrostructureFactor 벽 위치 BidWallTier/AskWallTier(무결성: 지지 ≤ 3호가 · 허매수 > 3호가 · 플래그 없음 = 0) ·
+  뱃지 [🛡️ n호가 매수벽] · [🧱 n호가 매도벽 -15] · [⚠️ n호가 허매수 감지] · 악마의 변호인 ⑥ 라벨 '15호가 매도벽/허매수 함정'.
+- 테스트 StockManager.Tests/Feeds/UpbitOrderbookDepthTests.cs 19건: 15단 정확값 · L1 = 기존 판독 동일 · 17단 → 15 · 절단 표 5 · 깊은 단 형식 위반 거부 4 · Trade/무효 = 0단 ·
+  depthTap→피더→Pump→엔진 5호가 매도벽(−15) · 3호가 매수벽(+10) · 8호가 허매수(양수 박탈 −10) · L1 경로 = 1호가 유지 · ValidDepthTiers 표 ·
+  거버넌스 진입 근거 = DepthTrap(−20) + 매도벽 뱃지 + '15호가 지수 가중 뎁스'(벽 없음 대조 = DepthTrap 0) · δ=0 디코딩 10만 = 0B · 어댑터→피더→Pump→엔진 10만 = 0B(MinAllocated · Release).
+  기존 테스트 갱신: 뱃지 문자열(벽 위치) · 가중표 상한 · 무작위 가중합 범위 17 · IL 무할당 대상 4종 추가 · 호스트 depthTap 문자열.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중: Default · WebOnly · PrimesBench · KiwoomProxy x86 · KiwoomComShim) · 전체 스위트 5,392 통과 + 7 건너뜀(옵트인) · 실패 0 · 4분 51초(기존 5,373 + 신규 19) ·
+  infra-scan 0(기준 117) · 래칫/PureShell 통과(≤40 · UI 이주 없음).
+- 한계(정직): 실 업비트 스트림 15호가 수신은 오프라인 프레임으로만 검증(라이브 소크 미실시) · KRX/US = L1 유지 · 벽 문턱/가중은 설계값 · 실 앱 근거 카드 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(시세 수신 · 가상 원장뿐) · 인터락 30(0x800000001FFFFFFF) · Tighten 6 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

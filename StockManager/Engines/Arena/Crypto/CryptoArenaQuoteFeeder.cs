@@ -8,6 +8,8 @@
 //      OnFrame(index, frame) = 같은 판독을 임의 마켓 슬롯에 · OnBook(index, …) = 호가 직접 주입.
 //      [v12.18.74-DEV] OnUpbitMarketFrame(index, in frame) = UpbitMarketFrameTap 서명 — 어댑터가 CryptoArenaUniverse.StreamMarkets(4종 · 표 순서 = 슬롯 순서)를
 //        구독하고 시장 상태가 수용한 프레임만 통지(재접속 직전 체결 재전송 = 누적 체결량 이중 가산 0).
+//      [v12.18.76-DEV] OnUpbitMarketDepthFrame(index, in frame, in depth) = UpbitMarketDepthTap 서명 — 호가 프레임의 15호가 잔량 열을 L1 과 같은 슬롯 쓰기 창에
+//        원자 기록(슬롯 = 고정 인라인 버퍼 · 힙 0) → Pump 가 엔진 OnDepthQuote 로 전달(매수벽/매도벽/허매수 실가동). L1 전용 경로(OnFrame/OnBook) = 잔량 열 0단(기존 동작).
 //   ② 소비자(정산 스레드 = 대시보드 허브 50ms 펌프 1개): Pump(utcTicks) — 버전이 바뀐 슬롯만 엔진 OnTrade(누적 차분) · OnQuote ·
 //      갱신 0 = Drain(휴먼 큐 · 신선도 판정). 엔진 시각 = 펌프 시각(로컬 UTC 마이크로초 — 거래소 시계 편차 무관 · 무수신 2초 = StaleQuote).
 //   ③ 합성 데모 시세(SelectSource(Synthetic)): 스트림 미결선 PC 에서도 24/7 대결을 시연하는 결정론 난수 보행(4종 · 업비트 호가 격자 ·
@@ -34,7 +36,7 @@ namespace StockManager.Engines.Arena.Crypto
         /// <summary>합성 기준 최우선 잔량(코인 raw · BTC 0.5 · ETH 10 · XRP 30,000 · SOL 100).</summary>
         private static readonly long[] s_synBaseQty = { 50_000_000, 10 * Scale, 30_000 * Scale, 100 * Scale };
 
-        private struct Slot { public long Ver, Bid, Ask, BidQty, AskQty, BuyCum, SellCum, TradePx; }
+        private struct Slot { public long Ver, Bid, Ask, BidQty, AskQty, BuyCum, SellCum, TradePx; public int Tiers; public UpbitDepthLevels BidDepth, AskDepth; }
 
         private readonly UpbitCryptoArenaEngine _engine;
         private readonly Slot[] _slots = new Slot[MaxSlots];
@@ -93,6 +95,16 @@ namespace StockManager.Engines.Arena.Crypto
         /// <summary>UpbitMarketFrameTap 서명 — 어댑터 마켓 인덱스(= CryptoArenaUniverse.StreamMarkets 순서 = 슬롯) → 슬롯.</summary>
         public void OnUpbitMarketFrame(int marketIndex, in UpbitStreamFrame frame) => OnFrame(marketIndex, in frame);
 
+        /// <summary>[v12.18.76-DEV] UpbitMarketDepthTap 서명 — 수용 프레임 + 15호가 잔량 열 → 슬롯(Trade = OnFrame 동일).</summary>
+        public void OnUpbitMarketDepthFrame(int marketIndex, in UpbitStreamFrame frame, in UpbitOrderbookDepth depth)
+        {
+            if (frame.Kind != UpbitStreamKind.Orderbook) { OnFrame(marketIndex, in frame); return; }
+            int n = Math.Clamp(depth.Tiers, 0, UpbitOrderbookDepth.MaxTiers);
+            ReadOnlySpan<long> bids = depth.BidSize, asks = depth.AskSize;
+            if (OnDepthBook(marketIndex, frame.BidRaw, frame.AskRaw, frame.BidSizeRaw, frame.AskSizeRaw, bids.Slice(0, n), asks.Slice(0, n)))
+                Interlocked.Increment(ref _streamUpdates);
+        }
+
         /// <summary>판독된 업비트 프레임 → 슬롯(Orderbook = L1 호가 · Trade = 테이커 누적량). 무효 = 폐기(false).</summary>
         public bool OnFrame(int index, in UpbitStreamFrame f)
         {
@@ -120,6 +132,12 @@ namespace StockManager.Engines.Arena.Crypto
 
         /// <summary>최우선 호가(원 raw · 코인 raw) → 슬롯. 범위 밖 인덱스 · 격자 비정렬 · 매수 ≥ 매도 · 잔량 범위 밖 = 폐기(false).</summary>
         public bool OnBook(int index, long bidRaw, long askRaw, long bidQtyRaw, long askQtyRaw)
+            => OnDepthBook(index, bidRaw, askRaw, bidQtyRaw, askQtyRaw, default, default);
+
+        /// <summary>
+        /// [v12.18.76-DEV] OnBook + 호가별 잔량 열(raw · [0] = L1 잔량 · 최대 15단). 잔량 열은 UpbitCryptoArenaEngine.ValidDepthTiers 접두만 기록(불일치 = 0단 · L1 은 그대로).
+        /// </summary>
+        public bool OnDepthBook(int index, long bidRaw, long askRaw, long bidQtyRaw, long askQtyRaw, ReadOnlySpan<long> bidDepthQtyRaw, ReadOnlySpan<long> askDepthQtyRaw)
         {
             if ((uint)index >= MaxSlots || bidRaw >= askRaw || askRaw > UpbitCryptoArenaEngine.MaxPriceRaw
                 || !UpbitTickAligner.IsAligned(bidRaw) || !UpbitTickAligner.IsAligned(askRaw)
@@ -131,6 +149,13 @@ namespace StockManager.Engines.Arena.Crypto
             ref Slot s = ref _slots[index];
             long v = Lock(ref s);
             s.Bid = bidRaw; s.Ask = askRaw; s.BidQty = bidQtyRaw; s.AskQty = askQtyRaw;
+            int n = UpbitCryptoArenaEngine.ValidDepthTiers(bidQtyRaw, askQtyRaw, bidDepthQtyRaw, askDepthQtyRaw);
+            if (n > 0)
+            {
+                bidDepthQtyRaw.Slice(0, n).CopyTo(s.BidDepth);
+                askDepthQtyRaw.Slice(0, n).CopyTo(s.AskDepth);
+            }
+            s.Tiers = n;
             Volatile.Write(ref s.Ver, v + 2);
             return true;
         }
@@ -176,7 +201,8 @@ namespace StockManager.Engines.Arena.Crypto
                 _seenBuy[i] = q.BuyCum; _seenSell[i] = q.SellCum;
                 if (buy > 0) _engine.OnTrade(sym, q.TradePx, Math.Min(buy, UpbitCryptoArenaEngine.MaxBookQtyRaw), 1, now);
                 if (sell > 0) _engine.OnTrade(sym, q.TradePx, Math.Min(sell, UpbitCryptoArenaEngine.MaxBookQtyRaw), -1, now);
-                if (q.Bid > 0) _engine.OnQuote(sym, q.Bid, q.Ask, q.BidQty, q.AskQty, now);
+                ReadOnlySpan<long> bidDepth = q.BidDepth, askDepth = q.AskDepth;
+                if (q.Bid > 0) _engine.OnDepthQuote(sym, q.Bid, q.Ask, q.BidQty, q.AskQty, now, bidDepth.Slice(0, q.Tiers), askDepth.Slice(0, q.Tiers));
                 any = true;
             }
             if (!any) _engine.Drain(now);

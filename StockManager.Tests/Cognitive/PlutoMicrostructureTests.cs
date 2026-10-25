@@ -174,7 +174,7 @@ namespace StockManager.Tests.Cognitive
                 Assert.InRange(PlutoOrderbookDepthAnalyzer.WeightOf(i), ideal - 0.5, ideal + 0.5);
                 if (i > 0) Assert.True(PlutoOrderbookDepthAnalyzer.WeightOf(i) < PlutoOrderbookDepthAnalyzer.WeightOf(i - 1));
             }
-            Assert.Equal(0, PlutoOrderbookDepthAnalyzer.WeightOf(10));
+            Assert.Equal(0, PlutoOrderbookDepthAnalyzer.WeightOf(PlutoOrderbookDepthAnalyzer.MaxTiers));
             Assert.Equal(0, PlutoOrderbookDepthAnalyzer.WeightOf(-1));
         }
 
@@ -184,12 +184,12 @@ namespace StockManager.Tests.Cognitive
             var rng = new Random(75);
             for (int it = 0; it < 3000; it++)
             {
-                int nb = rng.Next(1, 13), na = rng.Next(1, 13);
+                int nb = rng.Next(1, 18), na = rng.Next(1, 18);
                 var bid = new long[nb];
                 var ask = new long[na];
                 for (int i = 0; i < nb; i++) bid[i] = rng.NextInt64(0, 1_000_000_000_000);
                 for (int i = 0; i < na; i++) ask[i] = rng.NextInt64(0, 1_000_000_000_000);
-                int n = Math.Min(Math.Min(nb, na), 10);
+                int n = Math.Min(Math.Min(nb, na), PlutoOrderbookDepthAnalyzer.MaxTiers);
                 Int128 wb = 0, wa = 0;
                 for (int i = 0; i < n; i++) { wb += (Int128)bid[i] * PlutoOrderbookDepthAnalyzer.WeightOf(i); wa += (Int128)ask[i] * PlutoOrderbookDepthAnalyzer.WeightOf(i); }
                 var r = PlutoOrderbookDepthAnalyzer.Analyze(bid, ask);
@@ -281,7 +281,8 @@ namespace StockManager.Tests.Cognitive
             PlutoMicrostructureAnalyzer.OnDepth(ref st, bid, ask);
             var f = PlutoMicrostructureAnalyzer.Assess(in st, Samsung, 70_000);
             Assert.True(f.HasAskWall && f.IsDepthTrap && !f.CvdReady && f.IsWellFormed);
-            Assert.Contains(PlutoMicrostructureText.AskWallBadge, PlutoMicrostructureText.Badges(in f));
+            Assert.Equal(7, f.AskWallTier);
+            Assert.Contains("[🧱 7호가 매도벽 -15]", PlutoMicrostructureText.Badges(in f));
         }
 
         // ── ③ 팩터 · 악마의 변호인 ──────────────────────────────────────────────
@@ -308,7 +309,7 @@ namespace StockManager.Tests.Cognitive
             string badges = PlutoMicrostructureText.Badges(in f);
             Assert.Contains(PlutoMicrostructureText.CvdBuyBadge, badges);
             Assert.Contains(PlutoMicrostructureText.BullishBadge, badges);
-            Assert.Contains(PlutoMicrostructureText.BidWallBadge, badges);
+            Assert.Contains("[🛡️ 2호가 매수벽]", badges);
             Assert.False(PlutoMicrostructureAnalyzer.Assess(in bull, 0, 9_950).HasMicrostructure);
             Assert.False(PlutoMicrostructureAnalyzer.Assess(in bull, 7, 0).HasMicrostructure);
         }
@@ -375,7 +376,7 @@ namespace StockManager.Tests.Cognitive
             Assert.Equal(PlutoBlockReason.CounterThesisVeto, r2);
             var r3 = PlutoCognitiveGovernor.Approve(in regime, 6000, 0, 25, 0, 35, 3000, 1000, 1000, 0, 0, default, Kst10.Ticks, out var t3, depthTrap: true);
             Assert.Equal((PlutoBlockReason.None, CounterThesis.DepthTrap, -20), (r3, t3.Theses, t3.Penalty));
-            Assert.Contains("10호가 매도벽/허매수", PlutoGovernanceText.Compose(in t3));
+            Assert.Contains("15호가 매도벽/허매수", PlutoGovernanceText.Compose(in t3));
         }
 
         // ── ④ 3대 아레나 결속 ───────────────────────────────────────────────────

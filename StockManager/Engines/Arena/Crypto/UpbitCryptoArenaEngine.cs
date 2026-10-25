@@ -32,6 +32,9 @@
 //   [v12.18.75-DEV] 플루토 미시구조 팩터(EnableMicrostructure · 선택): 매 체결 = 실측 ask_bid 방향(BID = 매수 테이커) × 체결 수량 raw CVD 누적(KST 1분 봉) ·
 //     매 유효 호가 = L1 잔량 뎁스 판독(피드 = orderbook_units[0] → 제공 범위 비례 가중) → 팩터 게시(TryReadMicrostructure) · 가동 시 점수 × 100bp 를
 //     MicrostructureWeight(20)로 가산 · 기여 최대 = CvdBullishDivergence / OrderbookDepthSupport 진입 · 약세 다이버전스 · 매도벽/허매수 = 악마의 변호인 ⑤⑥.
+//   [v12.18.76-DEV] 15호가 뎁스 결속(OnDepthQuote): 업비트 orderbook_units 최대 15단 잔량 열 → PlutoOrderbookDepthAnalyzer 직접 판독(δ=0 · span) →
+//     매수벽 지지(+10) · 매도벽(−15) · 원거리 허매수(−10) 실가동 · 매도벽/허매수 = 악마의 변호인 ⑥ DepthTrap(−20) · 근거 뱃지에 벽 위치 호가.
+//     잔량 열 검증(ValidDepthTiers): [0] = L1 잔량 일치 · 0 ≤ 잔량 ≤ 상한인 연속 접두만 · 불일치/2단 미만 = L1 판독(기존 동작 · fail-closed).
 // ============================================================================
 using System;
 using System.Threading;
@@ -413,6 +416,13 @@ namespace StockManager.Engines.Arena.Crypto
         /// 표 밖 마켓 · 호가 격자 비정렬 · 매수 ≥ 매도 · 잔량 범위 밖 · 세션 무효 = 폐기(DroppedQuotes 증가 · fail-closed).
         /// </summary>
         public void OnQuote(long symbol, long bidRaw, long askRaw, long bidQtyRaw, long askQtyRaw, long utcMicros)
+            => OnDepthQuote(symbol, bidRaw, askRaw, bidQtyRaw, askQtyRaw, utcMicros, default, default);
+
+        /// <summary>
+        /// [v12.18.76-DEV] OnQuote + 호가별 잔량 열(raw · [0] = 최우선 · 최대 15단). 유효 2단 이상 = 다단 뎁스 판독(벽/허매수) · 그 외 = L1 판독(OnQuote 동일).
+        /// </summary>
+        public void OnDepthQuote(long symbol, long bidRaw, long askRaw, long bidQtyRaw, long askQtyRaw, long utcMicros,
+            ReadOnlySpan<long> bidDepthQtyRaw, ReadOnlySpan<long> askDepthQtyRaw)
         {
             BeginWrite();
             Clock(utcMicros);
@@ -432,7 +442,9 @@ namespace StockManager.Engines.Arena.Crypto
                 PlutoTechnicalAnalyzer.OnPrice(ref _tech[si], mid, KstTicksOf(utcMicros));
                 _techLast[si] = PlutoTechnicalAnalyzer.Assess(in _tech[si], s.Symbol, mid);
                 PlutoTechnicalFactor tech = Volatile.Read(ref _technical) ? _techLast[si] : default;
-                PlutoMicrostructureAnalyzer.OnL1(ref _micro[si], bidQtyRaw, askQtyRaw);
+                int tiers = ValidDepthTiers(bidQtyRaw, askQtyRaw, bidDepthQtyRaw, askDepthQtyRaw);
+                if (tiers > 1) PlutoMicrostructureAnalyzer.OnDepth(ref _micro[si], bidDepthQtyRaw.Slice(0, tiers), askDepthQtyRaw.Slice(0, tiers));   // [v12.18.76-DEV] 15호가
+                else PlutoMicrostructureAnalyzer.OnL1(ref _micro[si], bidQtyRaw, askQtyRaw);
                 _microLast[si] = PlutoMicrostructureAnalyzer.Assess(in _micro[si], s.Symbol, mid);
                 PlutoMicrostructureFactor micro = Volatile.Read(ref _microstructure) ? _microLast[si] : default;
                 if (s.LastMid > 0)
@@ -606,6 +618,22 @@ namespace StockManager.Engines.Arena.Crypto
             long keep = (long)Int128.Min((Int128)CryptoPaperExchange.MinOrderKrwRaw * 2 * Scale / bidRaw + 1, long.MaxValue);
             long sell = Math.Min(bidQtyRaw, positionQtyRaw - keep);
             return sell > 0 && (Int128)sell * bidRaw / Scale >= CryptoPaperExchange.MinOrderKrwRaw ? sell : 0;   // 부분 청산분도 최소 주문 이상
+        }
+
+        /// <summary>
+        /// [v12.18.76-DEV] 잔량 열 유효 단 수(δ=0): [0] = L1 잔량(bidQty/askQty)과 일치해야 하며(불일치 = 0) · 양측 공통 범위(≤ 15) 안에서
+        /// 0 ≤ 잔량 ≤ MaxBookQtyRaw 인 연속 접두 길이. 0 = 뎁스 미사용(L1 판독).
+        /// </summary>
+        public static int ValidDepthTiers(long bidQtyRaw, long askQtyRaw, ReadOnlySpan<long> bidDepthQtyRaw, ReadOnlySpan<long> askDepthQtyRaw)
+        {
+            int n = Math.Min(Math.Min(bidDepthQtyRaw.Length, askDepthQtyRaw.Length), PlutoOrderbookDepthAnalyzer.MaxTiers);
+            if (n <= 0 || bidDepthQtyRaw[0] != bidQtyRaw || askDepthQtyRaw[0] != askQtyRaw) return 0;
+            for (int i = 0; i < n; i++)
+            {
+                long b = bidDepthQtyRaw[i], a = askDepthQtyRaw[i];
+                if (b < 0 || a < 0 || b > MaxBookQtyRaw || a > MaxBookQtyRaw) return i;
+            }
+            return n;
         }
 
         /// <summary>최우선 잔량 raw × 가격 raw → 원(내림 · δ=0).</summary>
