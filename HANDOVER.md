@@ -4485,3 +4485,30 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,475 통과 + 7 건너뜀 · 실패 0 · 4분 15초(기존 5,452 + 신규 23) · infra-scan 0(기준 117) · 래칫/PureShell 통과(≤40 · 신규 결합 0).
 - 한계(정직): 점수 산출 = 아레나 시세 종목(KRX 5 · US 5 · 코인 4)뿐 · 카탈로그 나머지는 감시 수 표기만(실 피드 확장 = 업비트 StreamMarkets/엔진 MaxSymbols 확대 · KIS 해외 시세 결선 필요) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
 - 불변: liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault/피어 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미스테이징 · 원격 푸시 없음.
+
+## 193. v12.18.80-DEV — 플루토 병렬 학습 스웜(3대 자산 레인 · BelowNormal · CPU 듀티) + 실데이터 우선(업비트 공개 REST 120종 · KIS 구성 시 KRX) + 420슬롯 매트릭스/데이터 레이크(δ=0) (2026-10-25)
+
+- 방향 = [제안 A] 실데이터 우선 + 정직 대기. 오더 전제 검증: PlutoParallelLearningSwarm · PlutoMultiAssetDataLake · PlutoUniverseMatrixBoard 전부 부재 → 신규(Engines/Cognitive/Screening/).
+- 소스 경계(PlutoAssetDataSource.cs): IPlutoAssetDataSource(시장 1개 · 동기 Fetch · 워커 스레드에서 파싱/분석) · PlutoAssetSample(봉 200 · 방향 체결 200 · 15호가) · PlutoFetchOutcome(Ok/NoData/RateLimited/Faulted/NotConnected) ·
+  PlutoRequestPacer(최소 송신 간격 · 초과 큐잉 0) · PlutoBarFactorBuilder(기존 브레인 재생: 봉 → 스퀴즈 Push + 대표가 × 거래량 프로파일 + 봉 감쇄 · 체결 → CVD · 15호가 → 뎁스 · 가격 = 매도 1호가 ∨ 종가 · 국면 = 판정 전).
+- 업비트(Feeds/Crypto/UpbitPublicCandleSource.cs): 종목당 GET 3회(1분봉 200 · 체결 200 · 호가) · 인증 헤더 0 · 초당 8회 이하(10 초과 게이트 = 생성 거부) · 429/418 = RateLimited · 그 외 비 2xx/전송/파싱 = Faulted ·
+  UpbitCandleProtocol = Utf8JsonReader 타입드 게터 · JsonException 만 catch · raw 10^8 · 역전/미상 방향 = 실패(부분 판독 노출 0) · 동기 HttpClient.Send · 응답 버퍼 512KB 재사용 · 요청 시한 10초.
+- KRX(Adapters/KisDailyBarSource.cs): 호스트 KisProvider 일봉(인증 구성 시에만 부착 · 초당 1회 · 게이트 거부 = RateLimited · 빈 응답 = NoData) · 미시구조 판독 없음(0점) · 밸류에이션 = PlutoValuationBuffer.
+- US = 소스 미결선(KisProvider 해외 일봉 미지원 · 카탈로그에 거래소 코드 없음) → 100종 전부 '감시 중 · 실피드 연결 대기'(합성 점수 0).
+- 매트릭스: 420슬롯(KRX 0 · US 200 · 코인 300 · 카탈로그 순서) · 셀 = 상태(Awaiting/Live/NoData/Faulted) + 입력 + 시각 + 봉 수 · 슬롯 seqlock(시장 워커 단일 작성자) ·
+  TryRead/TryFindSlot(정렬 키 이분 탐색)/상태 계수 δ=0 · Live 아님 = 입력 폐기 · Scanner(Live ∧ 키 있음). PlutoUniverseMerge.Merge(primary 우선 중복 제거) · When(실 피드 조건).
+- 레이크: 슬롯 × 200봉 연속 배열(구축 1회) · Ok = 교체 · 그 외 = 비움 · TryCopyBars(최신 우선 · δ=0) · 시장별 조회/성공/무데이터/레이트/실패/스윕 누계.
+- 스웜: 레인 3개 = 전용 스레드(IsBackground · BelowNormal · "PlutoSwarm-*") + Channel<int>(용량 = 카탈로그 수 · DropOldest · 단일 판독자) · 스케줄러 PeriodicTimer 60초(진행 중/쿨다운 = 건너뜀 · 0/2/1 상태로 중복 투입 0) ·
+  미부착/미결선 = Awaiting(조회 0) · 9자 이상 마켓(키 0 · 3종) = NoData(조회 0 · 레이트 예산 보존) · 429 = 그 슬롯 Faulted + 쿨다운 60초 + 남은 인덱스 폐기(재시도 · 큐잉 0) ·
+  듀티 스로틀 = 작업 × (100 − 듀티) ÷ 듀티(상한 2초 · 기본 25%) · Attach = 기동 전만 · Dispose 멱등(취소 → 채널 완료 → Join).
+- 스크리너: MaxUniverse 128 → 256 · 호스트 유니버스 = Merge(매트릭스 Live, When(아레나 실 피드 출처 적용 중, 아레나)) — ★아레나 합성 데모 시세는 추천 점수에서 제외(기존 v12.18.78~79 경로의 합성 시세 혼입 차단).
+- 포트/UI: PlutoSwarmLaneView(StatusText · Css live/await/warn) · PlutoSwarmView(BadgeText) · PlutoRecoBoardView.Swarm(init) · 어댑터(선택 스웜 · 판독마다 레인 투영) ·
+  DualArenaPage '🧠 병렬 학습 스웜(BelowNormal · CPU 듀티 25%): KRX … | US … | Upbit 실데이터 n/120' + 레인 칩 3개 + 탭 커버 문구에 레인 상태.
+- 호스트: `Pluto.SwarmEnabled`(기본 켜짐) · UpbitPublicCandleSource(HttpPool.Shared) · KIS 구성 시 KisDailyBarSource · 스웜 60초 · 종료 시 Dispose.
+- 테스트: StockManager.Tests/Cognitive/PlutoParallelLearningSwarmTests.cs 26건(Theory 8 포함) — 실 응답 형태 파싱/실패 · 소스 GET 3회/429 후속 0/페이서 8회 · 빌더 · 매트릭스 배치/계수/스캐너 · 병합/게이트 · 레이크 ·
+  스웜 미결선/키 불가/429 쿨다운/스레드 BelowNormal 전수 스윕/스로틀 · 스크리너 결선 · 어댑터/뱃지 · DualArenaPage · 호스트 문자열 · δ=0: 동시 기록 중 매트릭스 판독 10만 회 0B · 찢어진 판독 0 · 레이크 복사 10만 회 0B.
+  옵트인 실측 Integration/UpbitCandleSwarmLiveTests.cs(MS2E_UPBIT_REST=1): BTC/ETH/XRP 200봉 · 15호가 · 스프레드 0~5bp · 종합 64/58/59(2026-10-25 실측). 기존 호스트 문자열 단언 3건 갱신.
+- 검증: WebOnly → sln Release -warnaserror 0W/0E(오중) · 전체 스위트 5,503 통과 + 8 건너뜀 · 실패 0 · 4분 27초 · Cognitive 8회 반복 무결 · infra-scan 0(기준 117) · 래칫/PureShell 통과.
+- 한계(정직): US 실피드 0(KIS 해외 일봉 · 거래소 코드 매핑 필요) · KRX = KIS 키 구성 PC 에서만 · 업비트 전수 1회 ≈ 117종 × 3 GET ÷ 8/s ≈ 45초 + 스로틀 · CVD = 최근 체결 200건(대형 코인은 3분 미만 → CVD 미성숙 · 뎁스만) ·
+  국면 = 판정 전(봉 기반 국면 분류 미구현) · 실 앱 패널 육안 미확인 · 버전 번호 승격 미실시.
+- 불변: liveArmed:false(시세 GET 만) · 인터락 무변경 · QuantumVault/피어 미접근 · 타 세션 파일(LiveWireKisLongSoakTests · .claude/headroom) 미수정/미스테이징 · 원격 푸시 없음.

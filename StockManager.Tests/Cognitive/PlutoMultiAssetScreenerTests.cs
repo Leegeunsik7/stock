@@ -378,7 +378,7 @@ namespace StockManager.Tests.Cognitive
             while (dir is not null && !System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "StockManager.sln"))) dir = dir.Parent;
             Assert.NotNull(dir);
             string form = System.IO.File.ReadAllText(System.IO.Path.Combine(dir!.FullName, "StockManager", "Blazor", "BlazorHomeForm.cs"));
-            Assert.Contains("PlutoArenaUniverse.Crypto(cryptoArena), cryptoArena.CapitalWon)", form);
+            Assert.Contains("PlutoArenaUniverse.Crypto(cryptoArena))), cryptoArena.CapitalWon)", form);   // [v12.18.80-DEV] 매트릭스 병합 + 실 피드 게이트
             Assert.Contains("PlutoScreenMarket.Crypto", form);
             string catalog = System.IO.File.ReadAllText(System.IO.Path.Combine(dir.FullName, "StockManager", "Engines", "Cognitive", "Screening", "PlutoMultiAssetUniverseCatalog.cs"));
             Assert.DoesNotContain("HttpClient", catalog);                          // 카탈로그 = 정적 메타데이터(네트워크 0)

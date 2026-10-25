@@ -422,10 +422,10 @@ namespace StockManager.Tests.Cognitive
             Assert.NotNull(dir);
             string form = System.IO.File.ReadAllText(System.IO.Path.Combine(dir!.FullName, "StockManager", "Blazor", "BlazorHomeForm.cs"));
             Assert.Contains("cfg.GetBool(\"Pluto.ScreenerEnabled\", true)", form);
-            Assert.Contains("PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer), krxArena.CapitalWon)", form);
-            Assert.Contains("PlutoArenaUniverse.Us(usArena, plutoValuationBuffer), usArena.CapitalCents)", form);
+            Assert.Contains("PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer))), krxArena.CapitalWon)", form);   // [v12.18.80-DEV] 매트릭스 병합 + 실 피드 게이트
+            Assert.Contains("PlutoArenaUniverse.Us(usArena, plutoValuationBuffer))), usArena.CapitalCents)", form);
             Assert.Contains("PlutoScreenMacro.FromLearning(learningForScreener?.Status)", form);
-            Assert.Contains("new StockManager.Adapters.PlutoRecommendationPortAdapter(plutoScreener)", form);
+            Assert.Contains("new StockManager.Adapters.PlutoRecommendationPortAdapter(plutoScreener, plutoSwarm)", form);
             Assert.Contains("MS2E.UI.Portable.Ports.Trading.UnwiredPlutoRecommendationPort.Instance", form);
             string port = System.IO.File.ReadAllText(System.IO.Path.Combine(dir.FullName, "MS2E.UI.Portable", "Ports", "Trading", "PlutoRecommendationPort.cs"));
             Assert.DoesNotContain("StockManager.Engines", port);                  // Pure Shell — 포트 DTO 엔진 타입 참조 0

@@ -12,6 +12,7 @@
 //   [v12.18.79-DEV] 3대 자산(KRX · US · 업비트 KRW) — 가상자산 유니버스(PlutoArenaUniverse.Crypto · 코인 4대 팩터) 추가.
 //    감시 카탈로그(PlutoMultiAssetUniverseCatalog · KRX 200 · US 100 · 업비트 120) = 집계 Monitored(감시 수) — 피드 판독이 없는 카탈로그 종목은 점수 산출 0
 //    ('피드 판독 대기'로 정직 집계 · 시세/재무 날조 0). Passed = 추천 기준 통과(Top 5 절단 전). 코인 추천 수량 = 코인 × 10^8 raw.
+//   [v12.18.80-DEV] 유니버스 = PlutoUniverseMerge(매트릭스 보드 Live 셀(병렬 학습 스웜 실데이터) 우선 + 아레나 시세 보조) · 스캔 버퍼 256.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -33,7 +34,7 @@ namespace StockManager.Engines.Cognitive.Screening
 
     public sealed class PlutoMarketScreener : IDisposable
     {
-        public const int MaxUniverse = 128;
+        public const int MaxUniverse = 256;   // [v12.18.80-DEV] 128 → 256(매트릭스 KRX 200 실데이터 + 아레나 병합)
 
         private sealed class Universe
         {

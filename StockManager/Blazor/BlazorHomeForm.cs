@@ -1853,18 +1853,44 @@ namespace StockManager.Blazor
                 var learningForScreener = plutoLearningRef;
                 var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,
                     () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status));
+                // [v12.18.80-DEV] 병렬 학습 스웜 — 3대 자산 레인(시장별 전용 스레드 BelowNormal · CPU 듀티 25% · Channels) → 420슬롯 매트릭스 + 데이터 레이크.
+                //   업비트 = 공개 REST(키 불필요 · 초당 8회 이하 · 429 = 스윕 중단/쿨다운 · 재시도 0) · KRX = KIS 일봉(인증 구성 시에만) · US = 소스 미결선(KIS 해외 일봉 미지원).
+                //   미결선 레인 = '감시 중 · 실피드 연결 대기'(합성 점수 0). `Pluto.SwarmEnabled`(기본 켜짐) · 시세 GET 만(liveArmed:false).
+                //   아레나 보조 유니버스 = 실 피드 출처 적용 중일 때만(합성 데모 시세 = 추천 점수 제외 · PlutoUniverseMerge.When).
+                var plutoMatrix = new StockManager.Engines.Cognitive.Screening.PlutoUniverseMatrixBoard();
+                StockManager.Engines.Cognitive.Screening.PlutoParallelLearningSwarm? plutoSwarm = null;
+                if (cfg.GetBool("Pluto.SwarmEnabled", true))
+                {
+                    plutoSwarm = new StockManager.Engines.Cognitive.Screening.PlutoParallelLearningSwarm(plutoMatrix,
+                        new StockManager.Engines.Cognitive.Screening.PlutoMultiAssetDataLake(plutoMatrix));
+                    plutoSwarm.Attach(new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared));
+                    if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisForSwarm)
+                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm), plutoValuationBuffer);
+                    plutoSwarm.Start(TimeSpan.FromSeconds(60));
+                    var swarmForShutdown = plutoSwarm;
+                    FormClosed += (_, _) => ShutdownTrace.Step("plutoSwarm", swarmForShutdown.Dispose);
+                    services.AddSingleton(plutoSwarm);
+                }
                 plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Krx,
-                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer), krxArena.CapitalWon);
+                    StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.Merge(plutoMatrix.Scanner(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Krx),
+                        StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.When(() => krxArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.KrxArenaFeed.Bridge,
+                            StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Krx(krxArena, plutoValuationBuffer))), krxArena.CapitalWon);
                 plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us,
-                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Us(usArena, plutoValuationBuffer), usArena.CapitalCents);
+                    StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.Merge(plutoMatrix.Scanner(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us),
+                        StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.When(() => usArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.UsArenaFeed.KisOverseas,
+                            StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Us(usArena, plutoValuationBuffer))), usArena.CapitalCents);
                 // [v12.18.79-DEV] 3대 자산 — 업비트 아레나 시세 유니버스 × 코인 4대 팩터(유동성 · 볼밴 스퀴즈 · CVD · 15호가 뎁스벽) · 감시 카탈로그(KRX 200 · US 100 · 업비트 120) 집계.
+                //   [v12.18.80-DEV] 매트릭스 Live 셀(업비트 공개 REST 실데이터 120종) 우선 + 아레나 보조.
                 plutoScreener.AddUniverse(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Crypto,
-                    StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Crypto(cryptoArena), cryptoArena.CapitalWon);
+                    StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.Merge(plutoMatrix.Scanner(StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Crypto),
+                        StockManager.Engines.Cognitive.Screening.PlutoUniverseMerge.When(() => cryptoArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.CryptoArenaFeed.UpbitStream,
+                            StockManager.Engines.Cognitive.Screening.PlutoArenaUniverse.Crypto(cryptoArena))), cryptoArena.CapitalWon);
                 plutoScreener.Start(TimeSpan.FromSeconds(30));
                 FormClosed += (_, _) => ShutdownTrace.Step("plutoScreener", plutoScreener.Dispose);
                 services.AddSingleton(plutoRecoBoard);
                 services.AddSingleton(plutoScreener);
-                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoRecommendationPort>(new StockManager.Adapters.PlutoRecommendationPortAdapter(plutoScreener));
+                services.AddSingleton(plutoMatrix);
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoRecommendationPort>(new StockManager.Adapters.PlutoRecommendationPortAdapter(plutoScreener, plutoSwarm));
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoRecommendationPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoRecommendationPort.Instance);
             // [v12.18.12-DEV] 아레나 고속 틱 리플레이 — 별도 원장 · 합성 1M 틱(첫 재생 시 생성 · 약 13MB) · 재생 스레드는 첫 명령 시 기동.

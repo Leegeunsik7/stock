@@ -5,6 +5,7 @@
 //   카드 = 종목명/코드 · 종합 점수(0~100) · 4대 팩터 점수(각 0~25) · 핵심 근거 3줄 · 악마의 변호인 판정 · 목표 안전마진 · 추천 수량.
 //   [👤 1-Click 아레나 담기] = 페이지가 자기 휴먼 티켓 상태(종목 · 수량)만 채운다 — 접수는 기존 매수 버튼 → I*ArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 스크리너 미가동 호스트 = UnwiredPlutoRecommendationPort(IsWired false) → '추천 엔진 미결선' 정직 렌더.
+//   [v12.18.80-DEV] Swarm = 병렬 학습 스웜 레인별 실데이터 수집 상태(업비트 공개 REST · KIS 일봉 · 미결선 = '실피드 연결 대기').
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -67,6 +68,9 @@ namespace MS2E.UI.Portable.Ports.Trading
 
         public PlutoRecoMarketView Crypto { get; init; } = PlutoRecoMarketView.None;
 
+        /// <summary>[v12.18.80-DEV] 병렬 학습 스웜 실데이터 수집 상태(미지정 = None · 뱃지 미표시).</summary>
+        public PlutoSwarmView Swarm { get; init; } = PlutoSwarmView.None;
+
         public PlutoRecoMarketView Of(int market) => market switch { PlutoRecoMarket.Us => Us, PlutoRecoMarket.Crypto => Crypto, _ => Krx };
 
         /// <summary>[v12.18.79-DEV] 3대 시장 전수 감시 합계 · 피드 판독 합계 · 추천 기준 통과 합계.</summary>
@@ -78,6 +82,37 @@ namespace MS2E.UI.Portable.Ports.Trading
         public string MonitorBadgeText => "📡 3대 시장 전수 감시 중: KRX " + Krx.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
             + "개 | US " + Us.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
             + "개 | Upbit " + Crypto.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture) + "개";
+    }
+
+    /// <summary>
+    /// [v12.18.80-DEV] 병렬 학습 스웜 레인 1개(시장별 실데이터 수집 상태). Connected false = 소스 미결선(KIS 미구성 등) → '감시 중 · 실피드 연결 대기'(합성 점수 0) ·
+    /// Live = 실데이터 판독 슬롯 · NoData = 응답 봉 없음/키 인코딩 불가 · Faulted = 조회 실패 · CoolingDown = 레이트 리밋 쿨다운(재시도 0).
+    /// </summary>
+    public sealed record PlutoSwarmLaneView(int Market, bool Connected, string SourceLabel, int Monitored, int Live, int Awaiting, int NoData, int Faulted,
+        bool Sweeping, bool CoolingDown, long Fetches, long RateLimited)
+    {
+        public static readonly PlutoSwarmLaneView None = new(PlutoRecoMarket.Krx, false, "실데이터 소스 미결선", 0, 0, 0, 0, 0, false, false, 0, 0);
+
+        public string StatusText => !Connected
+            ? "감시 중 · 실피드 연결 대기"
+            : CoolingDown ? "⏸ 레이트 리밋 쿨다운(재시도 0) · 실데이터 " + Live.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "실데이터 " + Live.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture) + (Sweeping ? " · 수집 중" : "");
+
+        public string Css => !Connected ? "await" : CoolingDown || Faulted > 0 ? "warn" : "live";
+    }
+
+    /// <summary>[v12.18.80-DEV] 병렬 학습 스웜 전체(Wired false = 스웜 미가동 호스트 · 뱃지 미표시).</summary>
+    public sealed record PlutoSwarmView(bool Wired, bool Running, int DutyPercent, PlutoSwarmLaneView Krx, PlutoSwarmLaneView Us, PlutoSwarmLaneView Crypto)
+    {
+        public static readonly PlutoSwarmView None = new(false, false, 0, PlutoSwarmLaneView.None, PlutoSwarmLaneView.None, PlutoSwarmLaneView.None);
+
+        public PlutoSwarmLaneView Of(int market) => market switch { PlutoRecoMarket.Us => Us, PlutoRecoMarket.Crypto => Crypto, _ => Krx };
+
+        public int TotalLive => Krx.Live + Us.Live + Crypto.Live;
+
+        /// <summary>"🧠 병렬 학습 스웜(BelowNormal · CPU 듀티 25%): KRX 감시 중 · 실피드 연결 대기 | US … | Upbit 실데이터 117/120".</summary>
+        public string BadgeText => "🧠 병렬 학습 스웜(BelowNormal · CPU 듀티 " + DutyPercent.ToString(System.Globalization.CultureInfo.InvariantCulture) + "%"
+            + (Running ? "" : " · 정지") + "): KRX " + Krx.StatusText + " | US " + Us.StatusText + " | Upbit " + Crypto.StatusText;
     }
 
     /// <summary>플루토 AI 추천 종목 판독 포트(호스트 필수 등록 · 스크리너 비활성 = UnwiredPlutoRecommendationPort).</summary>

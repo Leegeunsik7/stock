@@ -94,6 +94,17 @@
             <span class="ar-sub">피드 판독 @(rb.TotalScanned)종목 · 추천 기준 통과 @(rb.TotalPassed)종목 — 피드 판독이 없는 감시 종목은 점수를 내지 않습니다(판독 대기)</span>
         </div>
     }
+    @if (Reco.IsWired && rb.Swarm.Wired)
+    {
+        <div class="da-reco-swarm" data-swarm-live="@rb.Swarm.TotalLive" data-swarm-running="@(rb.Swarm.Running ? "on" : "off")">
+            <span class="da-badge da-reco-swarm-badge">@rb.Swarm.BadgeText</span>
+            @foreach (var lane in new[] { rb.Swarm.Krx, rb.Swarm.Us, rb.Swarm.Crypto })
+            {
+                <span class="da-badge da-swarm-lane @lane.Css" data-swarm-lane="@lane.Market" data-lane-live="@lane.Live" data-lane-connected="@(lane.Connected ? "on" : "off")"
+                      title="@lane.SourceLabel · 조회 @(lane.Fetches) · 레이트 리밋 @(lane.RateLimited) · 무데이터 @(lane.NoData) · 실패 @(lane.Faulted)">@PlutoRecoMarket.Label(lane.Market) · @lane.StatusText</span>
+            }
+        </div>
+    }
     @if (!Reco.IsWired)
     {
         <div class="ar-sub da-reco-empty">추천 엔진 미결선 — 스크리너가 가동되지 않은 호스트입니다(설정 Pluto.ScreenerEnabled).</div>
@@ -105,7 +116,7 @@
     else
     {
         <div class="ar-sub da-reco-tally" data-gen="@rb.Generation">스캔 @(rm.Scanned)종목 · 😈 악마의 변호인 탈락 @(rm.Vetoed) · 판독 부족 @(rm.Insufficient) · 기준(50점) 미달 @(rm.BelowThreshold) · 세대 #@(rb.Generation)@(rb.UpdatedUtc is { } ru ? " · " + ru.AddHours(9).ToString("HH:mm:ss") + " KST" : "")</div>
-        <div class="ar-sub da-reco-cover" data-awaiting="@rm.AwaitingFeed">감시 @(rm.Monitored)종목 · 피드 판독 대기 @(rm.AwaitingFeed) · 통과 @(rm.Passed)</div>
+        <div class="ar-sub da-reco-cover" data-awaiting="@rm.AwaitingFeed">감시 @(rm.Monitored)종목 · 피드 판독 대기 @(rm.AwaitingFeed) · 통과 @(rm.Passed)@(rb.Swarm.Wired ? " · " + rb.Swarm.Of(rtab).StatusText : "")</div>
         @if (rm.Cards.Count == 0)
         {
             <div class="ar-sub da-reco-empty">추천 기준을 통과한 종목이 없습니다 — 근거 없는 추천은 내지 않습니다.</div>
@@ -1096,6 +1107,8 @@ else
     .da-reco-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .da-reco-tab { background: #212836; color: #b0bec5; border: 1px solid #3a3f4b; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
     .da-reco-tab.on { background: #1a237e; color: #fff; border-color: #5c6bc0; }
+    .da-reco-swarm { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+    .da-swarm-lane.live { background: #1b3a2a; color: #a5d6a7; } .da-swarm-lane.await { background: #2a2f3a; color: #b0bec5; } .da-swarm-lane.warn { background: #3e2f12; color: #ffcc80; }
     .da-reco-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; margin-top: 6px; }
     .da-reco-card { background: #1b2030; border: 1px solid #2c3446; border-radius: 8px; padding: 8px 10px; }
     .da-reco-score.hot { background: #E53935; color: #fff; } .da-reco-score.good { background: #ef6c00; color: #fff; } .da-reco-score.ok { background: #3a3f4b; color: #ddd; }
