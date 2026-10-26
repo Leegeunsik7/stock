@@ -4825,3 +4825,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,667 통과 / 9 건너뜀 / 0 실패(5,676) ·
   infra-scan 0(기준 117) · 래칫 ≤40(Phase114 통과 · 신규 컴포넌트 주입 0) · 체결 핫패스 무변경(δ=0 기존 프로브 통과). liveArmed:false · 인터락 30 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
 - 미실측: 실제 데스크톱 앱 화면 캡처 검증 없음(bUnit DOM 판독으로만 검증).
+
+## 209. v12.18.87-GM — DualArena 다크 슬레이트 벤토 콕핏 + 플루토 인지 HUD + 레짐 적응형 추천 매트릭스 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-26)
+
+- 선행: v12.18.87-DEV = d381188(§208) · 사용자 화면 검증 완료 통보 후 착수. dotnet build-server shutdown 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 12.18.86 → 12.18.87(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 87, 0)` ×2 · "12.18.87" 핀 · HostVersion_Is_12_18_87 · release-package.ps1 머리말 · 3표기 바이트 치환 · BOM/줄바꿈 보존) =
+  4aa2a97(4파일 11/11줄 = 직전 승격 975afae 합계와 일치 · 잔여 0) · 태그 v12.18.87-GM -f → 4aa2a97.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,667 통과 + 9 건너뜀(옵트인) · 실패 0(5,676) · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드(이중키 조회 16 · 마스터 플래그 1) ·
+  [7/11] 봉인 38 아티팩트(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal 8A1740FF… · verify-live-armed(조회 지점 21 · 위반 0) ·
+  [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 · 격리 기동 PID 30116 · HWND 0x570AF0 실측.
+- 산출물: release-v12.18.87-GM.zip(558D0C3D…) · StockManager-v12.18.87-Standalone-win-x64.zip(9E684CB6…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit 4aa2a97) · manifest.sig 외 15종.
+  사후 독립 대조(zip 항목 스트림 SHA-256): 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 일치(불일치/누락 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(스크립트와 같은 인자 · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.86-GM 15종 → release/superseded-v12.18.86-GM/. 신규 15종 복사 후 재대조(바이트 동일 15/15 · 38/38 · .sha256) · worktree 제거 · prune.
+  잔류: 격리 기동 PID 30116 종료 확인 · 실행 중 MS2E.StockSuite.exe 0. 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 슬레이트 벤토 콕핏 · PlutoCognitiveHud · PlutoRecoMatrix(피드 미판독 = 집계 대기 행 · 날조 0) 포함 · 36슬롯 텐서/웜스타트 무변경 ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
