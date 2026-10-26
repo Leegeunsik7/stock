@@ -633,8 +633,8 @@ namespace StockManager.Simulation
         }
 
         public bool IsVolatile(int index) => _roots[_controls[index].Root].Volatile;
-        private long _stale;
-        public long StaleTargets => Interlocked.Read(ref _stale);
+        /// <summary>헤드리스 표면 = 탐색 직후 같은 디스패처에서 즉시 디스패치(노후 표적 재식별 · 재시도 경로 없음) → 노후 표적 0 고정(미할당 필드 CS0649 제거).</summary>
+        public long StaleTargets => 0;
 
         protected override void HandleException(Exception exception)
         {
