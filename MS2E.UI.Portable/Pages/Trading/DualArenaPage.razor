@@ -77,11 +77,12 @@
         PlutoLiveBriefing.Us(uHasHud, uHud.Phase, Learning.IsWired && !lvHud.HasRegime && PlutoMacroFeed.IsKeyPending(lvHud.MacroFeedText), swHud?.Us),
         PlutoLiveBriefing.Crypto(cHasHud, cHud.Tradable, swHud?.Crypto));
     string liveBrief = PlutoLiveBriefing.Compose(lights, kHud.SessionKst ?? cHud.SessionKst ?? uHud.SessionKst, Learning.IsWired, in lvHud, Reco.IsWired, rbHud);
+    string hudInsight = PlutoHudInsight.Compose(Learning.IsWired, in lvHud, Reco.IsWired, rbHud);
 }
 <section class="ck-card ck-hud">
-<div class="ck-card-h"><h2>플루토 인지 학습 관제탑 <small>Cognitive Brain HUD</small></h2></div>
-<PlutoCognitiveHud Wired="@Learning.IsWired" View="@lvHud" Briefing="@liveBrief" Lights="@lights" />
-<PlutoCouncilBalance View="@(Reco.IsWired ? Reco.Current.Council : PlutoCouncilView.None)" />
+<div class="ck-card-h"><h2>플루토 인지 학습 관제탑 <small>국면 연상 · 위원회 합의 · 자가 진화</small></h2></div>
+<PlutoCognitiveHud Wired="@Learning.IsWired" View="@lvHud" Briefing="@liveBrief" Lights="@lights" Insight="@hudInsight" Council="@rbHud.Council" />
+<PlutoCouncilBalance View="@rbHud.Council" />
 <div class="da-gov-bar">
     <button class="da-gov-toggle @govState" role="switch" aria-checked="@(govOn == 3 ? "true" : "false")" data-gov="@govState" @onclick="ToggleGovernance">
         🧠 플루토 프로 거버너 <b>(@(govOn == 3 ? "ON" : govOn == 0 ? "OFF" : "일부 ON"))</b>
@@ -158,8 +159,8 @@
     var rm = rb.Of(rtab);
 }
 <section class="ck-card ck-matrix">
-<div class="ck-card-h"><h2>레짐 적응형 AI 추천 매트릭스 <small>AI Top-Picks Matrix · 감시 @(rb.TotalMonitored)종목 · 통과 @(rb.TotalPassed)</small></h2></div>
-<PlutoRecoMatrix Board="@rb" Wired="@Reco.IsWired" Tab="@_mxTab" OnTab="@(t => _mxTab = t)" OnLoad="@LoadReco" Lights="@lights" />
+<div class="ck-card-h"><h2>국면 적응형 AI 추천 매트릭스 <small>감시 <span class="mono">@(rb.TotalMonitored)</span>종목 · 추천 통과 <span class="mono">@(rb.TotalPassed)</span> · 위험 차단 <span class="mono">@(rb.TotalBlocked)</span></small></h2></div>
+<PlutoRecoMatrix Board="@rb" Wired="@Reco.IsWired" Tab="@_mxTab" OnTab="@(t => _mxTab = t)" OnLoad="@LoadReco" Lights="@lights" View="@_mxView" OnView="@(v => _mxView = v)" />
 <details class="da-reco-detail">
 <summary>상세 근거 카드 · 수집 스웜 현황</summary>
 <div class="ar-card da-reco" data-reco="@(Reco.IsWired ? "wired" : "unwired")">
@@ -727,6 +728,7 @@ else
     private int _recoTab = -1;
     // [v12.18.87-DEV] 추천 매트릭스 탭(−1 = 전체 통합 순위)
     private int _mxTab = PlutoCockpitMatrix.All;
+    private int _mxView = PlutoRecoMatrix.PicksView;   // [v12.18.90-DEV] 💎 AI 엄선 추천 / 🛡️ 리스크 비토 차단 목록
     private string? _recoMsg;
     // [v12.18.85-DEV] 인지 브리핑 패널 열림(닫힘 = 합성 0)
     private bool _briefOpen;
@@ -1228,8 +1230,38 @@ else
     .hud-brief-t { margin: 6px 0 0; font-size: 13px; line-height: 1.55; color: #F3F4F6; }
     .hud-light { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; border: 1px solid #374151; color: #9CA3AF; background: #0B0F19; }
     .hud-light.live { border-color: #14532D; color: #86EFAC; } .hud-light.closed { border-color: #312E81; color: #C7D2FE; } .hud-light.await { border-color: #78350F; color: #FCD34D; }
-    .hud { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-    @@media (max-width: 1100px) { .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .hud { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    @@media (max-width: 1100px) { .hud { grid-template-columns: minmax(0, 1fr); } }
+    /* [v12.18.90-DEV] 기관용 인지 콕핏 — 브리핑 2번째 줄 · 3대 인지 카드 · 엔진 세부 계기(접힘) · 비토 쇼케이스 · 켈리 뱃지 */
+    .hud-brief-i { margin: 6px 0 0; padding-top: 6px; border-top: 1px dashed #312E81; font-size: 12.5px; line-height: 1.6; color: #C7D2FE; }
+    .hud-en { font-weight: 500; letter-spacing: 0; text-transform: none; color: #4B5563; }
+    .hud-stance { margin-top: 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid #1F2937; background: #111827; font-size: 11.5px; color: #9CA3AF; }
+    .hud-stance b { margin-right: 6px; color: #F3F4F6; } .hud-stance.def { border-color: #1E3A8A; } .hud-stance.def b { color: #93C5FD; }
+    .hud-stance.atk { border-color: #7F1D1D; } .hud-stance.atk b { color: #FCA5A5; }
+    .hud-agent { display: grid; grid-template-columns: 56px 1fr 52px; align-items: center; gap: 6px; font-size: 11.5px; color: #9CA3AF; margin: 3px 0; }
+    .hud-agent b { text-align: right; color: #D1D5DB; } .hud-agent.lead .hud-l, .hud-agent.lead b { color: #F9FAFB; font-weight: 700; }
+    .hud-ab { height: 6px; background: #1F2937; border-radius: 3px; overflow: hidden; } .hud-ab i { display: block; height: 100%; }
+    .hud-veto { color: #FCA5A5; font-weight: 700; } .hud-pass { color: #86EFAC; }
+    .hud-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 2px 0 4px; }
+    .hud-metric { background: #111827; border: 1px solid #1F2937; border-radius: 6px; padding: 5px 8px; }
+    .hud-metric span { display: block; font-size: 10.5px; color: #6B7280; } .hud-metric b { font-size: 15px; color: #F9FAFB; }
+    .hud-metric b.good { color: #86EFAC; } .hud-metric b.bad { color: #FCA5A5; } .hud-metric b.dim { font-size: 12px; color: #6B7280; }
+    .hud-tile .hud-tag + .hud-tag { margin-left: 4px; } .hud-tag.none { color: #6B7280; }
+    .hud-more { margin-top: 8px; } .hud-more summary { cursor: pointer; font-size: 11.5px; color: #6B7280; user-select: none; }
+    .hud-sub { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+    @@media (max-width: 1100px) { .hud-sub { grid-template-columns: minmax(0, 1fr); } }
+    .mx-views { display: flex; gap: 6px; margin-bottom: 8px; border-bottom: 1px solid #1F2937; }
+    .mx-view { background: transparent; color: #9CA3AF; border: 0; border-bottom: 2px solid transparent; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+    .mx-view.on { color: #E0E7FF; border-bottom-color: #6366F1; } .mx-view.veto.on { color: #FCA5A5; border-bottom-color: #E53935; }
+    .mx-kelly { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid #374151; color: #9CA3AF; white-space: nowrap; font-family: var(--ck-mono); }
+    .mx-kelly.k3 { border-color: #4338CA; background: #1E1B4B; color: #E0E7FF; } .mx-kelly.k2 { border-color: #7F1D1D; color: #FCA5A5; } .mx-kelly.k1 { border-color: #78350F; color: #FCD34D; }
+    .mx-score { width: 300px; }
+    .mx-state.hold { color: #FCD34D; border: 1px solid #78350F; }
+    .mx-veto-head { font-size: 12.5px; color: #FECACA; padding: 8px 10px; margin-bottom: 6px; border: 1px solid #7F1D1D; border-radius: 8px; background: #1F0F12; }
+    .mx-veto-head b { color: #FCA5A5; } .mx-veto-head .mx-sub { margin-left: 6px; }
+    .mx-vscore s { color: #6B7280; } .mx-vreason { color: #FECACA; }
+    .mx-vsrc { font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+    .mx-vsrc.cro { color: #C4B5FD; border: 1px solid #5B21B6; } .mx-vsrc.devil { color: #FCD34D; border: 1px solid #78350F; }
     .hud-tile { background: #0B0F19; border: 1px solid #1F2937; border-radius: 10px; padding: 10px 12px; min-width: 0; }
     .hud-k { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6B7280; margin-bottom: 6px; display: flex; justify-content: space-between; }
     .hud-v { font-size: 16px; font-weight: 700; color: #F9FAFB; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1261,7 +1293,6 @@ else
     .cc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; font-size: 11.5px; }
     .cc-veto { color: #FCA5A5; font-weight: 700; } .cc-pass { color: #86EFAC; } .cc-lead { font-weight: 700; color: #E5E7EB; }
     .cc-lead.up { color: #E53935; } .cc-lead.down { color: #1E88E5; } .cc-spill { flex-basis: 100%; }
-    .mx-kelly { width: 96px; white-space: nowrap; color: #9CA3AF; } .mx-kelly.k3 { color: #F9FAFB; font-weight: 700; } .mx-kelly.k2 { color: #FCA5A5; }
     .mx-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .mx-tab { background: #0B0F19; color: #9CA3AF; border: 1px solid #1F2937; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
     .mx-tab.on { background: #1E1B4B; color: #E0E7FF; border-color: #4338CA; }
@@ -1272,7 +1303,7 @@ else
     .mx-sub { color: #6B7280; font-size: 11px; }
     .mx-asset { font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid #374151; }
     .mx-asset.a0 { color: #FCA5A5; } .mx-asset.a1 { color: #93C5FD; } .mx-asset.a2 { color: #FCD34D; }
-    .mx-score { width: 170px; } .mx-score b { margin-left: 6px; color: #F9FAFB; }
+    .mx-score b { margin-left: 6px; color: #F9FAFB; }
     .mx-bar { display: inline-block; width: 90px; height: 6px; background: #1F2937; border-radius: 3px; overflow: hidden; vertical-align: middle; }
     .mx-bar span { display: block; height: 100%; background: #4B5563; } .mx-bar span.hot { background: #E53935; } .mx-bar span.good { background: #F59E0B; }
     .mx-break { font-size: 10.5px; color: #6B7280; margin-top: 2px; } .mx-break i { font-style: normal; }

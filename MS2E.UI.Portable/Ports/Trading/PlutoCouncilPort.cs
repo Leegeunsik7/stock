@@ -35,6 +35,14 @@ namespace MS2E.UI.Portable.Ports.Trading
             _ => "—",
         };
 
+        /// <summary>[v12.18.90-DEV] 점수 옆 뱃지: 산출 = "권장 비중: 켈리 12.5%" · 그 외 = "권장 비중: " + Plain.</summary>
+        public static string Badge(int state, int weightBp) => Normalize(state) == Sized
+            ? "권장 비중: 켈리 " + Pct(weightBp)
+            : "권장 비중: " + Plain(state, weightBp);
+
+        /// <summary>[v12.18.90-DEV] 행동 가이드: 표본 부족 · 음의 엣지 = "👀 관망" · 그 외 = "🔍 관측".</summary>
+        public static string Action(int state) => Normalize(state) is Insufficient or NoEdge ? "👀 관망" : "🔍 관측";
+
         public static string Label(int state) => Normalize(state) switch
         {
             Sized => "켈리 산출",

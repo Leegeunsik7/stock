@@ -3,6 +3,7 @@
 //   같은 스냅샷 참조 = 직전 투영 재사용(렌더 펌프 100ms 폴링에도 재매핑 0). 종목명 = StockDisplayNameResolver(미등록 = 코드 그대로).
 //   [v12.18.80-DEV] 병렬 학습 스웜(선택) = 레인 상태 투영(Swarm · 판독마다 갱신 — 수집 진행률은 스냅샷 세대와 무관하게 변함).
 //   [v12.18.88-DEV] 위원회 허브(선택) = 활성 국면 39셀 보드 판독 → Council(합의 가중치 · 켈리 · 비토 · 선행 파급) · 카드 = 선행 점수 · 합의 점수 · 켈리 통과.
+//   [v12.18.90-DEV] 비토 차단 쇼케이스 = 스냅샷 Vetoes → PlutoVetoCard(종목명 해석 · 실측 사유 그대로) · 시장별 리스크 통제관 비토 수(CouncilVetoed).
 //   [v12.18.85-DEV] 카드 Score = 적응 점수(FinalScore) · 학습 투영 근거(모멘텀 조정 · 악마의 변호인 감점 · 문구) 통과.
 // ============================================================================
 using System;
@@ -61,8 +62,33 @@ namespace StockManager.Adapters
             ArgumentNullException.ThrowIfNull(s);
             return new PlutoRecoBoardView(running, s.Generation,
                 s.Generation == 0 ? null : new DateTime(s.UpdatedUtcTicks, DateTimeKind.Utc),
-                MapMarket(s, PlutoScreenMarket.Krx), MapMarket(s, PlutoScreenMarket.Us)) { Crypto = MapMarket(s, PlutoScreenMarket.Crypto) };
+                MapMarket(s, PlutoScreenMarket.Krx), MapMarket(s, PlutoScreenMarket.Us))
+            {
+                Crypto = MapMarket(s, PlutoScreenMarket.Crypto),
+                Vetoes = MapVetoes(s.Vetoes),
+            };
         }
+
+        /// <summary>[v12.18.90-DEV] 비토 차단 목록 투영(콜드 · 종목명 미등록 = 코드 그대로).</summary>
+        public static IReadOnlyList<PlutoVetoCard> MapVetoes(IReadOnlyList<PlutoVetoedCandidate> src)
+        {
+            ArgumentNullException.ThrowIfNull(src);
+            if (src.Count == 0) return Array.Empty<PlutoVetoCard>();
+            var cards = new PlutoVetoCard[src.Count];
+            for (int i = 0; i < cards.Length; i++)
+            {
+                var v = src[i];
+                cards[i] = new PlutoVetoCard(MarketOf(v.Market), v.Code, NameOf(v.Market, v.Symbol, v.Code), v.BaseScore,
+                    v.Source == PlutoVetoSource.Council ? PlutoVetoSourceCode.Council : PlutoVetoSourceCode.Devil, v.ReasonText,
+                    PlutoDiscoveryScorer.PriceText(v.Market, v.Price));
+            }
+            return Array.AsReadOnly(cards);
+        }
+
+        private static int MarketOf(PlutoScreenMarket m) => m switch { PlutoScreenMarket.Us => PlutoRecoMarket.Us, PlutoScreenMarket.Crypto => PlutoRecoMarket.Crypto, _ => PlutoRecoMarket.Krx };
+
+        private static string NameOf(PlutoScreenMarket m, long symbol, string code) =>
+            StockDisplayNameResolver.Name(code) ?? PlutoMultiAssetUniverseCatalog.NameOf(m, symbol) ?? code;   // 미등록 = 코드(날조 0)
 
         private static PlutoRecoMarketView MapMarket(PlutoRecommendationSnapshot s, PlutoScreenMarket m)
         {
@@ -70,7 +96,7 @@ namespace StockManager.Adapters
             var cards = new List<PlutoRecommendationCard>(src.Count);
             foreach (var r in src) cards.Add(Map(r));
             var t = s.TallyOf(m);
-            return new PlutoRecoMarketView(cards.AsReadOnly(), t.Scanned, t.Vetoed, t.Insufficient, t.BelowThreshold, t.Monitored, t.Passed);
+            return new PlutoRecoMarketView(cards.AsReadOnly(), t.Scanned, t.Vetoed, t.Insufficient, t.BelowThreshold, t.Monitored, t.Passed) { CouncilVetoed = t.CouncilVetoed };
         }
 
         /// <summary>[v12.18.88-DEV] 위원회 허브 → 활성 국면 셀(3대 자산 레인) 판독(콜드 · 보드 seqlock).</summary>
@@ -113,8 +139,8 @@ namespace StockManager.Adapters
         public static PlutoRecommendationCard Map(PlutoRecommendation r)
         {
             ArgumentNullException.ThrowIfNull(r);
-            int market = r.Market switch { PlutoScreenMarket.Us => PlutoRecoMarket.Us, PlutoScreenMarket.Crypto => PlutoRecoMarket.Crypto, _ => PlutoRecoMarket.Krx };
-            string name = StockDisplayNameResolver.Name(r.Code) ?? PlutoMultiAssetUniverseCatalog.NameOf(r.Market, r.Symbol) ?? r.Code;   // 미등록 = 코드(날조 0)
+            int market = MarketOf(r.Market);
+            string name = NameOf(r.Market, r.Symbol, r.Code);
             var sc = r.Score;
             return new PlutoRecommendationCard(market, r.Rank, r.Symbol, r.Code, name, r.FinalScore,
                 sc.ValuationPts, sc.TechnicalPts, sc.MicroPts, sc.MacroPts, r.Reasons,

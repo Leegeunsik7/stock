@@ -3,9 +3,15 @@
    핵심 진입 근거 · 리스크(악마의 변호인) · 상태. 피드 미판독 종목 = 시장별 집계 대기 행(스켈레톤 · 종목명/점수 생성 0 — CLAUDE.md §2).
    [v12.18.88-DEV] Kelly % 열 = 프랙탈 켈리 권장 비중(산출 = % · 표본 부족 = n/20 · 음의 엣지 = 0% · 위원회 미결선 = —) · 점수 분해 = 선행 파급(KRX) 포함.
    [v12.18.89-DEV] 사용자 용어 순화 — 'Kelly %' → '권장 비중'(표본 부족 = 0% (관망) · 표본 n/20 = 툴팁) · 대기 행 = 시장 신호등 기준(장외 = '🌙 장마감 대기 중 (내일 09:00 개장)' · 그 외 = 시세 수신 대기).
+   [v12.18.90-DEV] 상단 보기 탭 [💎 AI 엄선 추천] · [🛡️ 리스크 비토 차단 목록 (N)](N = 3대 시장 차단 전수 · 목록 = 엔진이 실제 차단한 시세 판독 종목 + 실측 수치 사유) ·
+   점수 옆 [권장 비중: 켈리 X%] 뱃지(별도 열 폐지) · 상태 열 = 행동 가이드(🔍 관측 / 👀 관망 · 대기 행 = 🌙 장외 / 🟡 대기).
    순수 표시 — [Parameter] · EventCallback 만(주입 0 · 엔진 참조 0). 1-Click 담기 = 부모 콜백(가상 원장 · liveArmed:false). *@
 
-<div class="mx" data-mx-tab="@Tab">
+<div class="mx" data-mx-tab="@Tab" data-mx-view="@(View == VetoView ? "veto" : "picks")">
+    <div class="mx-views" role="tablist">
+        <button class="mx-view @(View != VetoView ? "on" : "")" role="tab" data-mx-view-btn="picks" @onclick="() => OnView.InvokeAsync(PicksView)">💎 AI 엄선 추천</button>
+        <button class="mx-view veto @(View == VetoView ? "on" : "")" role="tab" data-mx-view-btn="veto" data-mx-blocked="@PlutoVetoMatrix.Blocked(Board, PlutoCockpitMatrix.All)" @onclick="() => OnView.InvokeAsync(VetoView)">🛡️ 리스크 비토 차단 목록 <span class="mono">(@PlutoVetoMatrix.Blocked(Board, PlutoCockpitMatrix.All))</span></button>
+    </div>
     <div class="mx-tabs" role="tablist">
         @foreach (int t in s_tabs)
         {
@@ -22,11 +28,44 @@
     {
         <div class="mx-empty">첫 스캔 대기 중 — 감시 유니버스를 30초 주기로 판독합니다.</div>
     }
+    else if (View == VetoView)
+    {
+        var vetoes = PlutoVetoMatrix.Rows(Board, Wired, Tab);
+        int blocked = PlutoVetoMatrix.Blocked(Board, Tab);
+        <div class="mx-veto-head" data-mx-veto-total="@blocked">
+            🛡️ 플루토가 직전 분석에서 <b class="mono">@(blocked)종</b>의 진입을 막았습니다 — 점수가 높아도 위험 신호가 겹치면 사지 않습니다(자본 보존 우선).
+            @if (blocked > vetoes.Count) { <span class="mx-sub">차단 전 점수 상위 @(vetoes.Count)종 표시</span> }
+        </div>
+        @if (vetoes.Count == 0)
+        {
+            <div class="mx-empty">직전 분석에서 차단된 종목이 없습니다 — 위험 신호가 겹친 후보가 없었습니다.</div>
+        }
+        else
+        {
+            <table class="mx-grid mx-veto" data-mx-veto-rows="@vetoes.Count">
+                <thead><tr><th class="r">#</th><th>종목</th><th>자산</th><th class="r">차단 전 점수</th><th>차단 주체</th><th>차단 사유</th></tr></thead>
+                <tbody>
+                @for (int i = 0; i < vetoes.Count; i++)
+                {
+                    var v = vetoes[i];
+                    <tr class="mx-row mx-vrow" data-mx-veto-code="@v.Code" data-mx-market="@v.Market" data-mx-veto-src="@PlutoVetoSourceCode.Css(v.Source)">
+                        <td class="r mono">@(i + 1)</td>
+                        <td><b>@v.Name</b> <span class="mx-sub mono">@v.Code · @v.PriceText</span></td>
+                        <td><span class="mx-asset a@(v.Market)">@PlutoCockpitMatrix.AssetTag(v.Market)</span></td>
+                        <td class="r mono mx-vscore" data-mx-veto-score="@v.BaseScore"><s>@v.BaseScore</s></td>
+                        <td><span class="mx-vsrc @PlutoVetoSourceCode.Css(v.Source)">@PlutoVetoSourceCode.Label(v.Source)</span></td>
+                        <td class="mx-vreason" data-mx-veto-reason>⛔ @v.Reason</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    }
     else
     {
         var rows = PlutoCockpitMatrix.Rows(Board, Wired, Tab);
         <table class="mx-grid" data-mx-rows="@rows.Count">
-            <thead><tr><th class="r">순위</th><th>종목</th><th>자산</th><th>점수</th><th class="r">권장 비중</th><th>핵심 진입 근거</th><th>리스크 요인(변호인)</th><th>상태</th></tr></thead>
+            <thead><tr><th class="r">순위</th><th>종목</th><th>자산</th><th>점수 · 권장 비중</th><th>핵심 진입 근거</th><th>리스크 요인(변호인)</th><th>행동 가이드</th></tr></thead>
             <tbody>
             @foreach (var row in rows)
             {
@@ -40,13 +79,13 @@
                         <td class="mx-score" title="@sb.Text" data-mx-score="@c.Score" data-mx-base="@sb.Base">
                             <div class="mx-bar"><span class="@c.ScoreCss" style="width:@(Math.Clamp(c.Score, 0, 100))%"></span></div>
                             <b class="mono">@c.Score</b>
+                            <span class="mx-kelly k@(PlutoKellyCode.Normalize(c.KellyState))" data-mx-kelly="@PlutoKellyCode.Normalize(c.KellyState)" data-mx-kelly-bp="@c.KellyBp"
+                                  title="@KellyTitle(c)">@PlutoKellyCode.Badge(c.KellyState, c.KellyBp)</span>
                             <div class="mx-break mono" data-mx-break>기본 @sb.Base <i class="@(sb.Momentum > 0 ? "up" : sb.Momentum < 0 ? "down" : "")">@(sb.Momentum >= 0 ? "+" : "")@sb.Momentum</i> <i class="@(sb.Devil > 0 ? "down" : "")">−@sb.Devil</i>@if (sb.Lead != 0) { <i class="@(sb.Lead > 0 ? "up" : "down")" data-mx-lead="@sb.Lead"> 선행 @(sb.Lead > 0 ? "+" : "")@sb.Lead</i> }@(sb.Saturated ? " · 포화" : "")</div>
                         </td>
-                        <td class="r mono mx-kelly k@(PlutoKellyCode.Normalize(c.KellyState))" data-mx-kelly="@PlutoKellyCode.Normalize(c.KellyState)" data-mx-kelly-bp="@c.KellyBp"
-                            title="@KellyTitle(c)">@PlutoKellyCode.Plain(c.KellyState, c.KellyBp)</td>
                         <td class="mx-reason">@(c.Reasons.Count > 0 ? c.Reasons[0] : "—")</td>
                         <td class="mx-risk @(c.CounterCount == 0 ? "pass" : "watch")" data-mx-devil="@c.CounterCount">@c.CounterText</td>
-                        <td><span class="mx-state live">관측</span>
+                        <td><span class="mx-state @(PlutoKellyCode.Action(c.KellyState) == "👀 관망" ? "hold" : "live")" data-mx-action>@PlutoKellyCode.Action(c.KellyState)</span>
                             <button class="mx-load" disabled="@(c.RecommendedQty <= 0)" title="가상 원장 1-Click 담기(@c.QtyText)" @onclick="() => OnLoad.InvokeAsync(c)">담기</button></td>
                     </tr>
                 }
@@ -59,10 +98,9 @@
                         <td><span class="mx-skel"></span> <span class="mx-sub">감시 @(row.Awaiting)종목</span></td>
                         <td><span class="mx-asset a@(row.Market)">@PlutoCockpitMatrix.AssetTag(row.Market)</span></td>
                         <td class="mx-score"><div class="mx-bar skel"></div><b class="mono dim">--</b></td>
-                        <td class="r mono dim">--</td>
                         <td class="mx-reason dim">@light.AwaitText(row.Note)</td>
                         <td class="dim">@(closed ? "장외 — 점수 미산출" : "데이터 결손(정직 표기)")</td>
-                        <td><span class="mx-state await">@(closed ? "장외" : "대기")</span></td>
+                        <td><span class="mx-state await">@(closed ? "🌙 장외" : "🟡 대기")</span></td>
                     </tr>
                 }
             }
@@ -84,6 +122,11 @@
     [Parameter] public EventCallback<int> OnTab { get; set; }
     [Parameter] public EventCallback<PlutoRecommendationCard> OnLoad { get; set; }
     [Parameter] public PlutoMarketLights Lights { get; set; } = PlutoMarketLights.None;
+
+    /// <summary>[v12.18.90-DEV] 보기 탭(0 = 💎 AI 엄선 추천 · 1 = 🛡️ 리스크 비토 차단 목록).</summary>
+    public const int PicksView = 0, VetoView = 1;
+    [Parameter] public int View { get; set; } = PicksView;
+    [Parameter] public EventCallback<int> OnView { get; set; }
 
     private static string KellyTitle(PlutoRecommendationCard c) => PlutoKellyCode.Normalize(c.KellyState) == PlutoKellyCode.Insufficient
         ? "표본 부족 " + c.KellySamples + "/" + PlutoKellyCode.MinSamples + " — 비중 미산출(관망)" + (c.KellyText.Length > 0 ? " · " + c.KellyText : "")

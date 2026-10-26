@@ -6,6 +6,7 @@
 //   [👤 1-Click 아레나 담기] = 페이지가 자기 휴먼 티켓 상태(종목 · 수량)만 채운다 — 접수는 기존 매수 버튼 → I*ArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 스크리너 미가동 호스트 = UnwiredPlutoRecommendationPort(IsWired false) → '추천 엔진 미결선' 정직 렌더.
 //   [v12.18.85-DEV] 카드 Score = 학습 가중치 투영 적응 점수 · LearnMomentumPts/LearnDevilPts/LearnText = 투영 근거(학습 전 = 0 · 중립 문구).
+//   [v12.18.90-DEV] Vetoes = 리스크 비토 차단 쇼케이스(리스크 통제관 · 악마의 변호인이 진입을 막은 시세 판독 종목 + 실측 수치 인용 차단 사유 · 날조 0).
 //   [v12.18.80-DEV] Swarm = 병렬 학습 스웜 레인별 실데이터 수집 상태(업비트 공개 REST · KIS 일봉 · 미결선 = '실피드 연결 대기').
 // ============================================================================
 using System;
@@ -76,6 +77,10 @@ namespace MS2E.UI.Portable.Ports.Trading
     {
         public static readonly PlutoRecoMarketView None = new(Array.Empty<PlutoRecommendationCard>(), 0, 0, 0, 0);
 
+        /// <summary>[v12.18.90-DEV] 리스크 통제관 비토 탈락 수(위원회 미결선 = 0) · 차단 합계 = 악마의 변호인 + 리스크 통제관.</summary>
+        public int CouncilVetoed { get; init; }
+        public int BlockedTotal => Vetoed + CouncilVetoed;
+
         /// <summary>감시 중이지만 피드 판독이 아직 없는 종목 수(점수 산출 0 · 정직 집계).</summary>
         public int AwaitingFeed => Math.Max(0, Monitored - Scanned);
     }
@@ -93,6 +98,12 @@ namespace MS2E.UI.Portable.Ports.Trading
         /// <summary>[v12.18.88-DEV] 4대 인지 에이전트 위원회 · 선행 파급 · 켈리(미지정 = None · 위젯 '위원회 미결선').</summary>
         public PlutoCouncilView Council { get; init; } = PlutoCouncilView.None;
 
+        /// <summary>[v12.18.90-DEV] 비토 차단 목록(시장별 상위 ≤ 10 · 차단 전 기본 점수 내림차순 · 미지정 = 빈 목록).</summary>
+        public IReadOnlyList<PlutoVetoCard> Vetoes { get; init; } = Array.Empty<PlutoVetoCard>();
+
+        /// <summary>[v12.18.90-DEV] 3대 시장 비토 차단 합계(목록 상한과 무관한 전수 집계).</summary>
+        public int TotalBlocked => Krx.BlockedTotal + Us.BlockedTotal + Crypto.BlockedTotal;
+
         public PlutoRecoMarketView Of(int market) => market switch { PlutoRecoMarket.Us => Us, PlutoRecoMarket.Crypto => Crypto, _ => Krx };
 
         /// <summary>[v12.18.79-DEV] 3대 시장 전수 감시 합계 · 피드 판독 합계 · 추천 기준 통과 합계.</summary>
@@ -105,6 +116,29 @@ namespace MS2E.UI.Portable.Ports.Trading
             + "개 | US " + Us.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture)
             + "개 | Upbit " + Crypto.Monitored.ToString(System.Globalization.CultureInfo.InvariantCulture) + "개";
     }
+
+    /// <summary>[v12.18.90-DEV] 비토 차단 주체 코드(1 리스크 통제관 · 2 악마의 변호인 · 미상 = 리스크 통제관 취급 아님 → 0).</summary>
+    public static class PlutoVetoSourceCode
+    {
+        public const int Unknown = 0, Council = 1, Devil = 2;
+
+        public static int Normalize(int s) => s is Council or Devil ? s : Unknown;
+
+        public static string Label(int s) => Normalize(s) switch
+        {
+            Council => "🛡️ 리스크 통제관",
+            Devil => "😈 악마의 변호인",
+            _ => "차단 주체 미상",
+        };
+
+        public static string Css(int s) => Normalize(s) switch { Council => "cro", Devil => "devil", _ => "none" };
+    }
+
+    /// <summary>
+    /// [v12.18.90-DEV] 비토 차단 종목 1건 — 시세 판독 종목만(피드 미판독 = 목록 없음) · BaseScore = 차단 전 기본 점수 · Source = PlutoVetoSourceCode ·
+    /// Reason = 실측 수치 인용 차단 사유("VIX 38.2 (35 초과) — 패닉 투매 위험 차단").
+    /// </summary>
+    public sealed record PlutoVetoCard(int Market, string Code, string Name, int BaseScore, int Source, string Reason, string PriceText);
 
     /// <summary>
     /// [v12.18.80-DEV] 병렬 학습 스웜 레인 1개(시장별 실데이터 수집 상태). Connected false = 소스 미결선(KIS 미구성 등) → '감시 중 · 실피드 연결 대기'(합성 점수 0) ·

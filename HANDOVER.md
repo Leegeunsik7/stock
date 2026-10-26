@@ -4904,3 +4904,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,717 통과 / 9 건너뜀 / 0 실패(5,726) ·
   infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결 핫패스 무변경(δ=0 불변) · liveArmed:false · 타 세션 파일 미스테이징.
 - 정직 한계: 다음 개장 = 평일 기준(공휴일 달력 미반영) · 실 앱 화면 미실측(bUnit 검증).
+
+## 214. v12.18.90-DEV — DualArena 기관용 인지 콕핏 격상 + 리스크 비토 차단 쇼케이스 (2026-10-27)
+
+- 선행: d54a15a(§212 v12.18.89-DEV). 오더 전제 검증: 비토 '종목 목록'은 엔진에 없었음(직전까지 CouncilVetoed · Vetoed 건수만) → 엔진 Rank 에서 실제 차단 종목을 수집하도록 배선(날조 0).
+- 엔진(콜드 · Track B): PlutoRecommendationEngine.Rank 오버로드(out PlutoVetoedCandidate[]) — 리스크 통제관 비토 · 악마의 변호인(반대 논리 ≥ 2) 탈락 종목을
+  차단 전 기본 점수 내림차순 → 종목 오름차순으로 시장별 ≤ 10건(MaxVetoesPerMarket) 수집 · 판독 전무/50점 미만 = 목록 제외(비토 아님) · 집계(Tally)는 전수.
+  PlutoCognitiveCouncil.VetoDetail = 실측 수치 인용 사유('VIX 38.2 (35 초과) — 패닉 투매 위험 차단' · 10년물 bp · 빅테크 % · BTC 변동성 % · 패닉 국면 유사도 %) · 수치 미판독 = 사유만.
+  PlutoDiscoveryScorer.RiskList 추출 · 스크리너 Step → 스냅샷 Vetoes(init) 게시. 기존 Rank 오버로드 동작 불변(위임).
+- 포트/어댑터: PlutoVetoCard · PlutoVetoSourceCode(🛡️ 리스크 통제관 / 😈 악마의 변호인) · PlutoRecoMarketView.CouncilVetoed/BlockedTotal · PlutoRecoBoardView.Vetoes/TotalBlocked ·
+  어댑터 MapVetoes(종목명 해석 · 미등록 = 코드). 신규 Ports/Trading/PlutoInstitutionalHud.cs(순수): PlutoHudInsight(브리핑 2번째 줄 = 420종 분석 현황 · 12대 국면 연상 + 태세 · 비토 실적) ·
+  PlutoCouncilSummary(3대 자산 평균 발언권 · 주도 에이전트 · 게시 전 = 없음) · PlutoVetoMatrix(탭 필터 · 차단 전수). PlutoKellyCode.Badge('권장 비중: 켈리 X%') · Action(🔍 관측 / 👀 관망).
+- UI: PlutoCognitiveHud = 라이브 브리핑(+분석/국면/비토 2번째 줄) + 3대 인지 카드(🧭 과거 기억 연상: 국면 · 유사도 · 방어/공격 태세 ⚖️ 4대 위원회 밸런스: 발언권 % · 주도 · 거부권
+  🧬 자가 진화 성적표: 세대 · 승률 개선 %p · 최대 낙폭 %p · 웜스타트 n/3 · 영속화) · 듀얼 코어/학습 슬롯 타일 = '엔진 세부 계기'(접힘). PlutoRecoMatrix 상단 [💎 AI 엄선 추천] /
+  [🛡️ 리스크 비토 차단 목록 (N)] 보기 탭(N = 3대 시장 차단 전수 · 목록 = 차단 주체 · 차단 전 점수(취소선) · 실측 사유) · 점수 옆 켈리 뱃지(별도 열 폐지) · 행동 가이드 열.
+  위원회 범례 한글화(영문 = 툴팁). Deep Slate(#0B0F19/#111827) 페이지 토큰 · JetBrains Mono 수치 · 신호등 뱃지 유지. DualArenaPage 신규 주입 0(기존 Reco 스냅샷만).
+- 테스트: PlutoInstitutionalCockpitTests 14개(16 케이스) 신규(엔진 비토 수집/상한/사유 · 어댑터 · TryFind δ=0 · 브리핑/태세/위원회/웜스타트/켈리 · HUD/매트릭스 렌더 · RCL 순수성) · PlutoCouncilUiTests 켈리 뱃지 단언 갱신.
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,733 통과 / 9 건너뜀 / 0 실패(5,742) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결 핫패스(TryFind · 위원회 보드 TryRead) 무변경 δ=0 · 인터락 30 무변경 · liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
+- 정직 한계: 비토 목록 = 시세 판독 종목만(피드 미결선 시장 = 빈 목록) · 비토 판정 입력(VIX · 10년물 · 파급 레인) 미결선이면 리스크 통제관 비토 미발동 · 위원회 발언권 = 3대 자산 레인 단순 평균 ·
+  §213 번호는 오더 지정(§214)에 따라 비워 둠 · 실 앱 화면 미실측(bUnit 검증).

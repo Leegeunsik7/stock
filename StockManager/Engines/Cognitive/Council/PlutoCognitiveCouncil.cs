@@ -249,6 +249,36 @@ namespace StockManager.Engines.Cognitive.Council
             return sb.ToString();
         }
 
+        /// <summary>
+        /// [v12.18.90-DEV] 비토 차단 사유 상세(콜드 · 실측 수치 인용): "VIX 38.2 (35 초과) — 패닉 투매 위험 차단 · 미 10년물 금리 +31bp 급변 — 거시 충격 차단".
+        /// 수치 미판독 항목 = 수치 없이 사유만(가짜 수치 0).
+        /// </summary>
+        public static string VetoDetail(PlutoVetoReason v, in PlutoCouncilMacro m)
+        {
+            if (v == PlutoVetoReason.None) return "";
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            var parts = new List<string>(4);
+            if ((v & PlutoVetoReason.VixSpike) != 0)
+                parts.Add(m.VixX100 >= 0 ? "VIX " + (m.VixX100 / 100m).ToString("0.0", ci) + " (35 초과) — 패닉 투매 위험 차단" : "VIX 35 초과 — 패닉 투매 위험 차단");
+            if ((v & PlutoVetoReason.SpilloverShock) != 0)
+            {
+                var s = m.Spillover;
+                int before = parts.Count;
+                if ((s.Shocks & PlutoSpilloverShock.Us10yJump) != 0)
+                    parts.Add("미 10년물 금리 " + (s.Us10yChangeBp > 0 ? "+" : "") + s.Us10yChangeBp.ToString(ci) + "bp 급변 — 거시 충격 차단");
+                if ((s.Shocks & PlutoSpilloverShock.BigTechCrash) != 0)
+                    parts.Add("미 빅테크 " + (s.BigTechReturnBp / 100m).ToString("0.00", ci) + "% 급락 — 교차 자산 역풍 차단");
+                if ((s.Shocks & PlutoSpilloverShock.BtcVolSpike) != 0)
+                    parts.Add("비트코인 변동성 평시 대비 " + s.BtcVolRatioPct.ToString(ci) + "% 폭증 — 변동성 전이 차단");
+                if (parts.Count == before) parts.Add("교차 자산 충격 — 진입 차단");
+            }
+            if ((v & PlutoVetoReason.PanicRegimeMatch) != 0)
+                parts.Add("과거 패닉 국면 유사도 " + m.RegimeSimilarityPct.ToString(ci) + "% — 위기 재현 위험 차단");
+            if ((v & PlutoVetoReason.PanicLiquidation) != 0) parts.Add("종목 패닉 투매 국면 — 떨어지는 칼날 진입 차단");
+            if ((v & PlutoVetoReason.Unreadable) != 0) parts.Add("판정 보드 판독 불가 — 안전 차단(fail-closed)");
+            return string.Join(" · ", parts);
+        }
+
         /// <summary>39셀 기본 표(구축 1회): 행 0 = 균등 · 행 1~12 = 국면 전략/유형 · 열 Upbit = 수급 +500(역발상 −500).</summary>
         private static int[] BuildBase()
         {

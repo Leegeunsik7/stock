@@ -3,6 +3,9 @@
    ③ 누적 학습 성숙도(세대 · 평생 에피소드 · 섀도우 통과/거부 · 승률 개선 %p · 영속화 태그) ④ 3대 자산 텐서(활성 슬롯 출처 · 웜스타트 WarmReady/NoData).
    [v12.18.89-DEV] 최상단 [🧠 플루토 AI 라이브 브리핑] 카드(한 줄 자연어 요약 + 3대 시장 신호등 · Briefing null = 미표시) · 사용자 용어 순화
    (G0 → '0세대 (시세 데이터 축적 중)' · 판정 전 → '거시 분석 대기 (FRED 키 설정 시 가동)' · 보정 n/36 → '국면 가중치 (기본값)').
+   [v12.18.90-DEV] 기관용 인지 콕핏 — 브리핑 2번째 줄(420종 분석 현황 · 국면 연상 · 리스크 비토 실적) + 3대 인지 카드
+   (🧭 과거 기억 연상: 국면 · 유사도 · 방어/공격 태세 ⚖️ 4대 위원회 밸런스: 3대 자산 평균 발언권 · 주도 에이전트 · 거부권 🧬 자가 진화 성적표: 세대 · 승률 개선 · 최대 낙폭 · 웜스타트)
+   · 듀얼 코어/학습 슬롯 타일 = '엔진 세부 계기'(접힘) 이동.
    순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0). 미결선/판정 전 = 빈 게이지 + 정직 문구(가짜 국면 · 가짜 가중치 0). 상승/공격 = 적색 · 하강/방어 = 청색. *@
 
 @if (Briefing is not null)
@@ -15,16 +18,19 @@
             }
         </div>
         <p class="hud-brief-t">@Briefing</p>
+        @if (!string.IsNullOrEmpty(Insight)) { <p class="hud-brief-i" data-hud-insight>@Insight</p> }
     </div>
 }
 <section class="hud" data-hud="@(Wired ? "wired" : "unwired")">
     <div class="hud-tile" data-hud-tile="regime" data-hud-sim="@(Wired && View.HasRegime ? View.RegimeSimilarityX10 : -1)">
-        <div class="hud-k">거시 레짐 매칭</div>
+        <div class="hud-k">🧭 과거 기억 연상 <span class="hud-en">12대 역사적 국면</span></div>
         @if (Wired && View.HasRegime)
         {
-            <div class="hud-v">@View.RegimeName</div>
+            int tilt = PlutoWeightScale.TiltX100(View.MomentumTiltPct, View.DevilStrictnessPts);
+            <div class="hud-v" title="@View.RegimeNote">@View.RegimeName</div>
             <div class="hud-gauge"><span style="width:@(Pct(View.RegimeSimilarityX10))%"></span></div>
             <div class="hud-s mono">유사도 @(View.RegimeSimilarityX10 / 10).@(View.RegimeSimilarityX10 % 10)%</div>
+            <div class="hud-stance @PlutoHudInsight.StanceCss(tilt)" data-hud-stance="@PlutoHudInsight.StanceCss(tilt)"><b>@PlutoHudInsight.Stance(tilt)</b> <span>@PlutoHudInsight.StanceNote(tilt)</span></div>
             @if (View.RegimeEffect is not null) { <div class="hud-s">@View.RegimeEffect</div> }
         }
         else
@@ -35,8 +41,63 @@
         }
     </div>
 
+    @{ var cs = PlutoCouncilSummary.Of(Council); }
+    <div class="hud-tile" data-hud-tile="council" data-hud-council="@(Council.Wired ? Council.Published ? "live" : "pending" : "unwired")" data-hud-lead="@(cs.Has ? cs.Lead : -1)">
+        <div class="hud-k">⚖️ 4대 위원회 밸런스 <span class="hud-en">발언권 · 3대 자산 평균</span></div>
+        @if (cs.Has)
+        {
+            <div class="hud-v">주도: @PlutoCouncilAgentCode.Korean(cs.Lead) 에이전트 <small class="hud-s mono">@PlutoKellyCode.Pct(cs.WeightOf(cs.Lead))</small></div>
+            @foreach (int a in s_agents)
+            {
+                <div class="hud-agent @(a == cs.Lead ? "lead" : "")" data-hud-agent="@a" data-hud-agent-bp="@cs.WeightOf(a)" title="@PlutoCouncilAgentCode.Label(a)">
+                    <span class="hud-l">@PlutoCouncilAgentCode.Korean(a)</span>
+                    <span class="hud-ab"><i class="@PlutoCouncilAgentCode.Css(a)" style="width:@(BpPct(cs.WeightOf(a)))"></i></span>
+                    <b class="mono">@PlutoKellyCode.Pct(cs.WeightOf(a))</b>
+                </div>
+            }
+            <div class="hud-s @(Council.Vetoed ? "hud-veto" : "hud-pass")" data-hud-veto="@(Council.Vetoed ? "on" : "off")">@(Council.Vetoed ? "⛔ 리스크 통제관 거부권 발동 중" : "리스크 통제관: 거부권 미발동")</div>
+        }
+        else
+        {
+            <div class="hud-v dim">@(!Council.Wired ? "위원회 미결선" : "첫 위원회 소집 대기")</div>
+            <div class="hud-gauge skel"><span style="width:0%"></span></div>
+            <div class="hud-s">@(!Council.Wired ? "추세 · 역발상 · 호가 수급 · 위험 통제 에이전트 비활성" : "첫 분석 후 4대 에이전트 발언권을 게시합니다")</div>
+        }
+    </div>
+
+    <div class="hud-tile" data-hud-tile="maturity" data-hud-gen="@(Wired ? View.Generation : 0)">
+        <div class="hud-k">🧬 자가 진화 성적표 <span class="hud-en">섀도우 검증</span></div>
+        @if (Wired)
+        {
+            string warm = PlutoHudInsight.WarmText(View.Tensor, out int warmReady, out int warmTotal);
+            <div class="hud-v">@(View.Generation)세대 <small class="hud-s">(@PlutoPlainText.MaturityNote(View.Generation))</small></div>
+            <div class="hud-metrics">
+                <div class="hud-metric"><span>승률 개선</span>
+                    @if (View.Shadow.HasComparison) { <b class="mono @(View.Shadow.WinRateGainBp > 0 ? "up" : View.Shadow.WinRateGainBp < 0 ? "down" : "")" data-hud-gain="@View.Shadow.WinRateGainBp">@PlutoHudInsight.PctP(View.Shadow.WinRateGainBp)</b> }
+                    else { <b class="mono dim">비교 전</b> }
+                </div>
+                <div class="hud-metric" title="최대 낙폭(MDD) 변화 — 음수 = 낙폭 축소"><span>최대 낙폭</span>
+                    @if (View.Shadow.HasComparison) { <b class="mono @(View.Shadow.MddGainBp > 0 ? "good" : View.Shadow.MddGainBp < 0 ? "bad" : "")" data-hud-mdd="@View.Shadow.MddGainBp">@PlutoHudInsight.PctP(-View.Shadow.MddGainBp)</b> }
+                    else { <b class="mono dim">비교 전</b> }
+                </div>
+            </div>
+            <div class="hud-s mono">평생 @(View.LifetimeEpisodes >= 0 ? View.LifetimeEpisodes.ToString("N0") + "회" : "— (영속화 미결선)") · 이번 기동 표본 @(View.Samples)</div>
+            <div class="hud-s mono">섀도우 통과 @(View.Swaps) · 거부 @(View.RejectedSwaps)</div>
+            <span class="hud-tag @(warmTotal > 0 && warmReady == warmTotal ? "on" : warmTotal > 0 ? "stale" : "none")" data-hud-warm-all="@(warmReady)/@(warmTotal)">@warm</span>
+            <span class="hud-tag @PlutoLearningPersist.Css(View.PersistState)" data-hud-persist="@PlutoLearningPersist.Css(View.PersistState)">@PlutoLearningPersist.Label(View.PersistState)</span>
+        }
+        else
+        {
+            <div class="hud-v dim">—</div>
+            <div class="hud-s">세대 · 에피소드 기록 없음</div>
+        }
+    </div>
+</section>
+<details class="hud-more">
+<summary>엔진 세부 계기 — 듀얼 코어 가중치 · 3대 자산 학습 슬롯</summary>
+<div class="hud-sub">
     <div class="hud-tile" data-hud-tile="balance" data-hud-tilt="@(Wired ? PlutoWeightScale.TiltX100(View.MomentumTiltPct, View.DevilStrictnessPts) : 0)">
-        <div class="hud-k">듀얼-코어 밸런스</div>
+        <div class="hud-k">듀얼 코어 밸런스</div>
         @if (Wired)
         {
             int mom = PlutoWeightScale.MomentumX100(View.MomentumTiltPct), st = PlutoWeightScale.StrictnessX100(View.DevilStrictnessPts);
@@ -53,26 +114,8 @@
         }
     </div>
 
-    <div class="hud-tile" data-hud-tile="maturity" data-hud-gen="@(Wired ? View.Generation : 0)">
-        <div class="hud-k">누적 학습 성숙도</div>
-        @if (Wired)
-        {
-            <div class="hud-v">@(View.Generation)세대 <small class="hud-s">(@PlutoPlainText.MaturityNote(View.Generation))</small></div>
-            <div class="hud-s mono">평생 @(View.LifetimeEpisodes >= 0 ? View.LifetimeEpisodes.ToString("N0") + "회" : "— (영속화 미결선)") · 이번 기동 표본 @(View.Samples)</div>
-            <div class="hud-s mono">섀도우 통과 @(View.Swaps) · 거부 @(View.RejectedSwaps)
-                @if (View.Shadow.HasComparison) { <span class="@(View.Shadow.WinRateGainBp > 0 ? "up" : View.Shadow.WinRateGainBp < 0 ? "down" : "")" data-hud-gain="@View.Shadow.WinRateGainBp"> · 승률 @PctP(View.Shadow.WinRateGainBp)</span> }
-            </div>
-            <span class="hud-tag @PlutoLearningPersist.Css(View.PersistState)" data-hud-persist="@PlutoLearningPersist.Css(View.PersistState)">@PlutoLearningPersist.Label(View.PersistState)</span>
-        }
-        else
-        {
-            <div class="hud-v dim">—</div>
-            <div class="hud-s">세대 · 에피소드 기록 없음</div>
-        }
-    </div>
-
     <div class="hud-tile" data-hud-tile="tensor" data-hud-tensor="@(View.Tensor is null ? "unwired" : "wired")">
-        <div class="hud-k">3대 자산 텐서 @if (View.Tensor is { } tv) { <span class="hud-s" data-hud-calib="@tv.CalibratedSlots">@PlutoPlainText.TensorCalibration(tv.CalibratedSlots)</span> }</div>
+        <div class="hud-k">3대 자산 학습 슬롯 @if (View.Tensor is { } tv) { <span class="hud-s" data-hud-calib="@tv.CalibratedSlots">@PlutoPlainText.TensorCalibration(tv.CalibratedSlots)</span> }</div>
         @if (View.Tensor is { } t)
         {
             @foreach (var l in t.Lanes)
@@ -86,17 +129,23 @@
         }
         else
         {
-            <div class="hud-v dim">인지 텐서 미결선</div>
+            <div class="hud-v dim">학습 슬롯 미결선</div>
             <div class="hud-s">자산군별 슬롯 · 웜스타트 상태 없음</div>
         }
     </div>
-</section>
+</div>
+</details>
 
 @code {
+    private static readonly int[] s_agents = { PlutoCouncilAgentCode.Trend, PlutoCouncilAgentCode.Reversion, PlutoCouncilAgentCode.Liquidity, PlutoCouncilAgentCode.Risk };
+
     [Parameter] public bool Wired { get; set; }
     [Parameter] public PlutoLearningView View { get; set; }
     [Parameter] public string? Briefing { get; set; }
     [Parameter] public PlutoMarketLights Lights { get; set; } = PlutoMarketLights.None;
+    /// <summary>[v12.18.90-DEV] 브리핑 2번째 줄(PlutoHudInsight.Compose · 빈 값 = 미표시) · 4대 위원회(미지정 = 미결선).</summary>
+    [Parameter] public string? Insight { get; set; }
+    [Parameter] public PlutoCouncilView Council { get; set; } = PlutoCouncilView.None;
 
     private static int Pct(int x10) => Math.Clamp(x10 / 10, 0, 100);
 
@@ -107,5 +156,5 @@
 
     private static string Signed(long v) => (v > 0 ? "+" : "") + v.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    private static string PctP(int bp) => (bp > 0 ? "+" : bp < 0 ? "−" : "") + (Math.Abs(bp) / 100m).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%p";
+    private static string BpPct(int bp) => (Math.Clamp(bp, 0, 10000) / 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
 }

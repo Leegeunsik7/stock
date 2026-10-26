@@ -1,6 +1,7 @@
 @* PlutoCouncilBalance — v12.18.88-DEV: 4대 인지 에이전트 위원회 밸런스 위젯(다크 슬레이트 콕핏 · 관제탑 하단 띠).
    ① 활성 국면 셀(3대 자산 레인) 합의 가중치 스택 바(TrendScout · MeanReversion · LiquidityPredator · ChiefRiskOfficer · 합 100%) + 주도 에이전트
    ② 레인별 프랙탈 켈리 권장 비중(산출 = % · 표본 부족 = 0% (관망) · 음의 엣지 = 0% (진입 비권장) · [v12.18.89-DEV] 표본 n/20 = 툴팁) ③ 리스크 통제관 비토 · 교차 자산 선행 파급(KRX 점수 · 근거 문구).
+   [v12.18.90-DEV] 범례 = 한글 에이전트명(영문 = 툴팁).
    순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0). 미결선/첫 게시 전 = 빈 스켈레톤 + 정직 문구(가짜 가중치 · 가짜 비중 0). *@
 
 <section class="cc" data-cc="@(View.Wired ? View.Published ? "live" : "pending" : "unwired")" data-cc-veto="@(View.Vetoed ? "on" : "off")">
@@ -12,7 +13,7 @@
         }
         @foreach (int a in s_agents)
         {
-            <span class="cc-key"><i class="@PlutoCouncilAgentCode.Css(a)"></i>@PlutoCouncilAgentCode.Label(a)</span>
+            <span class="cc-key" title="@PlutoCouncilAgentCode.Label(a)"><i class="@PlutoCouncilAgentCode.Css(a)"></i>@PlutoCouncilAgentCode.Korean(a)</span>
         }
     </div>
     @if (!View.Wired)

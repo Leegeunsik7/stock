@@ -104,10 +104,13 @@ namespace StockManager.Engines.Cognitive.Screening
                 var weights = _weights();
                 long now = _utcNow();
                 var cm = _council?.Prepare(now) ?? Council.PlutoCouncilMacro.None;   // [v12.18.88-DEV] 파급 공급 · 게시 → 거시/국면 판독(미결선 = 생략)
-                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Krx, in weights, _tensor), in cm, out var krxTally);
-                var us = ScanMarket(PlutoScreenMarket.Us, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Us, in weights, _tensor), in cm, out var usTally);
-                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Crypto, in weights, _tensor), in cm, out var cryptoTally);
-                var snap = new PlutoRecommendationSnapshot(++_generation, now, krx, krxTally, us, usTally, crypto, cryptoTally);
+                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Krx, in weights, _tensor), in cm, out var krxTally, out var krxVeto);
+                var us = ScanMarket(PlutoScreenMarket.Us, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Us, in weights, _tensor), in cm, out var usTally, out var usVeto);
+                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Crypto, in weights, _tensor), in cm, out var cryptoTally, out var cryptoVeto);
+                var snap = new PlutoRecommendationSnapshot(++_generation, now, krx, krxTally, us, usTally, crypto, cryptoTally)
+                {
+                    Vetoes = Array.AsReadOnly<PlutoVetoedCandidate>([.. krxVeto, .. usVeto, .. cryptoVeto]),   // [v12.18.90-DEV] 비토 차단 쇼케이스(콜드)
+                };
                 _board.Publish(snap);
                 _council?.PublishBoard(in cm, _ => weights);   // 체결 핫패스 39셀 판정 보드(셀 해석은 허브가 텐서로 수행)
                 Interlocked.Increment(ref _cycles);
@@ -116,14 +119,14 @@ namespace StockManager.Engines.Cognitive.Screening
         }
 
         private PlutoRecommendation[] ScanMarket(PlutoScreenMarket market, in PlutoScreenMacro macro, in PlutoCognitiveWeights weights, in Council.PlutoCouncilMacro cm,
-            out PlutoScreenTally tally)
+            out PlutoScreenTally tally, out PlutoVetoedCandidate[] vetoes)
         {
             var u = _universes[(int)market];
             int monitored = PlutoMultiAssetUniverseCatalog.CountOf(market);
-            if (u is null) { tally = new PlutoScreenTally(0, 0, 0, 0, monitored, 0); return Array.Empty<PlutoRecommendation>(); }
+            if (u is null) { tally = new PlutoScreenTally(0, 0, 0, 0, monitored, 0); vetoes = Array.Empty<PlutoVetoedCandidate>(); return Array.Empty<PlutoRecommendation>(); }
             int n = Math.Clamp(u.Scan(_scratch), 0, _scratch.Length);
             var council = _council is null ? default : _council.InputsFor(market, in cm, in weights);
-            return PlutoRecommendationEngine.Rank(_scratch.AsSpan(0, n), market, in macro, in weights, u.Capital, monitored, PlutoRecommendationSnapshot.TopN, in council, out tally);
+            return PlutoRecommendationEngine.Rank(_scratch.AsSpan(0, n), market, in macro, in weights, u.Capital, monitored, PlutoRecommendationSnapshot.TopN, in council, out tally, out vetoes);
         }
 
         /// <summary>추천 수량(내림 · 자본 × 비중 &lt; 1주 = 0).</summary>

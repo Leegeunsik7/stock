@@ -40,9 +40,26 @@ namespace StockManager.Engines.Cognitive.Screening
         public int CouncilVetoed { get; init; }
     }
 
+    /// <summary>[v12.18.90-DEV] 비토 차단 주체 — 리스크 통제관(거시 충격 강제 차단) · 악마의 변호인(반대 논리 ≥ 2 중첩).</summary>
+    public enum PlutoVetoSource : byte
+    {
+        Council = 1,
+        DevilsAdvocate = 2,
+    }
+
+    /// <summary>
+    /// [v12.18.90-DEV] 비토 차단 종목 1건(불변 · 시세 판독 종목만 — 피드 판독 전무 종목은 차단 목록에도 없음 · 날조 0).
+    /// BaseScore = 차단 전 4대 팩터 기본 점수 · CouncilVeto = 리스크 통제관 사유 비트(DevilsAdvocate = None) · ReasonText = 실측 수치 인용 차단 사유.
+    /// </summary>
+    public sealed record PlutoVetoedCandidate(PlutoScreenMarket Market, long Symbol, string Code, long Price, int BaseScore,
+        PlutoVetoSource Source, Council.PlutoVetoReason CouncilVeto, string ReasonText);
+
     public sealed class PlutoRecommendationSnapshot
     {
         public const int TopN = 5, Markets = 3;
+
+        /// <summary>[v12.18.90-DEV] 시장별 비토 차단 목록 상한(차단 전 기본 점수 내림차순 · 집계 = PlutoScreenTally 전수).</summary>
+        public const int MaxVetoesPerMarket = 10;
 
         public static readonly PlutoRecommendationSnapshot Empty = new(0, 0,
             Array.Empty<PlutoRecommendation>(), default, Array.Empty<PlutoRecommendation>(), default);
@@ -85,6 +102,9 @@ namespace StockManager.Engines.Cognitive.Screening
         public int TotalMonitored { get; }
         public int TotalScanned { get; }
         public int TotalPassed { get; }
+
+        /// <summary>[v12.18.90-DEV] 3대 시장 비토 차단 목록(KRX → US → 코인 · 시장별 ≤ MaxVetoesPerMarket · 판독 전용 · 핫패스 미사용).</summary>
+        public IReadOnlyList<PlutoVetoedCandidate> Vetoes { get; init; } = Array.Empty<PlutoVetoedCandidate>();
 
         public IReadOnlyList<PlutoRecommendation> Of(PlutoScreenMarket m) => m switch
         {

@@ -81,11 +81,13 @@ namespace StockManager.Tests.Cognitive
             using var ctx = new TestContext();
             var cut = ctx.RenderComponent<PlutoRecoMatrix>(p => p.Add(x => x.Board, board).Add(x => x.Wired, true).Add(x => x.Tab, PlutoRecoMarket.Krx));
             Assert.Contains("권장 비중", cut.Find(".mx-grid thead").TextContent);
-            Assert.Equal("16.7%", cut.Find(".mx-row[data-mx-code='005930'] .mx-kelly").TextContent.Trim());
+            Assert.Equal("권장 비중: 켈리 16.7%", cut.Find(".mx-row[data-mx-code='005930'] .mx-score .mx-kelly").TextContent.Trim());   // [v12.18.90-DEV] 점수 옆 뱃지
             Assert.Equal("1667", cut.Find(".mx-row[data-mx-code='005930'] .mx-kelly").GetAttribute("data-mx-kelly-bp"));
-            Assert.Equal("0% (관망)", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").TextContent.Trim());
+            Assert.Equal("권장 비중: 0% (관망)", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").TextContent.Trim());
             Assert.StartsWith("표본 부족 5/20", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").GetAttribute("title"));
-            Assert.Equal("—", cut.Find(".mx-row[data-mx-code='035420'] .mx-kelly").TextContent.Trim());
+            Assert.Equal("권장 비중: —", cut.Find(".mx-row[data-mx-code='035420'] .mx-kelly").TextContent.Trim());
+            Assert.Equal("🔍 관측", cut.Find(".mx-row[data-mx-code='005930'] [data-mx-action]").TextContent.Trim());      // 행동 가이드
+            Assert.Equal("👀 관망", cut.Find(".mx-row[data-mx-code='000660'] [data-mx-action]").TextContent.Trim());
             Assert.Equal("기본 70 + 모멘텀 +0 − 변호인 0 + 선행 +3 = 73", cut.Find(".mx-row[data-mx-code='005930'] .mx-score").GetAttribute("title"));
             Assert.Equal("3", cut.Find(".mx-row[data-mx-code='005930'] [data-mx-lead]").GetAttribute("data-mx-lead"));
             Assert.Empty(cut.FindAll(".mx-row[data-mx-code='000660'] [data-mx-lead]"));

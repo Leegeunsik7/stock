@@ -243,12 +243,19 @@ namespace StockManager.Engines.Cognitive.Screening
         {
             int n = CountOf(r);
             if (n == 0) return "😈 악마의 변호인: 반대 논리 0건 — 통과";
-            string list = "";
-            for (int bit = 1; bit <= (int)PlutoScreenRisk.MacroRiskOff; bit <<= 1)
-                if (((int)r & bit) != 0) list += (list.Length > 0 ? " · " : "") + RiskLabel((PlutoScreenRisk)bit, market);
+            string list = RiskList(r, market);
             return n >= VetoRiskCount
                 ? "😈 악마의 변호인: 반대 논리 " + n.ToString(CultureInfo.InvariantCulture) + "건 중첩 — 탈락(" + list + ")"
                 : "😈 악마의 변호인: 반대 논리 1건 — 감시 통과(" + list + ")";
+        }
+
+        /// <summary>[v12.18.90-DEV] 반대 논리 목록("a · b" · 없음 = "").</summary>
+        public static string RiskList(PlutoScreenRisk r, PlutoScreenMarket market)
+        {
+            string list = "";
+            for (int bit = 1; bit <= (int)PlutoScreenRisk.MacroRiskOff; bit <<= 1)
+                if (((int)r & bit) != 0) list += (list.Length > 0 ? " · " : "") + RiskLabel((PlutoScreenRisk)bit, market);
+            return list;
         }
 
         /// <summary>시장별 가격 표기(KRX 원 · US 센트 → 달러 · 코인 raw → 원 · 1,000원 미만 = 소수 4자리).</summary>

@@ -93,9 +93,19 @@ namespace StockManager.Engines.Cognitive.Screening
         /// <summary>[v12.18.88-DEV] 위원회 결선 랭킹(council.Enabled false = 위 오버로드와 완전 동일).</summary>
         public static PlutoRecommendation[] Rank(ReadOnlySpan<PlutoScreenInputs> universe, PlutoScreenMarket market, in PlutoScreenMacro macro,
             in PlutoCognitiveWeights weights, long capital, int monitored, int topN, in PlutoCouncilInputs council, out PlutoScreenTally tally)
+            => Rank(universe, market, in macro, in weights, capital, monitored, topN, in council, out tally, out _);
+
+        /// <summary>
+        /// [v12.18.90-DEV] 랭킹 + 비토 차단 목록(리스크 통제관 · 악마의 변호인 탈락 종목 · 차단 전 기본 점수 내림차순 → 종목 오름차순 · ≤ MaxVetoesPerMarket ·
+        /// 사유 = 실측 수치 인용). 판독 전무(Insufficient) · 50점 미만 = 차단 목록 제외(비토가 아님).
+        /// </summary>
+        public static PlutoRecommendation[] Rank(ReadOnlySpan<PlutoScreenInputs> universe, PlutoScreenMarket market, in PlutoScreenMacro macro,
+            in PlutoCognitiveWeights weights, long capital, int monitored, int topN, in PlutoCouncilInputs council, out PlutoScreenTally tally,
+            out PlutoVetoedCandidate[] vetoes)
         {
             if (topN is < 1 or > PlutoRecommendationSnapshot.TopN) throw new ArgumentOutOfRangeException(nameof(topN));
             var picks = new List<Pick>(universe.Length);
+            var blocked = new List<Blocked>();
             int scanned = 0, vetoed = 0, insufficient = 0, below = 0, councilVetoed = 0;
             int lead = council.Enabled && market == PlutoScreenMarket.Krx ? council.Macro.Spillover.LeadPts : 0;
             for (int i = 0; i < universe.Length; i++)
@@ -105,12 +115,17 @@ namespace StockManager.Engines.Cognitive.Screening
                 scanned++;
                 var s = PlutoDiscoveryScorer.Score(in x, in macro);
                 if (s.Insufficient) { insufficient++; continue; }     // 피드 판독 전무 = 점수 산출 0(가짜 추천 0)
-                if (s.Vetoed) { vetoed++; continue; }
+                if (s.Vetoed) { vetoed++; blocked.Add(new Blocked(i, x.Symbol, s.Total, PlutoVetoSource.DevilsAdvocate, PlutoVetoReason.None, s.Risks)); continue; }
                 PlutoCouncilVerdict verdict = default;
                 if (council.Enabled)
                 {
                     verdict = PlutoCognitiveCouncil.Convene(in x, in s, in council.Macro, council.RegimeId, in council.Learned);
-                    if (verdict.Vetoed) { councilVetoed++; continue; }   // 리스크 통제관 거부권 = 진입 강제 차단(점수 무관)
+                    if (verdict.Vetoed)   // 리스크 통제관 거부권 = 진입 강제 차단(점수 무관)
+                    {
+                        councilVetoed++;
+                        blocked.Add(new Blocked(i, x.Symbol, s.Total, PlutoVetoSource.Council, verdict.Veto, s.Risks));
+                        continue;
+                    }
                 }
                 var a = Project(in s, in weights);
                 if (lead != 0) a = a.WithLead(lead);
@@ -145,6 +160,18 @@ namespace StockManager.Engines.Cognitive.Screening
                 };
             }
             tally = new PlutoScreenTally(scanned, vetoed, insufficient, below, Math.Max(monitored, scanned), picks.Count) { CouncilVetoed = councilVetoed };
+            blocked.Sort(static (p, q) => p.BaseScore != q.BaseScore ? q.BaseScore.CompareTo(p.BaseScore) : p.Symbol.CompareTo(q.Symbol));
+            vetoes = new PlutoVetoedCandidate[Math.Min(blocked.Count, PlutoRecommendationSnapshot.MaxVetoesPerMarket)];
+            for (int v = 0; v < vetoes.Length; v++)
+            {
+                var b = blocked[v];
+                ref readonly var x = ref universe[b.Index];
+                string reason = b.Source == PlutoVetoSource.Council
+                    ? PlutoCognitiveCouncil.VetoDetail(b.Veto, in council.Macro)
+                    : "반대 논리 " + PlutoDiscoveryScorer.CountOf(b.Risks).ToString(System.Globalization.CultureInfo.InvariantCulture) + "건 중첩 — "
+                      + PlutoDiscoveryScorer.RiskList(b.Risks, market) + " → 진입 차단";
+                vetoes[v] = new PlutoVetoedCandidate(market, x.Symbol, PlutoMarketScreener.CodeOf(market, x.Symbol), x.Price, b.BaseScore, b.Source, b.Veto, reason);
+            }
             return result;
         }
 
@@ -157,6 +184,8 @@ namespace StockManager.Engines.Cognitive.Screening
         }
 
         private static string Signed(int v) => (v >= 0 ? "+" : "") + v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        private readonly record struct Blocked(int Index, long Symbol, int BaseScore, PlutoVetoSource Source, PlutoVetoReason Veto, PlutoScreenRisk Risks);
 
         private readonly record struct Pick(int Index, long Symbol, PlutoDiscoveryScore Score, PlutoAdaptiveAdjust Adjust, int Total, PlutoCouncilVerdict Verdict);
     }
