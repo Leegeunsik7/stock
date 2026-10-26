@@ -4735,3 +4735,32 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 인지 브리핑 · 적응 랭킹 포함(§203) · 첫 기동 학습 전 = 조정 0(중립) · KIS 미구성 시 KRX/US 추천 0 · 국면별 개별 가중치 아님(전역 1벌) ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 이번 GM 커밋/태그 원격 푸시 없음.
+
+## 205. v12.18.86-DEV — 플루토 36슬롯 인지 텐서 매트릭스(12대 국면 × KRX/US/Upbit) + 기동 즉시 웜스타트 회고 학습기 (2026-10-26)
+
+- 선행: fa8ff57(CI 통과 · seqlock 텔레메트리). 오더 전제 검증: PlutoWeightCalibrator(전역 1벌) · PlutoCognitiveWeightSeqlock · PlutoCheckpointManager/PlutoLearningStore(PlutoLearningCheckpoints 롤링 64행) ·
+  PlutoRegimeMatcher(12대 국면) · PlutoRecommendationEngine · --pluto-briefing 실재 확인. 로컬 캔들 = portfolio.db `Candles`(Symbol · Date · Close · 시장 열 없음 → 종목 코드로 자산군 판별).
+- PlutoCognitiveTensorLake(Engines/Cognitive/Learning): 사전 할당 seqlock 셀 39개 = 국면 슬롯 36(행 1~12 × 열 3) + 자산 기준선 3(행 0 · 국면 판정 전 폴백 · 웜스타트 대상) · 셀마다 전용 보정기(링 256).
+  Resolve(자산군, 국면 판독값, ref 가중치) δ=0 = 국면 슬롯(세대>0) → 자산 기준선(세대>0) → 호출자 전역 그대로. 3대 아레나 Govern: 전역 TryRead → 국면 TryRead → **텐서 Resolve** → 국면 Bias(기존) 순.
+  Activate(국면) = 활성 국면 포인터 원자 게시(스크리너/브리핑 콜드 판독). Observe = 국면 슬롯 + 기준선 동시 관측 · Recalibrate = 새 표본 ≥10 셀만 제안 → 기존 섀도우 게이트 → 셀 핫스왑.
+  ※ '포인터 스왑' 실체 = 국면 ID → 사전 할당 seqlock 셀 배열 인덱스 전환(할당 0) · 활성 국면 포인터는 Volatile int(정직 표기).
+- 스웜: AddArena(name, copy, PlutoAssetClass) 오버로드(호스트 krx/us/crypto = Krx/Us/Upbit 태그) · 진입 근거 수확 시 국면 · 텐서 해석 엄격도 기록 → 최종 청산 회고를 (자산군 · 진입 시 국면) 슬롯에 관측.
+  진입 시 국면 = 수확 시점 판정기 값(근거 링 지연 ≤ 1주기 오차 허용). 태그 없는 아레나 = 전역 보정기만(기존 동작).
+- 영속: PlutoLearningCheckpoints 에 AssetClass 열(기본 −1 = 전역) — 기존 DB 는 생성자에서 ALTER TABLE ADD COLUMN(기존 행 체크섬 불변 · 전역 복원 무변경) + 인덱스(RegimeId, AssetClass, Id).
+  슬롯 행 = SealSlot(체크섬에 자산군 결속 → 키 변조 = 손상) · LoadSlots = ROW_NUMBER 슬롯별 최신 8행 · AppendSlot = INSERT + 같은 슬롯 8행 밖 DELETE(트랜잭션) ·
+  전역 판독/정리 = GlobalScope(유효 슬롯 행 제외 · 64행 정리가 슬롯 행 삭제 0). PlutoCheckpointManager(tensor 인자) = 전역 복원 후 슬롯 복원(같은 슬롯 이전 행 롤백 ·
+  슬롯 판독 장애 = 텐서만 중립 + 텐서 기록 중지) · Checkpoint = 전역 1행 + 변화 셀만 슬롯 행.
+- PlutoReplayWarmStarter + PlutoLocalCandleSource(Adapters): 체크포인트 복원 직후 백그라운드 Task 1회(UI 무블로킹) — 자산군당 최근 일봉(최대 32종목 × 120봉) → 결정적 가상 리플레이 100회
+  (균등 간격 진입 · 10봉 모멘텀 확신도 · 3/5/10봉 보유 · −7% 손절 · 왕복 25bp · 교훈 매핑) → 임시 보정기 → ApplyReplay(기준선 + 판정 국면 슬롯) = 기존 섀도우 게이트 그대로.
+  합성 표본 = 실 에피소드/슬롯 보정기 무오염 · 영속 0(통과 가중치만 다음 체크포인트) · 예산 1초(초과 = TimedOut) · 캔들 0 = NoData(가짜 시계열 0) · `Pluto.WarmStartEnabled`(기본 켜짐).
+- 추천: PlutoRecommendationEngine.AssetWeights(시장, 전역, 텐서) = 활성 국면 슬롯 → 기준선 → 전역 · PlutoMarketScreener(tensor 인자) 가 시장별 전용 가중치로 각 랭킹 독립 투영.
+- 브리핑: PlutoTensorBriefing(12대 국면 행 + 기준선 행 × KRX/US/Upbit · ○ 미학습 ◔ 축적 ◑ 보정 가능 ● 보정됨 · 세대/모멘텀%/엄격도 · 국면별 0~3/3 · 보정 슬롯 n/36) →
+  --pluto-briefing 끝에 추가 출력. CLI 판독 전용 유지(AssetClass 열 부재 레거시 DB = LegacyLoadRecentSql · 텐서 전 슬롯 미학습 표기 · 마이그레이션/기록 0).
+- 테스트 PlutoCognitiveTensorTests 22건(ConcurrencyStress): 셀 배치 · 슬롯 독립 보정(34슬롯 무간섭) · 해석 순서 · 성숙도/섀도우 거부 · 활성 포인터 · 스웜 라우팅 · 복합 키 왕복 ·
+  슬롯 손상/키 변조/문자열 오염 롤백 · 슬롯당 8행 + 전역 정리 격리 · v12.18.85 스키마 마이그레이션 · 텐서 저장소 장애 격리 · 웜스타트 100회×자산군 <1초 핫스왑 · 국면 슬롯 결속 ·
+  NoData/Failed · 리플레이 결정성/교훈 · Candles 어댑터 · 자산군 추천 투영 · CLI 매트릭스(바이트 불변) · 호스트 결선 · δ=0 2종(국면 전환+셀 핫스왑 중 Resolve 10만 회 = 0 B ·
+  거버너 가동 KRX 정산 10만 틱 = 0 B). 사보타주(Resolve 내 new byte[1] · 빌드 오류 0) → 3.2MB/2.8MB Red 실측 후 원복(초기 KRX 정산 테스트가 거버너 미가동이라 Resolve 미경유 → EnableGovernance 추가로 교정).
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,643 통과 / 9 건너뜀 / 0 실패(5,652) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(Portable 무변경). liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
+- 정직 한계: 실 캔들이 Candles 테이블에 적재되지 않은 환경에서는 웜스타트 = NoData · 국면 판정(FRED 키) 전에는 36슬롯이 아닌 자산 기준선만 학습/사용 ·
+  리플레이 교훈 매핑은 가격 경로 휴리스틱(실 회고 판정기 아님 · 세대당 ±2점/±5% 상한 + 섀도우 게이트로만 반영) · UI(DualArena) 텐서 표 미노출(CLI 전용).

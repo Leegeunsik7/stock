@@ -1,12 +1,13 @@
 # STATUS
 
-- **Active Milestone**: ZeroAllocSlidingTelemetry seqlock 정합성 보정 — 이동평균 (count,sum) 쌍 torn read 원천 차단
-- **Build Status**: 오중 Release -warnaserror 0W/0E (WebOnly + sln: Default/Portable/PrimesBench/x86 KiwoomProxy/KiwoomComShim) · 5,621 통과 / 9 건너뜀 / 0 실패
+- **Active Milestone**: v12.18.86-DEV — 플루토 36슬롯 인지 텐서(12대 국면 × KRX/US/Upbit) + 기동 즉시 웜스타트 회고 학습기
+- **Build Status**: 오중 Release -warnaserror 0W/0E (WebOnly + sln: Default/Portable/PrimesBench/x86 KiwoomProxy/KiwoomComShim) · 5,643 통과 / 9 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
 - **Updated At**: 2026-10-26
 - **Completed Deliverables**:
-  - `_version` seqlock 도입 — Push/Reset 쓰기 진입 홀수(Interlocked full fence)·완료 짝수(release)
-  - MeanDelayMicros/MeanSlippageBps → SeqlockMean(짝수 확인→count·sum 판독→버전 불변 확인·SpinWait 구조체 재시도)
-  - 신규 테스트 2건: seqlock 판독 경로 δ=0 · 상수 스트림+주기 Reset torn read 0 검출
-  - 사보타주 검증(버전 재확인 무력화·빌드 오류 0) → torn 76건 Red 실측 후 원복
-  - TelemetryAnomalyCircuitBreakerConcurrencyTests 10회 반복 6/6 전원 통과 · Push δ=0 유지
-- **Next Milestone**: CI(GitHub Actions) 통과 확인 · 국면별 개별 가중치 분리 검토 · 섀도우 판정 이력 누적 추세
+  - PlutoCognitiveTensorLake: seqlock 셀 39개(국면 슬롯 36 + 자산 기준선 3) · 슬롯별 독립 보정기 · Resolve δ=0(슬롯 → 기준선 → 전역) · 3대 아레나 결선
+  - 스웜 자산군 태그 아레나 → (자산군 · 진입 시 국면) 슬롯 관측 · 셀 단위 섀도우 게이트 핫스왑
+  - PlutoLearningCheckpoints AssetClass 열 마이그레이션 · (RegimeId, AssetClass) 복합 키 영속/복원 · 슬롯별 롤백 · 전역 레이크 격리
+  - PlutoReplayWarmStarter + PlutoLocalCandleSource: Candles 기반 자산군당 리플레이 100회 · 1초 예산 · 백그라운드 · NoData 정직
+  - 추천 엔진 자산군 독립 투영(AssetWeights) · --pluto-briefing 36슬롯 성숙도/가중치 매트릭스 표
+  - 신규 테스트 22건(δ=0 2종 사보타주 Red 실측 후 원복)
+- **Next Milestone**: Candles 실적재 경로 확인(웜스타트 실데이터) · DualArena UI 텐서 매트릭스 노출 · CI 통과 확인

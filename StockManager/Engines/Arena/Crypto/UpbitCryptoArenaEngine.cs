@@ -144,7 +144,8 @@ namespace StockManager.Engines.Arena.Crypto
         private bool _microstructure;
         private int _govUs10yBp, _govDxyBp;
         private PlutoCognitiveWeightSeqlock? _learning;
-        private PlutoRegimeMatcher? _regimeMatcher;                         // [v12.18.82-DEV] 12대 역사적 국면 판정기(Track B 게시 · 정산 스레드 δ=0 판독)
+        private PlutoRegimeMatcher? _regimeMatcher;
+        private PlutoCognitiveTensorLake? _tensor;                          // [v12.18.86-DEV] 36슬롯 인지 텐서(국면 × 자산군 전용 가중치 · 정산 스레드 δ=0 해석)                         // [v12.18.82-DEV] 12대 역사적 국면 판정기(Track B 게시 · 정산 스레드 δ=0 판독)
         private PlutoSizerState _sizer;
         private long _govApproved, _govPanic, _govCooldown, _govVeto;
         private PlutoGovernorStats _govSnap;
@@ -211,6 +212,11 @@ namespace StockManager.Engines.Arena.Crypto
         public void AttachRegimeMatcher(PlutoRegimeMatcher matcher) => Volatile.Write(ref _regimeMatcher, matcher ?? throw new ArgumentNullException(nameof(matcher)));
 
         public bool RegimeMatcherAttached => Volatile.Read(ref _regimeMatcher) is not null;
+
+        /// <summary>[v12.18.86-DEV] 36슬롯 인지 텐서 결선(국면 슬롯 → Upbit 기준선 → 전역 순 해석 · 미결선 = 전역 그대로).</summary>
+        public void AttachTensor(PlutoCognitiveTensorLake tensor) => Volatile.Write(ref _tensor, tensor ?? throw new ArgumentNullException(nameof(tensor)));
+
+        public bool TensorAttached => Volatile.Read(ref _tensor) is not null;
 
         public bool GovernanceEnabled => Volatile.Read(ref _governed);
 
@@ -814,6 +820,7 @@ namespace StockManager.Engines.Arena.Crypto
             Volatile.Read(ref _learning)?.TryRead(out learned);                 // [v12.18.77-DEV] Track A — 학습 가중치 스냅샷 판독(δ=0 · 미결선/경합 = 중립)
             PlutoRegimeMatch history = default;
             Volatile.Read(ref _regimeMatcher)?.TryRead(out history);               // [v12.18.82-DEV] 역사적 국면 판독(δ=0 · 미결선/경합 = 판정 전 · 편향 0)
+            Volatile.Read(ref _tensor)?.Resolve(PlutoAssetClass.Upbit, history.CycleId, ref learned);   // [v12.18.86-DEV] 국면 × 자산군 슬롯 해석(δ=0 · 미보정 = 전역 유지)
             learned = history.Bias(in learned);
             var r = PlutoCognitiveGovernor.Approve(in s.Regime, score, momentumBp, momentumWeight, imbalanceBp, imbalanceWeight, EntryScore, s.BidQty, s.AskQty,
                 Volatile.Read(ref _govUs10yBp), Volatile.Read(ref _govDxyBp), in _sizer, nowTicks, out gov, pocResistance, cvdBearish, depthTrap, in learned, in history);

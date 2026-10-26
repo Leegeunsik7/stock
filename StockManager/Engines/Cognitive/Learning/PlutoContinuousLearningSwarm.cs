@@ -10,6 +10,9 @@
 //     ② 글로벌 인제스천 허브 직전 안정값 → 에피소딕 기억창고 유사 국면 탐색(0~100%) · 거시 역풍 입력(미 10년물/달러 변화) 을 아레나에 주입(콜백 · 값 없으면 생략).
 //        [v12.18.82-DEV] 같은 관측 → 12대 역사적 국면 판정기(PlutoRegimeMatcher · 결선 시) 게시 — 3대 아레나 정산 스레드가 δ=0 판독해 거버너 가중치 편향 · 근거 카드 뱃지.
 //     ③ 새 표본 ≥ RecalibrateEvery(10) 누적 시 보정기 제안 → 섀도우 검증 → 통과 시 seqlock 원자 핫스왑(불통과 = 기존 유지 · 판정 기록).
+//     [v12.18.86-DEV] 36슬롯 인지 텐서(결선 시): 자산군 태그 아레나의 최종 청산 회고 = (자산군 · 진입 시 국면) 슬롯 + 자산 기준선 보정기에도 관측 ·
+//        매 주기 활성 국면 포인터 게시(Activate) · 새 표본 ≥ 10 셀만 독립 제안 → 섀도우 → 셀 핫스왑(전역 가중치와 별개 · 체결 스레드는 Resolve δ=0 판독).
+//        진입 시 국면 = 진입 근거 수확 시점의 판정기 판독값(근거 링 지연 ≤ 1주기 · 국면 전환 경계 표본 1주기 오차 허용 · 정직 표기).
 //     ④ 상태 스냅샷(PlutoLearningStatus · 불변 레코드) 게시 — UI 어댑터가 판독(콜드).
 //   Start = 백그라운드 PeriodicTimer 루프(예외 = Faulted 계수 · 루프 지속 · 체결 스레드 무간섭) · Dispose = 취소.
 //   ★liveArmed:false — 가중치는 가상 원장 진입 판정 입력일 뿐(브로커 · 무장 · 송출 경로 0). ★QuantumVault · 피어 접근 0.
@@ -43,9 +46,12 @@ namespace StockManager.Engines.Cognitive.Learning
             public readonly long[] EntrySeq = new long[EntryMapCapacity];
             public readonly int[] EntryConfidence = new int[EntryMapCapacity];
             public readonly int[] EntryStrictness = new int[EntryMapCapacity];
+            public readonly int[] EntryRegime = new int[EntryMapCapacity];
+            public readonly int[] EntryTensorStrictness = new int[EntryMapCapacity];
+            public readonly PlutoAssetClass? Asset;
             public long LastSeq;
 
-            public Arena(string name, RationaleCopier copy) { Name = name; Copy = copy; }
+            public Arena(string name, RationaleCopier copy, PlutoAssetClass? asset) { Name = name; Copy = copy; Asset = asset; }
         }
 
         private readonly PlutoGlobalDataIngestor _ingestor;
@@ -53,6 +59,7 @@ namespace StockManager.Engines.Cognitive.Learning
         private readonly PlutoWeightCalibrator _calibrator;
         private readonly PlutoCognitiveWeightSeqlock _weights;
         private readonly PlutoRegimeMatcher? _regime;
+        private readonly PlutoCognitiveTensorLake? _tensor;
         private readonly List<Arena> _arenas = new();
         private readonly AiTradeRationale[] _buf = new AiTradeRationale[CopyCapacity];
         private readonly object _stepGate = new();
@@ -65,7 +72,7 @@ namespace StockManager.Engines.Cognitive.Learning
         private long _cycles, _faulted, _gapSkipped, _samplesAtLastCalibration;
 
         public PlutoContinuousLearningSwarm(PlutoGlobalDataIngestor ingestor, PlutoEpisodicMemoryStore memory, PlutoWeightCalibrator calibrator,
-            PlutoCognitiveWeightSeqlock weights, Func<long>? utcNowTicks = null, PlutoRegimeMatcher? regime = null)
+            PlutoCognitiveWeightSeqlock weights, Func<long>? utcNowTicks = null, PlutoRegimeMatcher? regime = null, PlutoCognitiveTensorLake? tensor = null)
         {
             _ingestor = ingestor ?? throw new ArgumentNullException(nameof(ingestor));
             _memory = memory ?? throw new ArgumentNullException(nameof(memory));
@@ -73,6 +80,7 @@ namespace StockManager.Engines.Cognitive.Learning
             _weights = weights ?? throw new ArgumentNullException(nameof(weights));
             _utcNow = utcNowTicks ?? (() => DateTime.UtcNow.Ticks);
             _regime = regime;
+            _tensor = tensor;
         }
 
         public PlutoGlobalDataIngestor Ingestor => _ingestor;
@@ -81,6 +89,8 @@ namespace StockManager.Engines.Cognitive.Learning
         public PlutoCognitiveWeightSeqlock Weights => _weights;
         /// <summary>[v12.18.82-DEV] 역사적 국면 판정기(미결선 = null).</summary>
         public PlutoRegimeMatcher? RegimeMatcher => _regime;
+        /// <summary>[v12.18.86-DEV] 36슬롯 인지 텐서(미결선 = null).</summary>
+        public PlutoCognitiveTensorLake? Tensor => _tensor;
         public long Cycles => Interlocked.Read(ref _cycles);
         public long Faulted => Interlocked.Read(ref _faulted);
         public long GapSkipped => Interlocked.Read(ref _gapSkipped);
@@ -90,11 +100,14 @@ namespace StockManager.Engines.Cognitive.Learning
         public PlutoLearningStatus? Status => Volatile.Read(ref _status);
 
         /// <summary>학습 대상 아레나 등록(기동 전 · 이름 = 진단용).</summary>
-        public void AddArena(string name, RationaleCopier copy)
+        public void AddArena(string name, RationaleCopier copy) => AddArena(name, copy, null);
+
+        /// <summary>[v12.18.86-DEV] 자산군 태그 아레나 등록(텐서 슬롯 학습 대상 · null = 전역 보정기만).</summary>
+        public void AddArena(string name, RationaleCopier copy, PlutoAssetClass? asset)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(name);
             ArgumentNullException.ThrowIfNull(copy);
-            lock (_stepGate) _arenas.Add(new Arena(name, copy));
+            lock (_stepGate) _arenas.Add(new Arena(name, copy, asset));
         }
 
         /// <summary>거시 역풍 입력 주입 대상(미 10년물 변화 bp · 달러 인덱스 변화 bp) — 아레나 SetMacroHeadwind.</summary>
@@ -110,6 +123,7 @@ namespace StockManager.Engines.Cognitive.Learning
                 bool hasMacro = _ingestor.TryRead(out var macro);
                 var match = hasMacro ? _memory.FindNearest(in macro) : default;
                 var regime = hasMacro && _regime is not null ? _regime.Publish(in macro) : default;
+                if (_tensor is not null && _regime is not null && _regime.TryRead(out var activeRegime)) _tensor.Activate(activeRegime.CycleId);
                 if (hasMacro && macro.Has(PlutoMacroField.Us10y | PlutoMacroField.Dollar))
                     Volatile.Read(ref _macroSink)?.Invoke(macro.Us10yChangeBp, macro.DollarIndexChangeBp);
 
@@ -124,6 +138,8 @@ namespace StockManager.Engines.Cognitive.Learning
                         if (_lastVerdict.Reason != PlutoShadowReason.NoChange) _weights.TrySwap(in candidate, _lastVerdict.Passed);
                     }
                 }
+
+                _tensor?.Recalibrate();
 
                 _weights.TryRead(out var live);
                 long cycles = Interlocked.Increment(ref _cycles);
@@ -142,6 +158,8 @@ namespace StockManager.Engines.Cognitive.Learning
             if (n <= 0) return;
             if (a.LastSeq > 0 && span[0].Seq > a.LastSeq + 1) Interlocked.Add(ref _gapSkipped, span[0].Seq - a.LastSeq - 1);
             _weights.TryRead(out var live);
+            int regimeNow = 0;
+            if (_tensor is not null && a.Asset is not null && _regime is not null && _regime.TryRead(out var rm)) regimeNow = rm.CycleId;
             for (int i = 0; i < n; i++)
             {
                 ref readonly var r = ref span[i];
@@ -154,6 +172,13 @@ namespace StockManager.Engines.Cognitive.Learning
                     a.EntrySeq[slot] = r.Seq;
                     a.EntryConfidence[slot] = g.Confidence;
                     a.EntryStrictness[slot] = live.DevilStrictnessPts;
+                    a.EntryRegime[slot] = regimeNow;
+                    if (_tensor is not null && a.Asset is { } entryAsset)
+                    {
+                        var resolved = live;
+                        _tensor.Resolve(entryAsset, regimeNow, ref resolved);           // 진입 시 체결 스레드와 같은 해석(슬롯 → 기준선 → 전역)
+                        a.EntryTensorStrictness[slot] = resolved.DevilStrictnessPts;
+                    }
                 }
                 else if (g.Governed && g.PostMortem.HasReview && g.PostMortem.IsFinal)
                 {
@@ -161,6 +186,12 @@ namespace StockManager.Engines.Cognitive.Learning
                     int slot = (int)(pm.EntrySeq % EntryMapCapacity);
                     bool known = a.EntrySeq[slot] == pm.EntrySeq;
                     _calibrator.Observe(in pm, known ? a.EntryConfidence[slot] : -1, known ? a.EntryStrictness[slot] : live.DevilStrictnessPts);
+                    if (_tensor is not null && a.Asset is { } asset)
+                    {
+                        int regimeAtEntry = known ? a.EntryRegime[slot] : regimeNow;
+                        _tensor.Observe(asset, regimeAtEntry, in pm, known ? a.EntryConfidence[slot] : -1,
+                            known ? a.EntryTensorStrictness[slot] : _tensor.StrictnessOf(asset, regimeAtEntry));
+                    }
                 }
             }
         }

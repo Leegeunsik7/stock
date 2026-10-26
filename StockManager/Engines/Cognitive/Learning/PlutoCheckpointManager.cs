@@ -10,6 +10,8 @@
 //     최신 행 손상 = 그 이전 무결 행으로 롤백(RolledBack · 손상 건수 계수) · 전부 손상 = 중립 폴백(CorruptFallback) · 저장소 장애 = 중립(StoreFailed).
 //   Checkpoint(백그라운드 주기 · 콜드): 라이브 가중치 + 평생 에피소드가 직전 기록과 다를 때만 1행 추가(합체 기록 · 무변화 = 기록 0) · 레이크 = 최근 LakeCapacity(64)행.
 //     실패 = 계수만(자동 재시도 · 큐잉 0 → 다음 주기가 최신 스냅샷으로 다시 시도). Dispose = 루프 정지 후 최종 1회 기록.
+//   [v12.18.86-DEV] 텐서 결선(PlutoCognitiveTensorLake + IPlutoTensorStore) 시: Restore = 전역 복원 후 슬롯별 최신 무결 행 복원(손상 = 같은 슬롯 이전 행 롤백 ·
+//     슬롯 판독 장애 = 텐서만 중립 + 텐서 기록 중지 · 전역 무영향) · Checkpoint = 전역 1행(변화 시) + 변화 슬롯만 슬롯 행(슬롯당 최근 SlotKeep(8)행).
 //   ★체결 핫패스(Track A)는 이 관리자를 모른다 — seqlock TryRead 만(δ=0 · DB I/O 블로킹 0). ★liveArmed:false · QuantumVault · 피어 접근 0.
 // ============================================================================
 using System;
@@ -23,26 +25,40 @@ namespace StockManager.Engines.Cognitive.Learning
     public readonly struct PlutoLearningCheckpoint
     {
         public const int NoRegime = -1;
+        /// <summary>[v12.18.86-DEV] 전역 가중치 행(자산군 무관 · 기존 롤링 레이크).</summary>
+        public const int NoAsset = -1;
 
         public readonly int RegimeId;
         public readonly long Episodes;
         public readonly PlutoCognitiveWeights Weights;
         public readonly long CalibratedUtcTicks;
         public readonly long Checksum;
+        /// <summary>[v12.18.86-DEV] 자산군(−1 = 전역 행 · 0~2 = 텐서 슬롯 행 · (RegimeId, AssetClass) 복합 키).</summary>
+        public readonly int AssetClass;
 
         public PlutoLearningCheckpoint(int regimeId, long episodes, in PlutoCognitiveWeights weights, long calibratedUtcTicks, long checksum)
+            : this(regimeId, episodes, in weights, calibratedUtcTicks, checksum, NoAsset) { }
+
+        public PlutoLearningCheckpoint(int regimeId, long episodes, in PlutoCognitiveWeights weights, long calibratedUtcTicks, long checksum, int assetClass)
         {
-            RegimeId = regimeId; Episodes = episodes; Weights = weights; CalibratedUtcTicks = calibratedUtcTicks; Checksum = checksum;
+            RegimeId = regimeId; Episodes = episodes; Weights = weights; CalibratedUtcTicks = calibratedUtcTicks; Checksum = checksum; AssetClass = assetClass;
         }
 
         /// <summary>체크섬 자동 봉인 생성.</summary>
         public static PlutoLearningCheckpoint Seal(int regimeId, long episodes, in PlutoCognitiveWeights weights, long calibratedUtcTicks) =>
             new(regimeId, episodes, in weights, calibratedUtcTicks, ComputeChecksum(regimeId, episodes, in weights, calibratedUtcTicks));
 
+        /// <summary>[v12.18.86-DEV] 텐서 슬롯 행 봉인(자산군까지 체크섬 결속 → 행 키 변조 = 손상 판정).</summary>
+        public static PlutoLearningCheckpoint SealSlot(int regimeId, PlutoAssetClass asset, long episodes, in PlutoCognitiveWeights weights, long calibratedUtcTicks) =>
+            new(regimeId, episodes, in weights, calibratedUtcTicks, ComputeChecksum(regimeId, episodes, in weights, calibratedUtcTicks, (int)asset), (int)asset);
+
         /// <summary>해석 불가 행 표식(무결성 검사 불통과 고정).</summary>
         public static PlutoLearningCheckpoint Corrupt => new(int.MinValue, -1, default, 0, 0);
 
-        public static long ComputeChecksum(int regimeId, long episodes, in PlutoCognitiveWeights w, long calibratedUtcTicks)
+        public bool IsSlot => AssetClass >= 0;
+
+        /// <summary>assetClass = −1(전역) 은 v12.18.84 체크섬과 동일(기존 행 무변경 복원) · 0~2 = 자산군 추가 혼합.</summary>
+        public static long ComputeChecksum(int regimeId, long episodes, in PlutoCognitiveWeights w, long calibratedUtcTicks, int assetClass = NoAsset)
         {
             ulong h = 14695981039346656037UL;
             h = Mix(h, 0x504C55544F434B50L);                                     // 도메인 솔트("PLUTOCKP")
@@ -55,6 +71,7 @@ namespace StockManager.Engines.Cognitive.Learning
             h = Mix(h, w.ShadowMddBp);
             h = Mix(h, w.ShadowSamples);
             h = Mix(h, calibratedUtcTicks);
+            if (assetClass != NoAsset) h = Mix(h, 0x54454E534F520000L | (uint)assetClass);   // "TENSOR" + 자산군
             return (long)h;
         }
 
@@ -65,10 +82,12 @@ namespace StockManager.Engines.Cognitive.Learning
             return h;
         }
 
-        /// <summary>무결: 체크섬 일치 · 가중치 범위 · 에피소드 ≥ 0 · 국면 ID ≥ −1 · 시각 &gt; 0.</summary>
+        /// <summary>무결: 체크섬 일치 · 가중치 범위 · 에피소드 ≥ 0 · 국면 ID ≥ −1 · 시각 &gt; 0 · 슬롯 행 = 자산군 0~2 ∧ 국면 −1~12.</summary>
         public bool IsIntact =>
             RegimeId >= NoRegime && Episodes >= 0 && CalibratedUtcTicks > 0 && Weights.IsWellFormed
-            && Checksum == ComputeChecksum(RegimeId, Episodes, in Weights, CalibratedUtcTicks);
+            && AssetClass is >= NoAsset and < PlutoCognitiveTensorLake.Assets
+            && (AssetClass == NoAsset || RegimeId <= PlutoCognitiveTensorLake.Regimes)
+            && Checksum == ComputeChecksum(RegimeId, Episodes, in Weights, CalibratedUtcTicks, AssetClass);
     }
 
     /// <summary>체크포인트 저장소 경계(호스트 어댑터 구현 · 콜드).</summary>
@@ -79,6 +98,16 @@ namespace StockManager.Engines.Cognitive.Learning
 
         /// <summary>1행 추가 + 최근 keep 행만 유지(원자). 장애 = 예외.</summary>
         void Append(in PlutoLearningCheckpoint checkpoint, int keep);
+    }
+
+    /// <summary>[v12.18.86-DEV] 텐서 슬롯 저장소 경계((RegimeId, AssetClass) 복합 키 · 같은 테이블 · 콜드).</summary>
+    public interface IPlutoTensorStore
+    {
+        /// <summary>슬롯별 최신 순 최대 perSlot 건(슬롯 행만 · 해석 불가 = Corrupt 표식). 장애 = 예외.</summary>
+        IReadOnlyList<PlutoLearningCheckpoint> LoadSlots(int perSlot);
+
+        /// <summary>슬롯 행 1건 추가 + 같은 슬롯 최근 keepPerSlot 행만 유지(원자 · 전역 레이크 무간섭). 장애 = 예외.</summary>
+        void AppendSlot(in PlutoLearningCheckpoint checkpoint, int keepPerSlot);
     }
 
     public enum PlutoPersistState : byte
@@ -99,29 +128,40 @@ namespace StockManager.Engines.Cognitive.Learning
     public sealed class PlutoCheckpointManager : IDisposable
     {
         public const int LakeCapacity = 64, RestoreScan = 64;
+        /// <summary>[v12.18.86-DEV] 텐서 슬롯당 보존 행 수(롤백 깊이).</summary>
+        public const int SlotKeep = 8;
 
         private readonly IPlutoLearningStore _store;
         private readonly PlutoCognitiveWeightSeqlock _weights;
         private readonly Func<long> _observed;
         private readonly Func<int> _regimeId;
         private readonly Func<long> _utcNow;
+        private readonly PlutoCognitiveTensorLake? _tensor;
+        private readonly IPlutoTensorStore? _tensorStore;
         private readonly object _gate = new();
         private PlutoLearningCheckpoint _last;
         private int _state;
-        private long _baseEpisodes, _saves, _saveFailures, _lastSavedUtcTicks, _corruptSkipped, _faulted;
+        private long _baseEpisodes, _saves, _saveFailures, _lastSavedUtcTicks, _corruptSkipped, _faulted, _slotSaves, _slotRestored;
+        private bool _tensorFailed;
         private CancellationTokenSource? _cts;
         private Task? _loop;
 
         /// <param name="observedEpisodes">이번 기동 누적 청산 회고 표본(보정기 Observed).</param>
         /// <param name="regimeId">현재 국면 ID(판정 전 = −1).</param>
+        /// <param name="tensor">[v12.18.86-DEV] 36슬롯 인지 텐서(결선 시 store 는 IPlutoTensorStore 필수).</param>
         public PlutoCheckpointManager(IPlutoLearningStore store, PlutoCognitiveWeightSeqlock weights, Func<long> observedEpisodes,
-            Func<int>? regimeId = null, Func<long>? utcNowTicks = null)
+            Func<int>? regimeId = null, Func<long>? utcNowTicks = null, PlutoCognitiveTensorLake? tensor = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _weights = weights ?? throw new ArgumentNullException(nameof(weights));
             _observed = observedEpisodes ?? throw new ArgumentNullException(nameof(observedEpisodes));
             _regimeId = regimeId ?? (() => PlutoLearningCheckpoint.NoRegime);
             _utcNow = utcNowTicks ?? (() => DateTime.UtcNow.Ticks);
+            if (tensor is not null)
+            {
+                _tensorStore = store as IPlutoTensorStore ?? throw new ArgumentException("텐서 결선 = IPlutoTensorStore 저장소 필수", nameof(store));
+                _tensor = tensor;
+            }
         }
 
         public PlutoPersistState State => (PlutoPersistState)Volatile.Read(ref _state);
@@ -134,6 +174,11 @@ namespace StockManager.Engines.Cognitive.Learning
         public long CorruptSkipped => Interlocked.Read(ref _corruptSkipped);
         public long Faulted => Interlocked.Read(ref _faulted);
         public bool Running => Volatile.Read(ref _loop) is { IsCompleted: false };
+        /// <summary>[v12.18.86-DEV] 텐서 결선 여부 · 슬롯 행 기록 수 · 기동 복원 슬롯 수 · 슬롯 판독 장애(텐서 기록 중지).</summary>
+        public PlutoCognitiveTensorLake? Tensor => _tensor;
+        public long SlotSaves => Interlocked.Read(ref _slotSaves);
+        public long SlotsRestored => Interlocked.Read(ref _slotRestored);
+        public bool TensorStoreFailed { get { lock (_gate) return _tensorFailed; } }
 
         /// <summary>기동 1회 복원(스웜 Start 전 · 콜드). 중복 호출 = 예외.</summary>
         public PlutoPersistState Restore()
@@ -141,6 +186,26 @@ namespace StockManager.Engines.Cognitive.Learning
             lock (_gate)
             {
                 if (State != PlutoPersistState.NotRestored) throw new InvalidOperationException("이미 복원됨");
+                var state = RestoreGlobal();
+                RestoreTensor(state);
+                return state;
+            }
+        }
+
+        private void RestoreTensor(PlutoPersistState globalState)
+        {
+            if (_tensor is null || _tensorStore is null) return;
+            if (globalState == PlutoPersistState.StoreFailed) { _tensorFailed = true; return; }
+            IReadOnlyList<PlutoLearningCheckpoint> slots;
+            try { slots = _tensorStore.LoadSlots(SlotKeep); }
+            catch (Exception) { _tensorFailed = true; return; }                  // 슬롯 판독 장애 = 텐서 중립 · 기록 중지(전역 무영향)
+            Interlocked.Exchange(ref _slotRestored, _tensor.Restore(slots, out int skipped));
+            Interlocked.Add(ref _corruptSkipped, skipped);
+        }
+
+        private PlutoPersistState RestoreGlobal()
+        {
+            {
                 IReadOnlyList<PlutoLearningCheckpoint> rows;
                 try { rows = _store.LoadRecent(RestoreScan); }
                 catch (Exception) { return Set(PlutoPersistState.StoreFailed); }
@@ -171,6 +236,31 @@ namespace StockManager.Engines.Cognitive.Learning
             lock (_gate)
             {
                 if (State is PlutoPersistState.NotRestored or PlutoPersistState.StoreFailed) return false;
+                bool global = CheckpointGlobal();
+                return CheckpointTensor() > 0 || global;
+            }
+        }
+
+        private int CheckpointTensor()
+        {
+            if (_tensor is null || _tensorStore is null || _tensorFailed) return 0;
+            int saved = 0;
+            long now = 0;
+            for (int cell = 0; cell < PlutoCognitiveTensorLake.Cells; cell++)
+            {
+                if (!_tensor.TryDirty(cell, out var cp, ref now, _utcNow)) continue;
+                try { _tensorStore.AppendSlot(in cp, SlotKeep); }
+                catch (Exception) { Interlocked.Increment(ref _saveFailures); continue; }   // 다음 주기 재시도(큐잉 0)
+                _tensor.MarkSaved(cell, in cp);
+                saved++;
+            }
+            if (saved > 0) Interlocked.Add(ref _slotSaves, saved);
+            return saved;
+        }
+
+        private bool CheckpointGlobal()
+        {
+            {
                 if (!_weights.TryRead(out var w)) return false;
                 long episodes = LifetimeEpisodes;
                 var l = _last.Weights;

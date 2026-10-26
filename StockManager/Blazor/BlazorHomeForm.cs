@@ -1793,6 +1793,7 @@ namespace StockManager.Blazor
             //   `Pluto.MacroFeedUrl`(기본 빈 값 = 수집원 미결선 → UI '수집원 미결선' 정직 렌더 · https 만) — 가상 원장 진입 판정 입력만(송출 경로 0).
             StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm? plutoLearningRef = null;   // [v12.18.78-DEV] 스크리너 거시 적합도 입력(학습 비활성 = null → 판정 전)
             StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock? plutoWeightsRef = null;     // [v12.18.85-DEV] 스크리너 학습 가중치 투영 입력(학습 비활성 = null → 중립)
+            StockManager.Engines.Cognitive.Learning.PlutoCognitiveTensorLake? plutoTensorRef = null;         // [v12.18.86-DEV] 스크리너 자산군 전용 가중치 투영 입력(학습 비활성 = null → 전역)
             if (cfg.GetBool("Pluto.LearningEnabled", true))
             {
                 var plutoWeights = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock();
@@ -1802,11 +1803,14 @@ namespace StockManager.Blazor
                 // [v12.18.82-DEV] 12대 역사적 국면 판정기 — 스웜이 관측마다 게시 · 3대 아레나 정산 스레드 δ=0 판독(유사도 ≥ 60% 국면 전략 → 가중치 편향 · 근거 카드 뱃지).
                 var plutoRegime = new StockManager.Engines.Cognitive.Learning.PlutoRegimeMatcher();
                 var plutoCalibrator = new StockManager.Engines.Cognitive.Learning.PlutoWeightCalibrator();
+                // [v12.18.86-DEV] 36슬롯 인지 텐서(12대 국면 × KRX/US/Upbit 독립 가중치 + 자산 기준선) — 스웜이 자산군 태그 회고로 슬롯별 독립 보정 ·
+                //   3대 아레나 정산 스레드 = 국면 판독값 → 슬롯 seqlock 해석(δ=0 · 미보정 = 전역 유지).
+                var plutoTensor = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveTensorLake();
                 var plutoSwarm = new StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm(plutoIngestor, plutoMemory,
-                    plutoCalibrator, plutoWeights, regime: plutoRegime);
-                plutoSwarm.AddArena("krx", krxArena.CopyRationales);
-                plutoSwarm.AddArena("us", usArena.CopyRationales);
-                plutoSwarm.AddArena("crypto", cryptoArena.CopyRationales);
+                    plutoCalibrator, plutoWeights, regime: plutoRegime, tensor: plutoTensor);
+                plutoSwarm.AddArena("krx", krxArena.CopyRationales, StockManager.Engines.Cognitive.Learning.PlutoAssetClass.Krx);
+                plutoSwarm.AddArena("us", usArena.CopyRationales, StockManager.Engines.Cognitive.Learning.PlutoAssetClass.Us);
+                plutoSwarm.AddArena("crypto", cryptoArena.CopyRationales, StockManager.Engines.Cognitive.Learning.PlutoAssetClass.Upbit);
                 plutoSwarm.SetMacroSink((us10y, dxy) => { krxArena.SetMacroHeadwind(us10y, dxy); usArena.SetMacroHeadwind(us10y, dxy); cryptoArena.SetMacroHeadwind(us10y, dxy); });
                 krxArena.AttachLearning(plutoWeights);
                 usArena.AttachLearning(plutoWeights);
@@ -1814,6 +1818,9 @@ namespace StockManager.Blazor
                 krxArena.AttachRegimeMatcher(plutoRegime);
                 usArena.AttachRegimeMatcher(plutoRegime);
                 cryptoArena.AttachRegimeMatcher(plutoRegime);
+                krxArena.AttachTensor(plutoTensor);
+                usArena.AttachTensor(plutoTensor);
+                cryptoArena.AttachTensor(plutoTensor);
                 // [v12.18.84-DEV] 학습 가중치 영속화 — portfolio.db 전용 테이블(PlutoLearningCheckpoints · 롤링 64행) · 스웜 기동 전 골든 체크포인트 seqlock 원자 복원
                 //   (손상 = 직전 무결 행 롤백 · 전부 손상 = 중립 폴백) · 30초 주기 백그라운드 합체 기록(무변화 = 0 · 체결 핫패스 = seqlock 판독만) · 종료 시 최종 기록.
                 StockManager.Engines.Cognitive.Learning.PlutoCheckpointManager? plutoCheckpoints = null;
@@ -1823,11 +1830,26 @@ namespace StockManager.Blazor
                     {
                         var learningStore = new StockManager.Adapters.PlutoLearningStore(db);
                         plutoCheckpoints = new StockManager.Engines.Cognitive.Learning.PlutoCheckpointManager(learningStore, plutoWeights, () => plutoCalibrator.Observed,
-                            () => plutoSwarm.Status is { Regime.Found: true } st ? st.Regime.CycleId : StockManager.Engines.Cognitive.Learning.PlutoLearningCheckpoint.NoRegime);
+                            () => plutoSwarm.Status is { Regime.Found: true } st ? st.Regime.CycleId : StockManager.Engines.Cognitive.Learning.PlutoLearningCheckpoint.NoRegime,
+                            tensor: plutoTensor);
                         plutoCheckpoints.Restore();
                         plutoCheckpoints.Start(TimeSpan.FromSeconds(30));
                     }
                     catch (Exception ex) { Log.Warn($"[Pluto] 학습 영속화 비활성(스키마 준비 실패 · 인메모리 학습 지속): {ex.Message}"); plutoCheckpoints = null; }
+                }
+                // [v12.18.86-DEV] 기동 즉시 웜스타트 — 복원 후 백그라운드 1회(UI 무블로킹): portfolio.db Candles 최근 일봉 → 자산군당 가상 리플레이 100회 →
+                //   섀도우 게이트 통과 시 자산 기준선(+ 판정 국면 슬롯) 핫스왑 · 캔들 0 = NoData(가짜 시계열 0) · 예산 1초. `Pluto.WarmStartEnabled`(기본 켜짐).
+                StockManager.Engines.Cognitive.Learning.PlutoReplayWarmStarter? plutoWarmStart = null;
+                if (cfg.GetBool("Pluto.WarmStartEnabled", true))
+                {
+                    plutoWarmStart = new StockManager.Engines.Cognitive.Learning.PlutoReplayWarmStarter(plutoTensor, new StockManager.Adapters.PlutoLocalCandleSource(db),
+                        () => plutoRegime.TryRead(out var m) ? m.CycleId : 0);
+                    _ = plutoWarmStart.StartAsync().ContinueWith(t =>
+                    {
+                        if (t.IsFaulted) { Log.Warn($"[Pluto] 웜스타트 장애: {t.Exception?.GetBaseException().Message}"); return; }
+                        var r = t.Result;
+                        Log.Info($"[Pluto] 웜스타트 {r.State} · 리플레이 {r.Simulations}회 · 핫스왑 셀 {r.SwappedCells} · {r.ElapsedMs}ms");
+                    }, TaskScheduler.Default);
                 }
                 plutoSwarm.Start(TimeSpan.FromSeconds(5));
                 var macroCts = new System.Threading.CancellationTokenSource();
@@ -1862,11 +1884,14 @@ namespace StockManager.Blazor
                 services.AddSingleton(plutoIngestor);
                 services.AddSingleton(plutoMemory);
                 services.AddSingleton(plutoRegime);
+                services.AddSingleton(plutoTensor);
+                if (plutoWarmStart is not null) services.AddSingleton(plutoWarmStart);
                 services.AddSingleton(plutoSwarm);
                 services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints));
                 if (plutoCheckpoints is not null) services.AddSingleton(plutoCheckpoints);
                 plutoLearningRef = plutoSwarm;
                 plutoWeightsRef = plutoWeights;
+                plutoTensorRef = plutoTensor;
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);
             // [v12.18.65-DEV] 플루토 밸류에이션(오더상 브레인 2단계 · 피더 2단계 §170 와 별개) — 재무 프로필 → 적정가 · 안전마진 · 등급 평가(콜드 · 부트 1회) → seqlock 버퍼 → 양 아레나 호가 재판정(δ=0).
@@ -1898,7 +1923,8 @@ namespace StockManager.Blazor
                 // [v12.18.85-DEV] 레짐 적응형 추천 — 스텝당 학습 seqlock TryRead 1회(Track B) → PlutoRecommendationEngine 모멘텀 조정/악마의 변호인 감점 투영(학습 비활성 = 중립).
                 var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,
                     () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status),
-                    weights: plutoWeightsRef is null ? null : StockManager.Engines.Cognitive.Screening.PlutoMarketScreener.WeightsFrom(plutoWeightsRef));
+                    weights: plutoWeightsRef is null ? null : StockManager.Engines.Cognitive.Screening.PlutoMarketScreener.WeightsFrom(plutoWeightsRef),
+                    tensor: plutoTensorRef);   // [v12.18.86-DEV] 시장별 텐서 전용 가중치 독립 투영(미결선 = 전역)
                 // [v12.18.80-DEV] 병렬 학습 스웜 — 3대 자산 레인(시장별 전용 스레드 BelowNormal · CPU 듀티 25% · Channels) → 420슬롯 매트릭스 + 데이터 레이크.
                 //   업비트 = 공개 REST(키 불필요 · 초당 8회 이하 · 429 = 스윕 중단/쿨다운 · 재시도 0) · KRX = KIS 일봉 · US = KIS 해외 일봉(인증 구성 시에만 · v12.18.81-DEV).
                 //   미결선 레인 = '감시 중 · 실피드 연결 대기'(합성 점수 0). `Pluto.SwarmEnabled`(기본 켜짐) · 시세 GET 만(liveArmed:false).

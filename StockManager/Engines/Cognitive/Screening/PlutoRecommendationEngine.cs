@@ -8,6 +8,8 @@
 //     ③ 적응 점수 = 기본 점수 + ① − ② (0~100 포화). 중립 가중치(학습 전) = 기본 점수와 완전 동일(기존 스크리너 동작 보존).
 //   랭킹(Rank): 판독 전무(피드 미결선 · Insufficient) = 점수 산출 0 · 집계만(가짜 점수 0) · 반대 논리 ≥ 2 = 탈락 · 적응 점수 50점 미만 = 제외 →
 //     적응 점수 내림차순(동점 = 반대 논리 적은 순 → 종목 오름차순 · 결정적) 상위 N.
+//   [v12.18.86-DEV] 자산군 독립 투영(AssetWeights): 시장(KRX · US · 코인=Upbit)마다 36슬롯 인지 텐서 활성 국면 슬롯 → 자산 기준선 → 전역 순으로 해석한
+//     전용 가중치를 그 시장 랭킹에만 투영(한 자산군 학습이 다른 자산군 추천 점수를 흔들지 않음 · 텐서 미결선/미보정 = 전역 그대로 = v12.18.85 동작).
 //   ★체결 핫패스 무간섭: 가중치는 호출자가 seqlock TryRead 1회로 넘긴 값 스냅샷만 사용(잠금 · 공유 쓰기 0). 결과는 불변 스냅샷 원자 교체로만 게시.
 //   ★liveArmed:false — 추천 = 가상 원장 휴먼 티켓 보조 입력뿐(주문 · 무장 · 브로커 경로 0) · QuantumVault/피어 접근 0.
 // ============================================================================
@@ -44,6 +46,22 @@ namespace StockManager.Engines.Cognitive.Screening
         /// <summary>팩터 점수 0(중립) 의 0~25점 환산값(PlutoDiscoveryScorer.Points(0)).</summary>
         public const int NeutralFactorPts = 12;
         public const int MaxScore = 100;
+
+        /// <summary>[v12.18.86-DEV] 시장 → 텐서 자산군 열.</summary>
+        public static PlutoAssetClass AssetOf(PlutoScreenMarket market) => market switch
+        {
+            PlutoScreenMarket.Us => PlutoAssetClass.Us,
+            PlutoScreenMarket.Crypto => PlutoAssetClass.Upbit,
+            _ => PlutoAssetClass.Krx,
+        };
+
+        /// <summary>[v12.18.86-DEV] 시장 전용 가중치(δ=0): 텐서 활성 국면 슬롯 → 자산 기준선 → 전역(텐서 null = 전역 그대로).</summary>
+        public static PlutoCognitiveWeights AssetWeights(PlutoScreenMarket market, in PlutoCognitiveWeights global, PlutoCognitiveTensorLake? tensor)
+        {
+            var w = global;
+            tensor?.ResolveActive(AssetOf(market), ref w);
+            return w;
+        }
 
         /// <summary>학습 가중치 → 종목 1건 조정(δ=0 · 순수 함수). 가중치 무결성 위반 = 미적용(중립).</summary>
         public static PlutoAdaptiveAdjust Project(in PlutoDiscoveryScore s, in PlutoCognitiveWeights w)

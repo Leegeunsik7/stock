@@ -52,14 +52,17 @@ namespace StockManager.Engines.Cognitive.Screening
         private readonly Universe?[] _universes = new Universe?[PlutoRecommendationSnapshot.Markets];
         private readonly PlutoScreenInputs[] _scratch = new PlutoScreenInputs[MaxUniverse];
         private readonly object _stepGate = new();
+        private readonly PlutoCognitiveTensorLake? _tensor;
         private long _generation, _cycles, _faulted;
         private CancellationTokenSource? _cts;
         private Task? _loop;
 
         /// <param name="weights">[v12.18.85-DEV] 학습 가중치 스냅샷 공급자(스텝당 1회 · 미지정 = 중립 → 기존 점수 그대로).</param>
+        /// <param name="tensor">[v12.18.86-DEV] 36슬롯 인지 텐서(시장별 전용 가중치 독립 투영 · 미지정 = 전역 가중치 공유).</param>
         public PlutoMarketScreener(PlutoRecommendationBoard board, Func<PlutoScreenMacro>? macro = null, Func<long>? utcNow = null,
-            Func<PlutoCognitiveWeights>? weights = null)
+            Func<PlutoCognitiveWeights>? weights = null, PlutoCognitiveTensorLake? tensor = null)
         {
+            _tensor = tensor;
             _board = board ?? throw new ArgumentNullException(nameof(board));
             _macro = macro ?? (static () => default);
             _utcNow = utcNow ?? (static () => DateTime.UtcNow.Ticks);
@@ -94,9 +97,9 @@ namespace StockManager.Engines.Cognitive.Screening
             {
                 var macro = _macro();
                 var weights = _weights();
-                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, in weights, out var krxTally);
-                var us = ScanMarket(PlutoScreenMarket.Us, in macro, in weights, out var usTally);
-                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, in weights, out var cryptoTally);
+                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Krx, in weights, _tensor), out var krxTally);
+                var us = ScanMarket(PlutoScreenMarket.Us, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Us, in weights, _tensor), out var usTally);
+                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Crypto, in weights, _tensor), out var cryptoTally);
                 var snap = new PlutoRecommendationSnapshot(++_generation, _utcNow(), krx, krxTally, us, usTally, crypto, cryptoTally);
                 _board.Publish(snap);
                 Interlocked.Increment(ref _cycles);

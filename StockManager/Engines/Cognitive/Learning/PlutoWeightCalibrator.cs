@@ -86,6 +86,20 @@ namespace StockManager.Engines.Cognitive.Learning
             return true;
         }
 
+        /// <summary>[v12.18.86-DEV] 표본 직접 학습(δ=0) — 웜스타트 가상 리플레이 · 텐서 슬롯 전용. 판정 없음/확신도 범위 밖 = 정규화(미상 −1).</summary>
+        public bool ObserveSample(in PlutoLearningSample sample)
+        {
+            if (sample.Verdict == PostMortemVerdict.None) return false;
+            var s = sample.EntryConfidence is >= 0 and <= 100 ? sample
+                : new PlutoLearningSample(sample.ReturnBp, -1, sample.StrictnessAtEntry, sample.Lesson, sample.Verdict);
+            lock (_gate)
+            {
+                _ring[(int)(_total % Window)] = s;
+                _total++;
+            }
+            return true;
+        }
+
         /// <summary>
         /// 학습 절반(링 순서 짝수 번째) 교훈 압력 → 후보 가중치(δ=0). 표본 부족 = false(candidate = current).
         /// </summary>
