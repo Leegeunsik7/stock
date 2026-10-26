@@ -6,6 +6,7 @@
 //   [v12.18.82-DEV] 12대 역사적 국면 판정(RegimeName · RegimeSimilarityX10(0~1000) · RegimeNote 해설 · RegimeEffect 전략/편향 문구) — 호스트가 한국어 문자열로 옮긴다.
 //   [v12.18.83-DEV] MacroFeedText = 호스트 거시 피드 결선 문구(예 '거시 피드: FRED API 키 미설정 · 관측 대기' · null = 미표기).
 //   [v12.18.84-DEV] LifetimeEpisodes(재기동 합산 평생 누적 학습 에피소드 · −1 = 영속화 미결선) · PersistState(PlutoLearningPersist 코드) → 영속화 뱃지.
+//   [v12.18.85-DEV] Shadow(PlutoShadowView) = 섀도우 검증 직전 판정 · 현행 가중치 섀도우 성과 → 인지 브리핑(PlutoBriefingComposer) 입력.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -57,18 +58,56 @@ namespace MS2E.UI.Portable.Ports.Trading
     }
 
     /// <summary>
+    /// [v12.18.85-DEV] 섀도우 검증 요약 — Verdict = 직전 판정 코드(PlutoShadowVerdictCode) · Baseline*/Candidate* = 직전 판정의 현행 대비 후보 승률/MDD(bp) ·
+    /// Holdout = 홀드아웃 표본 · Live* = 현재 적용 중 가중치가 통과할 때 기록된 섀도우 승률/MDD/표본(영속 체크포인트 보존 · 0 = 학습 전).
+    /// </summary>
+    public readonly record struct PlutoShadowView(
+        int Verdict, int BaselineWinRateBp, int CandidateWinRateBp, int BaselineMddBp, int CandidateMddBp, int Holdout,
+        int LiveWinRateBp, int LiveMddBp, int LiveSamples)
+    {
+        /// <summary>직전 판정이 비교 수치를 가짐(홀드아웃 판정까지 도달).</summary>
+        public bool HasComparison => Holdout > 0 && PlutoShadowVerdictCode.Normalize(Verdict) is PlutoShadowVerdictCode.Passed
+            or PlutoShadowVerdictCode.WinRateDegraded or PlutoShadowVerdictCode.DrawdownWorse;
+
+        /// <summary>승률 개선치 bp(후보 − 현행 · 비교 없음 = 0).</summary>
+        public int WinRateGainBp => HasComparison ? CandidateWinRateBp - BaselineWinRateBp : 0;
+
+        /// <summary>MDD 개선치 bp(현행 − 후보 · 양수 = 낙폭 축소 · 비교 없음 = 0).</summary>
+        public int MddGainBp => HasComparison ? BaselineMddBp - CandidateMddBp : 0;
+    }
+
+    /// <summary>[v12.18.85-DEV] 섀도우 판정 코드 — 0 판정 전 · 1 통과 · 2 홀드아웃 부족 · 3 승률 악화 거부 · 4 낙폭 악화 거부 · 5 변화 없음(미상 = 판정 전).</summary>
+    public static class PlutoShadowVerdictCode
+    {
+        public const int None = 0, Passed = 1, InsufficientHoldout = 2, WinRateDegraded = 3, DrawdownWorse = 4, NoChange = 5;
+
+        public static int Normalize(int v) => v is >= Passed and <= NoChange ? v : None;
+
+        public static string Label(int v) => Normalize(v) switch
+        {
+            Passed => "통과(핫스왑)",
+            InsufficientHoldout => "홀드아웃 표본 부족(보류)",
+            WinRateDegraded => "승률 악화 → 거부(현행 유지)",
+            DrawdownWorse => "낙폭 악화 → 거부(현행 유지)",
+            NoChange => "변화 없음",
+            _ => "판정 전",
+        };
+    }
+
+    /// <summary>
     /// 학습 상태 1건. Running = 백그라운드 스웜 가동 · Health = PlutoLearningHealth · EpisodeName/SimilarityPct = 최근접 과거 국면(null = 판정 불가) ·
     /// EpisodeIsSeed = 시드 근사 에피소드 · Generation = 가중치 핫스왑 세대(0 = 학습 전 중립) · MomentumTiltPct/DevilStrictnessPts = 현재 학습 가중치 ·
     /// Samples = 누적 청산 회고 표본 · Swaps/RejectedSwaps = 섀도우 게이트 통과/거부 누계 ·
     /// [v12.18.82-DEV] RegimeName/RegimeSimilarityX10 = 12대 역사적 국면 판정(null/−1 = 판정 전) · RegimeNote = 기간·해설 · RegimeEffect = 전략·가중치 편향 문구.
     /// [v12.18.83-DEV] MacroFeedText = 거시 피드 결선 문구(null = 미표기).
     /// [v12.18.84-DEV] LifetimeEpisodes = 평생 누적 학습 에피소드(−1 = 영속화 미결선) · PersistState = PlutoLearningPersist.
+    /// [v12.18.85-DEV] Shadow = 섀도우 검증 요약(인지 브리핑 · default = 판정 전).
     /// </summary>
     public readonly record struct PlutoLearningView(
         bool Running, int Health, string? EpisodeName, int SimilarityPct, bool EpisodeIsSeed,
         long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps,
         string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null, string? MacroFeedText = null,
-        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off)
+        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off, PlutoShadowView Shadow = default)
     {
         public bool HasMatch => EpisodeName is not null && SimilarityPct >= 0;
 

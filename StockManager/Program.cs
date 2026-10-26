@@ -30,6 +30,13 @@ namespace StockManager
                 return;
             }
 
+            // [v12.18.85-DEV] 플루토 인지 학습 브리핑 원샷 — portfolio.db 판독 전용(기록 0) · UI/뮤텍스 초기화 이전 분기.
+            if (StockManager.Tools.PlutoBriefingCli.IsInvocation(args))
+            {
+                Environment.ExitCode = StockManager.Tools.PlutoBriefingCli.Run(args, Console.Out);
+                return;
+            }
+
             ApplicationConfiguration.Initialize();
 
             // 전역 예외 핸들러

@@ -2,6 +2,7 @@
 // PlutoRecommendationPortAdapter — v12.18.78-DEV: 스크리너 불변 스냅샷 → IPlutoRecommendationPort DTO 투영(콜드 경로 · 판독 전용)
 //   같은 스냅샷 참조 = 직전 투영 재사용(렌더 펌프 100ms 폴링에도 재매핑 0). 종목명 = StockDisplayNameResolver(미등록 = 코드 그대로).
 //   [v12.18.80-DEV] 병렬 학습 스웜(선택) = 레인 상태 투영(Swarm · 판독마다 갱신 — 수집 진행률은 스냅샷 세대와 무관하게 변함).
+//   [v12.18.85-DEV] 카드 Score = 적응 점수(FinalScore) · 학습 투영 근거(모멘텀 조정 · 악마의 변호인 감점 · 문구) 통과.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -84,11 +85,16 @@ namespace StockManager.Adapters
             int market = r.Market switch { PlutoScreenMarket.Us => PlutoRecoMarket.Us, PlutoScreenMarket.Crypto => PlutoRecoMarket.Crypto, _ => PlutoRecoMarket.Krx };
             string name = StockDisplayNameResolver.Name(r.Code) ?? PlutoMultiAssetUniverseCatalog.NameOf(r.Market, r.Symbol) ?? r.Code;   // 미등록 = 코드(날조 0)
             var sc = r.Score;
-            return new PlutoRecommendationCard(market, r.Rank, r.Symbol, r.Code, name, sc.Total,
+            return new PlutoRecommendationCard(market, r.Rank, r.Symbol, r.Code, name, r.FinalScore,
                 sc.ValuationPts, sc.TechnicalPts, sc.MicroPts, sc.MacroPts, r.Reasons,
                 r.HasValuation, r.MarginOfSafetyBps, PlutoDiscoveryScorer.PriceText(r.Market, r.Price),
                 r.HasValuation ? PlutoDiscoveryScorer.PriceText(r.Market, r.FairPrice) : "", r.SeedProfile,
-                r.RecommendedQty, sc.RiskCount, r.RiskText);
+                r.RecommendedQty, sc.RiskCount, r.RiskText)
+            {
+                LearnMomentumPts = r.Adaptive.MomentumPts,
+                LearnDevilPts = r.Adaptive.DevilPts,
+                LearnText = PlutoRecommendationEngine.RationaleText(r.Adaptive),
+            };
         }
     }
 }

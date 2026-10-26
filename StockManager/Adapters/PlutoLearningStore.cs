@@ -5,6 +5,7 @@
 //     MomentumTiltPct · DevilStrictnessPts · ShadowWinRateBp · ShadowMddBp · ShadowSamples · CalibratedUtcTicks · Checksum.
 //   Append = 트랜잭션 1개(INSERT + 최근 keep 행 밖 DELETE) → 중간 중단 = 이전 레이크 그대로.
 //   LoadRecent = Id 내림차순 · 정수 아닌 칸(외부 변조 · 손상) = SQL 단계 판정 열(전 칸 integer 여부) + 값 0 투영(열 타입 단일 = DataTable 추론 흔들림 0) = Corrupt 표식 → 관리자가 다음 무결 행으로 롤백.
+//   [v12.18.85-DEV] LoadRecentSql · ParseRows 공개(인지 브리핑 CLI 가 판독 전용 연결로 같은 판정 재사용 · 스키마 생성/기록 0).
 //   호출자 = PlutoCheckpointManager 백그라운드 루프 · 기동 복원만(체결 핫패스 · UI 스레드 호출 0).
 // ============================================================================
 using System;
@@ -37,12 +38,21 @@ namespace StockManager.Adapters
     CalibratedUtcTicks INTEGER NOT NULL, Checksum INTEGER NOT NULL)");
         }
 
+        /// <summary>[v12.18.85-DEV] 최신 순 판독 SQL(파라미터 @n · 판독 전용 연결 재사용 — 인지 브리핑 CLI).</summary>
+        public static readonly string LoadRecentSql =
+            $"SELECT {string.Join(", ", Array.ConvertAll(Columns, c => $"CASE WHEN typeof({c}) = 'integer' THEN {c} ELSE 0 END"))}, "
+            + $"({string.Join(" AND ", Array.ConvertAll(Columns, c => $"typeof({c}) = 'integer'"))}) FROM {Table} ORDER BY Id DESC LIMIT @n";
+
         public IReadOnlyList<PlutoLearningCheckpoint> LoadRecent(int max)
         {
             if (max <= 0) return Array.Empty<PlutoLearningCheckpoint>();
-            var dt = _db.Query($"SELECT {string.Join(", ", Array.ConvertAll(Columns, c => $"CASE WHEN typeof({c}) = 'integer' THEN {c} ELSE 0 END"))}, "
-                + $"({string.Join(" AND ", Array.ConvertAll(Columns, c => $"typeof({c}) = 'integer'"))}) FROM {Table} ORDER BY Id DESC LIMIT @n",
-                new() { ["@n"] = max });
+            return ParseRows(_db.Query(LoadRecentSql, new() { ["@n"] = max }));
+        }
+
+        /// <summary>[v12.18.85-DEV] LoadRecentSql 결과 → 체크포인트(해석 불가 행 = Corrupt 표식).</summary>
+        public static IReadOnlyList<PlutoLearningCheckpoint> ParseRows(DataTable dt)
+        {
+            ArgumentNullException.ThrowIfNull(dt);
             var rows = new List<PlutoLearningCheckpoint>(dt.Rows.Count);
             foreach (DataRow r in dt.Rows) rows.Add(Parse(r));
             return rows;

@@ -4,6 +4,7 @@
 //   스크리너(Track B · 단일 라이터) 가 주기마다 새 스냅샷을 통째로 만든 뒤 PlutoRecommendationBoard.Publish(Volatile.Write 참조 1회)로 교체.
 //   판독자(UI 어댑터 · 체결 핫패스) = Volatile.Read 1회 → 불변 배열 판독 — 잠금 0 · 찢어진 판독 0(게시 후 스냅샷은 절대 변이 없음).
 //   TryFind(시장 · 종목) = 최대 5칸 선형 탐색 · 값 out — 힙 할당 0B(아레나 체결 루프 내 조회 허용).
+//   [v12.18.85-DEV] TryFind 점수 = 학습 가중치 투영 적응 점수(FinalScore · 생성 시 계산 = 판독 필드 읽기 · δ=0).
 //   [v12.18.79-DEV] 가상자산(업비트) 슬롯 추가(3대 자산) · 시장별 감시 종목 수(카탈로그) · 통과 종목 수 → 전체 모니터링 통계(TotalMonitored/TotalScanned/TotalPassed)를
 //    생성자에서 정수로 미리 합산(판독 = 필드 읽기 · δ=0).
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0(liveArmed:false).
@@ -16,11 +17,15 @@ using System.Threading;
 namespace StockManager.Engines.Cognitive.Screening
 {
     /// <summary>추천 1건(불변). Code = KRX 6자리 코드 · US 티커 · 업비트 마켓("KRW-BTC") · Price/FairPrice = KRX 원 · US 센트 · 코인 원 × 10^8 raw ·
-    /// RecommendedQty = 주(코인 = 코인 × 10^8 raw) · Reasons = 핵심 근거 3줄.</summary>
+    /// RecommendedQty = 주(코인 = 코인 × 10^8 raw) · Reasons = 핵심 근거 3줄 ·
+    /// [v12.18.85-DEV] Adaptive = 학습 가중치 투영(모멘텀 조정 · 악마의 변호인 감점 · default = 중립) · FinalScore = 적응 점수(랭킹 · 핫패스 조회 기준).</summary>
     public sealed record PlutoRecommendation(
         PlutoScreenMarket Market, int Rank, long Symbol, string Code, long Price, PlutoDiscoveryScore Score,
         IReadOnlyList<string> Reasons, bool HasValuation, int MarginOfSafetyBps, long FairPrice, bool SeedProfile,
-        long RecommendedQty, string RiskText);
+        long RecommendedQty, string RiskText, PlutoAdaptiveAdjust Adaptive = default)
+    {
+        public int FinalScore { get; } = PlutoRecommendationEngine.AdaptiveTotal(in Score, in Adaptive);
+    }
 
     /// <summary>시장별 스캔 집계 — Scanned = 피드 판독 종목 · Vetoed = 반대 논리 ≥ 2 탈락 · Insufficient = 판독 전무 · BelowThreshold = 50점 미만 ·
     /// [v12.18.79-DEV] Monitored = 감시 카탈로그 종목 수(피드 판독 대기 포함) · Passed = 추천 기준 통과(Top 5 절단 전).</summary>
@@ -93,7 +98,7 @@ namespace StockManager.Engines.Cognitive.Screening
             for (int i = 0; i < arr.Length; i++)
             {
                 var r = arr[i];
-                if (r.Symbol == symbol) { score = r.Score.Total; rank = r.Rank; return true; }
+                if (r.Symbol == symbol) { score = r.FinalScore; rank = r.Rank; return true; }
             }
             score = 0; rank = 0;
             return false;

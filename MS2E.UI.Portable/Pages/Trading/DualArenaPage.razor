@@ -31,7 +31,10 @@
    [v12.18.78-DEV] [🌟 플루토 오늘의 AI 추천 종목] 패널: 국내/미국 탭 · 카드(종목명/코드 · 점수 뱃지 · 4대 팩터 칩 · 핵심 근거 3줄 · 악마의 변호인 판정 · 목표 안전마진) ·
      [👤 1-Click 아레나 담기] = 해당 모드로 전환 + 휴먼 티켓 종목 · 추천 수량만 채움(접수 = 기존 매수 버튼 → SubmitHuman). IPlutoRecommendationPort 직접 주입(미결선 = 정직 렌더).
    [v12.18.79-DEV] 3대 자산 체제: [🪙 가상자산 (업비트)] 탭(코인 4대 팩터 칩 💧🌀📊🧱 · 수량 = 코인 단위) · 상단 [📡 3대 시장 전수 감시 중: KRX n개 | US n개 | Upbit n개] 뱃지 +
-     피드 판독/통과 합계 · 탭별 감시/판독 대기/통과 집계. 코인 1-Click = 크립토 모드 전환 + 마켓 · 코인 수량 바인딩만(접수 = 기존 매수 버튼). *@
+     피드 판독/통과 합계 · 탭별 감시/판독 대기/통과 집계. 코인 1-Click = 크립토 모드 전환 + 마켓 · 코인 수량 바인딩만(접수 = 기존 매수 버튼).
+   [v12.18.85-DEV] 거버너 바 [📊 인지 브리핑] 토글 → 브리핑 패널(PlutoBriefingComposer · 두 포트 판독만 · 열림 상태에서만 렌더 시 합성):
+     12대 국면 매칭(국면명 · 유사도) · 누적 학습 에피소드 · 최적 가중치(모멘텀 조정 % · 악마의 변호인 엄격도) · 섀도우 개선치 · 자산군별 적응 추천 Top 3(점수 · 학습 투영 · 근거 · 리스크).
+     추천 카드 = 학습 투영 근거 줄(LearnText). 미결선/첫 스캔 전/통과 0 = 안내 문구만(가짜 국면 · 가짜 종목 0). 판독 전용(주문 경로 무변경). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -77,7 +80,45 @@
     {
         <span class="da-badge da-learn none" data-learn="unwired">🧠 글로벌 학습 상태: 학습 엔진 미결선</span>
     }
+    <button class="da-brief-toggle @(_briefOpen ? "on" : "")" aria-expanded="@(_briefOpen ? "true" : "false")" data-brief-toggle="@(_briefOpen ? "on" : "off")" @onclick="() => _briefOpen = !_briefOpen">📊 인지 브리핑</button>
 </div>
+
+@if (_briefOpen)
+{
+    var lvb = Learning.IsWired ? Learning.Current : default;
+    var br = PlutoBriefingComposer.Compose(Learning.IsWired, in lvb, Reco.IsWired, Reco.IsWired ? Reco.Current : PlutoRecoBoardView.None);
+    <div class="ar-card da-brief" role="dialog" aria-label="플루토 인지 학습 브리핑" data-brief="@(br.LearningWired ? "wired" : "unwired")" data-brief-picks="@br.TotalPicks">
+        <div class="da-reco-head">
+            <h3>📊 플루토 인지 학습 브리핑 <small>학습 성과 정량 요약 · 학습 가중치를 3대 자산 유니버스에 투영한 적응 추천 · 가상 원장 전용</small></h3>
+            <button class="ar-btn da-brief-close" @onclick="() => _briefOpen = false">닫기</button>
+        </div>
+        <dl class="da-brief-grid">
+            <dt>학습 상태</dt><dd data-brief-state>@br.LearningState</dd>
+            <dt>🧭 국면 매칭</dt><dd data-brief-regime="@br.RegimeSimilarityX10">@br.RegimeLine</dd>
+            <dt>📚 누적 학습</dt><dd data-brief-episodes="@br.Episodes">@br.EpisodesLine</dd>
+            <dt>⚖️ 최적 가중치</dt><dd data-brief-gen="@br.Generation">@br.WeightsLine</dd>
+            <dt>🧪 섀도우 검증</dt><dd class="@(br.Shadow.WinRateGainBp > 0 ? "up" : br.Shadow.WinRateGainBp < 0 ? "down" : "")" data-brief-gain="@br.Shadow.WinRateGainBp">@br.ShadowLine</dd>
+        </dl>
+        <div class="da-brief-markets">
+        @foreach (var bm in br.Markets)
+        {
+            <div class="da-brief-market" data-brief-market="@bm.Market" data-brief-count="@bm.Picks.Count">
+                <b>@PlutoRecoMarket.Label(bm.Market)</b> <span class="ar-sub">@bm.Status</span>
+                @if (bm.Picks.Count > 0)
+                {
+                    <ol class="da-brief-picks">
+                    @foreach (var bp in bm.Picks)
+                    {
+                        <li data-code="@bp.Code"><b>@bp.Name</b> <span class="ar-sub">@bp.Code</span> · @(bp.Score)점 <span class="da-brief-net @(bp.LearnNetPts > 0 ? "up" : bp.LearnNetPts < 0 ? "down" : "")">(학습 @PlutoBriefingComposer.Signed(bp.LearnNetPts))</span>
+                            <div class="ar-sub">근거: @bp.Reason</div><div class="ar-sub">리스크: @bp.Risk</div></li>
+                    }
+                    </ol>
+                }
+            </div>
+        }
+        </div>
+    </div>
+}
 
 @{
     var rb = Reco.Current;
@@ -149,6 +190,7 @@
                 <ol class="da-reco-reasons">
                     @foreach (var reason in rc.Reasons) { <li>@reason</li> }
                 </ol>
+                @if (rc.LearnText.Length > 0) { <div class="da-reco-learn" data-learn-net="@rc.LearnNetPts">@rc.LearnText</div> }
                 <div class="da-reco-mos">@rc.MosText</div>
                 <div class="da-reco-devil @(rc.CounterCount == 0 ? "pass" : "watch")" data-devil="@rc.CounterCount">@rc.CounterText</div>
                 <button class="ar-btn da-reco-load" disabled="@(rc.RecommendedQty <= 0)" @onclick="() => LoadReco(rc)">👤 1-Click 아레나 담기 (@rc.QtyText)</button>
@@ -638,6 +680,8 @@ else
     // [v12.18.78-DEV] 추천 패널 상태(탭 −1 = 활성 모드 추종 · 메시지 = 마지막 1-Click 담기 결과)
     private int _recoTab = -1;
     private string? _recoMsg;
+    // [v12.18.85-DEV] 인지 브리핑 패널 열림(닫힘 = 합성 0)
+    private bool _briefOpen;
     // [v12.18.71-DEV] 카피 트레이딩 상태(배율 = 따라하기 · 자동 미러링 공용 · 토스트 = 마지막 1-클릭 결과)
     private decimal _copyRatio = 1.0m;
     private string? _copyMsg;
@@ -1125,6 +1169,16 @@ else
     .da-reco-mos { color: #ffcc80; font-size: 0.92em; }
     .da-reco-devil { font-size: 0.9em; margin: 4px 0; } .da-reco-devil.pass { color: #a5d6a7; } .da-reco-devil.watch { color: #ffcc80; }
     .da-reco-load { margin-top: 4px; }
+    .da-reco-learn { color: #b39ddb; font-size: 0.9em; margin: 2px 0; }
+    .da-brief-toggle { font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 16px; border: 1px solid #3a3f4b; background: #161b26; color: #b0bec5; cursor: pointer; }
+    .da-brief-toggle.on { background: #311b92; color: #fff; border-color: #7e57c2; }
+    .da-brief { margin: 8px 0; border-left: 3px solid #7e57c2; }
+    .da-brief-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 6px 0; font-size: 0.93em; }
+    .da-brief-grid dt { color: #9fa8da; font-weight: 700; } .da-brief-grid dd { margin: 0; }
+    .da-brief-grid dd.up, .da-brief-net.up { color: #E53935; } .da-brief-grid dd.down, .da-brief-net.down { color: #1E88E5; }
+    .da-brief-markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+    .da-brief-market { background: #1b2030; border: 1px solid #2c3446; border-radius: 8px; padding: 6px 10px; }
+    .da-brief-picks { margin: 4px 0 0; padding-left: 18px; font-size: 0.92em; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }

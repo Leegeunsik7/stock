@@ -3,6 +3,7 @@
 //   Step 0회(상태 null) = 스웜 가동 여부 + 미결선 · 판정 전. 국면 매칭 없음 = EpisodeName null.
 //   [v12.18.82-DEV] 12대 역사적 국면 판정(Regime) → 국면명 · 유사도 ×10 · 해설 · 전략/편향 문구(판정 전 = null/−1).
 //   [v12.18.83-DEV] 거시 피드 문구(호스트 결선 상태 · 예 'FRED API 키 미설정 · 관측 대기') 통과(null = 미표기).
+//   [v12.18.85-DEV] 섀도우 검증 요약(직전 판정 · 현행 가중치 섀도우 승률/MDD) → PlutoShadowView(인지 브리핑).
 //   [v12.18.84-DEV] 체크포인트 관리자(결선 시) → 평생 누적 학습 에피소드 · 영속화 상태 코드(미결선 = −1 · Off).
 // ============================================================================
 using System;
@@ -60,7 +61,12 @@ namespace StockManager.Adapters
             return new PlutoLearningView(running, health, e?.Name, e is null ? -1 : s.Match.SimilarityPct, e?.IsSeed ?? false,
                 s.Weights.Generation, s.Weights.MomentumTiltPct, s.Weights.DevilStrictnessPts, s.Samples, s.Swaps, s.RejectedSwaps,
                 cycle?.Name, cycle is null ? -1 : r.SimilarityX10, cycle is null ? null : $"{cycle.Period} · {cycle.Note}",
-                cycle is null ? null : PlutoRegimeText.Effect(in r), macroFeedText);
+                cycle is null ? null : PlutoRegimeText.Effect(in r), macroFeedText, Shadow: MapShadow(s.LastVerdict, s.Weights));
         }
+
+        /// <summary>[v12.18.85-DEV] 직전 섀도우 판정 + 현행 가중치 섀도우 성과 → 브리핑 DTO(판정 코드 = PlutoShadowReason 값 동일 · 미상 = 판정 전).</summary>
+        public static PlutoShadowView MapShadow(in PlutoShadowVerdict v, in PlutoCognitiveWeights w)
+            => new(PlutoShadowVerdictCode.Normalize((int)v.Reason), v.BaselineWinRateBp, v.ShadowWinRateBp, v.BaselineMddBp, v.ShadowMddBp, v.Holdout,
+                w.ShadowWinRateBp, w.ShadowMddBp, w.ShadowSamples);
     }
 }

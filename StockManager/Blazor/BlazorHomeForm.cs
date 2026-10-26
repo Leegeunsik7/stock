@@ -1792,6 +1792,7 @@ namespace StockManager.Blazor
             //   Track A = 3대 아레나 정산 스레드가 AttachLearning seqlock 만 판독(δ=0). `Pluto.LearningEnabled`(기본 켜짐 · 순수 인메모리 · 네트워크 0) ·
             //   `Pluto.MacroFeedUrl`(기본 빈 값 = 수집원 미결선 → UI '수집원 미결선' 정직 렌더 · https 만) — 가상 원장 진입 판정 입력만(송출 경로 0).
             StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm? plutoLearningRef = null;   // [v12.18.78-DEV] 스크리너 거시 적합도 입력(학습 비활성 = null → 판정 전)
+            StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock? plutoWeightsRef = null;     // [v12.18.85-DEV] 스크리너 학습 가중치 투영 입력(학습 비활성 = null → 중립)
             if (cfg.GetBool("Pluto.LearningEnabled", true))
             {
                 var plutoWeights = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveWeightSeqlock();
@@ -1865,6 +1866,7 @@ namespace StockManager.Blazor
                 services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints));
                 if (plutoCheckpoints is not null) services.AddSingleton(plutoCheckpoints);
                 plutoLearningRef = plutoSwarm;
+                plutoWeightsRef = plutoWeights;
             }
             else services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(MS2E.UI.Portable.Ports.Trading.UnwiredPlutoLearningPort.Instance);
             // [v12.18.65-DEV] 플루토 밸류에이션(오더상 브레인 2단계 · 피더 2단계 §170 와 별개) — 재무 프로필 → 적정가 · 안전마진 · 등급 평가(콜드 · 부트 1회) → seqlock 버퍼 → 양 아레나 호가 재판정(δ=0).
@@ -1893,8 +1895,10 @@ namespace StockManager.Blazor
             {
                 var plutoRecoBoard = new StockManager.Engines.Cognitive.Screening.PlutoRecommendationBoard();
                 var learningForScreener = plutoLearningRef;
+                // [v12.18.85-DEV] 레짐 적응형 추천 — 스텝당 학습 seqlock TryRead 1회(Track B) → PlutoRecommendationEngine 모멘텀 조정/악마의 변호인 감점 투영(학습 비활성 = 중립).
                 var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,
-                    () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status));
+                    () => StockManager.Engines.Cognitive.Screening.PlutoScreenMacro.FromLearning(learningForScreener?.Status),
+                    weights: plutoWeightsRef is null ? null : StockManager.Engines.Cognitive.Screening.PlutoMarketScreener.WeightsFrom(plutoWeightsRef));
                 // [v12.18.80-DEV] 병렬 학습 스웜 — 3대 자산 레인(시장별 전용 스레드 BelowNormal · CPU 듀티 25% · Channels) → 420슬롯 매트릭스 + 데이터 레이크.
                 //   업비트 = 공개 REST(키 불필요 · 초당 8회 이하 · 429 = 스윕 중단/쿨다운 · 재시도 0) · KRX = KIS 일봉 · US = KIS 해외 일봉(인증 구성 시에만 · v12.18.81-DEV).
                 //   미결선 레인 = '감시 중 · 실피드 연결 대기'(합성 점수 0). `Pluto.SwarmEnabled`(기본 켜짐) · 시세 GET 만(liveArmed:false).

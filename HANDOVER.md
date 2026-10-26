@@ -4691,3 +4691,26 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 출하 바이너리 상태(정직): 학습 가중치 영속화 기본 켜짐(`Pluto.LearningPersistEnabled`) · 첫 기동 = 체크포인트 없음 → 중립 시작('영속화 가동 중' · 누적 0회) ·
   FRED 키 미설정 출하(관측 대기 · 국면 '판정 전') · 실 장기 운용 재기동 실측 미수행 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) ·
   타 세션 파일 3종 미스테이징 · 이번 GM 커밋/태그 원격 푸시 없음(d1c631a 까지만 푸시됨).
+
+## 203. v12.18.85-DEV — 플루토 인지 학습 브리핑 + 레짐 적응형 Top-Picks 추천 엔진(학습 가중치 투영 · 정직 제외 · 핫패스 δ=0) (2026-10-26)
+
+- 배경: 지속 학습 결과(국면 유사도 · 섀도우 검증 · 보정 가중치)가 뱃지 조각으로만 흩어져 정량 요약이 없었고, 스크리너 랭킹은 학습 가중치를 반영하지 않음(4대 팩터 고정 점수).
+- PlutoRecommendationEngine(신규 · Engines/Cognitive/Screening · 정적 · Track B 콜드): Project(값 타입 · δ=0) = 모멘텀 조정 (기술 팩터 점수 − 중립 12) × MomentumTiltPct ÷ 100 ·
+  악마의 변호인 감점 DevilStrictnessPts × 반대 논리 수 ÷ 2 → 적응 점수 = 기본 + 모멘텀 − 감점(0~100 포화). 중립/무결성 위반 가중치 = 조정 0(기존 동작 보존).
+  Rank = 판독 전무(피드 미결선) · 탈락(반대 논리 ≥ 2) · 적응 점수 50점 미만 제외 → 적응 점수 내림차순(동점 = 반대 논리 → 종목) Top N · 추천 수량 = 적응 점수 기준 동적 비중.
+- PlutoMarketScreener: 랭킹을 엔진에 위임 · 생성자 weights 공급자(선택) + WeightsFrom(seqlock) = 스텝당 TryRead 1회(경합 = 중립). PlutoRecommendation 후행 Adaptive + FinalScore(생성 시 계산) ·
+  보드 TryFind 점수 = FinalScore(판독 필드 읽기 · δ=0). 호스트: 학습 seqlock 을 스크리너에 결선(학습 비활성 = 중립).
+- 인지 브리핑: RCL PlutoBriefing.cs(PlutoBriefingComposer · 순수 DTO) = 12대 국면(국면명 · 유사도 x.x%) · 누적 학습(영속 평생 / 미결선 = 이번 기동 표본) · 최적 가중치(세대 · 모멘텀 % · 엄격도 점 ·
+  핫스왑/거부) · 섀도우(직전 판정 · 승률/MDD 현행 → 후보 개선치 %p · 현행 섀도우 승률) · 자산군별(KRX · US · Upbit) Top 3(점수 · 학습 순 조정 · 근거 1줄 · 리스크).
+  PlutoLearningView 후행 Shadow(PlutoShadowView · PlutoShadowVerdictCode = 엔진 PlutoShadowReason 값 동일) · 카드 LearnMomentumPts/LearnDevilPts/LearnText.
+  호스트 PlutoBriefingService(두 포트 판독 → 합성) · DualArenaPage 거버너 바 [📊 인지 브리핑] 토글 패널(열림 시에만 합성 · 상승 적색/하강 청색) + 카드 학습 투영 줄([Inject] 추가 0).
+- CLI `--pluto-briefing [--db <경로>] [--top 1~5]`(PlutoBriefingCli · UI/뮤텍스 초기화 이전 분기): portfolio.db SQLite Mode=ReadOnly 판독만(파일 부재 = 미생성 · 스키마/기록 0) ·
+  PlutoLearningStore.LoadRecentSql/ParseRows 공개 재사용 + PlutoCheckpointManager.Restore 동일 판정(손상 롤백 · 중립 폴백) · 원샷 = 스웜/피드 비가동 → 국면 = 직전 기록 국면명만 ·
+  추천 = '추천 엔진 미결선'(가짜 종목 0). 종료 0/1(사용법)/2(판독 장애). 실 portfolio.db 스모크 exit 0(기록 0행 → 중립 · 판정 전).
+- 테스트: PlutoBriefingRecommenderTests 22건(투영 산식 · 중립 보존 · tilt 강화/축소 순위 역전 · 핫스왑 즉시 반영 · 미결선/탈락/엄격도 강등 제외 · 카드 투영 · 브리핑 정량 문구 ·
+  미결선/첫 스캔 전 정직 · 섀도우 코드 동일성 · 서비스 · CLI 판독 전용 바이트 불변/미생성/사용법/롤백 · 페이지 패널 결선/미결선 · 호스트 결선/RCL 순수성 ·
+  δ=0: 적응 랭커 스캔 + 가중치 핫스왑 동시 중 seqlock 판독 + 보드 조회 10만 회 0B · 학습 결속 KRX 정산 10만 회 0B).
+- 검증: WebOnly → sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,619 통과 / 9 건너뜀 / 0 실패(5,628) · infra-scan 0 · 래칫 ≤40.
+- 정직: 가중치는 전역 1벌(국면별 개별 가중치 아님) — '국면별 가중치' 는 현재 국면에서 학습된 전역 가중치를 투영한다는 의미. 브리핑의 섀도우 개선치는 직전 판정 1건 기준(누적 추세 아님) ·
+  샤프 미산출. KRX/US 레인은 KIS 미구성 시 감시만(추천 0) · 첫 기동 학습 전 = 조정 0. CLI 콘솔은 시스템 코드페이지(CP949) 출력 — 이모지는 '?' 로 표시될 수 있음.
+  liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

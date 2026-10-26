@@ -5,6 +5,7 @@
 //   카드 = 종목명/코드 · 종합 점수(0~100) · 4대 팩터 점수(각 0~25) · 핵심 근거 3줄 · 악마의 변호인 판정 · 목표 안전마진 · 추천 수량.
 //   [👤 1-Click 아레나 담기] = 페이지가 자기 휴먼 티켓 상태(종목 · 수량)만 채운다 — 접수는 기존 매수 버튼 → I*ArenaPort.SubmitHuman(휴먼 가상 원장 큐)뿐.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 스크리너 미가동 호스트 = UnwiredPlutoRecommendationPort(IsWired false) → '추천 엔진 미결선' 정직 렌더.
+//   [v12.18.85-DEV] 카드 Score = 학습 가중치 투영 적응 점수 · LearnMomentumPts/LearnDevilPts/LearnText = 투영 근거(학습 전 = 0 · 중립 문구).
 //   [v12.18.80-DEV] Swarm = 병렬 학습 스웜 레인별 실데이터 수집 상태(업비트 공개 REST · KIS 일봉 · 미결선 = '실피드 연결 대기').
 // ============================================================================
 using System;
@@ -30,6 +31,14 @@ namespace MS2E.UI.Portable.Ports.Trading
         bool HasValuation, int MarginOfSafetyBps, string PriceText, string FairPriceText, bool SeedProfile,
         long RecommendedQty, int CounterCount, string CounterText)
     {
+        /// <summary>[v12.18.85-DEV] 학습 가중치 투영 — 모멘텀 조정(±) · 악마의 변호인 감점(+ = 감점) · 근거 문구(빈 값 = 미표기). Score = 적응 점수.</summary>
+        public int LearnMomentumPts { get; init; }
+        public int LearnDevilPts { get; init; }
+        public string LearnText { get; init; } = "";
+
+        /// <summary>[v12.18.85-DEV] 학습 투영 순 조정(모멘텀 − 감점) · 기본 4대 팩터 합 = Score − 순 조정(포화 전).</summary>
+        public int LearnNetPts => LearnMomentumPts - LearnDevilPts;
+
         /// <summary>점수 뱃지 등급(≥ 75 강력 · ≥ 60 우수 · 그 외 관심).</summary>
         public string ScoreCss => Score >= 75 ? "hot" : Score >= 60 ? "good" : "ok";
 
