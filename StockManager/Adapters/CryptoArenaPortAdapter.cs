@@ -166,5 +166,12 @@ namespace StockManager.Adapters
             for (int i = 0; i < t.Length; i++) t[i] = CryptoArenaUniverse.Market(i);
             return t;
         }
+
+        public ArenaCouncilVetoFeed CouncilVetoes(int max = 20)
+        {
+            var buf = new ArenaVetoRecord[Math.Clamp(max, 0, ArenaCouncilVetoGate.Capacity)];
+            int n = _engine.CopyCouncilVetoes(buf, out long blocked);
+            return ArenaGovernanceMapper.CouncilFeed(_engine.CouncilAttached, buf.AsSpan(0, n), blocked, CryptoArenaUniverse.Label);
+        }
     }
 }

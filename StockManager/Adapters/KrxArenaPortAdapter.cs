@@ -162,5 +162,12 @@ namespace StockManager.Adapters
         private static KrxArenaBookView Map(in DuelBookStats b) => new(
             b.CapitalWon, b.CashWon, b.EquityWon, b.RealizedWon, b.UnrealizedWon, b.FeesWon, b.TaxWon,
             b.ReturnBp, b.MddBp, b.WinRateBp, b.Fills, b.Rejects, b.Wins, b.Losses, b.OpenPositions);
+
+        public ArenaCouncilVetoFeed CouncilVetoes(int max = 20)
+        {
+            var buf = new ArenaVetoRecord[Math.Clamp(max, 0, ArenaCouncilVetoGate.Capacity)];
+            int n = _engine.CopyCouncilVetoes(buf, out long blocked);
+            return ArenaGovernanceMapper.CouncilFeed(_engine.CouncilAttached, buf.AsSpan(0, n), blocked, static s => s.ToString("D6", System.Globalization.CultureInfo.InvariantCulture));
+        }
     }
 }

@@ -8,6 +8,8 @@
 using System;
 using System.Collections.Generic;
 using MS2E.UI.Portable.Ports.Trading;
+using StockManager.Engines.Arena.Common;
+using StockManager.Engines.Cognitive.Council;
 using StockManager.Engines.Cognitive.Governance;
 using StockManager.Engines.Cognitive.Regime;
 using MarketRegime = StockManager.Engines.Cognitive.Regime.MarketRegime;   // MS2E.Core.MarketRegime(전역 using) 동명 타입과 구분
@@ -63,6 +65,19 @@ namespace StockManager.Adapters
                 tags = list;
             }
             return new ArenaGovernanceCard(regime, tags, g.RawConfidence, g.Confidence, g.WeightBp, g.LossStreak, g.StreakCut, null, false);
+        }
+
+        /// <summary>[v12.18.88-GM] 리스크 통제관 비토 기각 로그 → 포트 피드(최신 → 과거 · 콜드 · 미결속 = Unwired).</summary>
+        public static ArenaCouncilVetoFeed CouncilFeed(bool attached, ReadOnlySpan<ArenaVetoRecord> records, long blocked, Func<long, string> label)
+        {
+            if (!attached) return ArenaCouncilVetoFeed.Unwired;
+            var list = new List<ArenaCouncilVetoView>(records.Length);
+            for (int i = records.Length - 1; i >= 0; i--)
+            {
+                ref readonly var r = ref records[i];
+                list.Add(new ArenaCouncilVetoView(r.Seq, label(r.Symbol), r.AtKst, r.Score, PlutoCognitiveCouncil.VetoText(r.Veto), r.Cell));
+            }
+            return new ArenaCouncilVetoFeed(true, blocked, list);
         }
     }
 }

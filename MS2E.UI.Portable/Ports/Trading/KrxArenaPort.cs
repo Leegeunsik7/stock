@@ -111,5 +111,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         ArenaOpeningAuctionView OpeningAuction => default;
         /// <summary>[v12.18.71-DEV] 수신 종목 개장 갭(전일 종가 vs 시초가 · 판정). 기본 구현 = 빈 목록.</summary>
         IReadOnlyList<ArenaOpenGapView> OpeningGaps() => Array.Empty<ArenaOpenGapView>();
+        /// <summary>[v12.18.88-GM] 리스크 통제관 비토 기각 로그(최신 → 과거 · 최대 max건 · UI 콜드 경로). 기본 구현 = 미결속(Unwired).</summary>
+        ArenaCouncilVetoFeed CouncilVetoes(int max = 20) => ArenaCouncilVetoFeed.Unwired;
     }
 }

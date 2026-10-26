@@ -42,6 +42,7 @@ using System.Threading;
 using MS2E.Infrastructure;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Arena.Common;
+using StockManager.Engines.Cognitive.Council;
 using StockManager.Engines.Cognitive.Governance;
 using StockManager.Engines.Cognitive.Learning;
 using StockManager.Engines.Cognitive.Microstructure;
@@ -122,6 +123,7 @@ namespace StockManager.Engines.Arena.Domestic
         private PlutoCognitiveWeightSeqlock? _learning;
         private PlutoRegimeMatcher? _regimeMatcher;
         private PlutoCognitiveTensorLake? _tensor;                          // [v12.18.86-DEV] 36슬롯 인지 텐서(국면 × 자산군 전용 가중치 · 정산 스레드 δ=0 해석)                         // [v12.18.82-DEV] 12대 역사적 국면 판정기(Track B 게시 · 정산 스레드 δ=0 판독)
+        private readonly ArenaCouncilVetoGate _council = new(PlutoAssetClass.Krx, MaxSymbols);   // [v12.18.88-GM] 리스크 통제관 비토 게이트(39셀 판정 보드 · 미결속 = 기존 진입 동작)
         private PlutoSizerState _sizer;
         private long _govApproved, _govPanic, _govCooldown, _govVeto;
         private PlutoGovernorStats _govSnap;
@@ -178,6 +180,7 @@ namespace StockManager.Engines.Arena.Domestic
             Array.Clear(_techLast);
             Array.Clear(_micro);                      // [v12.18.75-DEV] CVD · 뎁스 · 게시 팩터 동반 초기화
             Array.Clear(_microLast);
+            _council.Reset();                         // [v12.18.88-GM] 비토 기각 로그 · 종목 사유 초기화(보드 결속 유지)
             _symCount = 0;
             _ticks = _dropped = 0;
             PublishSnapshot();
@@ -265,6 +268,11 @@ namespace StockManager.Engines.Arena.Domestic
         public void AttachTensor(PlutoCognitiveTensorLake tensor) => Volatile.Write(ref _tensor, tensor ?? throw new ArgumentNullException(nameof(tensor)));
 
         public bool TensorAttached => Volatile.Read(ref _tensor) is not null;
+
+        /// <summary>[v12.18.88-GM] PlutoCognitiveCouncil 39셀 판정 보드 결속 — AI 진입 후보마다 리스크 통제관 비토 판독(VIX · 교차 자산 충격 · 패닉 국면 · 종목 패닉 투매 · 판독 불가 = 차단) · δ=0.</summary>
+        public void AttachCouncil(PlutoCouncilBoard board) => _council.Attach(board);
+
+        public bool CouncilAttached => _council.Attached;
 
         public bool GovernanceEnabled => Volatile.Read(ref _governed);
 
@@ -577,6 +585,7 @@ namespace StockManager.Engines.Arena.Domestic
             var dominant = gapFill && sig.Score < EntryScore ? ArenaTrigger.OpeningGapFill : sig.Dominant;
             int score = raw, confidence, weightBp = PositionWeightBp;
             PlutoGovernanceTag gov = default;
+            if (raw >= EntryScore && CouncilVetoes(si, raw, kst.Ticks)) return;   // [v12.18.88-GM] 리스크 통제관 비토 = 진입 차단(거버너 계수 무변경 · 기각 로그)
             if (governed)
             {
                 if (!Govern(si, raw, sig.MomentumBp, MomentumWeight, sig.ImbalanceBp, ImbalanceWeight, kst.Ticks, out gov, tech.IsPocResistance, micro.IsBearishDivergence, micro.IsDepthTrap)) return;
@@ -933,6 +942,32 @@ namespace StockManager.Engines.Arena.Domestic
                 Interlocked.MemoryBarrier();
                 if (Volatile.Read(ref _ver) == v) return n;
             }
+            return 0;
+        }
+
+        /// <summary>[v12.18.88-GM] 리스크 통제관 비토(쓰기 창 · δ=0): 역사적 국면 판독 → 보드 셀 조회 · true = 진입 차단(사유 전이 시 기각 로그). 미결속 = false.</summary>
+        private bool CouncilVetoes(int si, int score, long kstTicks)
+        {
+            if (!_council.Attached) return false;
+            PlutoRegimeMatch history = default;
+            Volatile.Read(ref _regimeMatcher)?.TryRead(out history);
+            ref Sym s = ref _syms[si];
+            return _council.Blocks(si, s.Symbol, s.Regime.Regime, history.CycleId, score, kstTicks);
+        }
+
+        /// <summary>[v12.18.88-GM] 비토 기각 로그(과거 → 최신 · seqlock · δ=0) · blocked = 누적 차단 건수(같은 사유 연속 포함). 경합 상한 초과 = 0.</summary>
+        public int CopyCouncilVetoes(Span<ArenaVetoRecord> destination, out long blocked)
+        {
+            for (int i = 0; i < SeqlockRetries; i++)
+            {
+                long v = Volatile.Read(ref _ver);
+                if ((v & 1) != 0) { Thread.SpinWait(8); continue; }
+                int n = _council.Copy(destination);
+                blocked = _council.Blocked;
+                Interlocked.MemoryBarrier();
+                if (Volatile.Read(ref _ver) == v) return n;
+            }
+            blocked = 0;
             return 0;
         }
 

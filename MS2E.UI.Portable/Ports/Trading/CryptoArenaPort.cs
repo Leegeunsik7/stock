@@ -118,5 +118,7 @@ namespace MS2E.UI.Portable.Ports.Trading
         bool SetAutoCopyEnabled(bool enabled, decimal ratio = 1.0m) => false;
         /// <summary>[v12.18.71-DEV] 자동 미러링 상태 · 복제 계수 · 마지막 결과. 기본 구현 = default(미지원).</summary>
         ArenaCopyTradingView CopyTrading => default;
+        /// <summary>[v12.18.88-GM] 리스크 통제관 비토 기각 로그(최신 → 과거 · 최대 max건 · UI 콜드 경로). 기본 구현 = 미결속(Unwired).</summary>
+        ArenaCouncilVetoFeed CouncilVetoes(int max = 20) => ArenaCouncilVetoFeed.Unwired;
     }
 }

@@ -351,6 +351,7 @@
 
     <div class="ar-card da-timeline">
         <h3>🧠 AI 가상자산 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
+        @VetoLog(CryptoPort.CouncilVetoes())
         @{ var ccards = cHas && c.RationaleCount > 0 ? CryptoPort.RecentRationales(MaxCards) : System.Array.Empty<CryptoRationaleView>(); }
         @if (ccards.Count == 0)
         {
@@ -506,6 +507,7 @@ else if (_mode == ModeUs)
 
     <div class="ar-card da-timeline">
         <h3>🧠 AI USD 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
+        @VetoLog(UsPort.CouncilVetoes())
         @{ var ucards = uHas && u.RationaleCount > 0 ? UsPort.RecentRationales(MaxCards) : System.Array.Empty<UsRationaleView>(); }
         @if (ucards.Count == 0)
         {
@@ -660,6 +662,7 @@ else
 
 <div class="ar-card da-timeline">
     <h3>🧠 AI 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
+    @VetoLog(Port.CouncilVetoes())
     @{ var cards = hasView && v.RationaleCount > 0 ? Port.RecentRationales(MaxCards) : System.Array.Empty<KrxRationaleView>(); }
     @if (cards.Count == 0)
     {
@@ -1130,6 +1133,18 @@ else
         }
     }</text>;
 
+    // [v12.18.88-GM] 리스크 통제관(ChiefRiskOfficer) 비토 기각 로그 — 체결 타임라인 상단(미결속 = 미표시 · 기각 0건 = 게이트 배지만).
+    private static RenderFragment VetoLog(ArenaCouncilVetoFeed f) => @<text>@if (f.Attached)
+    {
+        <div class="da-veto-log" data-veto-blocked="@f.Blocked">
+            <span class="da-badge da-veto-head">🛡️ 리스크 통제관 비토 게이트 · 누적 진입 차단 @(f.Blocked.ToString("N0"))건</span>
+            @foreach (var v in f.Recent)
+            {
+                <div class="da-veto" data-veto="@v.Seq"><b>@Sym(v.Symbol)</b> AI 진입 기각 · 원점수 @Signed(v.Score) · <span class="da-veto-reason">@v.Reason</span> <span class="ar-sub">#@v.Seq · @v.AtKst.ToString("MM-dd HH:mm:ss") KST · 셀 @v.Cell</span></div>
+            }
+        </div>
+    }</text>;
+
     // [v12.18.70-DEV] 청산 근거 카드 헤더 실현손익 칩(저널 매칭 = 수익률 병기 · 미매칭 = 금액만).
     private static RenderFragment PnlChip(string pnlText, long pnl, ArenaClosedTradeView? t) => @<text>
         <span class="da-pnl-chip @Css(pnl)">[실현손익: @pnlText@(t is { HasReturn: true } ? " (" + Bp(t.ReturnBp) + ")" : "")]</span>
@@ -1347,6 +1362,9 @@ else
     .da-card { border-left: 3px solid #3a3f4b; background: #121722; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
     .da-card.buy { border-left-color: #E53935; } .da-card.sell { border-left-color: #1E88E5; }
     .da-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 13px; }
+    .da-veto-log { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 3px; }
+    .da-veto { padding: 3px 8px; border-left: 3px solid #ffb300; background: #2a2414; border-radius: 4px; font-size: 12px; }
+    .da-veto-reason { color: #ffca28; }
     .da-trigger { padding: 1px 8px; border-radius: 6px; background: #1d2230; border: 1px solid #4dd0e1; font-size: 11.5px; }
     .da-metrics { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
     .da-conf { display: inline-flex; align-items: center; gap: 6px; }

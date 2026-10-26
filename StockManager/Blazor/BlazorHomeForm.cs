@@ -1940,6 +1940,10 @@ namespace StockManager.Blazor
                         regime: () => regimeForCouncil is not null && regimeForCouncil.TryRead(out var rm) ? rm : default,
                         tensor: plutoTensorRef);
                     services.AddSingleton(plutoCouncil);
+                    // [v12.18.88-GM] 3대 아레나 AI 진입 경로 × 리스크 통제관 비토 결선 — 진입 후보마다 39셀 판정 보드 seqlock 조회(δ=0) → 비토 = 진입 차단 + 체결 타임라인 기각 로그.
+                    krxArena.AttachCouncil(plutoCouncil.Board);
+                    usArena.AttachCouncil(plutoCouncil.Board);
+                    cryptoArena.AttachCouncil(plutoCouncil.Board);
                 }
                 // [v12.18.85-DEV] 레짐 적응형 추천 — 스텝당 학습 seqlock TryRead 1회(Track B) → PlutoRecommendationEngine 모멘텀 조정/악마의 변호인 감점 투영(학습 비활성 = 중립).
                 var plutoScreener = new StockManager.Engines.Cognitive.Screening.PlutoMarketScreener(plutoRecoBoard,

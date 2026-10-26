@@ -36,6 +36,7 @@ namespace StockManager.Engines.Cognitive.Council
         SpilloverShock = 2,
         PanicRegimeMatch = 4,
         PanicLiquidation = 8,
+        Unreadable = 16,           // [v12.18.88-GM] 아레나 진입 게이트 — 판정 보드 경합 상한 초과(판독 불가) = fail-closed 차단
     }
 
     /// <summary>합의 가중치 4개(bp · 합 10000 · 값 타입).</summary>
@@ -244,6 +245,7 @@ namespace StockManager.Engines.Cognitive.Council
             if ((v & PlutoVetoReason.SpilloverShock) != 0) sb.Append(" 교차 자산 충격");
             if ((v & PlutoVetoReason.PanicRegimeMatch) != 0) sb.Append(" 과거 패닉 국면 유사");
             if ((v & PlutoVetoReason.PanicLiquidation) != 0) sb.Append(" 패닉 투매 국면");
+            if ((v & PlutoVetoReason.Unreadable) != 0) sb.Append(" 판정 보드 판독 불가(fail-closed)");
             return sb.ToString();
         }
 

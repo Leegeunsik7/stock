@@ -85,4 +85,12 @@ namespace MS2E.UI.Portable.Ports.Trading
     {
         public bool IsExit => PostMortem is not null;
     }
+    /// <summary>[v12.18.88-GM] 리스크 통제관(PlutoCognitiveCouncil ChiefRiskOfficer) 비토 기각 1건 — 진입 후보(원점수 ≥ 임계)가 차단된 순간(사유 전이 시 1건).</summary>
+    public sealed record ArenaCouncilVetoView(long Seq, string Symbol, DateTime AtKst, int Score, string Reason, int Cell);
+
+    /// <summary>[v12.18.88-GM] 아레나 비토 게이트 상태(Attached false = 판정 보드 미결속 → 기존 진입 동작 · Blocked = 누적 차단 건수 · Recent = 최신 → 과거).</summary>
+    public sealed record ArenaCouncilVetoFeed(bool Attached, long Blocked, IReadOnlyList<ArenaCouncilVetoView> Recent)
+    {
+        public static ArenaCouncilVetoFeed Unwired { get; } = new(false, 0, Array.Empty<ArenaCouncilVetoView>());
+    }
 }
