@@ -78,10 +78,10 @@ namespace StockManager.Tests
         // ════════════ §1 버전 ════════════
 
         [Fact]
-        public void HostVersion_Is_12_18_84_And_DrivesReleaseNames()
+        public void HostVersion_Is_12_18_85_And_DrivesReleaseNames()
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
-            Assert.Equal(new Version(12, 18, 84, 0), v);
+            Assert.Equal(new Version(12, 18, 85, 0), v);
             Assert.Equal("12.18.85", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
             Assert.Contains("<Version>12.18.85</Version>", csproj);
