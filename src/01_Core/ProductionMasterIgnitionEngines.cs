@@ -36,7 +36,7 @@ namespace MS2E.Core
     // ════════════════════════════════════════════════════════════════════════
     /// <summary>
     /// 지연/슬리피지 이동평균 + HTTP 429/50x 연속 카운터를 사전할당 고정 링 + 러닝섬으로 O(1)·0 Byte 산출.
-    /// ★단일 라이터(텔레메트리 집계 스레드) 계약 — Push 는 한 스레드만. 판독은 Interlocked 커서로 락프리 동시 안전.
+    /// ★단일 라이터(텔레메트리 집계 스레드) 계약 — Push/Reset 은 한 스레드만. 이동평균 판독은 seqlock 으로 (count,sum) 쌍 torn read 0.
     /// </summary>
     public sealed class ZeroAllocSlidingTelemetry
     {
@@ -48,6 +48,7 @@ namespace MS2E.Core
         private long _sumDelay, _sumSlip;    // 러닝섬(증분)
         private long _lastDelay, _lastSlip;
         private long _consec429, _consec50x; // 연속 오류 카운터(성공에 리셋)
+        private long _version;               // ★seqlock 시퀀스(홀수=쓰기 중·짝수=안정) — (count,sum) 쌍 torn read 차단
 
         public ZeroAllocSlidingTelemetry(int windowPow2)
         {
@@ -62,6 +63,8 @@ namespace MS2E.Core
         /// <summary>텔레메트리 표본 1건(★단일 라이터·O(1)·δ=0). httpStatus: 429=레이트리밋·5xx=서버오류·그외=성공(연속 리셋).</summary>
         public void Push(long delayMicros, long slippageBps, int httpStatus)
         {
+            long seq = _version;                       // 단일 라이터 — 자기 쓰기 판독
+            Interlocked.Exchange(ref _version, seq + 1); // 홀수 = 쓰기 진입(full fence: 이후 데이터 store 선행 금지)
             long w = _writeCursor;
             int idx = (int)(w & _mask);
             if (Volatile.Read(ref _count) == _cap)     // 링 포화 → 덮어쓸 최고참 표본을 러닝섬에서 차감
@@ -83,13 +86,31 @@ namespace MS2E.Core
             else                                       { Volatile.Write(ref _consec429, 0); Volatile.Write(ref _consec50x, 0); }
 
             Volatile.Write(ref _writeCursor, w + 1);   // 발행(release)
+            Volatile.Write(ref _version, seq + 2);     // 짝수 = 쓰기 완료(release: 링·러닝섬·count 갱신 선행 보장)
+        }
+
+        /// <summary>seqlock 판독 — 짝수 버전 → count·sum 판독 → 버전 불변 확인. 불일치/쓰기 중이면 재시도(δ=0·SpinWait 구조체).</summary>
+        private long SeqlockMean(ref long sum)
+        {
+            SpinWait spin = default;
+            while (true)
+            {
+                long v1 = Volatile.Read(ref _version);
+                if ((v1 & 1) == 0)
+                {
+                    long c = Volatile.Read(ref _count);
+                    long s = Volatile.Read(ref sum);       // acquire — 아래 v2 판독이 데이터 판독 앞으로 당겨지지 않음
+                    if (Volatile.Read(ref _version) == v1) return c > 0 ? s / c : 0;
+                }
+                spin.SpinOnce();
+            }
         }
 
         public long Count => Volatile.Read(ref _count);
         public long LastDelayMicros => Volatile.Read(ref _lastDelay);
         public long LastSlippageBps => Volatile.Read(ref _lastSlip);
-        public long MeanDelayMicros { get { long c = Volatile.Read(ref _count); return c > 0 ? _sumDelay / c : 0; } }
-        public long MeanSlippageBps { get { long c = Volatile.Read(ref _count); return c > 0 ? _sumSlip / c : 0; } }
+        public long MeanDelayMicros => SeqlockMean(ref _sumDelay);
+        public long MeanSlippageBps => SeqlockMean(ref _sumSlip);
         public long Consecutive429 => Volatile.Read(ref _consec429);
         public long Consecutive50x => Volatile.Read(ref _consec50x);
 
@@ -101,13 +122,17 @@ namespace MS2E.Core
         public bool HttpErrorStorm(long consecutiveThreshold)
             => Consecutive429 >= consecutiveThreshold || Consecutive50x >= consecutiveThreshold;
 
+        /// <summary>★라이터 스레드에서만 호출(Push 와 동일 단일 라이터 계약) — seqlock 으로 감싸 판독측 반쯤 지워진 상태 차단.</summary>
         public void Reset()
         {
+            long seq = _version;
+            Interlocked.Exchange(ref _version, seq + 1);
             Array.Clear(_delay); Array.Clear(_slippage);
             Volatile.Write(ref _writeCursor, 0); Volatile.Write(ref _count, 0);
             _sumDelay = _sumSlip = 0;
             Volatile.Write(ref _lastDelay, 0); Volatile.Write(ref _lastSlip, 0);
             Volatile.Write(ref _consec429, 0); Volatile.Write(ref _consec50x, 0);
+            Volatile.Write(ref _version, seq + 2);
         }
     }
 

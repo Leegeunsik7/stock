@@ -434,5 +434,92 @@ namespace StockManager.Tests
             Assert.Equal(0L, Interlocked.Read(ref badRead));   // ★동시 판독 항상 유효 범위(torn 0)
             _out.WriteLine($"[Telemetry/5t] count={telem.Count} meanDelay={telem.MeanDelayMicros}μs");
         }
+
+        // seqlock 판독 경로 δ=0 — SeqlockMean(SpinWait 구조체) 힙 0.
+        private static readonly ZeroAllocSlidingTelemetry _readTelem = MakeReadTelem();
+        private static ZeroAllocSlidingTelemetry MakeReadTelem()
+        {
+            var t = new ZeroAllocSlidingTelemetry(64);
+            for (int i = 0; i < 100; i++) t.Push(i, i % 9, 200);
+            return t;
+        }
+        private static long _readSink;
+        private static void ReadHot() => _readSink += _readTelem.MeanDelayMicros + _readTelem.MeanSlippageBps;
+
+        [Fact]
+        public void Telemetry_SeqlockRead_ZeroAllocation()
+        {
+            long alloc = 0; Exception? err = null;
+            var th = new Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < 300_000; i++) ReadHot();
+                    alloc = ZeroAllocProbe.MinAllocated(() =>
+                    {
+                        for (int i = 0; i < 100_000; i++) ReadHot();
+                    });
+                }
+                catch (Exception e) { err = e; }
+            });
+            th.Start();
+            Assert.True(th.Join(30_000));
+            Assert.Null(err);
+            Assert.Equal(0L, alloc);   // ★seqlock 판독 경로 힙 0
+        }
+
+        // 상수 표본 스트림 — 정합 판독이면 평균은 정확히 {0, 상수}. (count,sum) 찢어진 판독은 상수 미만 평균으로 즉시 노출.
+        // 주기적 Reset(라이터 스레드)으로 링 충전 구간(count 증가)과 포화 구간(차감→가산)을 모두 반복 노출.
+        [Fact]
+        public void Telemetry_Seqlock_ConstantStream_NoTornMean()
+        {
+            const long D = 1_000, S = 7;
+            var telem = new ZeroAllocSlidingTelemetry(128);
+            long badRead = 0, reads = 0; Exception? err = null;
+            var start = new ManualResetEventSlim(false);
+            var done = new CountdownEvent(5);
+            long stop = 0;
+
+            var writer = new Thread(() =>
+            {
+                try
+                {
+                    start.Wait();
+                    for (int i = 0; i < 1_000_000; i++)
+                    {
+                        if ((i & 511) == 0) telem.Reset();
+                        telem.Push(D, S, 200);
+                    }
+                }
+                catch (Exception e) { err = e; }
+                finally { Volatile.Write(ref stop, 1); done.Signal(); }
+            }) { IsBackground = true };
+
+            for (int r = 0; r < 4; r++)
+            {
+                new Thread(() =>
+                {
+                    try
+                    {
+                        start.Wait();
+                        while (Volatile.Read(ref stop) == 0)
+                        {
+                            long md = telem.MeanDelayMicros, ms = telem.MeanSlippageBps;
+                            if ((md != 0 && md != D) || (ms != 0 && ms != S)) Interlocked.Increment(ref badRead);
+                            Interlocked.Increment(ref reads);
+                        }
+                    }
+                    catch (Exception e) { err = e; }
+                    finally { done.Signal(); }
+                }) { IsBackground = true }.Start();
+            }
+            writer.Start();
+            start.Set();
+            Assert.True(done.Wait(60_000));
+            done.Dispose(); start.Dispose();
+            Assert.Null(err);
+            _out.WriteLine($"[Telemetry/seqlock] reads={Interlocked.Read(ref reads)} torn={Interlocked.Read(ref badRead)}");
+            Assert.Equal(0L, Interlocked.Read(ref badRead));   // ★seqlock — torn read 0
+        }
     }
 }
