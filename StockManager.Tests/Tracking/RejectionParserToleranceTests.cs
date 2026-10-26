@@ -97,7 +97,7 @@ namespace StockManager.Tests.Tracking
         public static IEnumerable<object[]> UnreadableNoticeVariants()
         {
             var f = Fields(117_058, 1, 1);
-            yield return new object[] { "④ 필드 순서 역순", string.Join('^', f.Reverse()) };
+            yield return new object[] { "④ 필드 순서 역순", string.Join('^', Enumerable.Reverse(f)) };
             var swap = (string[])f.Clone(); (swap[4], swap[12]) = (swap[12], swap[4]);                // 매도매수 ↔ 거부여부 — 거부값 '02' = 정의 밖
             yield return new object[] { "④ 매도매수 ↔ 거부여부 교환", string.Join('^', swap) };
             var swap2 = (string[])f.Clone(); (swap2[2], swap2[8]) = (swap2[8], swap2[2]);              // 주문번호 ↔ 종목코드 — 종목 10자리 = 형식 이탈
