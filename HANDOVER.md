@@ -4803,3 +4803,25 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   잔류: 격리 기동 PID 29824 종료 확인 · 실행 중인 MS2E.StockSuite.exe(PID 45568)는 메인 체크아웃 bin\Debug 인스턴스(타 세션/사용자 · 패키징 무관 · 미종료). 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 36슬롯 텐서 · 웜스타트 · Candles 적재 레코더 · 인지 브리핑 텐서 패널 포함 · 첫 기동 = Candles 비어 있으면 웜스타트 NoData(적재분은 다음 기동부터) ·
   KIS 미구성 시 KRX/US 적재/추천 0 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 208. v12.18.87-DEV — DualArena 다크 슬레이트 벤토 콕핏 + 플루토 인지 학습 관제탑(HUD) + 레짐 적응형 추천 매트릭스(점수 분해) (2026-10-26)
+
+- 선행: 6fcd5e4(§207 v12.18.86-GM). 진단: 셸 라이트 테마(--card #fff) 위에 페이지가 다크 하드코딩 뱃지(#3a3f4b 등)를 가로 나열 → 혼색 · 디버그 뱃지 과밀 · 학습/추천 상태 한눈 파악 불가.
+  (오더의 'HANDOVER §206' 은 §206=웜스타트 DEV · §207=GM 으로 이미 사용 → 본 기록 §208.)
+- 테마: `.da-cockpit` 페이지 범위 CSS 변수 재정의(--bg/--canvas #0B0F19 · --card #111827 · --card-2/--line #1F2937 · --ink #E5E7EB · --sub #9CA3AF · --up #E53935 · --down #1E88E5) —
+  전역 app.css 무변경 · 하위 ArenaBattleView 도 같은 토큰 상속 · 숫자 = JetBrains Mono tabular-nums.
+- 레이아웃(3단 벤토): 헤더(FAIL-CLOSED · 가상 원장 / 플루토 인지 엔진 활성·정지·미결선 필) → ① 인지 학습 관제탑 카드(PlutoCognitiveHud + 거버너 토글 · 인지 브리핑 토글 +
+  기존 학습 뱃지 = '엔지니어링 진단 태그' 접힘 details) → ② 추천 매트릭스 카드(PlutoRecoMatrix + 기존 상세 근거 카드/스웜 현황 = 접힘 details) → ③ 아레나 대결 · 체결 타임라인 카드(기존 그대로).
+  기존 셀렉터 · data 속성 · @inject 6종 전부 보존(접힘 details 도 DOM 존재 → 기존 bUnit 계약 무변경).
+- PlutoCognitiveHud(Components · [Parameter] 만): 거시 레짐 게이지(국면명 · 유사도 바 · 편향 문구) · 듀얼-코어 시소(모멘텀 ±50% · 엄격도 −10~+20 중앙 기준 양방향 바 + 기울기 핀/라벨) ·
+  성숙도(G세대 · 평생 에피소드 · 섀도우 통과/거부 · 승률 개선 %p · 영속화 태그) · 3대 자산 텐서(출처 · 가중치 · WarmReady/NoData). 미결선/판정 전 = 빈 스켈레톤 게이지 + 정직 문구(가중치 미표시).
+- PlutoRecoMatrix(Components): 탭 전체(420)/KRX(200)/US(100)/Upbit(120)(라벨 = 감시 수) · 열 순위 · 종목 · 자산 · 점수 바 + 분해(툴팁 "기본 70 + 모멘텀 +12 − 변호인 4 = 78" · 인라인) ·
+  핵심 근거 · 리스크(변호인) · 상태(관측 + 가상 담기 → 부모 LoadReco). 피드 미판독 = 시장별 집계 대기 행 1개('Awaiting Market Feed' 스켈레톤 · 점수 '--' · 종목명/점수 생성 0).
+- PlutoCockpit.cs(Ports/Trading · 순수): PlutoWeightScale(엔진 경계 미러 · 드리프트 테스트) · PlutoScoreBreakdown(기본 = 4대 팩터 합 · 0~100 포화 표기) · PlutoCockpitMatrix.Rows.
+  정직 한계: 전체 탭 '감시 420' 중 개별 종목 행은 추천 통과 종목만 — 미판독 종목은 이름 없이 집계 행(매트릭스에 420행 전개 안 함). 앱 버전 문자열은 RCL 에서 판독 불가 → 헤더 미표기.
+- 테스트: PlutoCockpitUiTests 8건(ConcurrencyStress) · 기존 플래키 1건 하네스 교정: DualArenaModeTabTests.Us_Ticket_Reject — 렌더 펌프(100ms) 재렌더가 Find↔이벤트 사이에 끼면 클릭 소실
+  (변경 전 페이지로 기준선 2/5 재현 → 제품 결함 아님) → 수량 0 매수(항상 거부 · 멱등)를 WaitForAssertion 안에서 재식별/재시도 + 원장 불변 재단언. 교정 후 페이지 그룹 8/8 통과.
+  관측: PlutoMarketScreenerTests.Krx_Settle_Stays_ZeroAlloc_While_Screener_Scans_Concurrently 가 그룹 반복 중 1회 실패(이후 8회 + 전체 스위트 통과 · 엔진 코드 무변경 · δ=0 측정 창 노이즈 추정 · 미조치).
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,667 통과 / 9 건너뜀 / 0 실패(5,676) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(Phase114 통과 · 신규 컴포넌트 주입 0) · 체결 핫패스 무변경(δ=0 기존 프로브 통과). liveArmed:false · 인터락 30 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
+- 미실측: 실제 데스크톱 앱 화면 캡처 검증 없음(bUnit DOM 판독으로만 검증).

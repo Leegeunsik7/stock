@@ -36,7 +36,10 @@
      12대 국면 매칭(국면명 · 유사도) · 누적 학습 에피소드 · 최적 가중치(모멘텀 조정 % · 악마의 변호인 엄격도) · 섀도우 개선치 · 자산군별 적응 추천 Top 3(점수 · 학습 투영 · 근거 · 리스크).
      추천 카드 = 학습 투영 근거 줄(LearnText). 미결선/첫 스캔 전/통과 0 = 안내 문구만(가짜 국면 · 가짜 종목 0). 판독 전용(주문 경로 무변경).
    [v12.18.86-DEV] 브리핑 패널 내 PlutoTensorPanel — 3대 자산군(KRX · US · Upbit) 활성 슬롯 가중치(모멘텀 % · 악마의 변호인 엄격도) · 웜스타트 상태(WarmReady/NoData) ·
-     같은 IPlutoLearningPort 판독(PlutoLearningView.Tensor · 신규 주입 0 · null = '인지 텐서 미결선' 정직 렌더). *@
+     같은 IPlutoLearningPort 판독(PlutoLearningView.Tensor · 신규 주입 0 · null = '인지 텐서 미결선' 정직 렌더).
+   [v12.18.87-DEV] 다크 슬레이트 벤토 콕핏(.da-cockpit 페이지 범위 토큰 #0B0F19/#111827/#1F2937) — ① 헤더(FAIL-CLOSED · 엔진 상태) ② 인지 학습 관제탑(PlutoCognitiveHud 4분할) +
+     엔지니어링 진단 태그(접힘) ③ 추천 매트릭스(PlutoRecoMatrix · 전체/KRX/US/Upbit · 점수 분해 · 피드 미판독 = 대기 행) + 상세 근거 카드(접힘) ④ 아레나 대결 · 체결 타임라인.
+     기존 판독 · 셀렉터 · 주입 6종 불변(순수 재배치 · 표시 컴포넌트 [Parameter] 만). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -45,10 +48,15 @@
 @inject IPlutoLearningPort Learning
 @inject IPlutoRecommendationPort Reco
 
-<div class="top">
+<div class="da-cockpit">
+<div class="top ck-head">
     <div class="hello">
-        <h1>🥊 휴먼 vs AI 대결 · @(_mode == ModeCrypto ? CryptoPort.ModeName : _mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
+        <h1>휴먼 vs AI 대결 · @(_mode == ModeCrypto ? CryptoPort.ModeName : _mode == ModeUs ? UsPort.ModeName : Port.ModeName) <span class="tag">DUAL ARENA · EXPLAINABLE AI</span></h1>
         <p>같은 자본금 · 같은 호가로 휴먼과 AI 가 가상 매매를 겨룹니다. AI 는 매 체결마다 근거(수급 · 거시 · 기술적 타점 · 손익비)를 남깁니다. 증권사로 나가는 주문은 없습니다.</p>
+    </div>
+    <div class="ck-status">
+        <span class="ck-pill fail" data-ck-armed="false">FAIL-CLOSED · 가상 원장</span>
+        <span class="ck-pill @(Learning.IsWired ? "on" : "off")" data-ck-engine="@(Learning.IsWired ? "on" : "off")">플루토 인지 엔진: @(Learning.IsWired ? (Learning.Current.Running ? "활성" : "정지") : "미결선")</span>
     </div>
 </div>
 
@@ -59,6 +67,9 @@
     int govOn = (govKrx.Enabled ? 1 : 0) + (govUs.Enabled ? 1 : 0) + (govCrypto.Enabled ? 1 : 0);
     string govState = govOn == 3 ? "on" : govOn == 0 ? "off" : "mixed";
 }
+<section class="ck-card ck-hud">
+<div class="ck-card-h"><h2>플루토 인지 학습 관제탑 <small>Cognitive Brain HUD</small></h2></div>
+<PlutoCognitiveHud Wired="@Learning.IsWired" View="@(Learning.IsWired ? Learning.Current : default)" />
 <div class="da-gov-bar">
     <button class="da-gov-toggle @govState" role="switch" aria-checked="@(govOn == 3 ? "true" : "false")" data-gov="@govState" @onclick="ToggleGovernance">
         🧠 플루토 프로 거버너 <b>(@(govOn == 3 ? "ON" : govOn == 0 ? "OFF" : "일부 ON"))</b>
@@ -66,6 +77,11 @@
     <span class="ar-sub">국면 판정 · 악마의 변호인 감점 · 동적 비중 5~25% · 연패 쿨다운 — 3대 아레나 동시 적용(다음 정산부터 · 가상 원장 전용)</span>
     <span class="da-badge da-gov-persist @_persistCss" data-persist="@_persistCss">@_persistText</span>
     @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
+    <button class="da-brief-toggle @(_briefOpen ? "on" : "")" aria-expanded="@(_briefOpen ? "true" : "false")" data-brief-toggle="@(_briefOpen ? "on" : "off")" @onclick="() => _briefOpen = !_briefOpen">📊 인지 브리핑</button>
+</div>
+<details class="da-diag">
+<summary>엔지니어링 진단 태그</summary>
+<div class="da-diag-body">
     @if (Learning.IsWired)
     {
         var lv = Learning.Current;
@@ -82,8 +98,9 @@
     {
         <span class="da-badge da-learn none" data-learn="unwired">🧠 글로벌 학습 상태: 학습 엔진 미결선</span>
     }
-    <button class="da-brief-toggle @(_briefOpen ? "on" : "")" aria-expanded="@(_briefOpen ? "true" : "false")" data-brief-toggle="@(_briefOpen ? "on" : "off")" @onclick="() => _briefOpen = !_briefOpen">📊 인지 브리핑</button>
 </div>
+</details>
+</section>
 
 @if (_briefOpen)
 {
@@ -128,6 +145,11 @@
     int rtab = _recoTab >= 0 ? _recoTab : _mode == ModeUs ? PlutoRecoMarket.Us : _mode == ModeCrypto ? PlutoRecoMarket.Crypto : PlutoRecoMarket.Krx;
     var rm = rb.Of(rtab);
 }
+<section class="ck-card ck-matrix">
+<div class="ck-card-h"><h2>레짐 적응형 AI 추천 매트릭스 <small>AI Top-Picks Matrix · 감시 @(rb.TotalMonitored)종목 · 통과 @(rb.TotalPassed)</small></h2></div>
+<PlutoRecoMatrix Board="@rb" Wired="@Reco.IsWired" Tab="@_mxTab" OnTab="@(t => _mxTab = t)" OnLoad="@LoadReco" />
+<details class="da-reco-detail">
+<summary>상세 근거 카드 · 수집 스웜 현황</summary>
 <div class="ar-card da-reco" data-reco="@(Reco.IsWired ? "wired" : "unwired")">
     <div class="da-reco-head">
         <h3>🌟 플루토 오늘의 AI 추천 종목 <small>주식 = 안전마진 · 스퀴즈/POC · CVD/뎁스 · 거시 적합도 · 코인 = 유동성 · 볼밴 스퀴즈 · CVD · 15호가 뎁스벽 — 4대 팩터 0~100점 · 반대 논리 2건 이상 자동 탈락 · 가상 원장 전용</small></h3>
@@ -201,14 +223,18 @@
         }
         </div>
     }
-    @if (_recoMsg is not null) { <span class="ar-msg da-reco-msg">@_recoMsg</span> }
 </div>
+</details>
+@if (_recoMsg is not null) { <span class="ar-msg da-reco-msg">@_recoMsg</span> }
+</section>
 
 @if (_copyMsg is not null)
 {
     <div class="da-toast @_copyCss" role="status" data-copy="@_copyCss">@_copyMsg</div>
 }
 
+<section class="ck-card ck-arena">
+<div class="ck-card-h"><h2>휴먼 vs AI 실시간 대결 · 체결 근거 타임라인 <small>Arena &amp; Execution Timeline · 가상 원장</small></h2></div>
 <div class="ar-mode da-modes" role="tablist">
     <button class="da-mode-tab @(_mode == ModeKrx ? "on" : "")" role="tab" data-mode="krx" @onclick="() => SetMode(ModeKrx)">🇰🇷 국내 대형주 (KRW ₩)</button>
     <button class="da-mode-tab @(_mode == ModeUs ? "on" : "")" role="tab" data-mode="us" @onclick="() => SetMode(ModeUs)">🇺🇸 미국 빅테크 (USD $)</button>
@@ -661,6 +687,8 @@ else
 </div>
 </div>
 }
+</section>
+</div>
 
 @code {
     public const int RenderPumpMs = 100, MaxCards = 30, MaxClosed = 50;
@@ -682,6 +710,8 @@ else
     private string? _cryptoMsg;
     // [v12.18.78-DEV] 추천 패널 상태(탭 −1 = 활성 모드 추종 · 메시지 = 마지막 1-Click 담기 결과)
     private int _recoTab = -1;
+    // [v12.18.87-DEV] 추천 매트릭스 탭(−1 = 전체 통합 순위)
+    private int _mxTab = PlutoCockpitMatrix.All;
     private string? _recoMsg;
     // [v12.18.85-DEV] 인지 브리핑 패널 열림(닫힘 = 합성 0)
     private bool _briefOpen;
@@ -1146,6 +1176,66 @@ else
 }
 
 <style>
+    /* [v12.18.87-DEV] 다크 슬레이트 콕핏 — 페이지 범위 디자인 토큰(전역 테마 무변경 · 라이트 셸 위에서도 일체 다크) · 상승 적색 / 하강 청색(CLAUDE.md §4) */
+    .da-cockpit { --bg: #0B0F19; --canvas: #0B0F19; --card: #111827; --card-2: #1F2937; --ink: #E5E7EB; --sub: #9CA3AF; --line: #1F2937; --hairline: #1F2937;
+        --up: #E53935; --down: #1E88E5; --accent: #6366F1; --ck-mono: "JetBrains Mono", "Roboto Mono", ui-monospace, Consolas, monospace;
+        background: #0B0F19; color: #E5E7EB; font-family: Inter, "Pretendard Variable", Pretendard, system-ui, sans-serif; padding: 12px 16px 20px; border-radius: 12px; }
+    .da-cockpit .mono, .da-cockpit .ck-pill { font-family: var(--ck-mono); font-variant-numeric: tabular-nums; }
+    .da-cockpit .up { color: #E53935; } .da-cockpit .down { color: #1E88E5; } .da-cockpit .dim { color: #6B7280; }
+    .ck-head { padding: 4px 2px 12px; border-bottom: 1px solid #1F2937; margin-bottom: 12px; }
+    .ck-head h1 { color: #F3F4F6; } .ck-head .tag { font-size: 10px; letter-spacing: .14em; color: #818CF8; margin-left: 8px; }
+    .ck-status { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ck-pill { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 4px 10px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: #D1D5DB; }
+    .ck-pill.fail { border-color: #7F1D1D; background: #1F0F12; color: #FCA5A5; } .ck-pill.on { border-color: #3730A3; color: #C7D2FE; } .ck-pill.off { color: #9CA3AF; }
+    .ck-card { background: #111827; border: 1px solid #1F2937; border-radius: 12px; padding: 12px 14px; margin: 0 0 12px; }
+    .ck-card-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .ck-card-h h2 { font-size: 14px; font-weight: 700; color: #F3F4F6; letter-spacing: -.1px; }
+    .ck-card-h small { font-size: 11px; font-weight: 500; color: #6B7280; margin-left: 8px; }
+    .da-cockpit .ar-card { background: #111827; border: 1px solid #1F2937; }
+    .da-cockpit .da-badge { background: #1F2937; color: #D1D5DB; }
+    .da-diag, .da-reco-detail { margin-top: 8px; border-top: 1px dashed #1F2937; padding-top: 6px; }
+    .da-diag summary, .da-reco-detail summary { cursor: pointer; font-size: 11.5px; color: #6B7280; user-select: none; }
+    .da-diag-body { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .hud { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    @@media (max-width: 1100px) { .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .hud-tile { background: #0B0F19; border: 1px solid #1F2937; border-radius: 10px; padding: 10px 12px; min-width: 0; }
+    .hud-k { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6B7280; margin-bottom: 6px; display: flex; justify-content: space-between; }
+    .hud-v { font-size: 16px; font-weight: 700; color: #F9FAFB; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hud-s { font-size: 11.5px; color: #9CA3AF; margin-top: 3px; }
+    .hud-gauge { height: 6px; background: #1F2937; border-radius: 3px; overflow: hidden; }
+    .hud-gauge span { display: block; height: 100%; background: linear-gradient(90deg, #4F46E5, #818CF8); }
+    .hud-gauge.skel, .mx-bar.skel { background: repeating-linear-gradient(90deg, #1F2937 0 8px, #172033 8px 16px); }
+    .hud-row { display: grid; grid-template-columns: 44px 1fr 56px; align-items: center; gap: 6px; font-size: 11.5px; color: #9CA3AF; margin: 3px 0; }
+    .hud-row b { text-align: right; color: #E5E7EB; }
+    .hud-bi { position: relative; height: 6px; background: #1F2937; border-radius: 3px; }
+    .hud-bi::after { content: ""; position: absolute; left: 50%; top: -2px; width: 1px; height: 10px; background: #4B5563; }
+    .hud-bi i { position: absolute; top: 0; height: 100%; border-radius: 3px; } .hud-bi i.pos { background: #E53935; } .hud-bi i.neg { background: #1E88E5; } .hud-bi i.def { background: #F59E0B; }
+    .hud-seesaw { position: relative; height: 4px; margin-top: 8px; border-radius: 2px; background: linear-gradient(90deg, #F59E0B, #374151 50%, #E53935); }
+    .hud-pin { position: absolute; top: -4px; width: 4px; height: 12px; margin-left: -2px; background: #F9FAFB; border-radius: 2px; }
+    .hud-tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #374151; color: #9CA3AF; margin-top: 6px; }
+    .hud-tag.on { border-color: #14532D; color: #86EFAC; } .hud-tag.stale, .hud-tag.warn { border-color: #78350F; color: #FCD34D; } .hud-tag.fail { border-color: #7F1D1D; color: #FCA5A5; }
+    .hud-lane { display: grid; grid-template-columns: 44px auto 1fr; align-items: center; gap: 6px; margin: 3px 0; }
+    .hud-lane .hud-tag { margin-top: 0; } .hud-lane .hud-s { margin-top: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hud-asset { font-size: 11.5px; color: #E5E7EB; }
+    .mx-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .mx-tab { background: #0B0F19; color: #9CA3AF; border: 1px solid #1F2937; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+    .mx-tab.on { background: #1E1B4B; color: #E0E7FF; border-color: #4338CA; }
+    .mx-grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .mx-grid th { text-align: left; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; color: #6B7280; padding: 6px 8px; border-bottom: 1px solid #1F2937; }
+    .mx-grid td { padding: 7px 8px; border-bottom: 1px solid #172033; vertical-align: middle; color: #D1D5DB; }
+    .mx-grid .r { text-align: right; width: 40px; } .mx-row:hover td { background: #0F1729; }
+    .mx-sub { color: #6B7280; font-size: 11px; }
+    .mx-asset { font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid #374151; }
+    .mx-asset.a0 { color: #FCA5A5; } .mx-asset.a1 { color: #93C5FD; } .mx-asset.a2 { color: #FCD34D; }
+    .mx-score { width: 170px; } .mx-score b { margin-left: 6px; color: #F9FAFB; }
+    .mx-bar { display: inline-block; width: 90px; height: 6px; background: #1F2937; border-radius: 3px; overflow: hidden; vertical-align: middle; }
+    .mx-bar span { display: block; height: 100%; background: #4B5563; } .mx-bar span.hot { background: #E53935; } .mx-bar span.good { background: #F59E0B; }
+    .mx-break { font-size: 10.5px; color: #6B7280; margin-top: 2px; } .mx-break i { font-style: normal; }
+    .mx-reason { max-width: 280px; } .mx-risk.pass { color: #86EFAC; } .mx-risk.watch { color: #FCD34D; }
+    .mx-state { font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px; } .mx-state.live { color: #A5B4FC; border: 1px solid #3730A3; } .mx-state.await { color: #6B7280; border: 1px solid #374151; }
+    .mx-load { margin-left: 6px; font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid #374151; background: #1F2937; color: #E5E7EB; cursor: pointer; } .mx-load:disabled { opacity: .4; cursor: default; }
+    .mx-await td { color: #6B7280; } .mx-skel { display: inline-block; width: 72px; height: 9px; border-radius: 3px; background: #1F2937; vertical-align: middle; }
+    .mx-empty { color: #9CA3AF; font-size: 12px; padding: 10px 2px; }
     .da-gov-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 8px; }
     .da-gov-toggle { font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 18px; border: 1px solid #2a3040; background: #121722; color: var(--sub); cursor: pointer; }
     .da-gov-persist.saving { background: #616161; color: #fff; } .da-gov-persist.ok { background: #263238; color: #a5d6a7; }

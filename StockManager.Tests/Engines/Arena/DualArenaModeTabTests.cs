@@ -210,9 +210,15 @@ namespace StockManager.Tests.Engines.Arena
                 var s = Snap(us);
                 Assert.Equal(cash0, s.Human.CashWon);
                 Assert.Equal(0, s.Human.Fills);
-                cut.Find(".da-uqty").Change("0");
-                cut.Find(".ar-btn.buy").Click();
-                Assert.Contains("접수 거부", cut.Find(".da-msg").TextContent);
+                // 렌더 펌프(100ms 타이머) 재렌더가 Find ↔ 이벤트 사이에 끼면 이벤트 소실(기준선 병렬 부하 2/5 재현) → 재식별 후 재시도.
+                // 수량 0 매수 = 항상 접수 거부(원장 무영향 · 멱등) 이므로 반복 안전.
+                cut.WaitForAssertion(() =>
+                {
+                    cut.Find(".da-uqty").Change("0");
+                    cut.Find(".ar-btn.buy").Click();
+                    Assert.Contains("접수 거부", cut.Find(".da-msg").TextContent);
+                }, TimeSpan.FromSeconds(5));
+                Assert.Equal(cash0, Snap(us).Human.CashWon);
             }
         }
 

@@ -1,0 +1,79 @@
+@* PlutoRecoMatrix — v12.18.87-DEV: 3대 시장 감시 유니버스(KRX 200 · US 100 · Upbit 120) 레짐 적응형 추천 매트릭스(다크 슬레이트 데이터 그리드).
+   탭 = 전체(통합 점수 순위) · KRX · US · Upbit(라벨 = 감시 종목 수). 열 = 순위 · 종목 · 자산 · 점수 바(분해: 기본 + 모멘텀 − 변호인 = 최종 · 툴팁/인라인) ·
+   핵심 진입 근거 · 리스크(악마의 변호인) · 상태. 피드 미판독 종목 = 시장별 집계 대기 행(스켈레톤 · 종목명/점수 생성 0 — CLAUDE.md §2).
+   순수 표시 — [Parameter] · EventCallback 만(주입 0 · 엔진 참조 0). 1-Click 담기 = 부모 콜백(가상 원장 · liveArmed:false). *@
+
+<div class="mx" data-mx-tab="@Tab">
+    <div class="mx-tabs" role="tablist">
+        @foreach (int t in s_tabs)
+        {
+            <button class="mx-tab @(Tab == t ? "on" : "")" role="tab" data-mx-tab-btn="@t" @onclick="() => OnTab.InvokeAsync(t)">
+                @(t == PlutoCockpitMatrix.All ? "전체" : PlutoCockpitMatrix.AssetTag(t)) <span class="mono">(@PlutoCockpitMatrix.Monitored(Board, t))</span>
+            </button>
+        }
+    </div>
+    @if (!Wired)
+    {
+        <div class="mx-empty">추천 엔진 미결선 — 스크리너가 가동되지 않은 호스트입니다(설정 Pluto.ScreenerEnabled).</div>
+    }
+    else if (Board.Generation == 0)
+    {
+        <div class="mx-empty">첫 스캔 대기 중 — 감시 유니버스를 30초 주기로 판독합니다.</div>
+    }
+    else
+    {
+        var rows = PlutoCockpitMatrix.Rows(Board, Wired, Tab);
+        <table class="mx-grid" data-mx-rows="@rows.Count">
+            <thead><tr><th class="r">순위</th><th>종목</th><th>자산</th><th>점수</th><th>핵심 진입 근거</th><th>리스크 요인(변호인)</th><th>상태</th></tr></thead>
+            <tbody>
+            @foreach (var row in rows)
+            {
+                if (row.Card is { } c)
+                {
+                    var sb = PlutoScoreBreakdown.Of(c);
+                    <tr class="mx-row" data-mx-code="@c.Code" data-mx-market="@c.Market">
+                        <td class="r mono">@row.Rank</td>
+                        <td><b>@c.Name</b> <span class="mx-sub mono">@c.Code</span></td>
+                        <td><span class="mx-asset a@(c.Market)">@PlutoCockpitMatrix.AssetTag(c.Market)</span></td>
+                        <td class="mx-score" title="@sb.Text" data-mx-score="@c.Score" data-mx-base="@sb.Base">
+                            <div class="mx-bar"><span class="@c.ScoreCss" style="width:@(Math.Clamp(c.Score, 0, 100))%"></span></div>
+                            <b class="mono">@c.Score</b>
+                            <div class="mx-break mono" data-mx-break>기본 @sb.Base <i class="@(sb.Momentum > 0 ? "up" : sb.Momentum < 0 ? "down" : "")">@(sb.Momentum >= 0 ? "+" : "")@sb.Momentum</i> <i class="@(sb.Devil > 0 ? "down" : "")">−@sb.Devil</i>@(sb.Saturated ? " · 포화" : "")</div>
+                        </td>
+                        <td class="mx-reason">@(c.Reasons.Count > 0 ? c.Reasons[0] : "—")</td>
+                        <td class="mx-risk @(c.CounterCount == 0 ? "pass" : "watch")" data-mx-devil="@c.CounterCount">@c.CounterText</td>
+                        <td><span class="mx-state live">관측</span>
+                            <button class="mx-load" disabled="@(c.RecommendedQty <= 0)" title="가상 원장 1-Click 담기(@c.QtyText)" @onclick="() => OnLoad.InvokeAsync(c)">담기</button></td>
+                    </tr>
+                }
+                else
+                {
+                    <tr class="mx-row mx-await" data-mx-await="@row.Market" data-mx-count="@row.Awaiting">
+                        <td class="r mono">—</td>
+                        <td><span class="mx-skel"></span> <span class="mx-sub">감시 @(row.Awaiting)종목</span></td>
+                        <td><span class="mx-asset a@(row.Market)">@PlutoCockpitMatrix.AssetTag(row.Market)</span></td>
+                        <td class="mx-score"><div class="mx-bar skel"></div><b class="mono dim">--</b></td>
+                        <td class="mx-reason dim">Awaiting Market Feed — @row.Note</td>
+                        <td class="dim">데이터 결손(정직 표기)</td>
+                        <td><span class="mx-state await">대기</span></td>
+                    </tr>
+                }
+            }
+            </tbody>
+        </table>
+        @if (rows.Count == 0)
+        {
+            <div class="mx-empty">추천 기준을 통과한 종목이 없습니다 — 근거 없는 추천은 내지 않습니다.</div>
+        }
+    }
+</div>
+
+@code {
+    private static readonly int[] s_tabs = { PlutoCockpitMatrix.All, PlutoRecoMarket.Krx, PlutoRecoMarket.Us, PlutoRecoMarket.Crypto };
+
+    [Parameter] public PlutoRecoBoardView Board { get; set; } = PlutoRecoBoardView.None;
+    [Parameter] public bool Wired { get; set; }
+    [Parameter] public int Tab { get; set; } = PlutoCockpitMatrix.All;
+    [Parameter] public EventCallback<int> OnTab { get; set; }
+    [Parameter] public EventCallback<PlutoRecommendationCard> OnLoad { get; set; }
+}
