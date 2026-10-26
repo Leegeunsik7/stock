@@ -82,9 +82,9 @@ namespace StockManager.Tests
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
             Assert.Equal(new Version(12, 18, 84, 0), v);
-            Assert.Equal("12.18.84", ReleasePackager.DefaultVersion);
+            Assert.Equal("12.18.85", ReleasePackager.DefaultVersion);
             string csproj = File.ReadAllText(Path.Combine(RepoRoot(), "StockManager", "StockManager.csproj"));
-            Assert.Contains("<Version>12.18.84</Version>", csproj);
+            Assert.Contains("<Version>12.18.85</Version>", csproj);
         }
 
         // ════════════ §2 롤백 가드 ════════════
@@ -105,7 +105,7 @@ namespace StockManager.Tests
             Assert.Contains("dotnet build $sln -c Release -m:1 -warnaserror", s);
             var fn = Regex.Match(s, @"function Remove-ReleaseOutputs \{(?<b>[\s\S]*?)\n\}").Groups["b"].Value;
             foreach (var o in new[] { "$zipOut", "\"$zipOut.sha256\"", "master-seal.txt", "RELEASE_MANIFEST.json" }) Assert.Contains(o, fn);
-            Assert.Contains("v12.18.84-GM Production Golden Master", s);
+            Assert.Contains("v12.18.85-GM Production Golden Master", s);
         }
 
         // ════════════ §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 — 실 스크립트 실행(낡은 봉인 1초 = 빌드 전 거부) ════════════

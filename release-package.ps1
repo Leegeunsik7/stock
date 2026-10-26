@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-# release-package.ps1 — v12.18.84-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
+# release-package.ps1 — v12.18.85-GM Production Golden Master 봉인 & 배포 패키징 자동화 ([Phase 4] 교정판)
 #
 #   실제 '동시 출하' 아티팩트는 Host(win-x64) + KiwoomProxy(win-x86) 뿐이다(WebOnly·PrimesBench·KiwoomComShim 은 CI 검증 전용).
 #     [0/10] [릴리스 CI] 소스 무결성 사전 검사 — 태그 v<ver>-GM 존재 · 태그↔HEAD 코드 이탈 0 · 미커밋 코드 0(문서·release/·.claude/ 제외).

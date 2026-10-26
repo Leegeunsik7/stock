@@ -123,7 +123,7 @@ namespace StockManager.Tests
         {
             var v = typeof(StockManager.Blazor.BlazorHomeForm).Assembly.GetName().Version!;
             Assert.Equal(new Version(12, 18, 84, 0), v);                  // 수정 전: 10.1.0.0 → release-v10.1.0-GM.zip 발행
-            Assert.Equal("12.18.84", ReleasePackager.DefaultVersion);
+            Assert.Equal("12.18.85", ReleasePackager.DefaultVersion);
         }
 
         [Fact]
