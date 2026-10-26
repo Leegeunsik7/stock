@@ -4924,3 +4924,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결 핫패스(TryFind · 위원회 보드 TryRead) 무변경 δ=0 · 인터락 30 무변경 · liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
 - 정직 한계: 비토 목록 = 시세 판독 종목만(피드 미결선 시장 = 빈 목록) · 비토 판정 입력(VIX · 10년물 · 파급 레인) 미결선이면 리스크 통제관 비토 미발동 · 위원회 발언권 = 3대 자산 레인 단순 평균 ·
   §213 번호는 오더 지정(§214)에 따라 비워 둠 · 실 앱 화면 미실측(bUnit 검증).
+
+## 215. v12.18.90-GM — DualArena 기관용 인지 콕핏 + 리스크 비토 쇼케이스 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-27)
+
+- 선행: v12.18.90-DEV = 56a6281(§214) · 화면 점검 완료(오더 기준). dotnet build-server shutdown 후 착수. 12.18.89 는 DEV 전용(GM 미출하) → 12.18.88 → 12.18.90 직행 승격.
+- 12.18.88 → 12.18.90(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 90, 0)` ×2 · "12.18.90" 핀 · HostVersion_Is_12_18_90 · release-package.ps1 머리말 · 3표기 바이트 치환 · BOM/줄바꿈 보존) =
+  f5fb5ad(4파일 11/11줄 = 직전 승격 5a9c7da 합계와 일치 · 잔여 0) · 태그 v12.18.90-GM -f → f5fb5ad.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · [3/11] 전체 스위트 5,733 통과 + 9 건너뜀(옵트인) · 실패 0(5,742) ·
+  [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드 · [7/11] 봉인 38(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal A6034164… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 · 격리 기동 PID 43500 · HWND 0x410EA 실측.
+- 산출물: release-v12.18.90-GM.zip(98F57317…) · StockManager-v12.18.90-Standalone-win-x64.zip(35F5B861…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit f5fb5ad) · manifest.sig 외 15종.
+  사후 독립 대조(zip 항목 스트림 SHA-256): 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 일치(불일치 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.88-GM 15종 → release/superseded-v12.18.88-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 상태(정직): 비토 목록 = 시세 판독 종목만 · 거시 피드(VIX · 10년물) · 파급 레인 미결선이면 리스크 통제관 비토 미발동(가짜 비토 0) ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
