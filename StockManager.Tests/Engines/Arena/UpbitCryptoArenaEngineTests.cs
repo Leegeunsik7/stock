@@ -474,7 +474,7 @@ namespace StockManager.Tests.Engines.Arena
                     long start = CryptoArenaUniverse.SyntheticStartWon(k) * S;
                     long bid = UpbitTickAligner.AlignNearest(start + (rng.Next(-200, 200) * UpbitTickAligner.TickFor(start)));
                     f.OnBook(k, bid, UpbitTickAligner.AlignUp(bid + 1), QtyFor(bid), QtyFor(bid) / 2 + 1);
-                    if ((i & 63) == 0) e.SubmitHuman(Sym(k), (i & 64) == 0 ? 1 : -1, S / 1000);
+                    if ((i & 63) == 0) { e.SubmitHuman(Sym(k), (i & 64) == 0 ? 1 : -1, S / 1000); Thread.Yield(); }   // 2-vCPU CI 러너 기아 방어 — 펌프·리더에 양보
                 }
                 Interlocked.Increment(ref done);
             })).ToArray();
@@ -489,7 +489,7 @@ namespace StockManager.Tests.Engines.Arena
             {
                 var q = new DuelQuote[4];
                 var r = new AiTradeRationale[UpbitCryptoArenaEngine.RationaleCapacity];
-                while (Volatile.Read(ref done) < Producers)
+                do                                                                                  // do-while: 스케줄 지연돼도 최소 1회 무결성 검증
                 {
                     int n = e.CopyQuotes(q);
                     for (int i = 0; i < n; i++)
@@ -498,7 +498,7 @@ namespace StockManager.Tests.Engines.Arena
                     int m = e.CopyRationales(r);
                     for (int i = 0; i < m; i++) if (!r[i].IsWellFormed) Interlocked.Increment(ref torn);
                     Interlocked.Increment(ref reads);
-                }
+                } while (Volatile.Read(ref done) < Producers);
             });
             foreach (var t in producers) t.Start();
             pump.Start(); reader.Start();

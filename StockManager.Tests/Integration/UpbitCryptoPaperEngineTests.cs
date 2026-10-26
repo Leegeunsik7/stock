@@ -364,20 +364,21 @@ namespace StockManager.Tests.Integration
                         else if (f.Status == CryptoPaperStatus.ConcurrentWriter) Interlocked.Increment(ref casRejects);
                         else if (f.Status == CryptoPaperStatus.InsufficientKrw) Interlocked.Increment(ref krwRejects);
                         else Interlocked.Increment(ref otherRejects);
+                        if ((i & 15) == 0) Thread.Yield();                                         // 2-vCPU CI 러너 기아 방어 — 리더에 타임슬라이스 양보
                     }
                 }));
             }
             var reader = new Thread(() =>
             {
                 start.Wait();
-                while (Volatile.Read(ref stop) == 0)
+                do                                                                                  // do-while: 스케줄 지연돼도 최소 1회 스냅샷 검증
                 {
                     var s = ex.Snapshot();
                     reads++;
                     // 동일 매수만 → 모든 필드가 같은 세대면 KRW · BTC · 수수료가 FillCount 의 선형 함수
                     if (s.KrwRaw != CryptoPaperExchange.InitialKrwRaw - s.FillCount * unit || s.BtcRaw != s.FillCount * Qty
                         || s.FeesPaidRaw != s.FillCount * oneBuy.FeeRaw) torn++;
-                }
+                } while (Volatile.Read(ref stop) == 0);
             });
             foreach (var t in threads) t.Start();
             reader.Start();

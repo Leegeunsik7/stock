@@ -24,6 +24,15 @@ using Xunit;
 
 namespace StockManager.Tests
 {
+    /// <summary>로컬 릴리스 산출물(출하 바이너리 · 패키징 스크립트 실행) 전용 — GitHub Actions CI 에서는 Skip(산출물 부재·Windows PowerShell 환경 상이).</summary>
+    public sealed class LocalReleaseFactAttribute : FactAttribute
+    {
+        public LocalReleaseFactAttribute()
+        {
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true") Skip = "GitHub Actions CI — 로컬 릴리스 산출물 전용 검증";
+        }
+    }
+
     internal static class GmPaths
     {
         public static string RepoRoot()
@@ -174,7 +183,7 @@ namespace StockManager.Tests
             Assert.True(AssemblySealGenerator.VerifyReleaseSeal(m, host, proxy));
         }
 
-        [Fact]
+        [LocalReleaseFact]
         public void Shipped_Host_Binary_Is_The_Binary_Under_Test()
         {
             // IL 가드(아래)가 검사하는 어셈블리 = 실제 출하 바이너리임을 해시로 결속(다른 빌드를 검사하고 통과하는 착시 차단).

@@ -110,7 +110,7 @@ namespace StockManager.Tests
 
         // ════════════ §13 [v12.18.5-GM] [0/10] 피어 정돈 하드 게이트 — 실 스크립트 실행(낡은 봉인 1초 = 빌드 전 거부) ════════════
 
-        [Fact]
+        [LocalReleaseFact]
         public void PackageScript_Executed_StalePeerOneSecond_RejectedAtStep0_NoBuild_NoOutputs()
         {
             string tmp = Path.Combine(Path.GetTempPath(), "ms2e-gate0-" + Guid.NewGuid().ToString("N"));
