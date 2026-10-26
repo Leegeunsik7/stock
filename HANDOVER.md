@@ -4868,3 +4868,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness/Phase114 통과). liveArmed:false · 인터락 30 무변경 · QuantumVault 미접근 · 타 세션 파일 미스테이징.
 - 정직 한계: 빅테크/KRX 레인 = KIS 일봉(KIS 미구성 시 레인 비어 선행 0) · 10년물 = 거시 피드(FRED 키 미설정 시 미결선) · 상관 = 쌍 10개 누적 전 미추정 · 켈리 = 실측 회고 20건 전 미산출 ·
   실 앱 화면 · 실 네트워크 종단 미실측(bUnit · 대역 데이터로 검증).
+
+## 211. v12.18.88-GM — 아레나 AI 진입 경로 리스크 통제관 비토 결선 + 4대 인지 위원회 · 교차 자산 파급 · 프랙탈 켈리 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-26)
+
+- 선행: v12.18.88-DEV = f25b3b8(§210). (오더의 'HANDOVER §210' 은 §210=위원회 DEV 로 이미 사용 → 본 기록 §211.) dotnet build-server shutdown 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 비토 결선 = d69d108: ArenaCouncilVetoGate(Arena/Common · 3대 아레나 공용) — AI 진입 후보(원점수 ≥ 진입 임계)마다 PlutoCouncilBoard (자산군 × 12대 국면) 셀 seqlock 조회 →
+  셀 비토(VIX ≥ 35 · 교차 자산 충격 · 과거 패닉 국면 유사) | 종목 PanicLiquidation = 거버너 이전 진입 차단(거버너 계수 무변경 · 주문 0). 보드 경합 상한 초과 = PlutoVetoReason.Unreadable(신규 · fail-closed 차단).
+  기각 로그 = 고정 링 64 · 종목별 사유 전이 시 1건(같은 사유 연속 = 차단 계수만) · 원장 초기화 동반 소거. KRX/US/Upbit 엔진 AttachCouncil · CopyCouncilVetoes(seqlock) · 호스트 plutoCouncil.Board 3대 결속.
+  포트 ArenaCouncilVetoFeed(기본 Unwired) · DualArenaPage 3대 AI 타임라인 상단 '리스크 통제관 비토 게이트 · 누적 진입 차단 N건' + 기각 행(종목 · 원점수 · 사유 · 셀). 미결속 = 기존 진입 동작 동일.
+  ArenaCouncilVetoTests 10건(차단/해제 · 사유 전이 · 초기화 · fail-closed · 허브 VIX 36 E2E · 포트 · 비토 진입 후보 10만 회 δ=0 0B Release).
+- 12.18.87 → 12.18.88(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 88, 0)` ×2 · "12.18.88" 핀 · HostVersion_Is_12_18_88 · release-package.ps1 머리말 · 3표기 바이트 치환 · BOM/줄바꿈 보존) =
+  5a9c7da(4파일 11/11줄 = 직전 승격 4aa2a97 합계와 일치 · 잔여 0) · 태그 v12.18.88-GM -f → 5a9c7da.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · [3/11] 전체 스위트 5,709 통과 + 9 건너뜀(옵트인) · 실패 0(5,718) ·
+  [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드 · [7/11] 봉인 38(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal DD58AB47… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 · 격리 기동 PID 29344 · HWND 0x890026 실측.
+- 산출물: release-v12.18.88-GM.zip(28A1AA20…) · StockManager-v12.18.88-Standalone-win-x64.zip(4E9442C6…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit 5a9c7da) · manifest.sig 외 15종.
+  사후 독립 대조(zip 항목 스트림 SHA-256): 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 일치(불일치 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.87-GM 15종 → release/superseded-v12.18.87-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 상태(정직): 비토 판정 입력 = 거시 피드(VIX · 10년물) · 파급 레인 · 국면 판정기 — 미결선 항목은 비토 미발동(가짜 비토 0) · 보드 게시 전 = 비토 없음(Seq 0) ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음 · 실 앱 화면 미실측(bUnit/엔진 테스트로 검증).
