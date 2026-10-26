@@ -36,6 +36,16 @@ namespace MS2E.UI.Portable.Ports.Trading
         public int LearnDevilPts { get; init; }
         public string LearnText { get; init; } = "";
 
+        /// <summary>[v12.18.88-DEV] 교차 자산 선행 파급 점수(KRX 전용 · 0 = 미적용) · 위원회 합의 점수(−100~+100 · CouncilWired false = 미표기) ·
+        /// 프랙탈 켈리(KellyState = PlutoKellyCode · KellyBp = 권장 비중 · KellySamples = 엣지 표본 · KellyText = 근거 문구).</summary>
+        public int LeadPts { get; init; }
+        public bool CouncilWired { get; init; }
+        public int CouncilConsensus { get; init; }
+        public int KellyState { get; init; }
+        public int KellyBp { get; init; }
+        public int KellySamples { get; init; }
+        public string KellyText { get; init; } = "";
+
         /// <summary>[v12.18.85-DEV] 학습 투영 순 조정(모멘텀 − 감점) · 기본 4대 팩터 합 = Score − 순 조정(포화 전).</summary>
         public int LearnNetPts => LearnMomentumPts - LearnDevilPts;
 
@@ -79,6 +89,9 @@ namespace MS2E.UI.Portable.Ports.Trading
 
         /// <summary>[v12.18.80-DEV] 병렬 학습 스웜 실데이터 수집 상태(미지정 = None · 뱃지 미표시).</summary>
         public PlutoSwarmView Swarm { get; init; } = PlutoSwarmView.None;
+
+        /// <summary>[v12.18.88-DEV] 4대 인지 에이전트 위원회 · 선행 파급 · 켈리(미지정 = None · 위젯 '위원회 미결선').</summary>
+        public PlutoCouncilView Council { get; init; } = PlutoCouncilView.None;
 
         public PlutoRecoMarketView Of(int market) => market switch { PlutoRecoMarket.Us => Us, PlutoRecoMarket.Crypto => Crypto, _ => Krx };
 

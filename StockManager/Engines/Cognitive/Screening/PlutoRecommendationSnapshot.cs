@@ -25,11 +25,20 @@ namespace StockManager.Engines.Cognitive.Screening
         long RecommendedQty, string RiskText, PlutoAdaptiveAdjust Adaptive = default)
     {
         public int FinalScore { get; } = PlutoRecommendationEngine.AdaptiveTotal(in Score, in Adaptive);
+
+        /// <summary>[v12.18.88-DEV] 4대 인지 에이전트 위원회 판정(CouncilWired false = 위원회 미결선 · default) · 프랙탈 켈리 권장 비중(미결선 = default Unwired).</summary>
+        public Council.PlutoCouncilVerdict Council { get; init; }
+        public Council.PlutoKellyResult Kelly { get; init; }
+        public bool CouncilWired { get; init; }
     }
 
     /// <summary>시장별 스캔 집계 — Scanned = 피드 판독 종목 · Vetoed = 반대 논리 ≥ 2 탈락 · Insufficient = 판독 전무 · BelowThreshold = 50점 미만 ·
     /// [v12.18.79-DEV] Monitored = 감시 카탈로그 종목 수(피드 판독 대기 포함) · Passed = 추천 기준 통과(Top 5 절단 전).</summary>
-    public readonly record struct PlutoScreenTally(int Scanned, int Vetoed, int Insufficient, int BelowThreshold, int Monitored = 0, int Passed = 0);
+    public readonly record struct PlutoScreenTally(int Scanned, int Vetoed, int Insufficient, int BelowThreshold, int Monitored = 0, int Passed = 0)
+    {
+        /// <summary>[v12.18.88-DEV] 리스크 통제관 비토(거시 충격 강제 차단) 탈락 수.</summary>
+        public int CouncilVetoed { get; init; }
+    }
 
     public sealed class PlutoRecommendationSnapshot
     {

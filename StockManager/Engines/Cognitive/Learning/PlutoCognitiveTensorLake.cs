@@ -130,6 +130,22 @@ namespace StockManager.Engines.Cognitive.Learning
             return PlutoTensorSource.Global;
         }
 
+        /// <summary>
+        /// [v12.18.88-DEV] 셀 실측 엣지(프랙탈 켈리 입력 · 콜드): 국면 슬롯 표본 ≥ 켈리 최소 표본 = 그 슬롯 · 아니면 자산 기준선(국면 무관 자산군 전 표본).
+        /// fromRegime = 국면 슬롯 출처 여부.
+        /// </summary>
+        public Council.PlutoEdgeStats EdgeOf(PlutoAssetClass asset, int regimeId, out bool fromRegime)
+        {
+            int a = (int)asset % Assets;
+            if (regimeId is >= 1 and <= Regimes)
+            {
+                var slot = _calibrators[regimeId * Assets + a].Edge();
+                if (slot.Samples >= Council.PlutoDynamicKellyEngine.MinSamples) { fromRegime = true; return slot; }
+            }
+            fromRegime = false;
+            return _calibrators[a].Edge();
+        }
+
         /// <summary>활성 국면 기준 해석(콜드 · 스크리너/브리핑).</summary>
         public PlutoTensorSource ResolveActive(PlutoAssetClass asset, ref PlutoCognitiveWeights weights) => Resolve(asset, ActiveRegime, ref weights);
 

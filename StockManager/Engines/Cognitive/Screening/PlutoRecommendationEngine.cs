@@ -10,11 +10,14 @@
 //     적응 점수 내림차순(동점 = 반대 논리 적은 순 → 종목 오름차순 · 결정적) 상위 N.
 //   [v12.18.86-DEV] 자산군 독립 투영(AssetWeights): 시장(KRX · US · 코인=Upbit)마다 36슬롯 인지 텐서 활성 국면 슬롯 → 자산 기준선 → 전역 순으로 해석한
 //     전용 가중치를 그 시장 랭킹에만 투영(한 자산군 학습이 다른 자산군 추천 점수를 흔들지 않음 · 텐서 미결선/미보정 = 전역 그대로 = v12.18.85 동작).
+//   [v12.18.88-DEV] 4대 인지 에이전트 위원회(PlutoCouncilInputs · 미결선 = 기존 동작 그대로): ⑤ 리스크 통제관 비토 = 탈락(CouncilVetoed 계수) ·
+//     ⑥ KRX = 교차 자산 선행 파급 점수(LeadPts ±6) 적응 점수 가산 · ⑦ 합의 점수 · 프랙탈 켈리 권장 비중 = 추천에 첨부(켈리 Sized = 추천 수량도 켈리 비중 기준).
 //   ★체결 핫패스 무간섭: 가중치는 호출자가 seqlock TryRead 1회로 넘긴 값 스냅샷만 사용(잠금 · 공유 쓰기 0). 결과는 불변 스냅샷 원자 교체로만 게시.
 //   ★liveArmed:false — 추천 = 가상 원장 휴먼 티켓 보조 입력뿐(주문 · 무장 · 브로커 경로 0) · QuantumVault/피어 접근 0.
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using StockManager.Engines.Cognitive.Council;
 using StockManager.Engines.Cognitive.Learning;
 
 namespace StockManager.Engines.Cognitive.Screening
@@ -24,19 +27,23 @@ namespace StockManager.Engines.Cognitive.Screening
     {
         public readonly int MomentumPts, DevilPts;
         public readonly long Generation;
+        /// <summary>[v12.18.88-DEV] 교차 자산 선행 파급 점수(KRX 전용 · ± · 위원회 미결선 = 0).</summary>
+        public readonly int LeadPts;
 
-        public PlutoAdaptiveAdjust(int momentumPts, int devilPts, long generation)
+        public PlutoAdaptiveAdjust(int momentumPts, int devilPts, long generation, int leadPts = 0)
         {
-            MomentumPts = momentumPts; DevilPts = devilPts; Generation = generation;
+            MomentumPts = momentumPts; DevilPts = devilPts; Generation = generation; LeadPts = leadPts;
         }
 
-        /// <summary>순 조정 점수(모멘텀 − 감점).</summary>
-        public int Net => MomentumPts - DevilPts;
-        public bool IsZero => MomentumPts == 0 && DevilPts == 0;
+        /// <summary>순 조정 점수(모멘텀 − 감점 + 선행 파급).</summary>
+        public int Net => MomentumPts - DevilPts + LeadPts;
+        public bool IsZero => MomentumPts == 0 && DevilPts == 0 && LeadPts == 0;
 
-        public bool Equals(PlutoAdaptiveAdjust other) => MomentumPts == other.MomentumPts && DevilPts == other.DevilPts && Generation == other.Generation;
+        public PlutoAdaptiveAdjust WithLead(int leadPts) => new(MomentumPts, DevilPts, Generation, leadPts);
+
+        public bool Equals(PlutoAdaptiveAdjust other) => MomentumPts == other.MomentumPts && DevilPts == other.DevilPts && Generation == other.Generation && LeadPts == other.LeadPts;
         public override bool Equals(object? obj) => obj is PlutoAdaptiveAdjust o && Equals(o);
-        public override int GetHashCode() => HashCode.Combine(MomentumPts, DevilPts, Generation);
+        public override int GetHashCode() => HashCode.Combine(MomentumPts, DevilPts, Generation, LeadPts);
         public static bool operator ==(PlutoAdaptiveAdjust a, PlutoAdaptiveAdjust b) => a.Equals(b);
         public static bool operator !=(PlutoAdaptiveAdjust a, PlutoAdaptiveAdjust b) => !a.Equals(b);
     }
@@ -81,10 +88,16 @@ namespace StockManager.Engines.Cognitive.Screening
         /// </summary>
         public static PlutoRecommendation[] Rank(ReadOnlySpan<PlutoScreenInputs> universe, PlutoScreenMarket market, in PlutoScreenMacro macro,
             in PlutoCognitiveWeights weights, long capital, int monitored, int topN, out PlutoScreenTally tally)
+            => Rank(universe, market, in macro, in weights, capital, monitored, topN, default, out tally);
+
+        /// <summary>[v12.18.88-DEV] 위원회 결선 랭킹(council.Enabled false = 위 오버로드와 완전 동일).</summary>
+        public static PlutoRecommendation[] Rank(ReadOnlySpan<PlutoScreenInputs> universe, PlutoScreenMarket market, in PlutoScreenMacro macro,
+            in PlutoCognitiveWeights weights, long capital, int monitored, int topN, in PlutoCouncilInputs council, out PlutoScreenTally tally)
         {
             if (topN is < 1 or > PlutoRecommendationSnapshot.TopN) throw new ArgumentOutOfRangeException(nameof(topN));
             var picks = new List<Pick>(universe.Length);
-            int scanned = 0, vetoed = 0, insufficient = 0, below = 0;
+            int scanned = 0, vetoed = 0, insufficient = 0, below = 0, councilVetoed = 0;
+            int lead = council.Enabled && market == PlutoScreenMarket.Krx ? council.Macro.Spillover.LeadPts : 0;
             for (int i = 0; i < universe.Length; i++)
             {
                 ref readonly var x = ref universe[i];
@@ -93,10 +106,17 @@ namespace StockManager.Engines.Cognitive.Screening
                 var s = PlutoDiscoveryScorer.Score(in x, in macro);
                 if (s.Insufficient) { insufficient++; continue; }     // 피드 판독 전무 = 점수 산출 0(가짜 추천 0)
                 if (s.Vetoed) { vetoed++; continue; }
+                PlutoCouncilVerdict verdict = default;
+                if (council.Enabled)
+                {
+                    verdict = PlutoCognitiveCouncil.Convene(in x, in s, in council.Macro, council.RegimeId, in council.Learned);
+                    if (verdict.Vetoed) { councilVetoed++; continue; }   // 리스크 통제관 거부권 = 진입 강제 차단(점수 무관)
+                }
                 var a = Project(in s, in weights);
+                if (lead != 0) a = a.WithLead(lead);
                 int total = AdaptiveTotal(in s, in a);
                 if (total < PlutoDiscoveryScorer.MinRecommendScore) { below++; continue; }
-                picks.Add(new Pick(i, x.Symbol, s, a, total));
+                picks.Add(new Pick(i, x.Symbol, s, a, total, verdict));
             }
             picks.Sort((p, q) =>
             {
@@ -111,11 +131,20 @@ namespace StockManager.Engines.Cognitive.Screening
             {
                 var p = picks[r];
                 ref readonly var x = ref universe[p.Index];
+                var kelly = council.Enabled ? council.KellyOf(x.Symbol) : default;
+                long qty = kelly.IsSized
+                    ? PlutoMarketScreener.RecommendedQtyBp(market, capital, kelly.WeightBp, x.Price)
+                    : PlutoMarketScreener.RecommendedQty(market, capital, p.Total, x.Price);
                 result[r] = new PlutoRecommendation(market, r + 1, x.Symbol, PlutoMarketScreener.CodeOf(market, x.Symbol), x.Price, p.Score,
                     Array.AsReadOnly(PlutoDiscoveryScorer.Reasons(in x, in macro, p.Score)), x.HasValuation, x.MarginOfSafetyBps, x.FairPrice, x.SeedProfile,
-                    PlutoMarketScreener.RecommendedQty(market, capital, p.Total, x.Price), PlutoDiscoveryScorer.RiskText(p.Score.Risks, market), p.Adjust);
+                    qty, PlutoDiscoveryScorer.RiskText(p.Score.Risks, market), p.Adjust)
+                {
+                    Council = p.Verdict,
+                    Kelly = kelly,
+                    CouncilWired = council.Enabled,
+                };
             }
-            tally = new PlutoScreenTally(scanned, vetoed, insufficient, below, Math.Max(monitored, scanned), picks.Count);
+            tally = new PlutoScreenTally(scanned, vetoed, insufficient, below, Math.Max(monitored, scanned), picks.Count) { CouncilVetoed = councilVetoed };
             return result;
         }
 
@@ -129,6 +158,6 @@ namespace StockManager.Engines.Cognitive.Screening
 
         private static string Signed(int v) => (v >= 0 ? "+" : "") + v.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        private readonly record struct Pick(int Index, long Symbol, PlutoDiscoveryScore Score, PlutoAdaptiveAdjust Adjust, int Total);
+        private readonly record struct Pick(int Index, long Symbol, PlutoDiscoveryScore Score, PlutoAdaptiveAdjust Adjust, int Total, PlutoCouncilVerdict Verdict);
     }
 }

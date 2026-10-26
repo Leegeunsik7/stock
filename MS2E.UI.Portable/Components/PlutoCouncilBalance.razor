@@ -1,0 +1,75 @@
+@* PlutoCouncilBalance — v12.18.88-DEV: 4대 인지 에이전트 위원회 밸런스 위젯(다크 슬레이트 콕핏 · 관제탑 하단 띠).
+   ① 활성 국면 셀(3대 자산 레인) 합의 가중치 스택 바(TrendScout · MeanReversion · LiquidityPredator · ChiefRiskOfficer · 합 100%) + 주도 에이전트
+   ② 레인별 프랙탈 켈리 권장 비중(산출 = % · 표본 부족 = n/20 · 음의 엣지 = 0%) ③ 리스크 통제관 비토 · 교차 자산 선행 파급(KRX 점수 · 근거 문구).
+   순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0). 미결선/첫 게시 전 = 빈 스켈레톤 + 정직 문구(가짜 가중치 · 가짜 비중 0). *@
+
+<section class="cc" data-cc="@(View.Wired ? View.Published ? "live" : "pending" : "unwired")" data-cc-veto="@(View.Vetoed ? "on" : "off")">
+    <div class="cc-head">
+        <b>4대 인지 에이전트 위원회</b>
+        @if (View.Wired && View.Published)
+        {
+            <span class="cc-s">@(View.RegimeId > 0 ? "국면 슬롯 · " + View.RegimeName : "기준선 셀(국면 판정 전)")</span>
+        }
+        @foreach (int a in s_agents)
+        {
+            <span class="cc-key"><i class="@PlutoCouncilAgentCode.Css(a)"></i>@PlutoCouncilAgentCode.Label(a)</span>
+        }
+    </div>
+    @if (!View.Wired)
+    {
+        <div class="cc-empty">위원회 미결선 — 추천 스크리너 또는 위원회가 비활성인 호스트입니다(설정 Pluto.CouncilEnabled).</div>
+    }
+    else if (!View.Published)
+    {
+        <div class="cc-empty">첫 위원회 소집 대기 — 스크리너 첫 스캔 후 합의 가중치를 게시합니다.</div>
+    }
+    else
+    {
+        @foreach (var l in View.Lanes)
+        {
+            <div class="cc-lane" data-cc-lane="@l.Asset" data-cc-sum="@l.Sum" data-cc-lead="@l.Lead" data-cc-kelly="@PlutoKellyCode.Normalize(l.KellyState)">
+                <b class="cc-asset">@PlutoTensorLaneView.AssetLabel(l.Asset)</b>
+                <span class="cc-stack" title="@Title(l)">
+                    @foreach (int a in s_agents)
+                    {
+                        <i class="@PlutoCouncilAgentCode.Css(a)" style="width:@(Pct(l.WeightOf(a)))" data-cc-w="@l.WeightOf(a)"></i>
+                    }
+                </span>
+                <span class="cc-s mono">주도 @PlutoCouncilAgentCode.Korean(l.Lead) @PlutoKellyCode.Pct(l.WeightOf(l.Lead))</span>
+                <span class="hud-tag @PlutoKellyCode.Css(l.KellyState)" title="@KellyTitle(l)">켈리 @PlutoKellyCode.Cell(l.KellyState, l.KellyBp, l.Samples)</span>
+            </div>
+        }
+        <div class="cc-foot">
+            @if (View.Vetoed)
+            {
+                <span class="cc-veto" data-cc-veto-text>@View.VetoText</span>
+            }
+            else
+            {
+                <span class="cc-pass">리스크 통제관: 거부권 미발동</span>
+            }
+            @if (View.CouncilVetoed > 0) { <span class="cc-s mono">직전 스캔 비토 탈락 @(View.CouncilVetoed)종목</span> }
+            <span class="cc-lead @(View.LeadPts > 0 ? "up" : View.LeadPts < 0 ? "down" : "")" data-cc-leadpts="@View.LeadPts" title="@View.SpilloverText">
+                KRX 선행 파급 @(View.SpilloverHasData ? (View.LeadPts > 0 ? "+" : "") + View.LeadPts + "점" : "판독 없음")
+            </span>
+            <span class="cc-s cc-spill">@View.SpilloverText</span>
+        </div>
+    }
+</section>
+
+@code {
+    private static readonly int[] s_agents = { PlutoCouncilAgentCode.Trend, PlutoCouncilAgentCode.Reversion, PlutoCouncilAgentCode.Liquidity, PlutoCouncilAgentCode.Risk };
+
+    [Parameter] public PlutoCouncilView View { get; set; } = PlutoCouncilView.None;
+
+    private static string Pct(int bp) => (Math.Clamp(bp, 0, 10000) / 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static string Title(PlutoCouncilLaneView l) => string.Join(" · ", s_agents.Select(a => PlutoCouncilAgentCode.Label(a) + " " + PlutoKellyCode.Pct(l.WeightOf(a))));
+
+    private static string KellyTitle(PlutoCouncilLaneView l) => PlutoKellyCode.Normalize(l.KellyState) switch
+    {
+        PlutoKellyCode.Sized or PlutoKellyCode.NoEdge => PlutoKellyCode.Label(l.KellyState) + " · 승률 " + PlutoKellyCode.Pct(l.WinRateBp) + " · 손익비 "
+            + (l.PayoffX100 / 100m).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " · 표본 " + l.Samples + " · ½켈리 5~25%",
+        _ => PlutoKellyCode.Label(l.KellyState) + " (실측 청산 회고 " + l.Samples + "/" + PlutoKellyCode.MinSamples + ")",
+    };
+}

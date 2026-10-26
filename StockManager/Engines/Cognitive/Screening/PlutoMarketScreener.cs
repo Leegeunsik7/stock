@@ -13,6 +13,7 @@
 //    감시 카탈로그(PlutoMultiAssetUniverseCatalog · KRX 200 · US 100 · 업비트 120) = 집계 Monitored(감시 수) — 피드 판독이 없는 카탈로그 종목은 점수 산출 0
 //    ('피드 판독 대기'로 정직 집계 · 시세/재무 날조 0). Passed = 추천 기준 통과(Top 5 절단 전). 코인 추천 수량 = 코인 × 10^8 raw.
 //   [v12.18.85-DEV] ③ 랭킹 = PlutoRecommendationEngine 위임(학습 가중치 스냅샷 투영 · 모멘텀 조정/악마의 변호인 감점 · 중립 = 기존 점수 그대로).
+//   [v12.18.88-DEV] 위원회 허브(선택) = 스텝마다 교차 자산 파급 공급/게시 · 거시/국면 판독 → 시장별 위원회 입력(비토 · KRX 선행 점수 · 켈리) → 39셀 판정 보드 게시.
 //   [v12.18.80-DEV] 유니버스 = PlutoUniverseMerge(매트릭스 보드 Live 셀(병렬 학습 스웜 실데이터) 우선 + 아레나 시세 보조) · 스캔 버퍼 256.
 // ============================================================================
 using System;
@@ -53,6 +54,7 @@ namespace StockManager.Engines.Cognitive.Screening
         private readonly PlutoScreenInputs[] _scratch = new PlutoScreenInputs[MaxUniverse];
         private readonly object _stepGate = new();
         private readonly PlutoCognitiveTensorLake? _tensor;
+        private readonly Council.PlutoCouncilHub? _council;
         private long _generation, _cycles, _faulted;
         private CancellationTokenSource? _cts;
         private Task? _loop;
@@ -60,9 +62,10 @@ namespace StockManager.Engines.Cognitive.Screening
         /// <param name="weights">[v12.18.85-DEV] 학습 가중치 스냅샷 공급자(스텝당 1회 · 미지정 = 중립 → 기존 점수 그대로).</param>
         /// <param name="tensor">[v12.18.86-DEV] 36슬롯 인지 텐서(시장별 전용 가중치 독립 투영 · 미지정 = 전역 가중치 공유).</param>
         public PlutoMarketScreener(PlutoRecommendationBoard board, Func<PlutoScreenMacro>? macro = null, Func<long>? utcNow = null,
-            Func<PlutoCognitiveWeights>? weights = null, PlutoCognitiveTensorLake? tensor = null)
+            Func<PlutoCognitiveWeights>? weights = null, PlutoCognitiveTensorLake? tensor = null, Council.PlutoCouncilHub? council = null)
         {
             _tensor = tensor;
+            _council = council;
             _board = board ?? throw new ArgumentNullException(nameof(board));
             _macro = macro ?? (static () => default);
             _utcNow = utcNow ?? (static () => DateTime.UtcNow.Ticks);
@@ -77,6 +80,8 @@ namespace StockManager.Engines.Cognitive.Screening
         }
 
         public PlutoRecommendationBoard Board => _board;
+        /// <summary>[v12.18.88-DEV] 위원회 허브(미결선 = null · 기존 랭킹).</summary>
+        public Council.PlutoCouncilHub? CouncilHub => _council;
         public long Cycles => Interlocked.Read(ref _cycles);
         public long Faulted => Interlocked.Read(ref _faulted);
         public bool Running => Volatile.Read(ref _loop) is { IsCompleted: false };
@@ -97,23 +102,28 @@ namespace StockManager.Engines.Cognitive.Screening
             {
                 var macro = _macro();
                 var weights = _weights();
-                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Krx, in weights, _tensor), out var krxTally);
-                var us = ScanMarket(PlutoScreenMarket.Us, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Us, in weights, _tensor), out var usTally);
-                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Crypto, in weights, _tensor), out var cryptoTally);
-                var snap = new PlutoRecommendationSnapshot(++_generation, _utcNow(), krx, krxTally, us, usTally, crypto, cryptoTally);
+                long now = _utcNow();
+                var cm = _council?.Prepare(now) ?? Council.PlutoCouncilMacro.None;   // [v12.18.88-DEV] 파급 공급 · 게시 → 거시/국면 판독(미결선 = 생략)
+                var krx = ScanMarket(PlutoScreenMarket.Krx, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Krx, in weights, _tensor), in cm, out var krxTally);
+                var us = ScanMarket(PlutoScreenMarket.Us, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Us, in weights, _tensor), in cm, out var usTally);
+                var crypto = ScanMarket(PlutoScreenMarket.Crypto, in macro, PlutoRecommendationEngine.AssetWeights(PlutoScreenMarket.Crypto, in weights, _tensor), in cm, out var cryptoTally);
+                var snap = new PlutoRecommendationSnapshot(++_generation, now, krx, krxTally, us, usTally, crypto, cryptoTally);
                 _board.Publish(snap);
+                _council?.PublishBoard(in cm, _ => weights);   // 체결 핫패스 39셀 판정 보드(셀 해석은 허브가 텐서로 수행)
                 Interlocked.Increment(ref _cycles);
                 return snap;
             }
         }
 
-        private PlutoRecommendation[] ScanMarket(PlutoScreenMarket market, in PlutoScreenMacro macro, in PlutoCognitiveWeights weights, out PlutoScreenTally tally)
+        private PlutoRecommendation[] ScanMarket(PlutoScreenMarket market, in PlutoScreenMacro macro, in PlutoCognitiveWeights weights, in Council.PlutoCouncilMacro cm,
+            out PlutoScreenTally tally)
         {
             var u = _universes[(int)market];
             int monitored = PlutoMultiAssetUniverseCatalog.CountOf(market);
             if (u is null) { tally = new PlutoScreenTally(0, 0, 0, 0, monitored, 0); return Array.Empty<PlutoRecommendation>(); }
             int n = Math.Clamp(u.Scan(_scratch), 0, _scratch.Length);
-            return PlutoRecommendationEngine.Rank(_scratch.AsSpan(0, n), market, in macro, in weights, u.Capital, monitored, PlutoRecommendationSnapshot.TopN, out tally);
+            var council = _council is null ? default : _council.InputsFor(market, in cm, in weights);
+            return PlutoRecommendationEngine.Rank(_scratch.AsSpan(0, n), market, in macro, in weights, u.Capital, monitored, PlutoRecommendationSnapshot.TopN, in council, out tally);
         }
 
         /// <summary>추천 수량(내림 · 자본 × 비중 &lt; 1주 = 0).</summary>
@@ -122,6 +132,15 @@ namespace StockManager.Engines.Cognitive.Screening
             if (capital <= 0 || price <= 0) return 0;
             long budget = (long)((Int128)capital * PlutoDynamicSizer.WeightBp(score, 0, 0) / 10000);
             return budget / price;
+        }
+
+        /// <summary>[v12.18.88-DEV] 권장 비중 bp(프랙탈 켈리) 기준 추천 수량 — 주식 = 주 · 코인 = 코인 × 10^8 raw(내림 · 자본 부족 = 0).</summary>
+        public static long RecommendedQtyBp(PlutoScreenMarket market, long capital, int weightBp, long price)
+        {
+            if (capital <= 0 || price <= 0 || weightBp <= 0) return 0;
+            Int128 budget = (Int128)capital * Math.Min(weightBp, PlutoDynamicSizer.MaxWeightBp) / 10000;
+            if (market != PlutoScreenMarket.Crypto) return (long)(budget / price);
+            return (long)Int128.Min(budget * PlutoDiscoveryScorer.CryptoScale * PlutoDiscoveryScorer.CryptoScale / price, long.MaxValue);
         }
 
         /// <summary>[v12.18.79-DEV] 시장별 추천 수량 — 코인 = 원 자본 × 비중 ÷ 가격 raw → 코인 × 10^8 raw(내림 · 1 raw 미만 = 0) · 주식 = 주.</summary>

@@ -100,6 +100,23 @@ namespace StockManager.Engines.Cognitive.Learning
             return true;
         }
 
+        /// <summary>[v12.18.88-DEV] 링 표본 실측 엣지(승패 · 수익률 bp 합 · δ=0) — 프랙탈 켈리 입력. 무승부(Verdict 승도 패도 아님)는 표본 수에만 포함.</summary>
+        public Council.PlutoEdgeStats Edge()
+        {
+            lock (_gate)
+            {
+                int n = (int)Math.Min(_total, Window), wins = 0, losses = 0;
+                long sumWin = 0, sumLoss = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    ref readonly var s = ref _ring[i];
+                    if (s.IsWin) { wins++; sumWin += Math.Max(0, s.ReturnBp); }
+                    else if (s.ReturnBp <= 0) { losses++; sumLoss += -(long)s.ReturnBp; }
+                }
+                return new Council.PlutoEdgeStats(n, wins, losses, sumWin, sumLoss);
+            }
+        }
+
         /// <summary>
         /// 학습 절반(링 순서 짝수 번째) 교훈 압력 → 후보 가중치(δ=0). 표본 부족 = false(candidate = current).
         /// </summary>

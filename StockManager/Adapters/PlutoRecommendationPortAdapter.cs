@@ -2,12 +2,15 @@
 // PlutoRecommendationPortAdapter — v12.18.78-DEV: 스크리너 불변 스냅샷 → IPlutoRecommendationPort DTO 투영(콜드 경로 · 판독 전용)
 //   같은 스냅샷 참조 = 직전 투영 재사용(렌더 펌프 100ms 폴링에도 재매핑 0). 종목명 = StockDisplayNameResolver(미등록 = 코드 그대로).
 //   [v12.18.80-DEV] 병렬 학습 스웜(선택) = 레인 상태 투영(Swarm · 판독마다 갱신 — 수집 진행률은 스냅샷 세대와 무관하게 변함).
+//   [v12.18.88-DEV] 위원회 허브(선택) = 활성 국면 39셀 보드 판독 → Council(합의 가중치 · 켈리 · 비토 · 선행 파급) · 카드 = 선행 점수 · 합의 점수 · 켈리 통과.
 //   [v12.18.85-DEV] 카드 Score = 적응 점수(FinalScore) · 학습 투영 근거(모멘텀 조정 · 악마의 변호인 감점 · 문구) 통과.
 // ============================================================================
 using System;
 using System.Collections.Generic;
 using MS2E.UI.Portable.Helpers;
 using MS2E.UI.Portable.Ports.Trading;
+using StockManager.Engines.Cognitive.Council;
+using StockManager.Engines.Cognitive.Learning;
 using StockManager.Engines.Cognitive.Screening;
 
 namespace StockManager.Adapters
@@ -42,6 +45,11 @@ namespace StockManager.Adapters
                     view = c is not null && ReferenceEquals(c.Source, snap) ? c.View with { Running = running } : Map(snap, running);
                     System.Threading.Volatile.Write(ref _cache, new Cache(snap, running, view));
                 }
+                if (_screener.CouncilHub is { } hub)
+                {
+                    var cv = MapCouncil(hub, snap);
+                    view = view with { Council = cv };
+                }
                 if (_swarm is null) return view;
                 var sw = MapSwarm(_swarm);
                 return view.Swarm == sw ? view : view with { Swarm = sw };
@@ -63,6 +71,29 @@ namespace StockManager.Adapters
             foreach (var r in src) cards.Add(Map(r));
             var t = s.TallyOf(m);
             return new PlutoRecoMarketView(cards.AsReadOnly(), t.Scanned, t.Vetoed, t.Insufficient, t.BelowThreshold, t.Monitored, t.Passed);
+        }
+
+        /// <summary>[v12.18.88-DEV] 위원회 허브 → 활성 국면 셀(3대 자산 레인) 판독(콜드 · 보드 seqlock).</summary>
+        public static PlutoCouncilView MapCouncil(PlutoCouncilHub hub, PlutoRecommendationSnapshot s)
+        {
+            ArgumentNullException.ThrowIfNull(hub);
+            ArgumentNullException.ThrowIfNull(s);
+            if (hub.Prepared == 0) return PlutoCouncilView.None with { Wired = true };
+            int regime = hub.LastRegimeId;
+            var lanes = new PlutoCouncilLaneView[3];
+            var assets = new[] { PlutoAssetClass.Krx, PlutoAssetClass.Us, PlutoAssetClass.Upbit };
+            for (int i = 0; i < assets.Length; i++)
+            {
+                hub.Board.TryRead(assets[i], regime, out var c);
+                var w = c.Weights;
+                var k = c.Kelly;
+                lanes[i] = new PlutoCouncilLaneView(i, w.TrendBp, w.ReversionBp, w.LiquidityBp, w.RiskBp, (int)k.State, k.WeightBp, k.WinRateBp, k.PayoffX100, k.Samples);
+            }
+            var m = hub.LastMacro;
+            var veto = PlutoCognitiveCouncil.VetoOf(default, in m);
+            int vetoed = s.TallyOf(PlutoScreenMarket.Krx).CouncilVetoed + s.TallyOf(PlutoScreenMarket.Us).CouncilVetoed + s.TallyOf(PlutoScreenMarket.Crypto).CouncilVetoed;
+            return new PlutoCouncilView(true, hub.Board.Published > 0, regime, PlutoRegimeVectorLake.Get(regime)?.Name, lanes,
+                PlutoCognitiveCouncil.VetoText(veto), m.Spillover.LeadPts, m.Spillover.HasData, PlutoCrossAssetSpillover.Text(m.Spillover), vetoed);
         }
 
         public static PlutoSwarmView MapSwarm(PlutoParallelLearningSwarm swarm)
@@ -94,6 +125,13 @@ namespace StockManager.Adapters
                 LearnMomentumPts = r.Adaptive.MomentumPts,
                 LearnDevilPts = r.Adaptive.DevilPts,
                 LearnText = PlutoRecommendationEngine.RationaleText(r.Adaptive),
+                LeadPts = r.Adaptive.LeadPts,
+                CouncilWired = r.CouncilWired,
+                CouncilConsensus = r.Council.Consensus,
+                KellyState = (int)r.Kelly.State,
+                KellyBp = r.Kelly.WeightBp,
+                KellySamples = r.Kelly.Samples,
+                KellyText = r.CouncilWired ? PlutoDynamicKellyEngine.Text(r.Kelly) : "",
             };
         }
     }

@@ -4843,3 +4843,28 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   잔류: 격리 기동 PID 30116 종료 확인 · 실행 중 MS2E.StockSuite.exe 0. 패키징 로그 QuantumVault 참조 0.
 - 출하 바이너리 상태(정직): 슬레이트 벤토 콕핏 · PlutoCognitiveHud · PlutoRecoMatrix(피드 미판독 = 집계 대기 행 · 날조 0) 포함 · 36슬롯 텐서/웜스타트 무변경 ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 210. v12.18.88-DEV — 플루토 4대 인지 에이전트 위원회 + 교차 자산 선행-지행 파급 엔진 + 프랙탈 켈리 사이징 거버너 (2026-10-26)
+
+- 선행: 177c184(§209 v12.18.87-GM). 오더 전제 검증: '39슬롯 국면 텐서' = PlutoCognitiveTensorLake.Cells(13행[기준선 + 12대 국면] × 3열) — 36 국면 슬롯 + 자산 기준선 3. 기존 PlutoDynamicSizer(확신도 · ATR 5~25%)는 유지 · 켈리는 별도 엔진.
+- 신규 Engines/Cognitive/Council/:
+  PlutoCognitiveCouncil — TrendScout(기술 + 추세 국면) · MeanReversionHunter(밸류에이션 − 기술 과열 ½ · 박스권) · LiquidityPredator(미시구조 · 벽/매수 우위/허매수 · 코인 스프레드) · ChiefRiskOfficer(반대 논리 · VIX 초과 · 약세/패닉 국면 유사 · 파급 충격).
+    합의 가중치 = 39셀 표(국면 전략 → 주도 에이전트 · 유동성 국면 → 수급 · Upbit 열 수급 +500) + 셀 학습 투영(모멘텀 tilt × 20bp · 엄격도 × 50bp) · 하한 500 · 합 10000 보정. 합의 점수 = Σ Wi × Si ÷ 10000.
+    비토 = VIX ≥ 35 · 파급 충격 · 과거 패닉 국면 유사 ≥ 60% · 종목 패닉 투매 국면 → 추천 진입 강제 차단(CouncilVetoed 계수).
+  PlutoCrossAssetSpillover — 레인 3개(KRX 대형 5종 바스켓 · US 빅테크 6종 바스켓 · KRW-BTC) 고정 64칸 롤링 버퍼(과거 키 무시 · 같은 키 갱신 · 꽉 참 = 밀어냄) ·
+    선행 상관 = US 세션 u ↔ 다음 KRX 세션(≤ 4일) Pearson(쌍 ≥ 10) · KRX 선행 점수 = 빅테크 × max(상관,0) ÷ 50bp(±3) − 10년물 ÷ 10bp(±3) − BTC 변동성(단기 5 / 기준 20 · 창 분리) 150%=−1 · 200%=−2 → ±6 ·
+    충격 = |10년물| ≥ 25bp · 빅테크 ≤ −300bp · BTC 비율 ≥ 250%. 신호 게시 = 버전 브래킷 seqlock(TryRead δ=0). PlutoSpilloverFeeder = 데이터 레이크 봉 → 동일 가중 바스켓 일간 수익률.
+  PlutoDynamicKellyEngine — f* = p − (1−p)/b(텐서 셀 보정기 링 실측 승패 · 수익률: 국면 슬롯 표본 ≥ 20 = 슬롯 · 아니면 자산 기준선) → ½ 켈리 → 변동성 배율(ATR = 레이크 봉 14 TR 평균) → [5%, 25%].
+    표본 < 20 = Insufficient(미산출) · f* ≤ 0 = NoEdge(0% · 하한으로 끌어올리지 않음) · 패배 0 = 손익비 5.00 포화. 켈리 Sized = 추천 수량도 켈리 비중 기준(아니면 기존 사이저).
+  PlutoCouncilHub/PlutoCouncilBoard — 스크리너 Step 마다 파급 공급 · 게시 → 거시(VIX · 10년물) · 12대 국면 판독 → 시장별 입력 → 39셀 보드(셀당 seqlock · 체결 핫패스 TryRead δ=0) 게시.
+- 결선: PlutoRecommendationEngine.Rank 위원회 오버로드(미결선 = 기존 결과 완전 동일 · 테스트 고정) · PlutoAdaptiveAdjust.LeadPts(KRX 전용) · 호스트 `Pluto.CouncilEnabled`(기본 켜짐) ·
+  데이터 레이크를 스크리너 블록으로 끌어올려 스웜과 공유. 체결 엔진(Govern) 진입 경로는 무변경 — 비토는 추천/담기 경로에만 적용(아레나 AI 진입 게이트 결선은 미착수).
+- UI(Pure RCL): PlutoCouncilPort(순수 DTO · 엔진 참조 0) · PlutoCouncilBalance(관제탑 하단 · 레인 3개 스택 바 · 주도 에이전트 · 켈리 셀 · 비토/파급 문구 · 미결선/게시 전 = 정직 문구) ·
+  PlutoRecoMatrix Kelly % 열(산출 % · 표본 부족 n/20 · 음의 엣지 0% · 미결선 —) · 점수 분해 '+ 선행 ±n'. 페이지 주입 6종 불변 · 신규 컴포넌트 주입 0.
+- 테스트: PlutoCouncilTests 28건 · PlutoCouncilUiTests 4건(ConcurrencyStress) — 39셀 합 10000/주도 에이전트 · 학습 투영 · 비토 6사례 · 미결선 = 기존 랭킹 동일 · 비토 탈락 계수 · KRX 전용 선행 · 켈리 7사례 ·
+  선행 상관(+1000/−1000/미추정) · 금리/BTC 충격 · 롤링 버퍼 · 허브 스텝 비토/39셀 게시/포트 투영 · 핫패스 4종 조회 10만 회 0B(MinAllocated).
+  설계 결함 1건 테스트 중 발견 · 교정: BTC 기준 창이 단기 창을 포함해 비율 상한 200% → 250% 충격 도달 불가 → 창 분리.
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,699 통과 / 9 건너뜀 / 0 실패(5,708) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness/Phase114 통과). liveArmed:false · 인터락 30 무변경 · QuantumVault 미접근 · 타 세션 파일 미스테이징.
+- 정직 한계: 빅테크/KRX 레인 = KIS 일봉(KIS 미구성 시 레인 비어 선행 0) · 10년물 = 거시 피드(FRED 키 미설정 시 미결선) · 상관 = 쌍 10개 누적 전 미추정 · 켈리 = 실측 회고 20건 전 미산출 ·
+  실 앱 화면 · 실 네트워크 종단 미실측(bUnit · 대역 데이터로 검증).

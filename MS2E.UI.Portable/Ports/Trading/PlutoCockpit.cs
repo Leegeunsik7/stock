@@ -31,17 +31,18 @@ namespace MS2E.UI.Portable.Ports.Trading
     }
 
     /// <summary>추천 점수 분해(기본 = 4대 팩터 합 · Saturated = 기본 + 순 조정이 0~100 밖이라 최종이 포화됨).</summary>
-    public readonly record struct PlutoScoreBreakdown(int Base, int Momentum, int Devil, int Final, bool Saturated)
+    public readonly record struct PlutoScoreBreakdown(int Base, int Momentum, int Devil, int Final, bool Saturated, int Lead = 0)
     {
         public static PlutoScoreBreakdown Of(PlutoRecommendationCard c)
         {
             ArgumentNullException.ThrowIfNull(c);
             int b = c.ValuationPts + c.TechnicalPts + c.MicroPts + c.MacroPts;
-            return new(b, c.LearnMomentumPts, c.LearnDevilPts, c.Score, b + c.LearnMomentumPts - c.LearnDevilPts != c.Score);
+            return new(b, c.LearnMomentumPts, c.LearnDevilPts, c.Score, b + c.LearnMomentumPts - c.LearnDevilPts + c.LeadPts != c.Score, c.LeadPts);
         }
 
-        /// <summary>"기본 70 + 모멘텀 +12 − 변호인 4 = 88"(포화 = " (0~100 포화)" 덧붙임).</summary>
-        public string Text => "기본 " + I(Base) + " + 모멘텀 " + (Momentum >= 0 ? "+" : "") + I(Momentum) + " − 변호인 " + I(Devil) + " = " + I(Final)
+        /// <summary>"기본 70 + 모멘텀 +12 − 변호인 4 = 88"([v12.18.88-DEV] 선행 파급 ≠ 0 = " + 선행 +2" 삽입 · 포화 = " (0~100 포화)" 덧붙임).</summary>
+        public string Text => "기본 " + I(Base) + " + 모멘텀 " + (Momentum >= 0 ? "+" : "") + I(Momentum) + " − 변호인 " + I(Devil)
+            + (Lead != 0 ? " + 선행 " + (Lead > 0 ? "+" : "") + I(Lead) : "") + " = " + I(Final)
             + (Saturated ? " (0~100 포화)" : "");
 
         private static string I(int v) => v.ToString(CultureInfo.InvariantCulture);
