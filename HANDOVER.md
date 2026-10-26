@@ -4889,3 +4889,18 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 이관: 메인 release/ 의 v12.18.87-GM 15종 → release/superseded-v12.18.87-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 상태(정직): 비토 판정 입력 = 거시 피드(VIX · 10년물) · 파급 레인 · 국면 판정기 — 미결선 항목은 비토 미발동(가짜 비토 0) · 보드 게시 전 = 비토 없음(Seq 0) ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음 · 실 앱 화면 미실측(bUnit/엔진 테스트로 검증).
+
+## 212. v12.18.89-DEV — DualArena UX 직관화: 플루토 AI 라이브 브리핑(한 줄 자연어 요약) + 3대 시장 신호등 + 개발자 용어 순화 (2026-10-26)
+
+- 선행: 7e62cc7(§211 v12.18.88-GM). 오더 전제 검증: '0/24'(켈리 비중) 문구는 소스에 없음 — 실 표기 = 켈리 표본 부족 'n/20'(PlutoKellyCode.Cell) → 해당 셀을 순화 대상으로 적용.
+- 신규 Ports/Trading/PlutoLiveBriefing.cs(순수 · 엔진 참조 0): PlutoLightCode(⚪ 미결선 · 🟢 실시간 감시 · 🌙 장외 · 🟡 대기) · PlutoMarketLight/PlutoMarketLights ·
+  PlutoLiveBriefing.Krx(SessionOpen · SessionKst → 장마감/개장 전/주말 휴장 + 다음 개장 '내일/오늘/월요일 09:00') · Us(Phase · 거시 키 대기 · 프리마켓 · 달력 밖 = fail-closed ⚪) ·
+  Crypto(Tradable · 무효 시각 = ⚪) · 스웜 레인 실피드 미결선 = 🟡 · Compose(모드 + KRX · Upbit · US 문장 + AI 방침 · 열린 시장 0 = 관망) · 후보 = 추천 통과 카드 상위 2종 이름만(없음 = 정직 문구) ·
+  PlutoMacroFeed.IsKeyPending(호스트 FeedText 문구 계약) · PlutoPlainText(세대 · 텐서 보정 문구). 시각 = 엔진 SessionKst(호스트 시계 재판독 0).
+- UI: PlutoCognitiveHud 최상단 [🧠 플루토 AI 라이브 브리핑] 카드 + 신호등 3종 · 'G0' → '0세대 (시세 데이터 축적 중)' · '판정 전' → '거시 분석 대기 (FRED 키 설정 시 가동)' ·
+  '보정 n/36' → '국면 가중치 (기본값)'(보정 후 '국면 가중치 보정 n/36'). PlutoKellyCode.Plain 신설(Cell 유지) — 'Kelly %' 열 → '권장 비중' · 표본 부족 = '0% (관망)' · 음의 엣지 = '0% (진입 비권장)' · n/20 = 툴팁.
+  PlutoRecoMatrix 대기 행 'Awaiting Market Feed' → 신호등 기준(장외 = '🌙 장마감 대기 중 (내일 09:00 개장)' · 그 외 = '시세 수신 대기 — 사유'). DualArenaPage = 기존 주입 6종 스냅샷만 판독(신규 주입 0).
+- 테스트: PlutoLiveBriefingTests 8건 신규 · PlutoCockpitUiTests/PlutoCouncilUiTests 문구 단언 갱신.
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,717 통과 / 9 건너뜀 / 0 실패(5,726) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결 핫패스 무변경(δ=0 불변) · liveArmed:false · 타 세션 파일 미스테이징.
+- 정직 한계: 다음 개장 = 평일 기준(공휴일 달력 미반영) · 실 앱 화면 미실측(bUnit 검증).

@@ -26,6 +26,15 @@ namespace MS2E.UI.Portable.Ports.Trading
             _ => "—",
         };
 
+        /// <summary>[v12.18.89-DEV] 사용자 문구: 산출 = "12.5%" · 음의 엣지 = "0% (진입 비권장)" · 표본 부족 = "0% (관망)" · 미결선 = "—"(표본 수 = 툴팁).</summary>
+        public static string Plain(int state, int weightBp) => Normalize(state) switch
+        {
+            Sized => Pct(weightBp),
+            NoEdge => "0% (진입 비권장)",
+            Insufficient => "0% (관망)",
+            _ => "—",
+        };
+
         public static string Label(int state) => Normalize(state) switch
         {
             Sized => "켈리 산출",

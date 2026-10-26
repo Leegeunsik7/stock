@@ -175,7 +175,10 @@ namespace StockManager.Tests.Cognitive
             Assert.Contains("+15%", cut.Find("[data-hud-mom]").TextContent);
             Assert.Contains("up", cut.Find("[data-hud-mom]").ClassList);         // 공격(+) = 적색
             Assert.Contains("+8점", cut.Find("[data-hud-strict]").TextContent);
-            Assert.Contains("G64", cut.Find("[data-hud-tile='maturity']").TextContent);
+            Assert.Contains("64세대 (학습 가중치 적용 중)", cut.Find("[data-hud-tile='maturity']").TextContent);
+            Assert.Contains("국면 가중치 보정 4/36", cut.Find("[data-hud-tile='tensor']").TextContent);
+            Assert.NotEmpty(cut.Find("[data-hud-brief] .hud-brief-t").TextContent);           // [v12.18.89-DEV] 라이브 브리핑 + 신호등 3종
+            Assert.Equal(3, cut.FindAll("[data-hud-light]").Count);
             Assert.Contains("1,234", cut.Find("[data-hud-tile='maturity']").TextContent);
             Assert.Contains("+4.2%p", cut.Find("[data-hud-gain]").TextContent);
             Assert.Equal(3, cut.FindAll("[data-hud-lane]").Count);
@@ -223,7 +226,8 @@ namespace StockManager.Tests.Cognitive
             var waits = cut.FindAll(".mx-await");
             Assert.Equal(2, waits.Count);
             Assert.All(waits, w => Assert.Contains("--", w.QuerySelector(".mx-score")!.TextContent));   // 점수 생성 0
-            Assert.All(waits, w => Assert.Contains("Awaiting Market Feed", w.TextContent));
+            Assert.All(waits, w => Assert.DoesNotContain("Awaiting Market Feed", w.TextContent));      // [v12.18.89-DEV] 신호등 기준 사용자 문구
+            Assert.All(waits, w => Assert.True(w.TextContent.Contains("시세 수신 대기", StringComparison.Ordinal) || w.TextContent.Contains("대기 중", StringComparison.Ordinal)));
             Assert.Equal("100", cut.Find(".mx-await[data-mx-await='1']").GetAttribute("data-mx-count"));
 
             cut.Find("[data-mx-tab-btn='1']").Click();

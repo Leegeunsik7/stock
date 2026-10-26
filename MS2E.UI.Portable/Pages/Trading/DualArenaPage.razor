@@ -39,7 +39,9 @@
      같은 IPlutoLearningPort 판독(PlutoLearningView.Tensor · 신규 주입 0 · null = '인지 텐서 미결선' 정직 렌더).
    [v12.18.87-DEV] 다크 슬레이트 벤토 콕핏(.da-cockpit 페이지 범위 토큰 #0B0F19/#111827/#1F2937) — ① 헤더(FAIL-CLOSED · 엔진 상태) ② 인지 학습 관제탑(PlutoCognitiveHud 4분할) +
      엔지니어링 진단 태그(접힘) ③ 추천 매트릭스(PlutoRecoMatrix · 전체/KRX/US/Upbit · 점수 분해 · 피드 미판독 = 대기 행) + 상세 근거 카드(접힘) ④ 아레나 대결 · 체결 타임라인.
-     기존 판독 · 셀렉터 · 주입 6종 불변(순수 재배치 · 표시 컴포넌트 [Parameter] 만). *@
+     기존 판독 · 셀렉터 · 주입 6종 불변(순수 재배치 · 표시 컴포넌트 [Parameter] 만).
+   [v12.18.89-DEV] UX 직관화 — 관제탑 최상단 [🧠 플루토 AI 라이브 브리핑](PlutoLiveBriefing 한 줄 자연어 요약) + 3대 시장 신호등(Upbit · KRX · US) ·
+     매트릭스 대기 행 = 신호등 기준 장외 문구. 판독 = 기존 주입 6종 스냅샷(KRX SessionOpen · US Phase · Upbit Tradable · 스웜 레인 · 거시 피드 문구) — 신규 주입 0. *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -66,10 +68,19 @@
     var govCrypto = CryptoPort.Governance;
     int govOn = (govKrx.Enabled ? 1 : 0) + (govUs.Enabled ? 1 : 0) + (govCrypto.Enabled ? 1 : 0);
     string govState = govOn == 3 ? "on" : govOn == 0 ? "off" : "mixed";
+    var lvHud = Learning.IsWired ? Learning.Current : default;
+    var rbHud = Reco.IsWired ? Reco.Current : PlutoRecoBoardView.None;
+    var swHud = rbHud.Swarm.Wired ? rbHud.Swarm : null;
+    bool kHas = Port.TryRead(out var kHud), uHasHud = UsPort.TryRead(out var uHud), cHasHud = CryptoPort.TryRead(out var cHud);
+    var lights = new PlutoMarketLights(
+        PlutoLiveBriefing.Krx(kHas, kHud.SessionOpen, kHud.SessionKst, swHud?.Krx),
+        PlutoLiveBriefing.Us(uHasHud, uHud.Phase, Learning.IsWired && !lvHud.HasRegime && PlutoMacroFeed.IsKeyPending(lvHud.MacroFeedText), swHud?.Us),
+        PlutoLiveBriefing.Crypto(cHasHud, cHud.Tradable, swHud?.Crypto));
+    string liveBrief = PlutoLiveBriefing.Compose(lights, kHud.SessionKst ?? cHud.SessionKst ?? uHud.SessionKst, Learning.IsWired, in lvHud, Reco.IsWired, rbHud);
 }
 <section class="ck-card ck-hud">
 <div class="ck-card-h"><h2>플루토 인지 학습 관제탑 <small>Cognitive Brain HUD</small></h2></div>
-<PlutoCognitiveHud Wired="@Learning.IsWired" View="@(Learning.IsWired ? Learning.Current : default)" />
+<PlutoCognitiveHud Wired="@Learning.IsWired" View="@lvHud" Briefing="@liveBrief" Lights="@lights" />
 <PlutoCouncilBalance View="@(Reco.IsWired ? Reco.Current.Council : PlutoCouncilView.None)" />
 <div class="da-gov-bar">
     <button class="da-gov-toggle @govState" role="switch" aria-checked="@(govOn == 3 ? "true" : "false")" data-gov="@govState" @onclick="ToggleGovernance">
@@ -148,7 +159,7 @@
 }
 <section class="ck-card ck-matrix">
 <div class="ck-card-h"><h2>레짐 적응형 AI 추천 매트릭스 <small>AI Top-Picks Matrix · 감시 @(rb.TotalMonitored)종목 · 통과 @(rb.TotalPassed)</small></h2></div>
-<PlutoRecoMatrix Board="@rb" Wired="@Reco.IsWired" Tab="@_mxTab" OnTab="@(t => _mxTab = t)" OnLoad="@LoadReco" />
+<PlutoRecoMatrix Board="@rb" Wired="@Reco.IsWired" Tab="@_mxTab" OnTab="@(t => _mxTab = t)" OnLoad="@LoadReco" Lights="@lights" />
 <details class="da-reco-detail">
 <summary>상세 근거 카드 · 수집 스웜 현황</summary>
 <div class="ar-card da-reco" data-reco="@(Reco.IsWired ? "wired" : "unwired")">
@@ -1212,6 +1223,11 @@ else
     .da-diag, .da-reco-detail { margin-top: 8px; border-top: 1px dashed #1F2937; padding-top: 6px; }
     .da-diag summary, .da-reco-detail summary { cursor: pointer; font-size: 11.5px; color: #6B7280; user-select: none; }
     .da-diag-body { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .hud-brief { margin: 0 0 10px; padding: 10px 12px; border: 1px solid #3730A3; border-radius: 10px; background: linear-gradient(90deg, #1E1B4B, #0B0F19); }
+    .hud-brief-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12.5px; color: #E0E7FF; }
+    .hud-brief-t { margin: 6px 0 0; font-size: 13px; line-height: 1.55; color: #F3F4F6; }
+    .hud-light { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; border: 1px solid #374151; color: #9CA3AF; background: #0B0F19; }
+    .hud-light.live { border-color: #14532D; color: #86EFAC; } .hud-light.closed { border-color: #312E81; color: #C7D2FE; } .hud-light.await { border-color: #78350F; color: #FCD34D; }
     .hud { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
     @@media (max-width: 1100px) { .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .hud-tile { background: #0B0F19; border: 1px solid #1F2937; border-radius: 10px; padding: 10px 12px; min-width: 0; }
@@ -1237,7 +1253,7 @@ else
     .cc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; color: #E5E7EB; margin-bottom: 6px; }
     .cc-key { font-size: 10.5px; color: #9CA3AF; } .cc-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
     .cc-s { font-size: 11px; color: #9CA3AF; } .cc-empty { font-size: 12px; color: #9CA3AF; padding: 4px 0; }
-    .cc-lane { display: grid; grid-template-columns: 44px minmax(0, 1fr) 150px 96px; align-items: center; gap: 8px; margin: 4px 0; }
+    .cc-lane { display: grid; grid-template-columns: 44px minmax(0, 1fr) 150px 170px; align-items: center; gap: 8px; margin: 4px 0; }
     .cc-lane .hud-tag { margin-top: 0; text-align: center; } .cc-asset { font-size: 11.5px; color: #E5E7EB; }
     .cc-stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: #1F2937; }
     .cc-stack i { display: block; height: 100%; }
@@ -1245,7 +1261,7 @@ else
     .cc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; font-size: 11.5px; }
     .cc-veto { color: #FCA5A5; font-weight: 700; } .cc-pass { color: #86EFAC; } .cc-lead { font-weight: 700; color: #E5E7EB; }
     .cc-lead.up { color: #E53935; } .cc-lead.down { color: #1E88E5; } .cc-spill { flex-basis: 100%; }
-    .mx-kelly { width: 64px; color: #9CA3AF; } .mx-kelly.k3 { color: #F9FAFB; font-weight: 700; } .mx-kelly.k2 { color: #FCA5A5; }
+    .mx-kelly { width: 96px; white-space: nowrap; color: #9CA3AF; } .mx-kelly.k3 { color: #F9FAFB; font-weight: 700; } .mx-kelly.k2 { color: #FCA5A5; }
     .mx-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .mx-tab { background: #0B0F19; color: #9CA3AF; border: 1px solid #1F2937; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
     .mx-tab.on { background: #1E1B4B; color: #E0E7FF; border-color: #4338CA; }

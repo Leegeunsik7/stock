@@ -1,8 +1,22 @@
 @* PlutoCognitiveHud — v12.18.87-DEV: 플루토 인지 학습 관제탑(벤토 4분할 · 다크 슬레이트 콕핏).
    ① 거시 레짐 매칭 게이지(12대 국면 · 유사도 바) ② 듀얼-코어 시소(모멘텀 % ↔ 악마의 변호인 엄격도 · 중앙 기준 양방향 바)
    ③ 누적 학습 성숙도(세대 · 평생 에피소드 · 섀도우 통과/거부 · 승률 개선 %p · 영속화 태그) ④ 3대 자산 텐서(활성 슬롯 출처 · 웜스타트 WarmReady/NoData).
+   [v12.18.89-DEV] 최상단 [🧠 플루토 AI 라이브 브리핑] 카드(한 줄 자연어 요약 + 3대 시장 신호등 · Briefing null = 미표시) · 사용자 용어 순화
+   (G0 → '0세대 (시세 데이터 축적 중)' · 판정 전 → '거시 분석 대기 (FRED 키 설정 시 가동)' · 보정 n/36 → '국면 가중치 (기본값)').
    순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0). 미결선/판정 전 = 빈 게이지 + 정직 문구(가짜 국면 · 가짜 가중치 0). 상승/공격 = 적색 · 하강/방어 = 청색. *@
 
+@if (Briefing is not null)
+{
+    <div class="hud-brief" data-hud-brief>
+        <div class="hud-brief-h"><b>🧠 플루토 AI 라이브 브리핑</b>
+            @foreach (var light in new[] { Lights.Crypto, Lights.Krx, Lights.Us })
+            {
+                <span class="hud-light @PlutoLightCode.Css(light.State)" data-hud-light="@light.Market" data-light-state="@PlutoLightCode.Css(light.State)">@PlutoTensorLaneView.AssetLabel(light.Market): @light.Badge</span>
+            }
+        </div>
+        <p class="hud-brief-t">@Briefing</p>
+    </div>
+}
 <section class="hud" data-hud="@(Wired ? "wired" : "unwired")">
     <div class="hud-tile" data-hud-tile="regime" data-hud-sim="@(Wired && View.HasRegime ? View.RegimeSimilarityX10 : -1)">
         <div class="hud-k">거시 레짐 매칭</div>
@@ -15,9 +29,9 @@
         }
         else
         {
-            <div class="hud-v dim">@(Wired ? "판정 전" : "학습 엔진 미결선")</div>
+            <div class="hud-v dim">@(Wired ? "거시 분석 대기" : "학습 엔진 미결선")</div>
             <div class="hud-gauge skel"><span style="width:0%"></span></div>
-            <div class="hud-s">@(Wired ? View.MacroFeedText ?? "거시 관측 2차원 이상 수집 후 12대 국면 판정" : "실시간 학습 미가동 호스트")</div>
+            <div class="hud-s">@(!Wired ? "실시간 학습 미가동 호스트" : PlutoMacroFeed.IsKeyPending(View.MacroFeedText) ? "(FRED 키 설정 시 가동)" : View.MacroFeedText ?? "거시 관측 2차원 이상 수집 후 12대 국면 판정")</div>
         }
     </div>
 
@@ -43,7 +57,7 @@
         <div class="hud-k">누적 학습 성숙도</div>
         @if (Wired)
         {
-            <div class="hud-v mono">G@(View.Generation)</div>
+            <div class="hud-v">@(View.Generation)세대 <small class="hud-s">(@PlutoPlainText.MaturityNote(View.Generation))</small></div>
             <div class="hud-s mono">평생 @(View.LifetimeEpisodes >= 0 ? View.LifetimeEpisodes.ToString("N0") + "회" : "— (영속화 미결선)") · 이번 기동 표본 @(View.Samples)</div>
             <div class="hud-s mono">섀도우 통과 @(View.Swaps) · 거부 @(View.RejectedSwaps)
                 @if (View.Shadow.HasComparison) { <span class="@(View.Shadow.WinRateGainBp > 0 ? "up" : View.Shadow.WinRateGainBp < 0 ? "down" : "")" data-hud-gain="@View.Shadow.WinRateGainBp"> · 승률 @PctP(View.Shadow.WinRateGainBp)</span> }
@@ -58,7 +72,7 @@
     </div>
 
     <div class="hud-tile" data-hud-tile="tensor" data-hud-tensor="@(View.Tensor is null ? "unwired" : "wired")">
-        <div class="hud-k">3대 자산 텐서 @if (View.Tensor is { } tv) { <span class="hud-s mono">보정 @(tv.CalibratedSlots)/36</span> }</div>
+        <div class="hud-k">3대 자산 텐서 @if (View.Tensor is { } tv) { <span class="hud-s" data-hud-calib="@tv.CalibratedSlots">@PlutoPlainText.TensorCalibration(tv.CalibratedSlots)</span> }</div>
         @if (View.Tensor is { } t)
         {
             @foreach (var l in t.Lanes)
@@ -81,6 +95,8 @@
 @code {
     [Parameter] public bool Wired { get; set; }
     [Parameter] public PlutoLearningView View { get; set; }
+    [Parameter] public string? Briefing { get; set; }
+    [Parameter] public PlutoMarketLights Lights { get; set; } = PlutoMarketLights.None;
 
     private static int Pct(int x10) => Math.Clamp(x10 / 10, 0, 100);
 

@@ -39,9 +39,10 @@ namespace StockManager.Tests.Cognitive
             Assert.Equal("3", cut.Find("[data-cc-lane='0']").GetAttribute("data-cc-lead"));            // KRX = 위험 통제 주도
             Assert.Contains("위험 통제 45%", cut.Find("[data-cc-lane='0']").TextContent);
             Assert.Contains("width:45%", cut.FindAll("[data-cc-lane='0'] .cc-stack i")[3].GetAttribute("style"));
-            Assert.Contains("켈리 12.5%", cut.Find("[data-cc-lane='0']").TextContent);
-            Assert.Contains("켈리 7/20", cut.Find("[data-cc-lane='1']").TextContent);                  // 표본 부족 = 비중 미표기
-            Assert.Contains("켈리 0%", cut.Find("[data-cc-lane='2']").TextContent);                    // 음의 엣지
+            Assert.Contains("권장 비중: 12.5%", cut.Find("[data-cc-lane='0']").TextContent);
+            Assert.Contains("권장 비중: 0% (관망)", cut.Find("[data-cc-lane='1']").TextContent);         // [v12.18.89-DEV] 표본 부족 = 관망(표본 수 = 툴팁)
+            Assert.Contains("7/20", cut.Find("[data-cc-lane='1'] .hud-tag").GetAttribute("title"));
+            Assert.Contains("권장 비중: 0% (진입 비권장)", cut.Find("[data-cc-lane='2']").TextContent);  // 음의 엣지
             Assert.Contains("거부권 미발동", cut.Find(".cc-foot").TextContent);
             Assert.Equal("2", cut.Find("[data-cc-leadpts]").GetAttribute("data-cc-leadpts"));
             Assert.Contains("up", cut.Find("[data-cc-leadpts]").ClassList);                            // 상승 = 적색
@@ -79,10 +80,11 @@ namespace StockManager.Tests.Cognitive
             var board = new PlutoRecoBoardView(true, 1, DateTime.UtcNow, new PlutoRecoMarketView(cards, 3, 0, 0, 0, 200, 3), PlutoRecoMarketView.None);
             using var ctx = new TestContext();
             var cut = ctx.RenderComponent<PlutoRecoMatrix>(p => p.Add(x => x.Board, board).Add(x => x.Wired, true).Add(x => x.Tab, PlutoRecoMarket.Krx));
-            Assert.Contains("Kelly %", cut.Find(".mx-grid thead").TextContent);
+            Assert.Contains("권장 비중", cut.Find(".mx-grid thead").TextContent);
             Assert.Equal("16.7%", cut.Find(".mx-row[data-mx-code='005930'] .mx-kelly").TextContent.Trim());
             Assert.Equal("1667", cut.Find(".mx-row[data-mx-code='005930'] .mx-kelly").GetAttribute("data-mx-kelly-bp"));
-            Assert.Equal("5/20", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").TextContent.Trim());
+            Assert.Equal("0% (관망)", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").TextContent.Trim());
+            Assert.StartsWith("표본 부족 5/20", cut.Find(".mx-row[data-mx-code='000660'] .mx-kelly").GetAttribute("title"));
             Assert.Equal("—", cut.Find(".mx-row[data-mx-code='035420'] .mx-kelly").TextContent.Trim());
             Assert.Equal("기본 70 + 모멘텀 +0 − 변호인 0 + 선행 +3 = 73", cut.Find(".mx-row[data-mx-code='005930'] .mx-score").GetAttribute("title"));
             Assert.Equal("3", cut.Find(".mx-row[data-mx-code='005930'] [data-mx-lead]").GetAttribute("data-mx-lead"));

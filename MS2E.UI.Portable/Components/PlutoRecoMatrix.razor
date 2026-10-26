@@ -2,6 +2,7 @@
    탭 = 전체(통합 점수 순위) · KRX · US · Upbit(라벨 = 감시 종목 수). 열 = 순위 · 종목 · 자산 · 점수 바(분해: 기본 + 모멘텀 − 변호인 = 최종 · 툴팁/인라인) ·
    핵심 진입 근거 · 리스크(악마의 변호인) · 상태. 피드 미판독 종목 = 시장별 집계 대기 행(스켈레톤 · 종목명/점수 생성 0 — CLAUDE.md §2).
    [v12.18.88-DEV] Kelly % 열 = 프랙탈 켈리 권장 비중(산출 = % · 표본 부족 = n/20 · 음의 엣지 = 0% · 위원회 미결선 = —) · 점수 분해 = 선행 파급(KRX) 포함.
+   [v12.18.89-DEV] 사용자 용어 순화 — 'Kelly %' → '권장 비중'(표본 부족 = 0% (관망) · 표본 n/20 = 툴팁) · 대기 행 = 시장 신호등 기준(장외 = '🌙 장마감 대기 중 (내일 09:00 개장)' · 그 외 = 시세 수신 대기).
    순수 표시 — [Parameter] · EventCallback 만(주입 0 · 엔진 참조 0). 1-Click 담기 = 부모 콜백(가상 원장 · liveArmed:false). *@
 
 <div class="mx" data-mx-tab="@Tab">
@@ -25,7 +26,7 @@
     {
         var rows = PlutoCockpitMatrix.Rows(Board, Wired, Tab);
         <table class="mx-grid" data-mx-rows="@rows.Count">
-            <thead><tr><th class="r">순위</th><th>종목</th><th>자산</th><th>점수</th><th class="r">Kelly %</th><th>핵심 진입 근거</th><th>리스크 요인(변호인)</th><th>상태</th></tr></thead>
+            <thead><tr><th class="r">순위</th><th>종목</th><th>자산</th><th>점수</th><th class="r">권장 비중</th><th>핵심 진입 근거</th><th>리스크 요인(변호인)</th><th>상태</th></tr></thead>
             <tbody>
             @foreach (var row in rows)
             {
@@ -42,7 +43,7 @@
                             <div class="mx-break mono" data-mx-break>기본 @sb.Base <i class="@(sb.Momentum > 0 ? "up" : sb.Momentum < 0 ? "down" : "")">@(sb.Momentum >= 0 ? "+" : "")@sb.Momentum</i> <i class="@(sb.Devil > 0 ? "down" : "")">−@sb.Devil</i>@if (sb.Lead != 0) { <i class="@(sb.Lead > 0 ? "up" : "down")" data-mx-lead="@sb.Lead"> 선행 @(sb.Lead > 0 ? "+" : "")@sb.Lead</i> }@(sb.Saturated ? " · 포화" : "")</div>
                         </td>
                         <td class="r mono mx-kelly k@(PlutoKellyCode.Normalize(c.KellyState))" data-mx-kelly="@PlutoKellyCode.Normalize(c.KellyState)" data-mx-kelly-bp="@c.KellyBp"
-                            title="@(c.KellyText.Length > 0 ? c.KellyText : "위원회 미결선 — 켈리 비중 없음")">@PlutoKellyCode.Cell(c.KellyState, c.KellyBp, c.KellySamples)</td>
+                            title="@KellyTitle(c)">@PlutoKellyCode.Plain(c.KellyState, c.KellyBp)</td>
                         <td class="mx-reason">@(c.Reasons.Count > 0 ? c.Reasons[0] : "—")</td>
                         <td class="mx-risk @(c.CounterCount == 0 ? "pass" : "watch")" data-mx-devil="@c.CounterCount">@c.CounterText</td>
                         <td><span class="mx-state live">관측</span>
@@ -51,15 +52,17 @@
                 }
                 else
                 {
-                    <tr class="mx-row mx-await" data-mx-await="@row.Market" data-mx-count="@row.Awaiting">
+                    var light = Lights.Of(row.Market);
+                    bool closed = light.State == PlutoLightCode.Closed;
+                    <tr class="mx-row mx-await" data-mx-await="@row.Market" data-mx-count="@row.Awaiting" data-mx-light="@PlutoLightCode.Css(light.State)">
                         <td class="r mono">—</td>
                         <td><span class="mx-skel"></span> <span class="mx-sub">감시 @(row.Awaiting)종목</span></td>
                         <td><span class="mx-asset a@(row.Market)">@PlutoCockpitMatrix.AssetTag(row.Market)</span></td>
                         <td class="mx-score"><div class="mx-bar skel"></div><b class="mono dim">--</b></td>
                         <td class="r mono dim">--</td>
-                        <td class="mx-reason dim">Awaiting Market Feed — @row.Note</td>
-                        <td class="dim">데이터 결손(정직 표기)</td>
-                        <td><span class="mx-state await">대기</span></td>
+                        <td class="mx-reason dim">@light.AwaitText(row.Note)</td>
+                        <td class="dim">@(closed ? "장외 — 점수 미산출" : "데이터 결손(정직 표기)")</td>
+                        <td><span class="mx-state await">@(closed ? "장외" : "대기")</span></td>
                     </tr>
                 }
             }
@@ -80,4 +83,9 @@
     [Parameter] public int Tab { get; set; } = PlutoCockpitMatrix.All;
     [Parameter] public EventCallback<int> OnTab { get; set; }
     [Parameter] public EventCallback<PlutoRecommendationCard> OnLoad { get; set; }
+    [Parameter] public PlutoMarketLights Lights { get; set; } = PlutoMarketLights.None;
+
+    private static string KellyTitle(PlutoRecommendationCard c) => PlutoKellyCode.Normalize(c.KellyState) == PlutoKellyCode.Insufficient
+        ? "표본 부족 " + c.KellySamples + "/" + PlutoKellyCode.MinSamples + " — 비중 미산출(관망)" + (c.KellyText.Length > 0 ? " · " + c.KellyText : "")
+        : c.KellyText.Length > 0 ? c.KellyText : "위원회 미결선 — 켈리 비중 없음";
 }
