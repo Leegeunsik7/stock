@@ -53,20 +53,24 @@ namespace StockManager.Engines.Cognitive.Screening
         NotConnected = 4,
     }
 
-    /// <summary>워커 1개 전용 표본 버퍼(재사용 · 단일 스레드). 시간 순서 = 소스가 오래된 것부터 채운다.</summary>
+    /// <summary>
+    /// 워커 1개 전용 표본 버퍼(재사용 · 단일 스레드). 시간 순서 = 소스가 오래된 것부터 채운다.
+    /// [v12.18.86-DEV] DailyBars = 분 봉 소스(업비트)가 별도로 받은 일봉(오래된 순 · 0 = 이번 조회 없음) — 로컬 Candles 적재(웜스타트) 전용 · 스크리닝 판독 0.
+    /// </summary>
     public sealed class PlutoAssetSample
     {
-        public const int MaxBars = 200, MaxTrades = 200, MaxDepth = 15;
+        public const int MaxBars = 200, MaxTrades = 200, MaxDepth = 15, MaxDailyBars = 120;
 
         public readonly PlutoOhlcvBar[] Bars = new PlutoOhlcvBar[MaxBars];
+        public readonly PlutoOhlcvBar[] DailyBars = new PlutoOhlcvBar[MaxDailyBars];
         public readonly PlutoSideTrade[] Trades = new PlutoSideTrade[MaxTrades];
         public readonly long[] BidQty = new long[MaxDepth], AskQty = new long[MaxDepth];
-        public int BarCount, TradeCount, DepthTiers;
+        public int BarCount, TradeCount, DepthTiers, DailyBarCount;
         public long BestBid, BestAsk;
 
         public void Clear()
         {
-            BarCount = TradeCount = DepthTiers = 0;
+            BarCount = TradeCount = DepthTiers = DailyBarCount = 0;
             BestBid = BestAsk = 0;
         }
     }

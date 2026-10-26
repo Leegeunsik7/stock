@@ -5,6 +5,7 @@
 //   [v12.18.83-DEV] 거시 피드 문구(호스트 결선 상태 · 예 'FRED API 키 미설정 · 관측 대기') 통과(null = 미표기).
 //   [v12.18.85-DEV] 섀도우 검증 요약(직전 판정 · 현행 가중치 섀도우 승률/MDD) → PlutoShadowView(인지 브리핑).
 //   [v12.18.84-DEV] 체크포인트 관리자(결선 시) → 평생 누적 학습 에피소드 · 영속화 상태 코드(미결선 = −1 · Off).
+//   [v12.18.86-DEV] 인지 텐서(결선 시) → 활성 국면 × 3대 자산군 해석 가중치(Resolve · 미보정 = 전역 가중치 그대로) + 웜스타트 보고 → 자산군별 WarmReady/NoData(PlutoTensorView).
 // ============================================================================
 using System;
 using MS2E.UI.Portable.Ports.Trading;
@@ -17,12 +18,17 @@ namespace StockManager.Adapters
         private readonly PlutoContinuousLearningSwarm _swarm;
         private readonly string? _macroFeedText;
         private readonly PlutoCheckpointManager? _checkpoints;
+        private readonly PlutoCognitiveTensorLake? _tensor;
+        private readonly PlutoReplayWarmStarter? _warmStart;
 
-        public PlutoLearningPortAdapter(PlutoContinuousLearningSwarm swarm, string? macroFeedText = null, PlutoCheckpointManager? checkpoints = null)
+        public PlutoLearningPortAdapter(PlutoContinuousLearningSwarm swarm, string? macroFeedText = null, PlutoCheckpointManager? checkpoints = null,
+            PlutoCognitiveTensorLake? tensor = null, PlutoReplayWarmStarter? warmStart = null)
         {
             _swarm = swarm ?? throw new ArgumentNullException(nameof(swarm));
             _macroFeedText = macroFeedText;
             _checkpoints = checkpoints;
+            _tensor = tensor;
+            _warmStart = warmStart;
         }
 
         public bool IsWired => true;
@@ -33,8 +39,42 @@ namespace StockManager.Adapters
             {
                 var v = Map(_swarm.Status, _swarm.Running, _macroFeedText);
                 var c = _checkpoints;
-                return c is null ? v : v with { LifetimeEpisodes = c.LifetimeEpisodes, PersistState = PersistCode(c.State) };
+                if (c is not null) v = v with { LifetimeEpisodes = c.LifetimeEpisodes, PersistState = PersistCode(c.State) };
+                return _tensor is null ? v : v with { Tensor = MapTensor(_tensor, _warmStart?.Report, _swarm.Status?.Weights ?? default) };
             }
+        }
+
+        /// <summary>[v12.18.86-DEV] 텐서 활성 슬롯(자산군별 Resolve · 미보정 = 전역 가중치) + 웜스타트 보고(null = 웜스타트 비활성 → 미결선) → 브리핑 DTO.</summary>
+        public static PlutoTensorView MapTensor(PlutoCognitiveTensorLake tensor, PlutoWarmStartReport? warm, in PlutoCognitiveWeights global)
+        {
+            ArgumentNullException.ThrowIfNull(tensor);
+            int regime = tensor.ActiveRegime;
+            var lanes = new PlutoTensorLaneView[PlutoCognitiveTensorLake.Assets];
+            for (int a = 0; a < lanes.Length; a++)
+            {
+                var asset = (PlutoAssetClass)a;
+                var w = global;
+                var src = tensor.Resolve(asset, regime, ref w);
+                int code = WarmCode(warm, asset, out var lane);
+                lanes[a] = new PlutoTensorLaneView(a, (int)src, w.Generation, w.MomentumTiltPct, w.DevilStrictnessPts, code,
+                    code == PlutoWarmCode.Ready ? lane.Series : 0, code == PlutoWarmCode.Ready ? lane.Simulations : 0);
+            }
+            return new PlutoTensorView(regime, regime > 0 ? PlutoRegimeVectorLake.Get(regime)?.Name : null, tensor.CalibratedSlots, lanes);
+        }
+
+        /// <summary>자산군 웜스타트 코드: 레인 결속 = Ready · 진행 전/중 = Pending · 장애 = Failed · 예산 초과로 미도달 = TimedOut · 그 외(캔들 없음) = NoData.</summary>
+        public static int WarmCode(PlutoWarmStartReport? r, PlutoAssetClass asset, out PlutoWarmStartLane lane)
+        {
+            lane = default;
+            if (r is null) return PlutoWarmCode.Off;
+            switch (r.State)
+            {
+                case PlutoWarmStartState.NotStarted or PlutoWarmStartState.Running: return PlutoWarmCode.Pending;
+                case PlutoWarmStartState.Failed: return PlutoWarmCode.Failed;
+            }
+            foreach (var l in r.Lanes)
+                if (l.Asset == asset && l.Series > 0 && l.Simulations > 0) { lane = l; return PlutoWarmCode.Ready; }
+            return r.State == PlutoWarmStartState.TimedOut ? PlutoWarmCode.TimedOut : PlutoWarmCode.NoData;
         }
 
         public static int PersistCode(PlutoPersistState s) => s switch

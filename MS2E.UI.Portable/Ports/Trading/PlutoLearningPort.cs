@@ -7,6 +7,7 @@
 //   [v12.18.83-DEV] MacroFeedText = 호스트 거시 피드 결선 문구(예 '거시 피드: FRED API 키 미설정 · 관측 대기' · null = 미표기).
 //   [v12.18.84-DEV] LifetimeEpisodes(재기동 합산 평생 누적 학습 에피소드 · −1 = 영속화 미결선) · PersistState(PlutoLearningPersist 코드) → 영속화 뱃지.
 //   [v12.18.85-DEV] Shadow(PlutoShadowView) = 섀도우 검증 직전 판정 · 현행 가중치 섀도우 성과 → 인지 브리핑(PlutoBriefingComposer) 입력.
+//   [v12.18.86-DEV] Tensor(PlutoTensorView) = 활성 국면 × 3대 자산군 해석 가중치(모멘텀 % · 악마의 변호인 엄격도) + 웜스타트 상태(WarmReady/NoData) → 인지 브리핑 텐서 패널.
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -94,6 +95,57 @@ namespace MS2E.UI.Portable.Ports.Trading
         };
     }
 
+    /// <summary>[v12.18.86-DEV] 자산군 웜스타트 상태 코드 — 0 미결선 · 1 대기/진행 중 · 2 WarmReady(로컬 캔들 리플레이 결속) · 3 NoData(로컬 캔들 없음) · 4 예산 초과 · 5 판독 장애(미상 = 미결선).</summary>
+    public static class PlutoWarmCode
+    {
+        public const int Off = 0, Pending = 1, Ready = 2, NoData = 3, TimedOut = 4, Failed = 5;
+
+        public static int Normalize(int w) => w is >= Pending and <= Failed ? w : Off;
+
+        public static string Label(int w) => Normalize(w) switch
+        {
+            Pending => "웜스타트 대기",
+            Ready => "WarmReady",
+            NoData => "NoData",
+            TimedOut => "예산 초과(미결속)",
+            Failed => "캔들 판독 장애",
+            _ => "웜스타트 미결선",
+        };
+
+        public static string Css(int w) => Normalize(w) switch
+        {
+            Ready => "on",
+            Pending => "stale",
+            TimedOut or Failed => "fail",
+            _ => "none",
+        };
+    }
+
+    /// <summary>[v12.18.86-DEV] 텐서 가중치 출처 코드 — 0 전역(슬롯 · 기준선 미보정) · 1 자산 기준선 · 2 국면 × 자산군 슬롯(미상 = 전역).</summary>
+    public static class PlutoTensorSourceCode
+    {
+        public const int Global = 0, Baseline = 1, Regime = 2;
+
+        public static string Label(int s) => s switch
+        {
+            Regime => "국면 슬롯",
+            Baseline => "자산 기준선",
+            _ => "전역 폴백",
+        };
+    }
+
+    /// <summary>
+    /// [v12.18.86-DEV] 자산군 1레인(Asset = PlutoRecoMarket 값 · 0 KRX · 1 US · 2 Upbit) — Source = PlutoTensorSourceCode · Generation/MomentumTiltPct/DevilStrictnessPts = 현재 활성 슬롯 해석 가중치 ·
+    /// Warm = PlutoWarmCode · WarmSeries/WarmSimulations = 리플레이 종목 수/가상 리플레이 수(WarmReady 만 양수).
+    /// </summary>
+    public readonly record struct PlutoTensorLaneView(int Asset, int Source, long Generation, int MomentumTiltPct, int DevilStrictnessPts, int Warm, int WarmSeries, int WarmSimulations)
+    {
+        public static string AssetLabel(int a) => a switch { PlutoRecoMarket.Us => "US", PlutoRecoMarket.Crypto => "Upbit", _ => "KRX" };
+    }
+
+    /// <summary>[v12.18.86-DEV] 36슬롯 인지 텐서 활성 상태(ActiveRegimeId 0 = 판정 전 · ActiveRegimeName null = 판정 전) · Lanes = 3대 자산군(KRX · US · Upbit 순).</summary>
+    public sealed record PlutoTensorView(int ActiveRegimeId, string? ActiveRegimeName, int CalibratedSlots, IReadOnlyList<PlutoTensorLaneView> Lanes);
+
     /// <summary>
     /// 학습 상태 1건. Running = 백그라운드 스웜 가동 · Health = PlutoLearningHealth · EpisodeName/SimilarityPct = 최근접 과거 국면(null = 판정 불가) ·
     /// EpisodeIsSeed = 시드 근사 에피소드 · Generation = 가중치 핫스왑 세대(0 = 학습 전 중립) · MomentumTiltPct/DevilStrictnessPts = 현재 학습 가중치 ·
@@ -102,12 +154,13 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// [v12.18.83-DEV] MacroFeedText = 거시 피드 결선 문구(null = 미표기).
     /// [v12.18.84-DEV] LifetimeEpisodes = 평생 누적 학습 에피소드(−1 = 영속화 미결선) · PersistState = PlutoLearningPersist.
     /// [v12.18.85-DEV] Shadow = 섀도우 검증 요약(인지 브리핑 · default = 판정 전).
+    /// [v12.18.86-DEV] Tensor = 36슬롯 인지 텐서 활성 슬롯 가중치 · 자산군별 웜스타트 상태(null = 텐서 미결선).
     /// </summary>
     public readonly record struct PlutoLearningView(
         bool Running, int Health, string? EpisodeName, int SimilarityPct, bool EpisodeIsSeed,
         long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps,
         string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null, string? MacroFeedText = null,
-        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off, PlutoShadowView Shadow = default)
+        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off, PlutoShadowView Shadow = default, PlutoTensorView? Tensor = null)
     {
         public bool HasMatch => EpisodeName is not null && SimilarityPct >= 0;
 

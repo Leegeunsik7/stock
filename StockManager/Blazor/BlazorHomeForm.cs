@@ -1887,7 +1887,8 @@ namespace StockManager.Blazor
                 services.AddSingleton(plutoTensor);
                 if (plutoWarmStart is not null) services.AddSingleton(plutoWarmStart);
                 services.AddSingleton(plutoSwarm);
-                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints));
+                services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints,
+                    tensor: plutoTensor, warmStart: plutoWarmStart));   // [v12.18.86-DEV] 인지 브리핑 텐서 패널(활성 슬롯 가중치 · 웜스타트 상태)
                 if (plutoCheckpoints is not null) services.AddSingleton(plutoCheckpoints);
                 plutoLearningRef = plutoSwarm;
                 plutoWeightsRef = plutoWeights;
@@ -1935,13 +1936,19 @@ namespace StockManager.Blazor
                 {
                     plutoSwarm = new StockManager.Engines.Cognitive.Screening.PlutoParallelLearningSwarm(plutoMatrix,
                         new StockManager.Engines.Cognitive.Screening.PlutoMultiAssetDataLake(plutoMatrix));
-                    plutoSwarm.Attach(new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared));
+                    // [v12.18.86-DEV] 웜스타트 원천 결선 — 수신된 정상 일봉만 portfolio.db Candles 에 Upsert(PlutoCandleRecorder · 스웜 워커 백그라운드 · (Symbol, Date) 중복 = 갱신):
+                    //   업비트 = 분 봉 표본 + 마켓당 1시간 1회 일봉 수확(같은 페이서 · 합산 초당 8회 이하) · KIS 국내/해외 = 일봉 표본 그대로. 미수신 = 기록 0(웜스타트 NoData 정직 유지).
+                    //   `Pluto.CandleRecorderEnabled`(기본 켜짐) · 비활성 = 일봉 수확 GET 0 · 적재 0.
+                    bool recordCandles = cfg.GetBool("Pluto.CandleRecorderEnabled", true);
+                    StockManager.Engines.Cognitive.Screening.IPlutoAssetDataSource Recorded(StockManager.Engines.Cognitive.Screening.IPlutoAssetDataSource src, StockManager.Adapters.PlutoCandleCadence cadence)
+                        => recordCandles ? new StockManager.Adapters.PlutoCandleRecorder(src, db, cadence) : src;
+                    plutoSwarm.Attach(Recorded(new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared, harvestDaily: recordCandles), StockManager.Adapters.PlutoCandleCadence.Intraday));
                     if ((provider as QuoteAggregator)?.Find<KisProvider>() is { } kisForSwarm)
                     {
                         // [v12.18.81-DEV] US = KIS 해외 일봉(HHDFS76240000 · 상장 거래소 표) · KRX/US 페이서 공유(같은 KisProvider 게이트 · 합산 간격 1,150ms — 해외 VTS EGW00201 마진)
                         var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(StockManager.Adapters.KisDailyBarSource.MinRequestInterval);
-                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer);
-                        plutoSwarm.Attach(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), plutoValuationBuffer);
+                        plutoSwarm.Attach(Recorded(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), StockManager.Adapters.PlutoCandleCadence.Daily), plutoValuationBuffer);
+                        plutoSwarm.Attach(Recorded(new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), StockManager.Adapters.PlutoCandleCadence.Daily), plutoValuationBuffer);
                     }
                     plutoSwarm.Start(TimeSpan.FromSeconds(60));
                     var swarmForShutdown = plutoSwarm;

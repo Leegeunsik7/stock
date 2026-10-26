@@ -1,0 +1,40 @@
+@* PlutoTensorPanel — v12.18.86-DEV: 인지 브리핑 내 36슬롯 텐서 상태(3대 자산군 활성 슬롯 가중치 · 웜스타트 WarmReady/NoData).
+   순수 표시 컴포넌트 — [Parameter] PlutoTensorView 만 소비(주입 0 · 엔진 참조 0). null = '인지 텐서 미결선' 정직 렌더(가짜 가중치 0).
+   모멘텀 % 부호 = 상승 적색(up) / 하강 청색(down). ★판독 전용 — 주문 · 무장 경로 0. *@
+
+@if (Tensor is null)
+{
+    <div class="da-tensor" data-tensor="unwired"><span class="ar-sub">🧮 인지 텐서 미결선 — 자산군별 슬롯 가중치 · 웜스타트 상태 없음</span></div>
+}
+else
+{
+    <div class="da-tensor" data-tensor="wired" data-tensor-regime="@Tensor.ActiveRegimeId" data-tensor-calibrated="@Tensor.CalibratedSlots">
+        <div class="da-tensor-head">🧮 인지 텐서 활성 슬롯 <span class="ar-sub">국면 @(Tensor.ActiveRegimeName is null ? "판정 전(자산 기준선)" : $"{Tensor.ActiveRegimeId:D2} {Tensor.ActiveRegimeName}") · 보정 슬롯 @(Tensor.CalibratedSlots)/36</span></div>
+        <table class="da-tensor-grid">
+            <thead><tr><th>자산군</th><th>가중치 출처</th><th>모멘텀</th><th>악마의 변호인 엄격도</th><th>웜스타트</th></tr></thead>
+            <tbody>
+            @foreach (var l in Tensor.Lanes)
+            {
+                <tr data-tensor-asset="@l.Asset" data-tensor-source="@l.Source" data-tensor-warm="@PlutoWarmCode.Normalize(l.Warm)">
+                    <td><b>@PlutoTensorLaneView.AssetLabel(l.Asset)</b></td>
+                    <td>@PlutoTensorSourceCode.Label(l.Source) <span class="ar-sub">G@(l.Generation)</span></td>
+                    <td class="@(l.MomentumTiltPct > 0 ? "up" : l.MomentumTiltPct < 0 ? "down" : "")" data-tensor-mom="@l.MomentumTiltPct">@Signed(l.MomentumTiltPct)%</td>
+                    <td data-tensor-strict="@l.DevilStrictnessPts">@Signed(l.DevilStrictnessPts)점</td>
+                    <td><span class="da-tensor-warm @PlutoWarmCode.Css(l.Warm)">@PlutoWarmCode.Label(l.Warm)</span>
+                        @if (PlutoWarmCode.Normalize(l.Warm) == PlutoWarmCode.Ready)
+                        {
+                            <span class="ar-sub">종목 @(l.WarmSeries) · 리플레이 @(l.WarmSimulations)회</span>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public PlutoTensorView? Tensor { get; set; }
+
+    private static string Signed(long v) => (v > 0 ? "+" : "") + v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}

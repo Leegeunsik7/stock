@@ -9,6 +9,8 @@
 //   파서(UpbitCandleProtocol): Utf8JsonReader 타입드 게터만(TryGetDecimal/TryGetInt64 · 문자열 = ValueTextEquals) · 예외 = JsonException 만 catch → 실패(−1).
 //     가격/수량 raw = 원/코인 × 10^8(소수 8자리 초과 = 내림 · 음수/범위 초과 = 실패 · 거래량 범위 초과 = 상한 클램프).
 //   동기 HttpClient.Send(워커 스레드 BelowNormal 에서 파싱/분석까지 수행) · 응답 버퍼 512KB 재사용(단일 워커 전용) · 요청당 시한 10초.
+//   [v12.18.86-DEV] harvestDaily(호스트 Candles 적재 결선 시에만) = ④ /v1/candles/days?count=120(일봉) — 마켓당 DailyRefresh(1시간)에 1회 · 같은 페이서(합산 초당 8회 이하) →
+//     sample.DailyBars(웜스타트 로컬 캔들 원천). 429/418 = RateLimited 그대로(스윕 중단) · 그 외 실패 = 일봉만 생략(분 봉 표본 유지 · DailyRefresh 후 재수확 · 즉시 재시도 0).
 //   ★liveArmed:false — 시세 GET 만(주문/계좌/인증 경로 0) · 9자 이상 마켓(키 인코딩 불가)은 스웜이 조회 전 제외.
 // ============================================================================
 using System;
@@ -168,19 +170,28 @@ namespace StockManager.Engines.Feeds.Crypto
     public sealed class UpbitPublicCandleSource : IPlutoAssetDataSource
     {
         public const string BaseUrl = "https://api.upbit.com/v1";
-        public const int DefaultPerSecond = 8, CandleCount = 200, TradeCount = 200, BufferBytes = 512 * 1024;
+        public const int DefaultPerSecond = 8, CandleCount = 200, TradeCount = 200, BufferBytes = 512 * 1024, DailyCount = PlutoAssetSample.MaxDailyBars;
         public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+        /// <summary>[v12.18.86-DEV] 마켓당 일봉 재수확 최소 간격(당일 봉 갱신 · 레이트 예산 보존).</summary>
+        public static readonly TimeSpan DailyRefresh = TimeSpan.FromHours(1);
 
         private readonly HttpClient _http;
         private readonly PlutoRequestPacer _pacer;
         private readonly byte[] _buffer = new byte[BufferBytes];
+        private readonly bool _harvestDaily;
+        private readonly Func<long> _nowMs;
+        private readonly System.Collections.Generic.Dictionary<string, long> _dailyAt = new(StringComparer.Ordinal);   // 단일 워커 전용
 
-        public UpbitPublicCandleSource(HttpClient http, PlutoRequestPacer? pacer = null)
+        public UpbitPublicCandleSource(HttpClient http, PlutoRequestPacer? pacer = null, bool harvestDaily = false, Func<long>? nowMs = null)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
             _pacer = pacer ?? new PlutoRequestPacer(DefaultPerSecond);
             if (_pacer.PerSecond > 10) throw new ArgumentOutOfRangeException(nameof(pacer), "업비트 시세 한도(초당 10회) 초과 게이트");
+            _harvestDaily = harvestDaily;
+            _nowMs = nowMs ?? (static () => Environment.TickCount64);
         }
+
+        public bool HarvestsDaily => _harvestDaily;
 
         public PlutoScreenMarket Market => PlutoScreenMarket.Crypto;
         public bool IsConnected => true;
@@ -213,6 +224,21 @@ namespace StockManager.Engines.Feeds.Crypto
             sample.DepthTiers = tiers;
             sample.BestBid = bid;
             sample.BestAsk = ask;
+            return _harvestDaily ? HarvestDaily(entry.Code, m, sample, ct) : PlutoFetchOutcome.Ok;
+        }
+
+        /// <summary>[v12.18.86-DEV] 일봉 수확(마켓당 DailyRefresh 1회) — 429/418 = RateLimited · 그 외 실패/빈 응답 = 일봉 생략(Ok · 분 봉 표본 유지).</summary>
+        private PlutoFetchOutcome HarvestDaily(string code, string escaped, PlutoAssetSample sample, CancellationToken ct)
+        {
+            long now = _nowMs();
+            if (_dailyAt.TryGetValue(code, out long at) && now - at < (long)DailyRefresh.TotalMilliseconds) return PlutoFetchOutcome.Ok;
+            _dailyAt[code] = now;                                                   // 시도 기준 간격(실패도 DailyRefresh 후 재수확 — 레이트 예산 보존)
+            var r = Get(BaseUrl + "/candles/days?market=" + escaped + "&count=" + DailyCount.ToString(System.Globalization.CultureInfo.InvariantCulture), ct, out int len);
+            if (r == PlutoFetchOutcome.RateLimited) return r;
+            if (r != PlutoFetchOutcome.Ok) return PlutoFetchOutcome.Ok;
+            int d = UpbitCandleProtocol.ParseCandles(_buffer.AsSpan(0, len), sample.DailyBars);
+            if (d <= 0) return PlutoFetchOutcome.Ok;
+            sample.DailyBarCount = d;
             return PlutoFetchOutcome.Ok;
         }
 

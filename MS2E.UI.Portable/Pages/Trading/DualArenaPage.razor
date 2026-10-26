@@ -34,7 +34,9 @@
      피드 판독/통과 합계 · 탭별 감시/판독 대기/통과 집계. 코인 1-Click = 크립토 모드 전환 + 마켓 · 코인 수량 바인딩만(접수 = 기존 매수 버튼).
    [v12.18.85-DEV] 거버너 바 [📊 인지 브리핑] 토글 → 브리핑 패널(PlutoBriefingComposer · 두 포트 판독만 · 열림 상태에서만 렌더 시 합성):
      12대 국면 매칭(국면명 · 유사도) · 누적 학습 에피소드 · 최적 가중치(모멘텀 조정 % · 악마의 변호인 엄격도) · 섀도우 개선치 · 자산군별 적응 추천 Top 3(점수 · 학습 투영 · 근거 · 리스크).
-     추천 카드 = 학습 투영 근거 줄(LearnText). 미결선/첫 스캔 전/통과 0 = 안내 문구만(가짜 국면 · 가짜 종목 0). 판독 전용(주문 경로 무변경). *@
+     추천 카드 = 학습 투영 근거 줄(LearnText). 미결선/첫 스캔 전/통과 0 = 안내 문구만(가짜 국면 · 가짜 종목 0). 판독 전용(주문 경로 무변경).
+   [v12.18.86-DEV] 브리핑 패널 내 PlutoTensorPanel — 3대 자산군(KRX · US · Upbit) 활성 슬롯 가중치(모멘텀 % · 악마의 변호인 엄격도) · 웜스타트 상태(WarmReady/NoData) ·
+     같은 IPlutoLearningPort 판독(PlutoLearningView.Tensor · 신규 주입 0 · null = '인지 텐서 미결선' 정직 렌더). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -99,6 +101,7 @@
             <dt>⚖️ 최적 가중치</dt><dd data-brief-gen="@br.Generation">@br.WeightsLine</dd>
             <dt>🧪 섀도우 검증</dt><dd class="@(br.Shadow.WinRateGainBp > 0 ? "up" : br.Shadow.WinRateGainBp < 0 ? "down" : "")" data-brief-gain="@br.Shadow.WinRateGainBp">@br.ShadowLine</dd>
         </dl>
+        <PlutoTensorPanel Tensor="@lvb.Tensor" />
         <div class="da-brief-markets">
         @foreach (var bm in br.Markets)
         {
@@ -1179,6 +1182,11 @@ else
     .da-brief-markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
     .da-brief-market { background: #1b2030; border: 1px solid #2c3446; border-radius: 8px; padding: 6px 10px; }
     .da-brief-picks { margin: 4px 0 0; padding-left: 18px; font-size: 0.92em; }
+    .da-tensor { margin: 6px 0 8px; background: #161b26; border: 1px solid #2c3446; border-radius: 8px; padding: 6px 10px; font-size: 0.92em; }
+    .da-tensor-head { font-weight: 700; color: #9fa8da; margin-bottom: 4px; }
+    .da-tensor-grid { width: 100%; border-collapse: collapse; } .da-tensor-grid th, .da-tensor-grid td { text-align: left; padding: 2px 8px; border-bottom: 1px solid #232a3a; }
+    .da-tensor-grid td.up { color: #E53935; } .da-tensor-grid td.down { color: #1E88E5; }
+    .da-tensor-warm { font-weight: 700; padding: 1px 6px; border-radius: 8px; } .da-tensor-warm.on { color: #a5d6a7; } .da-tensor-warm.stale { color: #ffe082; } .da-tensor-warm.fail { color: #ef9a9a; } .da-tensor-warm.none { color: #90a4ae; }
     .da-gov-toggle.on { background: #1b5e20; color: #fff; border-color: #66bb6a; }
     .da-gov-toggle.mixed { background: #4e342e; color: #fff; border-color: #f9a825; }
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }

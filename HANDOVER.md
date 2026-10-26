@@ -4764,3 +4764,24 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
   infra-scan 0(기준 117) · 래칫 ≤40(Portable 무변경). liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
 - 정직 한계: 실 캔들이 Candles 테이블에 적재되지 않은 환경에서는 웜스타트 = NoData · 국면 판정(FRED 키) 전에는 36슬롯이 아닌 자산 기준선만 학습/사용 ·
   리플레이 교훈 매핑은 가격 경로 휴리스틱(실 회고 판정기 아님 · 세대당 ±2점/±5% 상한 + 섀도우 게이트로만 반영) · UI(DualArena) 텐서 표 미노출(CLI 전용).
+
+## 206. v12.18.86-DEV — 웜스타트 실효성(portfolio.db Candles 일봉 적재 결선) + DualArena 인지 브리핑 텐서 패널 (2026-10-26)
+
+- 선행: 54b2705(§205). 오더 전제 검증: `Candles` 스키마(Symbol · Date PK · OHLCV) 와 판독 어댑터(PlutoLocalCandleSource)만 존재 — **기록 경로 0건**(Grep 전수) → 실 환경 웜스타트는 항상 NoData 였음.
+  업비트 스웜 소스 = 1분 봉만 수신(일봉 아님) · KIS 소스(KisDailyBarSource 국내/해외) = 일봉 수신.
+- PlutoCandleRecorder(Adapters · IPlutoAssetDataSource 데코레이터): 내부 Fetch 결과/표본 무변경 반환 · Ok 일 때만 일봉 Upsert
+  (`ON CONFLICT(Symbol, Date) DO UPDATE … WHERE 값 변화` = 중복 행 0 · 동일 값 기록 0). 원천 = sample.DailyBars(업비트 수확) → Cadence.Daily 소스의 sample.Bars → 그 외(분 봉) = 적재 0.
+  단위 환원: KRX 원 · US 센트 ÷ 100 · 코인 raw ÷ 10^8(거래량 동일) · Date = 봉 UTC 날짜 · 같은 날짜 중복 = 마지막 봉 · 무효 봉/시각 0 = 버림.
+  종목당 30분 1회 · 단일 트랜잭션 · 스웜 워커 스레드(BelowNormal) · DB 장애 = 롤백 + Faults 계수(첫 1회 경고 로그) · 재시도/큐잉 0. 미수신(NoData/RateLimited/Faulted/NotConnected) = 기록 0.
+- UpbitPublicCandleSource(harvestDaily 옵션 · 기본 끔 = 기존 GET 3회 불변): ④ /v1/candles/days?count=120 — 마켓당 1시간 1회(시도 기준 · 실패도 창 내 재요청 0) · 같은 페이서(합산 초당 8회 이하) ·
+  429/418 = RateLimited(스윕 중단) · 그 외 실패 = 일봉만 생략(분 봉 표본 유지). PlutoAssetSample.DailyBars(120) 추가(스크리닝 판독 0).
+- 호스트(BlazorHomeForm): `Pluto.CandleRecorderEnabled`(기본 켜짐) → 업비트(Intraday + 수확) · KIS 국내/해외(Daily) 소스를 레코더로 감쌈 · 비활성 = 수확 GET 0 · 적재 0.
+  KIS 미구성 호스트 = KRX/US 적재 0 → 해당 자산군 웜스타트 NoData 유지(정직). 웜스타트는 기동 1회 — 적재분은 **다음 기동**부터 반영.
+- UI: PlutoLearningView.Tensor(PlutoTensorView · 순수 DTO) + PlutoWarmCode(Off/Pending/Ready/NoData/TimedOut/Failed) · PlutoTensorSourceCode. PlutoLearningPortAdapter(tensor · warmStart 인자) =
+  활성 국면으로 자산군별 Resolve(미보정 = 전역 가중치 · 출처 '전역 폴백') + 웜스타트 보고 레인 → WarmReady(종목 수 · 리플레이 수) / NoData / 예산 초과 / 장애.
+  MS2E.UI.Portable/Components/PlutoTensorPanel.razor([Parameter] 만 · 주입 0 · 엔진 참조 0) → DualArenaPage [📊 인지 브리핑] 패널 내 표(모멘텀 상승 적색/하강 청색) · null = '인지 텐서 미결선'.
+  DualArenaPage @inject 6종 불변 · 래칫 ≤40 · infra-scan 0.
+- 테스트: PlutoCandleWarmStartWiringTests 16건(ConcurrencyStress) + 호스트 결선 문자열 계약 4건 갱신(PlutoParallelLearningSwarm · KisOverseasDailyBarSource · PlutoContinualLearning · PlutoPublicMacroSource).
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,659 통과 / 9 건너뜀 / 0 실패(5,668) · infra-scan 0(기준 117) ·
+  δ=0 기존 프로브(텐서 Resolve · KRX 정산) 통과 — 레코더/수확은 콜드 워커 경로(핫패스 무변경). liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
+- 정직 한계: 업비트 일봉 120봉 → 리플레이 MinBars(22) 충족 · KIS 일봉은 150일 조회(약 100봉). 실 네트워크 종단 적재는 미실측(대역 HTTP·대역 소스로 검증).

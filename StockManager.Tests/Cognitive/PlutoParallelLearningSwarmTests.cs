@@ -555,8 +555,8 @@ namespace StockManager.Tests.Cognitive
             string Read(params string[] p) => System.IO.File.ReadAllText(System.IO.Path.Combine(dir!.FullName, System.IO.Path.Combine(p)));
             string form = Read("StockManager", "Blazor", "BlazorHomeForm.cs");
             Assert.Contains("cfg.GetBool(\"Pluto.SwarmEnabled\", true)", form);
-            Assert.Contains("new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared)", form);
-            Assert.Contains("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer)", form);
+            Assert.Contains("new StockManager.Engines.Feeds.Crypto.UpbitPublicCandleSource(HttpPool.Shared, harvestDaily: recordCandles)", form);
+            Assert.Contains("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), StockManager.Adapters.PlutoCandleCadence.Daily), plutoValuationBuffer)", form);
             Assert.Contains("cryptoArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.CryptoArenaFeed.UpbitStream", form);
             Assert.Contains("krxArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.KrxArenaFeed.Bridge", form);
             Assert.Contains("usArenaFeeder.AppliedSource == MS2E.UI.Portable.Ports.Trading.UsArenaFeed.KisOverseas", form);

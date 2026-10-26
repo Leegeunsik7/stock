@@ -395,8 +395,8 @@ namespace StockManager.Tests.Cognitive
             string form = Read("StockManager", "Blazor", "BlazorHomeForm.cs");
             int pacer = form.IndexOf("var kisSwarmPacer = new StockManager.Engines.Cognitive.Screening.PlutoRequestPacer(StockManager.Adapters.KisDailyBarSource.MinRequestInterval);", StringComparison.Ordinal);
             Assert.True(pacer > 0);
-            Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
-            Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
+            Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer), StockManager.Adapters.PlutoCandleCadence.Daily), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
+            Assert.True(form.IndexOf("new StockManager.Adapters.KisDailyBarSource(kisForSwarm, kisSwarmPacer, StockManager.Engines.Cognitive.Screening.PlutoScreenMarket.Us), StockManager.Adapters.PlutoCandleCadence.Daily), plutoValuationBuffer)", StringComparison.Ordinal) > pacer);
             string src = Read("StockManager", "Adapters", "KisDailyBarSource.cs");
             Assert.DoesNotContain("HttpMethod.Post", src);
             Assert.DoesNotContain("/trading/", src);
