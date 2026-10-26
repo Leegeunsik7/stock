@@ -4785,3 +4785,21 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,659 통과 / 9 건너뜀 / 0 실패(5,668) · infra-scan 0(기준 117) ·
   δ=0 기존 프로브(텐서 Resolve · KRX 정산) 통과 — 레코더/수확은 콜드 워커 경로(핫패스 무변경). liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
 - 정직 한계: 업비트 일봉 120봉 → 리플레이 MinBars(22) 충족 · KIS 일봉은 150일 조회(약 100봉). 실 네트워크 종단 적재는 미실측(대역 HTTP·대역 소스로 검증).
+
+## 207. v12.18.86-GM — 36슬롯 인지 텐서 + 웜스타트 Candles 적재 + 인지 브리핑 텐서 패널 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-26)
+
+- 선행: v12.18.86-DEV = 54b2705(§205) + 28b12cb(§206). dotnet build-server shutdown 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 12.18.85 → 12.18.86(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 86, 0)` ×2 · "12.18.86" 핀 · HostVersion_Is_12_18_86 · release-package.ps1 머리말 · BOM/줄바꿈 바이트 치환) =
+  975afae(4파일 11/11줄 = 직전 승격 합계와 일치 · 잔여 0) · 태그 v12.18.86-GM -f → 975afae. 커밋 전 GM 핀 테스트 48건 로컬 선통과.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,659 통과 + 9 건너뜀(옵트인) · 실패 0 · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드(이중키 조회 16 · 마스터 플래그 1) ·
+  [7/11] 봉인 38 아티팩트(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal A4400629… · verify-live-armed(조회 지점 21 · 위반 0) ·
+  [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 = 봉인 해시 · 격리 기동 PID 29824 · HWND 0x1F0FA6 실측.
+- 산출물: release-v12.18.86-GM.zip(F251E2B3…) · StockManager-v12.18.86-Standalone-win-x64.zip(39AC27D7…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit 975afae) · manifest.sig 외 15종.
+  사후 독립 대조: 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 SHA-256 일치(불일치/누락 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(스크립트와 같은 인자 · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.85-GM 15종 → release/superseded-v12.18.85-GM/. 신규 15종 복사 후 재대조(38/38 · .sha256 · master-seal 바이트 동일) · worktree 제거 · prune.
+  잔류: 격리 기동 PID 29824 종료 확인 · 실행 중인 MS2E.StockSuite.exe(PID 45568)는 메인 체크아웃 bin\Debug 인스턴스(타 세션/사용자 · 패키징 무관 · 미종료). 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 36슬롯 텐서 · 웜스타트 · Candles 적재 레코더 · 인지 브리핑 텐서 패널 포함 · 첫 기동 = Candles 비어 있으면 웜스타트 NoData(적재분은 다음 기동부터) ·
+  KIS 미구성 시 KRX/US 적재/추천 0 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
