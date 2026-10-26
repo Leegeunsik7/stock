@@ -4671,3 +4671,23 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 정직: 보정기는 샤프 지수를 산출하지 않음 → 체크포인트에 섀도우 승률/MDD 만 기록(샤프 날조 0). 가중치는 전역 1벌 — 국면 ID 는 기록 시점 국면(판정 전 −1) 문맥 표기이며
   국면별 개별 가중치 아님. 보정기 표본 링(256)은 영속화 대상 아님(재기동 후 표본 재축적 · MinSamples 20 이후 재보정). 실 장기 운용 재기동 실측 미수행(테스트 DB 기반).
   liveArmed:false · 인터락 30(0x800000001FFFFFFF) 무변경 · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 202. v12.18.84-GM — 플루토 학습 가중치 영속화(SQLite 롤링 체크포인트 레이크 + 기동 안전 복원) + CI CS0649 수정 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-26)
+
+- 선행: v12.18.84-DEV(§201) = 3fc4565 · CI CS0649(HeadlessUiSurface._stale 미할당 → 필드 제거 · StaleTargets => 0 고정 · 노후 표적 재시도 경로 없음 주석) = d1c631a(원격 master 푸시 완료 · 이번 태그에 포함).
+- 12.18.83 → 12.18.84(csproj Version/AssemblyVersion/FileVersion · GoldenMasterFreeze/Packaging 핀 · release-package.ps1 머리말 · BOM/줄바꿈 유지) =
+  6848544(4파일 · 11/11 줄) · 태그 v12.18.84-GM -f. dotnet build-server shutdown 후 착수 · MS2E_*/PROBE 환경변수 미설정 확인.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 는 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E ·
+  [3/11] 전체 스위트 5,597 통과 + 9 건너뜀(옵트인) · 실패 0 · [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 ·
+  [6/11] liveArmed:false 소스 가드 · [7/11] 봉인 38 아티팩트 · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal A2844D93… ·
+  verify-live-armed(조회 지점 21) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 ·
+  [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 바이너리 = 봉인 해시 · 격리 기동 PID 39792 · HWND 0x380E02 실측.
+- 산출물: release-v12.18.84-GM.zip(E5777999…) · StockManager-v12.18.84-Standalone-win-x64.zip(B453EA1C…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false) · manifest.sig 외 15종.
+  사후 독립 대조: 매니페스트 바이너리 38 ↔ 배포본 동명 항목 SHA-256 38/38 일치 · 불일치/누락 0 · zip 2종 .sha256 일치.
+- 이관: 메인 release/ 의 v12.18.83-GM 15종 → release/superseded-v12.18.83-GM/. 신규 15종 메인 release/ 복사(복사본 재대조 38/38 · .sha256 일치).
+- 태그 빌드 CLI 독립 재수검(스크립트와 같은 인자 · worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+  worktree 제거 · prune · 격리 기동 임시 폴더 0 · 잔류 호스트 프로세스 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 바이너리 상태(정직): 학습 가중치 영속화 기본 켜짐(`Pluto.LearningPersistEnabled`) · 첫 기동 = 체크포인트 없음 → 중립 시작('영속화 가동 중' · 누적 0회) ·
+  FRED 키 미설정 출하(관측 대기 · 국면 '판정 전') · 실 장기 운용 재기동 실측 미수행 · liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) ·
+  타 세션 파일 3종 미스테이징 · 이번 GM 커밋/태그 원격 푸시 없음(d1c631a 까지만 푸시됨).
