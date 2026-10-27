@@ -12,6 +12,8 @@
 //   웜스타트(ApplyReplay): 가상 리플레이 표본으로 채운 임시 보정기 → 같은 제안 · 섀도우 게이트 → 통과 시 셀 핫스왑(실 에피소드 계수 0 · 합성 표본 영속 0).
 //   영속(PlutoCheckpointManager 위임 · 콜드): 셀별 마지막 기록과 (세대 · tilt · 엄격도 · 평생 에피소드) 가 다를 때만 슬롯 행 1건 → (RegimeId, AssetClass) 복합 키 복원.
 //   ★δ=0: Resolve/TryRead/Observe/Recalibrate 힙 할당 0(고정 배열 · 값 타입). ★liveArmed:false — 가상 원장 진입 판정 입력만(주문 수단 0) · QuantumVault/피어 0.
+//   [v12.18.93-DEV] 사전 가중치(LoadPriors · PlutoRegimePriors · 옵트인): Resolve 폴백 = 국면 슬롯(보정) → 기준선(보정) → 전역(보정 · 세대 &gt; 0) → 국면 사전 가중치(세대 0) → 전역 중립.
+//     미보정 셀 첫 보정은 사전 가중치를 출발점으로 제안(섀도우 게이트 동일). 리플레이 계수(RecordReplay · 합성 표본 · 실 에피소드/영속 무관) · 직전 핫스왑 Δ(tilt · 엄격도) 콜드 판독.
 // ============================================================================
 using System;
 using System.Collections.Generic;
@@ -37,6 +39,8 @@ namespace StockManager.Engines.Cognitive.Learning
         Baseline = 1,
         /// <summary>국면 × 자산군 전용 슬롯.</summary>
         Regime = 2,
+        /// <summary>[v12.18.93-DEV] 국면 사전 가중치(세대 0 · 실측 아님).</summary>
+        Prior = 3,
     }
 
     /// <summary>슬롯 학습 성숙도.</summary>
@@ -53,8 +57,10 @@ namespace StockManager.Engines.Cognitive.Learning
     }
 
     /// <summary>셀 1개 상태(콜드 · 브리핑/감사용).</summary>
+    /// <remarks>[v12.18.93-DEV] Prior/HasPrior = 사전 가중치(적재 시) · ReplaySamples/ReplayWins = 가속 리플레이 합성 표본 누계 · LastDeltaTilt/LastDeltaStrict = 직전 핫스왑 변화량.</remarks>
     public readonly record struct PlutoTensorCell(int RegimeId, PlutoAssetClass Asset, PlutoCognitiveWeights Weights, long LifetimeEpisodes, long SessionSamples,
-        long WarmStarts, PlutoSlotMaturity Maturity);
+        long WarmStarts, PlutoSlotMaturity Maturity, PlutoCognitiveWeights Prior = default, bool HasPrior = false, long ReplaySamples = 0, long ReplayWins = 0,
+        int LastDeltaTilt = 0, int LastDeltaStrict = 0);
 
     public sealed class PlutoCognitiveTensorLake
     {
@@ -70,6 +76,12 @@ namespace StockManager.Engines.Cognitive.Learning
         private readonly long[] _warmStarts = new long[Cells];
         private readonly PlutoLearningCheckpoint[] _lastSaved = new PlutoLearningCheckpoint[Cells];
         private readonly PlutoShadowVerdict[] _lastVerdict = new PlutoShadowVerdict[Cells];
+        private readonly PlutoCognitiveWeights[] _prior = new PlutoCognitiveWeights[Cells];
+        private readonly long[] _replaySamples = new long[Cells];
+        private readonly long[] _replayWins = new long[Cells];
+        private readonly int[] _deltaTilt = new int[Cells];
+        private readonly int[] _deltaStrict = new int[Cells];
+        private int _priorsLoaded;
         private readonly object _learnGate = new();
         private int _activeRegime;
         private long _swaps, _rejected, _activations;
@@ -82,6 +94,22 @@ namespace StockManager.Engines.Cognitive.Learning
                 _calibrators[i] = new PlutoWeightCalibrator();
             }
         }
+
+        /// <summary>[v12.18.93-DEV] 사전 가중치 적재(국면 행 36셀 · 기준선 = 중립 · 콜드 1회 · 반환 = 적재 셀 수).</summary>
+        public int LoadPriors()
+        {
+            int n = 0;
+            for (int cell = Assets; cell < Cells; cell++)
+            {
+                var (regime, asset) = KeyOf(cell);
+                _prior[cell] = PlutoRegimePriors.Of(regime, asset);
+                n++;
+            }
+            Volatile.Write(ref _priorsLoaded, 1);
+            return n;
+        }
+
+        public bool PriorsLoaded => Volatile.Read(ref _priorsLoaded) != 0;
 
         /// <summary>셀 인덱스(δ=0): 국면 1~12 = 해당 행 · 그 외(판정 전 · 범위 밖) = 기준선 행 0.</summary>
         public static int CellOf(PlutoAssetClass asset, int regimeId) =>
@@ -126,6 +154,11 @@ namespace StockManager.Engines.Cognitive.Learning
             {
                 weights = baseline;
                 return PlutoTensorSource.Baseline;
+            }
+            if (weights.Generation == 0 && regimeId is >= 1 and <= Regimes && Volatile.Read(ref _priorsLoaded) != 0)
+            {
+                weights = _prior[regimeId * Assets + a];
+                return PlutoTensorSource.Prior;
             }
             return PlutoTensorSource.Global;
         }
@@ -195,17 +228,41 @@ namespace StockManager.Engines.Cognitive.Learning
         {
             var seq = _cells[cell];
             seq.TryRead(out var current);
+            if (current.Generation == 0 && cell >= Assets && Volatile.Read(ref _priorsLoaded) != 0) current = _prior[cell];   // [v12.18.93-DEV] 첫 보정 출발점 = 사전 가중치
             if (!calibrator.Propose(in current, out var candidate)) { _lastVerdict[cell] = default; return false; }
             var verdict = calibrator.ShadowValidate(in current, ref candidate);
             _lastVerdict[cell] = verdict;
             if (verdict.Reason == PlutoShadowReason.NoChange) return false;
-            if (seq.TrySwap(in candidate, verdict.Passed)) { Interlocked.Increment(ref _swaps); return true; }
+            if (seq.TrySwap(in candidate, verdict.Passed))
+            {
+                Volatile.Write(ref _deltaTilt[cell], candidate.MomentumTiltPct - current.MomentumTiltPct);
+                Volatile.Write(ref _deltaStrict[cell], candidate.DevilStrictnessPts - current.DevilStrictnessPts);
+                Interlocked.Increment(ref _swaps);
+                return true;
+            }
             Interlocked.Increment(ref _rejected);
             return false;
         }
 
-        /// <summary>셀 현재 가중치의 '진입 당시 엄격도' (웜스타트 표본 기록용 · 콜드).</summary>
-        public int StrictnessOf(PlutoAssetClass asset, int regimeId) => TryRead(asset, regimeId, out var w) ? w.DevilStrictnessPts : 0;
+        /// <summary>셀 현재 가중치의 '진입 당시 엄격도' (웜스타트 표본 기록용 · 콜드). [v12.18.93-DEV] 미보정 + 사전 가중치 적재 = 사전 엄격도.</summary>
+        public int StrictnessOf(PlutoAssetClass asset, int regimeId) => TryStartingPoint(asset, regimeId, out var w) ? w.DevilStrictnessPts : 0;
+
+        /// <summary>[v12.18.93-DEV] 셀 출발 가중치(콜드): 보정됨 = 현재 · 미보정 + 사전 가중치 적재 = 사전 가중치 · 그 외 = 현재(중립). 판독 경합 = false.</summary>
+        public bool TryStartingPoint(PlutoAssetClass asset, int regimeId, out PlutoCognitiveWeights weights)
+        {
+            if (!TryRead(asset, regimeId, out weights)) return false;
+            int cell = CellOf(asset, regimeId);
+            if (weights.Generation == 0 && cell >= Assets && PriorsLoaded) weights = _prior[cell];
+            return true;
+        }
+
+        /// <summary>[v12.18.93-DEV] 가속 리플레이 합성 표본 계수(콜드 · 실 에피소드 · 보정기 링 · 영속 무관).</summary>
+        public void RecordReplay(PlutoAssetClass asset, int regimeId, int samples, int wins)
+        {
+            int cell = CellOf(asset, regimeId);
+            Interlocked.Add(ref _replaySamples[cell], Math.Max(0, samples));
+            Interlocked.Add(ref _replayWins[cell], Math.Clamp(wins, 0, Math.Max(0, samples)));
+        }
 
         /// <summary>셀 평생 에피소드 = 복원 기준 + 이번 기동 관측(합성 리플레이 제외).</summary>
         public long LifetimeEpisodes(int cell) => Interlocked.Read(ref _baseEpisodes[cell]) + _calibrators[cell].Observed;
@@ -229,7 +286,10 @@ namespace StockManager.Engines.Cognitive.Learning
                 : lifetime == 0 ? PlutoSlotMaturity.Untrained
                 : lifetime < PlutoWeightCalibrator.MinSamples ? PlutoSlotMaturity.Accumulating
                 : PlutoSlotMaturity.Calibratable;
-            return new PlutoTensorCell(regime, asset, w, lifetime, _calibrators[cell].Observed, Interlocked.Read(ref _warmStarts[cell]), maturity);
+            bool prior = cell >= Assets && PriorsLoaded;
+            return new PlutoTensorCell(regime, asset, w, lifetime, _calibrators[cell].Observed, Interlocked.Read(ref _warmStarts[cell]), maturity,
+                prior ? _prior[cell] : default, prior, Interlocked.Read(ref _replaySamples[cell]), Interlocked.Read(ref _replayWins[cell]),
+                Volatile.Read(ref _deltaTilt[cell]), Volatile.Read(ref _deltaStrict[cell]));
         }
 
         /// <summary>국면 슬롯 보정 완료 수(0~36 · 기준선 제외).</summary>

@@ -1,0 +1,40 @@
+@* PlutoThoughtStream — v12.18.93-DEV: 💭 플루토 실시간 생각 독백 스트림(체결 타임라인 상단 · 최신순).
+   순수 표시 — [Parameter] 독백 목록만(주입 0 · 엔진 참조 0). 독백 = 이미 게시된 AI 근거 카드의 렌더 콜드 경로 합성(PlutoThoughtComposer · 체결 핫패스 무관).
+   근거 카드 0 = 정직 문구(가짜 독백 0). 매수 = 적색 · 매도 = 청색. *@
+
+<div class="pts" data-pts="@Lines.Count">
+    <div class="pts-head">💭 플루토 생각 독백 <span class="ar-sub">Inner Monologue · 관찰 → 논쟁 → 결정 · 근거 카드 기반 · 가상 원장</span></div>
+    @if (Lines.Count == 0)
+    {
+        <div class="ar-sub pts-empty" data-pts-empty>아직 생각할 체결이 없습니다 — 플루토는 실제 가상 체결이 일어날 때만 독백을 남깁니다.</div>
+    }
+    @foreach (var l in Lines)
+    {
+        <div class="pts-line @(l.Side > 0 ? "buy" : "sell")" data-pts-seq="@l.Seq">
+            <span class="pts-at">@l.AtKst.ToString("HH:mm:ss")</span>
+            <b class="pts-name">@l.Name</b>
+            <span class="pts-step obs"><i>[관찰]</i> @l.Observe</span>
+            <span class="pts-arrow">→</span>
+            <span class="pts-step deb"><i>[논쟁]</i> @l.Debate</span>
+            <span class="pts-arrow">→</span>
+            <span class="pts-step dec"><i>[결정]</i> @l.Decide</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<PlutoThoughtLine> Lines { get; set; } = Array.Empty<PlutoThoughtLine>();
+}
+
+<style>
+    .pts { border: 1px solid #312E81; background: #0F1024; border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+    .pts-head { font-size: 12.5px; font-weight: 700; color: #C7D2FE; margin-bottom: 4px; }
+    .pts-empty { padding: 4px 0; }
+    .pts-line { font-size: 12px; line-height: 1.6; padding: 4px 0; border-top: 1px dashed #1F2937; color: #D1D5DB; }
+    .pts-line:first-of-type { border-top: 0; }
+    .pts-line.buy .pts-name { color: #E53935; } .pts-line.sell .pts-name { color: #1E88E5; }
+    .pts-at { color: #6B7280; margin-right: 6px; font-family: ui-monospace, Consolas, monospace; }
+    .pts-step i { font-style: normal; font-weight: 700; color: #A5B4FC; }
+    .pts-step.dec i { color: #FCD34D; }
+    .pts-arrow { color: #6B7280; margin: 0 4px; }
+</style>

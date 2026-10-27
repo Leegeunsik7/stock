@@ -1,0 +1,58 @@
+@* PlutoStudyJournalPanel — v12.18.93-DEV: ⚡ 자율 학습 가속 결과(자산군별 라운드 G→G+1 · 섀도우 승률 개선 %p · 가중치 Δ) + 📓 플루토 공부 노트(학습 일지).
+   순수 표시 — [Parameter] PlutoReplayRunView 만(주입 0 · 엔진 참조 0). 미실행/미결선/캔들 없음 = 정직 문구(가짜 진화 0). 합성 표본 = '합성' 표기.
+   승률 개선 + = 적색(up) · − = 청색(down). *@
+
+<div class="psj" data-psj-state="@PlutoReplayStateCode.Normalize(Run.State)">
+    <div class="psj-head">⚡ 자율 학습 가속 · 📓 플루토 공부 노트 <span class="ar-sub">로컬 과거 캔들 가상 회고 · 섀도우 게이트 진화 · 합성 표본(실 청산 표본과 분리)</span></div>
+    <div class="psj-sum" data-psj-sum>@Run.Summary@(Run.Completed && Run.RegimeName is not null ? " · 대상 국면 " + Run.RegimeName : "")</div>
+    @if (Run.Completed && Run.Lanes.Count > 0)
+    {
+        <table class="psj-table" data-psj-rounds>
+            <thead><tr><th>자산 · 대상 셀</th><th>라운드</th><th>표본(합성)</th><th>세대</th><th>섀도우 판정</th><th>승률 기준 → 후보</th><th>개선</th><th>가중치 Δ</th></tr></thead>
+            <tbody>
+            @foreach (var l in Run.Lanes)
+            {
+                @foreach (var r in l.Rounds)
+                {
+                    <tr data-psj-asset="@l.Asset" data-psj-round="@r.Round" data-psj-swapped="@(r.Swapped ? "1" : "0")">
+                        <td>@(r.Round == 1 ? PlutoTensorLaneView.AssetLabel(l.Asset) + " · " + l.TargetName : "")</td>
+                        <td class="mono">R@(r.Round)</td>
+                        <td class="mono">@r.Samples (@(r.Wins)승)</td>
+                        <td class="mono @(r.Swapped ? "evo" : "")">@r.GenText</td>
+                        <td>@PlutoShadowVerdictCode.Label(r.Verdict)</td>
+                        <td class="mono">@Wr(r.BaseWinBp) → @Wr(r.CandWinBp)</td>
+                        <td class="mono @(r.GainBp > 0 ? "up" : r.GainBp < 0 ? "down" : "")" data-psj-gain="@r.GainBp">@r.GainText</td>
+                        <td class="mono">@(r.Swapped ? r.DeltaText : "—")</td>
+                    </tr>
+                }
+            }
+            </tbody>
+        </table>
+    }
+    <ul class="psj-journal" data-psj-journal>
+        @foreach (var e in PlutoStudyJournal.Compose(Run))
+        {
+            <li><b>@e.Icon @e.Title</b><p>@e.Body</p></li>
+        }
+    </ul>
+</div>
+
+@code {
+    [Parameter] public PlutoReplayRunView Run { get; set; } = PlutoReplayRunView.Unwired;
+
+    private static string Wr(int bp) => (bp / 100m).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+}
+
+<style>
+    .psj { font-size: 12px; color: #D1D5DB; }
+    .psj-head { font-size: 13px; font-weight: 700; color: #F9FAFB; margin-bottom: 4px; } .psj-head span { font-weight: 400; }
+    .psj-sum { color: #C7D2FE; margin-bottom: 6px; }
+    .psj-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    .psj-table th { text-align: left; font-size: 11px; color: #9CA3AF; border-bottom: 1px solid #374151; padding: 4px 6px; white-space: nowrap; }
+    .psj-table td { border-bottom: 1px solid #1F2937; padding: 4px 6px; }
+    .psj-table .mono { font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .psj-table .evo { color: #86EFAC; font-weight: 700; } .psj .up { color: #E53935; } .psj .down { color: #1E88E5; }
+    .psj-journal { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .psj-journal li { background: #111827; border: 1px solid #1F2937; border-radius: 8px; padding: 6px 10px; line-height: 1.55; }
+    .psj-journal p { margin: 2px 0 0; }
+</style>

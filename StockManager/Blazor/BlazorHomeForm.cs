@@ -1810,6 +1810,9 @@ namespace StockManager.Blazor
                 // [v12.18.86-DEV] 36슬롯 인지 텐서(12대 국면 × KRX/US/Upbit 독립 가중치 + 자산 기준선) — 스웜이 자산군 태그 회고로 슬롯별 독립 보정 ·
                 //   3대 아레나 정산 스레드 = 국면 판독값 → 슬롯 seqlock 해석(δ=0 · 미보정 = 전역 유지).
                 var plutoTensor = new StockManager.Engines.Cognitive.Learning.PlutoCognitiveTensorLake();
+                // [v12.18.93-DEV] 39슬롯 사전 가중치(12대 국면 × 3대 자산군 정성 휴리스틱 · 세대 0 · 실측/전역 보정 가중치가 항상 우선) — `Pluto.TensorPriorsEnabled`(기본 켜짐).
+                if (cfg.GetBool("Pluto.TensorPriorsEnabled", true)) plutoTensor.LoadPriors();
+                var plutoCandles = new StockManager.Adapters.PlutoLocalCandleSource(db);
                 var plutoSwarm = new StockManager.Engines.Cognitive.Learning.PlutoContinuousLearningSwarm(plutoIngestor, plutoMemory,
                     plutoCalibrator, plutoWeights, regime: plutoRegime, tensor: plutoTensor);
                 plutoSwarm.AddArena("krx", krxArena.CopyRationales, StockManager.Engines.Cognitive.Learning.PlutoAssetClass.Krx);
@@ -1846,7 +1849,7 @@ namespace StockManager.Blazor
                 StockManager.Engines.Cognitive.Learning.PlutoReplayWarmStarter? plutoWarmStart = null;
                 if (cfg.GetBool("Pluto.WarmStartEnabled", true))
                 {
-                    plutoWarmStart = new StockManager.Engines.Cognitive.Learning.PlutoReplayWarmStarter(plutoTensor, new StockManager.Adapters.PlutoLocalCandleSource(db),
+                    plutoWarmStart = new StockManager.Engines.Cognitive.Learning.PlutoReplayWarmStarter(plutoTensor, plutoCandles,
                         () => plutoRegime.TryRead(out var m) ? m.CycleId : 0);
                     _ = plutoWarmStart.StartAsync().ContinueWith(t =>
                     {
@@ -1883,6 +1886,21 @@ namespace StockManager.Blazor
                             StockManager.Adapters.PlutoPublicMacroSource.FetchTimeout));
                     }
                 }
+                // [v12.18.93-DEV] 로컬 거시 레짐 추정기 — 외부 거시 수집원 미생성(FRED 키 미설정 · 사용자 수집원 없음) = portfolio.db 일봉 → 실현변동성(VIX 대용) · 지수 추세 ·
+                //   BTC 흐름 3차원 관측 → 수집기 병합(10분 주기 · 백그라운드) → 12대 국면 판정 해소. 캔들 부족(차원 < 2) = 판정 전 유지(가짜 관측 0). `Pluto.LocalMacroEnabled`(기본 켜짐).
+                string? localMacroText = null;
+                if (macroSource is null && cfg.GetBool("Pluto.LocalMacroEnabled", true))
+                {
+                    string baseFeed = macroFeedText ?? "거시 피드: 외부 수집원 미결선";
+                    macroFeedText = baseFeed + " → " + StockManager.Engines.Cognitive.Learning.PlutoLocalMacroEstimator.SourceName + " 대기(로컬 일봉 부족 시 판정 전)";
+                    _ = Task.Run(() => StockManager.Engines.Cognitive.Learning.PlutoLocalMacroEstimator.RunAsync(plutoCandles, plutoIngestor, TimeSpan.FromMinutes(10),
+                        b => System.Threading.Volatile.Write(ref localMacroText, baseFeed + " → " + StockManager.Engines.Cognitive.Learning.PlutoLocalMacroEstimator.Describe(in b)),
+                        macroCts.Token));
+                }
+                // [v12.18.93-DEV] 원클릭 자율 학습 가속기(인스펙터 · 관제탑 버튼 → 로컬 캔들 가상 회고 100회 · 3라운드 섀도우 게이트 진화 · 백그라운드). `Pluto.FastReplayEnabled`(기본 켜짐).
+                StockManager.Engines.Cognitive.Learning.PlutoFastReplayLearner? plutoFast = cfg.GetBool("Pluto.FastReplayEnabled", true)
+                    ? new StockManager.Engines.Cognitive.Learning.PlutoFastReplayLearner(plutoTensor, plutoCandles, () => plutoRegime.TryRead(out var m) ? m.CycleId : 0)
+                    : null;
                 FormClosed += (_, _) => ShutdownTrace.Step("plutoLearning", () => { macroCts.Cancel(); plutoSwarm.Dispose(); plutoCheckpoints?.Dispose(); macroSource?.Dispose(); macroCts.Dispose(); });
                 services.AddSingleton(plutoWeights);
                 services.AddSingleton(plutoIngestor);
@@ -1892,7 +1910,9 @@ namespace StockManager.Blazor
                 if (plutoWarmStart is not null) services.AddSingleton(plutoWarmStart);
                 services.AddSingleton(plutoSwarm);
                 services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IPlutoLearningPort>(new StockManager.Adapters.PlutoLearningPortAdapter(plutoSwarm, macroFeedText, plutoCheckpoints,
-                    tensor: plutoTensor, warmStart: plutoWarmStart));   // [v12.18.86-DEV] 인지 브리핑 텐서 패널(활성 슬롯 가중치 · 웜스타트 상태)
+                    tensor: plutoTensor, warmStart: plutoWarmStart,    // [v12.18.86-DEV] 인지 브리핑 텐서 패널(활성 슬롯 가중치 · 웜스타트 상태)
+                    fastReplay: plutoFast, macroFeedTextNow: () => System.Threading.Volatile.Read(ref localMacroText)));   // [v12.18.93-DEV] 자율 학습 가속 · 로컬 거시 추정 근거 문구
+                if (plutoFast is not null) services.AddSingleton(plutoFast);
                 if (plutoCheckpoints is not null) services.AddSingleton(plutoCheckpoints);
                 plutoLearningRef = plutoSwarm;
                 plutoWeightsRef = plutoWeights;

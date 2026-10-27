@@ -141,6 +141,13 @@ namespace StockManager.Engines.Cognitive.Learning
         /// 결정적 가상 리플레이: 균등 간격 진입점 최대 destination.Length(≤ Simulations)회 → 표본 기록. 반환 = 기록 수(후보 0 = 0).
         /// </summary>
         public static int Replay(IReadOnlyList<PlutoCandleSeries> series, int strictnessAtEntry, Span<PlutoLearningSample> destination)
+            => Replay(series, strictnessAtEntry, destination, 0, 0);
+
+        /// <summary>
+        /// [v12.18.93-DEV] 위상 이동 리플레이(가속 학습기 라운드별 서로 다른 진입점) — 진입점 = (균등 간격 + offset) mod 후보 · 보유 기간 회전 + holdShift.
+        /// offset 0 · holdShift 0 = 기존 Replay 와 동일.
+        /// </summary>
+        public static int Replay(IReadOnlyList<PlutoCandleSeries> series, int strictnessAtEntry, Span<PlutoLearningSample> destination, long offset, int holdShift)
         {
             ArgumentNullException.ThrowIfNull(series);
             long candidates = 0;
@@ -149,8 +156,8 @@ namespace StockManager.Engines.Cognitive.Learning
             int count = Math.Min(destination.Length, Simulations);
             for (int k = 0; k < count; k++)
             {
-                long pick = candidates >= count ? (long)k * candidates / count : k % candidates;
-                int hold = s_holds[(int)((k + k / candidates) % s_holds.Length)];
+                long pick = ((candidates >= count ? (long)k * candidates / count : k % candidates) + Math.Max(0, offset)) % candidates;
+                int hold = s_holds[(int)((k + k / candidates + Math.Max(0, holdShift)) % s_holds.Length)];
                 foreach (var s in series)
                 {
                     long c = Candidates(s);

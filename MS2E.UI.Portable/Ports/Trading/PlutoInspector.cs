@@ -5,6 +5,7 @@
 //   PlutoEvolutionEta = 다음 진화 심사까지 표본 진행도: 첫 심사 = 누적 표본 N / 20(보정기 최소 표본) · 이후 = 직전 심사 이후 새 표본 n / 10(재보정 주기).
 //     ★심사 ≠ 진화 확정 — 섀도우 검증 통과 시에만 세대 +1(불통과 = 현행 유지) · 직전 심사 기준점 미상(−1) = 첫 심사 이후 진행도 미표기(가짜 진행률 0).
 //   PlutoCooldownDial = 연패 쿨다운(15분) 남은 비율 % · 판독 전용 — 주문 · 무장 · 브로커 경로 0.
+//   [v12.18.93-DEV] 셀 사전 가중치(Prior* · HasPrior · 실측 아님) · 가속 리플레이 합성 표본(Replay* · 실 표본과 분리 표기) · 직전 핫스왑 Δ(LastDelta*).
 // ============================================================================
 using System;
 using System.Globalization;
@@ -41,8 +42,23 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// Lifetime = 셀 평생 에피소드 · Wins/Losses = 셀 보정기 링(최근 ≤ 256) 실측 승패 · WinRateBp = 실측 승률(표본 0 = 0).
     /// </summary>
     public readonly record struct PlutoTensorCellView(int RegimeId, string RegimeName, int Asset, long Generation, int MomentumTiltPct, int DevilStrictnessPts,
-        int Maturity, long Lifetime, int Wins, int Losses, int WinRateBp)
+        int Maturity, long Lifetime, int Wins, int Losses, int WinRateBp,
+        int PriorTiltPct = 0, int PriorStrictnessPts = 0, bool HasPrior = false, long ReplaySamples = 0, long ReplayWins = 0, int LastDeltaTilt = 0, int LastDeltaStrict = 0)
     {
+        /// <summary>[v12.18.93-DEV] 사전 가중치 문구 "사전 −5% · +4점(실측 아님)" · 미적재 = "".</summary>
+        public string PriorText => !HasPrior ? ""
+            : "사전 " + Sgn(PriorTiltPct) + "% · " + Sgn(PriorStrictnessPts) + "점";
+
+        /// <summary>[v12.18.93-DEV] 리플레이 합성 표본 문구 "리플레이 34표본 · 58.8%" · 0 = "".</summary>
+        public string ReplayText => ReplaySamples <= 0 ? ""
+            : "리플레이 " + ReplaySamples.ToString(CultureInfo.InvariantCulture) + "표본 · " + (ReplayWins * 1000 / ReplaySamples / 10m).ToString("0.0", CultureInfo.InvariantCulture) + "%";
+
+        /// <summary>[v12.18.93-DEV] 직전 핫스왑 변화 "Δ +5% · −2점" · 변화 0 = "".</summary>
+        public string DeltaText => Generation <= 0 || (LastDeltaTilt == 0 && LastDeltaStrict == 0) ? ""
+            : "Δ " + Sgn(LastDeltaTilt) + "% · " + Sgn(LastDeltaStrict) + "점";
+
+        private static string Sgn(int v) => (v > 0 ? "+" : "") + v.ToString(CultureInfo.InvariantCulture);
+
         public const int BaselineRegime = -1;
 
         public bool IsBaseline => RegimeId == BaselineRegime;

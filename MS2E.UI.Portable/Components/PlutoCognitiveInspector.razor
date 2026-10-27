@@ -2,13 +2,21 @@
    ① 종목별 실시간 분석 피처 — 추천 보드 카드(시장 탭 · 4대 팩터 점수 · 학습 조정 · 위원회 합의 · 켈리) + 행 선택 시 엔진 근거 문구 원문 · 거시 레짐 줄(국면 · 유사도 · 엄격도).
    ② 39슬롯 인지 텐서 실측표 — 12국면 행 + 자산 기준선 행 × 3대 자산(모멘텀 조정 · 변호인 엄격도 · 셀 실측 승률 · 성숙도 · 활성 국면 행 강조 · 웜스타트 상태).
    ③ 4대 위원회 채점표 — 자산별 에이전트 발언권(bp) · 주도 · 켈리 · 엣지 승률/표본 · 리스크 비토.
-   순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0 · 텐서 = 열림 시 콜드 스냅샷). 미결선/판독 없음 = 정직 문구(가짜 지표 · 가짜 승률 0). 상승/공격 = 적색 · 하강/방어 = 청색. *@
+   순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0 · 텐서 = 열림 시 콜드 스냅샷). 미결선/판독 없음 = 정직 문구(가짜 지표 · 가짜 승률 0). 상승/공격 = 적색 · 하강/방어 = 청색.
+   [v12.18.93-DEV] [⚡ 플루토 자율 학습 가속 (100회 리플레이)] 버튼(OnFastReplay · 백그라운드) · ① 개념 과외 칩(PlutoConceptTutor) ·
+   ② 미보정 셀 = 국면 사전 가중치(실측 아님) · 리플레이 합성 표본 · 직전 핫스왑 Δ · ④ 자율 학습 가속 결과 + 플루토 공부 노트(PlutoStudyJournalPanel). *@
 
 <div class="pci-scrim" @onclick="Close">
 <div class="pci-modal" role="dialog" aria-label="플루토 인지 데이터 인스펙터" data-pci @onclick:stopPropagation="true">
     <div class="pci-head">
         <div class="pci-title">🧠 플루토 인지 데이터 인스펙터 <small>Pluto Cognitive Inspector · 판독 전용(주문 0)</small></div>
         <div>
+            @if (OnFastReplay.HasDelegate)
+            {
+                <button class="pci-btn pci-fast" data-pci-fast="@(Replaying ? "running" : CanReplay ? "ready" : "off")" disabled="@(!CanReplay || Replaying)"
+                        title="로컬 과거 캔들로 자산군당 가상 회고 100회(3라운드) → 섀도우 검증 통과 시 텐서 세대 진화(합성 표본 · 실 청산 표본과 분리)"
+                        @onclick="() => OnFastReplay.InvokeAsync()">@(Replaying ? "⏳ 가상 회고 실행 중…" : "⚡ 플루토 자율 학습 가속 (100회 리플레이)")</button>
+            }
             @if (OnRefresh.HasDelegate) { <button class="pci-btn" data-pci-refresh @onclick="() => OnRefresh.InvokeAsync()">↻ 새로 판독</button> }
             <button class="pci-x" @onclick="Close" aria-label="닫기">✕</button>
         </div>
@@ -26,7 +34,9 @@
             {
                 <span>거시 레짐: @(Wired ? "판정 전(거시 관측 2차원 이상 수집 후 12대 국면 판정)" : "학습 엔진 미결선")</span>
             }
+            @if (Wired && View.MacroFeedText is { } feed) { <span class="dim" data-pci-feed>@feed</span> }
         </div>
+        <PlutoConceptTutor />
         <div class="pci-tabs" role="tablist">
             @foreach (int m in s_markets)
             {
@@ -120,8 +130,14 @@
                                         <span class="mono @(cell.MomentumTiltPct > 0 ? "up" : cell.MomentumTiltPct < 0 ? "down" : "")">@Signed(cell.MomentumTiltPct)%</span>
                                         <span class="mono @(cell.DevilStrictnessPts > 0 ? "def" : cell.DevilStrictnessPts < 0 ? "atk" : "")">@Signed(cell.DevilStrictnessPts)점(@cell.StanceText)</span>
                                     }
+                                    else if (cell.HasPrior)
+                                    {
+                                        <span class="mono pci-prior @(cell.PriorTiltPct > 0 ? "up" : cell.PriorTiltPct < 0 ? "down" : "")" data-pci-prior="@cell.PriorTiltPct:@cell.PriorStrictnessPts" title="국면 × 자산군 사전 가중치(정성 휴리스틱 · 실측 아님) — 첫 보정 출발점">@cell.PriorText</span>
+                                    }
                                     else { <span class="dim">가중치 미보정</span> }
+                                    @if (cell.DeltaText.Length > 0) { <span class="mono pci-delta" data-pci-delta>@cell.DeltaText</span> }
                                     <span class="mono pci-win">@cell.WinText</span>
+                                    @if (cell.ReplayText.Length > 0) { <span class="mono dim" data-pci-replay="@cell.ReplaySamples">@(cell.ReplayText)(합성)</span> }
                                     <span class="pci-tag @PlutoSlotMaturityCode.Css(cell.Maturity)">@PlutoSlotMaturityCode.Label(cell.Maturity)@(cell.Generation > 0 ? " G" + cell.Generation : "")</span>
                                 </td>
                             }
@@ -129,7 +145,7 @@
                     }
                 </tbody>
             </table>
-            <div class="pci-foot">셀 = 모멘텀 조정 % · 변호인 엄격도 점(+ 방어 / − 공격) · 셀 실측 승률(최근 회고 링) · 표본 20 이상 + 섀도우 통과 시 보정 완료</div>
+            <div class="pci-foot">셀 = 모멘텀 조정 % · 변호인 엄격도 점(+ 방어 / − 공격) · 셀 실측 승률(최근 회고 링) · 표본 20 이상 + 섀도우 통과 시 보정 완료 · '사전' = 국면 사전 가중치(실측 아님) · 리플레이 = 가속 학습 합성 표본(실측 승률과 분리)</div>
         }
     </section>
 
@@ -171,6 +187,10 @@
             <div class="pci-foot @(Council.Vetoed ? "veto" : "")" data-pci-veto="@(Council.Vetoed ? "on" : "off")">@(Council.Vetoed ? "⛔ 리스크 통제관 거부권: " + Council.VetoText : "리스크 통제관: 거부권 미발동") · 직전 스캔 비토 탈락 @(Council.CouncilVetoed)종</div>
         }
     </section>
+
+    <section class="pci-sec" data-pci-sec="journal">
+        <PlutoStudyJournalPanel Run="@Replay" />
+    </section>
 </div>
 </div>
 
@@ -189,6 +209,11 @@
     [Parameter] public int InitialMarket { get; set; }
     [Parameter] public EventCallback OnRefresh { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
+    /// <summary>[v12.18.93-DEV] 자율 학습 가속 결선(false = 버튼 비활성) · 실행 중 · 직전 결과 · 실행 콜백.</summary>
+    [Parameter] public bool CanReplay { get; set; }
+    [Parameter] public bool Replaying { get; set; }
+    [Parameter] public PlutoReplayRunView Replay { get; set; } = PlutoReplayRunView.Unwired;
+    [Parameter] public EventCallback OnFastReplay { get; set; }
 
     private int _market;
     private int _pick = -1;
@@ -213,6 +238,8 @@
     .pci-head { display: flex; align-items: center; justify-content: space-between; }
     .pci-title { font-size: 15px; font-weight: 700; } .pci-title small { font-size: 11.5px; font-weight: 400; color: #9CA3AF; margin-left: 6px; }
     .pci-x { background: transparent; border: 0; color: #9CA3AF; font-size: 16px; cursor: pointer; }
+    .pci-btn.pci-fast { border-color: #6366F1; background: #1e1b4b; color: #fff; font-weight: 700; } .pci-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .pci-prior { color: #A5B4FC; } .pci-delta { color: #86EFAC; }
     .pci-btn { font-size: 12px; padding: 4px 10px; margin-right: 6px; border-radius: 6px; border: 1px solid #374151; background: #1F2937; color: #E5E7EB; cursor: pointer; }
     .pci-sec { border: 1px solid #1F2937; border-radius: 10px; padding: 10px 12px; background: #0B0F19; }
     .pci-sec h3 { margin: 0 0 8px; font-size: 13.5px; color: #F9FAFB; } .pci-sec h3 span { font-size: 11px; font-weight: 400; color: #6B7280; margin-left: 6px; }

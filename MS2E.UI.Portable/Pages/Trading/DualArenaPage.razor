@@ -49,6 +49,9 @@
      ② 관제탑 1.0s 스캔 하트비트 + 진화 심사 진행도 바(N / 20) · 쿨다운 뱃지 = 원형 다이얼(남은 분 / 15분) ③ [🔍 플루토 사고 데이터 상세 열람] → PlutoCognitiveInspector
      (분석 피처 · 39슬롯 텐서 실측표 · 4대 위원회 채점표 — 텐서 = 열림 시 콜드 스냅샷 · 페이지 주입 6종 불변). *@
 @implements IDisposable
+@* [v12.18.93-DEV] 플루토 퀀트 코-러닝 허브 — ① 체결 타임라인 상단 💭 생각 독백 스트림(PlutoThoughtStream · 근거 카드 렌더 콜드 합성) ② 📝 오답 노트(손절 · 익절 실패 · 비토 · PlutoPostMortemCard)
+   ③ 📚 개념 과외 칩(CVD · 켈리 · 볼린저 · 거시 레짐 · PlutoConceptTutor) ④ 휴먼 주문 접수 직후 🤖 AI 코칭 뱃지(PlutoCoachBadge · 스프레드 · 비중 · 리스크 · 표시만)
+   ⑤ 관제탑/인스펙터 [⚡ 플루토 자율 학습 가속 (100회 리플레이)](IPlutoLearningPort.RunFastReplayAsync · 백그라운드) + 학습 일지(인스펙터 ④). *@
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
 @inject ICryptoArenaPort CryptoPort
@@ -104,7 +107,13 @@
     <span class="da-badge da-gov-persist @_persistCss" data-persist="@_persistCss">@_persistText</span>
     @if (_govMsg is not null) { <span class="ar-msg da-gov-msg">@_govMsg</span> }
     <button class="da-brief-toggle @(_briefOpen ? "on" : "")" aria-expanded="@(_briefOpen ? "true" : "false")" data-brief-toggle="@(_briefOpen ? "on" : "off")" @onclick="() => _briefOpen = !_briefOpen">📊 인지 브리핑</button>
+    <button class="da-fast @(_replaying ? "run" : "")" data-fast="@(_replaying ? "running" : Learning.CanFastReplay ? "ready" : "off")" disabled="@(!Learning.CanFastReplay || _replaying)"
+            title="로컬 과거 캔들로 자산군당 가상 회고 100회(3라운드) → 섀도우 검증 통과 시 텐서 세대 진화(합성 표본 · 실 청산 표본과 분리 · 가상 원장 전용)" @onclick="RunFastReplay">
+        @(_replaying ? "⏳ 가상 회고 실행 중…" : "⚡ 플루토 자율 학습 가속 (100회 리플레이)")
+    </button>
+    @if (_replayMsg is not null) { <span class="ar-msg da-fast-msg" role="status" data-fast-msg>@_replayMsg</span> }
 </div>
+<PlutoConceptTutor />
 <details class="da-diag">
 <summary>엔지니어링 진단 태그</summary>
 <div class="da-diag-body">
@@ -373,6 +382,7 @@
                 <button class="ar-btn sell" disabled="@(cq.Count == 0)" @onclick="() => SubmitCrypto(-1)">매도</button>
                 @if (_cryptoMsg is not null) { <span class="ar-msg da-msg">@_cryptoMsg</span> }
             </div>
+            <PlutoCoachBadge Feedback="@CoachFor(ModeCrypto)" />
         </div>
     }
 
@@ -380,6 +390,8 @@
         <h3>🧠 AI 가상자산 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
         @VetoLog(CryptoPort.CouncilVetoes())
         @{ var ccards = cHas && c.RationaleCount > 0 ? CryptoPort.RecentRationales(MaxCards) : System.Array.Empty<CryptoRationaleView>(); }
+    <PlutoThoughtStream Lines="@Thoughts(ccards)" />
+    <PlutoPostMortemCard Notes="@Notes(cClosed, CryptoPort.CouncilVetoes())" />
         @if (ccards.Count == 0)
         {
             <div class="ar-sub da-nocard">아직 AI 체결이 없습니다 — 근거 카드는 실제 가상 체결이 일어날 때만 생성됩니다.</div>
@@ -531,6 +543,7 @@ else if (_mode == ModeUs)
                 <button class="ar-btn sell" disabled="@(uq.Count == 0)" @onclick="() => SubmitUs(-1)">매도</button>
                 @if (_usMsg is not null) { <span class="ar-msg da-msg">@_usMsg</span> }
             </div>
+            <PlutoCoachBadge Feedback="@CoachFor(ModeUs)" />
         </div>
     }
 
@@ -538,6 +551,8 @@ else if (_mode == ModeUs)
         <h3>🧠 AI USD 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
         @VetoLog(UsPort.CouncilVetoes())
         @{ var ucards = uHas && u.RationaleCount > 0 ? UsPort.RecentRationales(MaxCards) : System.Array.Empty<UsRationaleView>(); }
+    <PlutoThoughtStream Lines="@Thoughts(ucards)" />
+    <PlutoPostMortemCard Notes="@Notes(uClosed, UsPort.CouncilVetoes())" />
         @if (ucards.Count == 0)
         {
             <div class="ar-sub da-nocard">아직 AI 체결이 없습니다 — 근거 카드는 실제 가상 체결이 일어날 때만 생성됩니다.</div>
@@ -688,6 +703,7 @@ else
             <button class="ar-btn sell" disabled="@(quotes.Count == 0)" @onclick="() => Submit(-1)">매도</button>
             @if (_msg is not null) { <span class="ar-msg da-msg">@_msg</span> }
         </div>
+        <PlutoCoachBadge Feedback="@CoachFor(ModeKrx)" />
     </div>
 }
 
@@ -695,6 +711,8 @@ else
     <h3>🧠 AI 매매 근거 타임라인 <small>최신순 · 최대 @(MaxCards)건</small></h3>
     @VetoLog(Port.CouncilVetoes())
     @{ var cards = hasView && v.RationaleCount > 0 ? Port.RecentRationales(MaxCards) : System.Array.Empty<KrxRationaleView>(); }
+    <PlutoThoughtStream Lines="@Thoughts(cards)" />
+    <PlutoPostMortemCard Notes="@Notes(kClosed, Port.CouncilVetoes())" />
     @if (cards.Count == 0)
     {
         <div class="ar-sub da-nocard">아직 AI 체결이 없습니다 — 근거 카드는 실제 가상 체결이 일어날 때만 생성됩니다.</div>
@@ -732,7 +750,8 @@ else
     var rbIns = Reco.IsWired ? Reco.Current : PlutoRecoBoardView.None;
     <PlutoCognitiveInspector Wired="@Learning.IsWired" View="@(Learning.IsWired ? Learning.Current : default)" Cells="@_inspectCells"
                              RecoWired="@Reco.IsWired" Board="@rbIns" Council="@rbIns.Council" InitialMarket="@ModeMarket()"
-                             OnRefresh="OpenInspector" OnClose="() => _inspectOpen = false" />
+                             OnRefresh="OpenInspector" OnClose="() => _inspectOpen = false"
+                             CanReplay="@Learning.CanFastReplay" Replaying="@_replaying" Replay="@_replay" OnFastReplay="RunFastReplay" />
 }
 </div>
 
@@ -783,7 +802,90 @@ else
     private void OpenInspector()
     {
         _inspectCells = Learning.IsWired ? Learning.ReadTensorCells() : System.Array.Empty<PlutoTensorCellView>();
+        _replay = Learning.LastReplay;
         _inspectOpen = true;
+    }
+
+    // [v12.18.93-DEV] ⚡ 자율 학습 가속 — 백그라운드 리플레이(UI 스레드 무블로킹 · 체결 핫패스 = seqlock 판독만) → 완료 시 텐서 콜드 재판독 · 결과 문구.
+    private bool _replaying;
+    private string? _replayMsg;
+    private PlutoReplayRunView _replay = PlutoReplayRunView.Unwired;
+
+    private async Task RunFastReplay()
+    {
+        if (_replaying || !Learning.CanFastReplay) return;
+        _replaying = true;
+        _replayMsg = "⏳ 로컬 과거 캔들로 가상 회고 100회 실행 중…";
+        PlutoReplayRunView r;
+        try { r = await Learning.RunFastReplayAsync(); }
+        catch (Exception ex) { r = PlutoReplayRunView.Unwired with { State = PlutoReplayStateCode.Failed, Error = ex.GetType().Name }; }
+        _replay = r;
+        _replaying = false;
+        _replayMsg = r.Summary;
+        if (_inspectOpen) _inspectCells = Learning.ReadTensorCells();
+    }
+
+    // [v12.18.93-DEV] 💭 생각 독백 · 📝 오답 노트 — 이미 게시된 근거 카드 · 청산 저널 · 비토 피드의 렌더 콜드 합성(최신 MaxLines/MaxNotes 건).
+    private static IReadOnlyList<PlutoThoughtLine> Thoughts(IReadOnlyList<KrxRationaleView> cards)
+    {
+        var list = new List<PlutoThoughtLine>(PlutoThoughtComposer.MaxLines);
+        for (int i = 0; i < cards.Count && i < PlutoThoughtComposer.MaxLines; i++) list.Add(PlutoThoughtComposer.Of(cards[i], StockDisplayNameResolver.Display(cards[i].Symbol)));
+        return list;
+    }
+
+    private static IReadOnlyList<PlutoThoughtLine> Thoughts(IReadOnlyList<UsRationaleView> cards)
+    {
+        var list = new List<PlutoThoughtLine>(PlutoThoughtComposer.MaxLines);
+        for (int i = 0; i < cards.Count && i < PlutoThoughtComposer.MaxLines; i++) list.Add(PlutoThoughtComposer.Of(cards[i], Sym(cards[i].Ticker)));
+        return list;
+    }
+
+    private static IReadOnlyList<PlutoThoughtLine> Thoughts(IReadOnlyList<CryptoRationaleView> cards)
+    {
+        var list = new List<PlutoThoughtLine>(PlutoThoughtComposer.MaxLines);
+        for (int i = 0; i < cards.Count && i < PlutoThoughtComposer.MaxLines; i++) list.Add(PlutoThoughtComposer.Of(cards[i], Sym(cards[i].Market)));
+        return list;
+    }
+
+    private IReadOnlyList<PlutoPostMortemNote> Notes(IReadOnlyList<ArenaClosedTradeView> closed, ArenaCouncilVetoFeed vetoes)
+    {
+        var lv = Learning.IsWired ? Learning.Current : default;
+        return PlutoPostMortemComposer.Collect(closed, vetoes, Sym, Learning.IsWired, in lv);
+    }
+
+    // [v12.18.93-DEV] 🤖 휴먼 주문 코칭 — 접수 직후 1회 합성(마지막 주문 모드만 표시 · 주문 변경 · 차단 0).
+    private PlutoCoachFeedback? _coach;
+
+    private PlutoCoachFeedback? CoachFor(int mode) => _coach is { } c && c.Mode == mode ? c : null;
+
+    private void CoachKrx(long sym, int side, long qty, bool accepted)
+    {
+        long bid = 0, ask = 0, held = 0;
+        foreach (var q in Port.Quotes()) if (q.Symbol == sym) { bid = q.BidWon; ask = q.AskWon; break; }
+        foreach (var p in Port.Positions(ArenaSide.Human)) if (p.Symbol == sym) { held = p.Qty; break; }
+        Port.TryRead(out var v);
+        var g = Port.Governance;
+        _coach = PlutoOrderCoach.Evaluate(ModeKrx, side, accepted, bid, ask, qty, 1, v.Human.EquityWon, v.Human.CashWon, held, g.Regime, g.InCooldown);
+    }
+
+    private void CoachUs(string tkr, int side, long qty, bool accepted)
+    {
+        long bid = 0, ask = 0, held = 0;
+        foreach (var q in UsPort.Quotes()) if (q.Ticker == tkr) { bid = q.BidCents; ask = q.AskCents; break; }
+        foreach (var p in UsPort.Positions(ArenaSide.Human)) if (p.Ticker == tkr) { held = p.Qty; break; }
+        UsPort.TryRead(out var v);
+        var g = UsPort.Governance;
+        _coach = PlutoOrderCoach.Evaluate(ModeUs, side, accepted, bid, ask, qty, 1, v.Human.EquityCents, v.Human.CashCents, held, g.Regime, g.InCooldown);
+    }
+
+    private void CoachCrypto(string mkt, int side, long qtyRaw, bool accepted)
+    {
+        long bid = 0, ask = 0, held = 0;
+        foreach (var q in CryptoPort.Quotes()) if (q.Market == mkt) { bid = q.BidRaw; ask = q.AskRaw; break; }
+        foreach (var p in CryptoPort.Positions(ArenaSide.Human)) if (p.Market == mkt) { held = p.QtyRaw; break; }
+        CryptoPort.TryRead(out var v);
+        var g = CryptoPort.Governance;
+        _coach = PlutoOrderCoach.Evaluate(ModeCrypto, side, accepted, bid, ask, qtyRaw, CryptoArenaUnits.Scale, v.Human.EquityRaw, v.Human.CashRaw, held, g.Regime, g.InCooldown);
     }
 
     private int ModeMarket() => _mode == ModeCrypto ? PlutoRecoMarket.Crypto : _mode == ModeUs ? PlutoRecoMarket.Us : PlutoRecoMarket.Krx;
@@ -865,6 +967,7 @@ else
         long sym = _symbol;
         if (sym <= 0) { var q = Port.Quotes(); sym = q.Count > 0 ? q[0].Symbol : 0; }
         int r = Port.SubmitHuman(sym, side, _qty);
+        CoachKrx(sym, side, _qty, r == KrxArenaReject.None);
         _msg = r == KrxArenaReject.None
             ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결"
             : "접수 거부: " + KrxArenaReject.Label(r);
@@ -920,6 +1023,7 @@ else
         string? tkr = _ticker;
         if (string.IsNullOrEmpty(tkr)) { var q = UsPort.Quotes(); tkr = q.Count > 0 ? q[0].Ticker : null; }
         int r = UsPort.SubmitHuman(tkr ?? "", side, _usQty);
+        CoachUs(tkr ?? "", side, _usQty, r == UsArenaReject.None);
         _usMsg = r == UsArenaReject.None
             ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결(USD)"
             : "접수 거부: " + UsArenaReject.Label(r);
@@ -937,6 +1041,7 @@ else
         if (string.IsNullOrEmpty(mkt)) { var q = CryptoPort.Quotes(); mkt = q.Count > 0 ? q[0].Market : null; }
         long qtyRaw = _coinQty <= 0 || _coinQty > 1_000_000_000m ? 0 : (long)decimal.Truncate(_coinQty * CryptoArenaUnits.Scale);
         int r = CryptoPort.SubmitHuman(mkt ?? "", side, qtyRaw);
+        CoachCrypto(mkt ?? "", side, qtyRaw, r == CryptoArenaReject.None);
         _cryptoMsg = r == CryptoArenaReject.None
             ? (side > 0 ? "매수" : "매도") + " 접수 → 다음 정산 회차 가상 체결(KRW)"
             : "접수 거부: " + CryptoArenaReject.Label(r);
@@ -1523,6 +1628,10 @@ else
     .da-ticket select { min-width: 260px; }
     .da-ticket input { width: 90px; }
     .da-timeline { margin-top: 10px; }
+    /* [v12.18.93-DEV] 자율 학습 가속 버튼 */
+    .da-fast { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 8px; border: 1px solid #6366F1; background: #1e1b4b; color: #fff; cursor: pointer; }
+    .da-fast:disabled { opacity: .55; cursor: not-allowed; } .da-fast.run { border-color: #F59E0B; }
+    .da-fast-msg { color: #C7D2FE; }
     .da-closed { margin: 10px 0; } .da-closed-sum { margin: 2px 0 6px; }
     .da-closed-tbl th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; } .da-closed-tbl td { font-variant-numeric: tabular-nums; }
     .da-closed-name small { color: var(--sub); margin-left: 4px; }

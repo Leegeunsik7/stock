@@ -7,9 +7,11 @@
 //   [v12.18.84-DEV] 체크포인트 관리자(결선 시) → 평생 누적 학습 에피소드 · 영속화 상태 코드(미결선 = −1 · Off).
 //   [v12.18.86-DEV] 인지 텐서(결선 시) → 활성 국면 × 3대 자산군 해석 가중치(Resolve · 미보정 = 전역 가중치 그대로) + 웜스타트 보고 → 자산군별 WarmReady/NoData(PlutoTensorView).
 //   [v12.18.92-DEV] 진화 심사 기준점(스웜 SamplesAtLastCalibration) → EvolveAnchor · ReadTensorCells = 39셀(국면 1~12 → 기준선) 가중치 · 성숙도 · 셀 실측 승패(콜드 · 인스펙터 열림 시만).
+//   [v12.18.93-DEV] 셀 사전 가중치 · 리플레이 합성 표본 · 직전 Δ 투영 · 자율 학습 가속기(PlutoFastReplayLearner 결선 시) → CanFastReplay · LastReplay · RunFastReplayAsync(백그라운드).
 // ============================================================================
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Cognitive.Learning;
 
@@ -22,15 +24,20 @@ namespace StockManager.Adapters
         private readonly PlutoCheckpointManager? _checkpoints;
         private readonly PlutoCognitiveTensorLake? _tensor;
         private readonly PlutoReplayWarmStarter? _warmStart;
+        private readonly PlutoFastReplayLearner? _fast;
+        private readonly Func<string?>? _macroFeedTextNow;
 
+        /// <param name="macroFeedTextNow">[v12.18.93-DEV] 거시 피드 문구 동적 공급(로컬 캔들 추정 근거 갱신 · null 반환 = 정적 문구 유지).</param>
         public PlutoLearningPortAdapter(PlutoContinuousLearningSwarm swarm, string? macroFeedText = null, PlutoCheckpointManager? checkpoints = null,
-            PlutoCognitiveTensorLake? tensor = null, PlutoReplayWarmStarter? warmStart = null)
+            PlutoCognitiveTensorLake? tensor = null, PlutoReplayWarmStarter? warmStart = null, PlutoFastReplayLearner? fastReplay = null, Func<string?>? macroFeedTextNow = null)
         {
             _swarm = swarm ?? throw new ArgumentNullException(nameof(swarm));
             _macroFeedText = macroFeedText;
             _checkpoints = checkpoints;
             _tensor = tensor;
             _warmStart = warmStart;
+            _fast = fastReplay;
+            _macroFeedTextNow = macroFeedTextNow;
         }
 
         public bool IsWired => true;
@@ -39,7 +46,7 @@ namespace StockManager.Adapters
         {
             get
             {
-                var v = Map(_swarm.Status, _swarm.Running, _macroFeedText);
+                var v = Map(_swarm.Status, _swarm.Running, _macroFeedTextNow?.Invoke() ?? _macroFeedText);
                 v = v with { EvolveAnchor = _swarm.SamplesAtLastCalibration };
                 var c = _checkpoints;
                 if (c is not null) v = v with { LifetimeEpisodes = c.LifetimeEpisodes, PersistState = PersistCode(c.State) };
@@ -48,6 +55,50 @@ namespace StockManager.Adapters
         }
 
         public IReadOnlyList<PlutoTensorCellView> ReadTensorCells() => _tensor is null ? Array.Empty<PlutoTensorCellView>() : MapCells(_tensor);
+
+        public bool CanFastReplay => _fast is not null;
+
+        public PlutoReplayRunView LastReplay => _fast is null ? PlutoReplayRunView.Unwired : MapReplay(_fast.Report);
+
+        public async Task<PlutoReplayRunView> RunFastReplayAsync()
+        {
+            if (_fast is null) return PlutoReplayRunView.Unwired;
+            var r = await _fast.RunAsync().ConfigureAwait(false);
+            return MapReplay(r);
+        }
+
+        /// <summary>[v12.18.93-DEV] 가속 리플레이 보고 → UI DTO(상태 코드 · 자산군 라운드 · 교훈 집계 · 대상 셀 국면명).</summary>
+        public static PlutoReplayRunView MapReplay(PlutoFastReplayReport r)
+        {
+            ArgumentNullException.ThrowIfNull(r);
+            int state = r.State switch
+            {
+                PlutoFastReplayState.Running => PlutoReplayStateCode.Running,
+                PlutoFastReplayState.Completed => PlutoReplayStateCode.Completed,
+                PlutoFastReplayState.NoData => PlutoReplayStateCode.NoData,
+                PlutoFastReplayState.Failed => PlutoReplayStateCode.Failed,
+                _ => PlutoReplayStateCode.Idle,
+            };
+            string? regimeName = r.RegimeId > 0 ? PlutoRegimeVectorLake.Get(r.RegimeId)?.Name : null;
+            var lanes = new PlutoReplayLaneView[r.Lanes.Count];
+            for (int i = 0; i < lanes.Length; i++)
+            {
+                var l = r.Lanes[i];
+                var rounds = new PlutoReplayRoundView[l.Rounds.Count];
+                for (int k = 0; k < rounds.Length; k++)
+                {
+                    var x = l.Rounds[k];
+                    rounds[k] = new PlutoReplayRoundView(x.Round, x.Samples, x.Wins, x.Before.Generation, x.After.Generation, x.Before.MomentumTiltPct, x.After.MomentumTiltPct,
+                        x.Before.DevilStrictnessPts, x.After.DevilStrictnessPts, PlutoShadowVerdictCode.Normalize((int)x.Verdict.Reason), x.Verdict.BaselineWinRateBp, x.Verdict.ShadowWinRateBp);
+                }
+                var t = l.Lessons;
+                lanes[i] = new PlutoReplayLaneView((int)l.Asset, l.Series, l.Samples, l.Wins,
+                    l.TargetRegimeId > 0 ? PlutoRegimeVectorLake.Get(l.TargetRegimeId)?.Name ?? "국면 " + l.TargetRegimeId.ToString(System.Globalization.CultureInfo.InvariantCulture) : "자산 기준선",
+                    rounds, new PlutoLessonTallyView(t.TrendWins, t.DisciplinedWins, t.ShockLosses, t.CounterLosses, t.RegimeShiftLosses, t.DecayLosses, t.AvgWinBp, t.AvgLossBp));
+            }
+            DateTime? at = r.CompletedUtcTicks > 0 ? new DateTime(r.CompletedUtcTicks, DateTimeKind.Utc) : null;
+            return new PlutoReplayRunView(state, r.ElapsedMs, regimeName, lanes, at, r.Runs, r.Error);
+        }
 
         /// <summary>[v12.18.92-DEV] 39셀 → 인스펙터 DTO(국면 행 1~12 먼저 · 기준선 행 마지막 · 행 내 KRX · US · Upbit 순).</summary>
         public static PlutoTensorCellView[] MapCells(PlutoCognitiveTensorLake tensor)
@@ -68,7 +119,8 @@ namespace StockManager.Adapters
             bool baseline = c.RegimeId == PlutoCognitiveTensorLake.BaselineRegime;
             string name = baseline ? "자산 기준선" : PlutoRegimeVectorLake.Get(c.RegimeId)?.Name ?? "국면 " + c.RegimeId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return new PlutoTensorCellView(baseline ? PlutoTensorCellView.BaselineRegime : c.RegimeId, name, (int)c.Asset, c.Weights.Generation,
-                c.Weights.MomentumTiltPct, c.Weights.DevilStrictnessPts, (int)c.Maturity, c.LifetimeEpisodes, e.Wins, e.Losses, e.WinRateBp);
+                c.Weights.MomentumTiltPct, c.Weights.DevilStrictnessPts, (int)c.Maturity, c.LifetimeEpisodes, e.Wins, e.Losses, e.WinRateBp,
+                c.Prior.MomentumTiltPct, c.Prior.DevilStrictnessPts, c.HasPrior, c.ReplaySamples, c.ReplayWins, c.LastDeltaTilt, c.LastDeltaStrict);
         }
 
         /// <summary>[v12.18.86-DEV] 텐서 활성 슬롯(자산군별 Resolve · 미보정 = 전역 가중치) + 웜스타트 보고(null = 웜스타트 비활성 → 미결선) → 브리핑 DTO.</summary>

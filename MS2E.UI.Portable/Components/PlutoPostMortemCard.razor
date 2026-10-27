@@ -1,0 +1,37 @@
+@* PlutoPostMortemCard — v12.18.93-DEV: 📝 플루토 오답 노트 & 회고록(손절 · 익절 실패 · 리스크 비토 차단).
+   순수 표시 — [Parameter] 노트 목록만(PlutoPostMortemComposer 합성 · 주입 0 · 엔진 참조 0).
+   ★보정 문구 = 교훈 압력 방향 + 실제 진화 진행도 · 현재 세대 인용(섀도우 통과 전 '보정 완료' 위장 0 · 비토 = 보정 표본 0 정직 표기). *@
+
+@if (Notes.Count > 0)
+{
+    <div class="ppm" data-ppm="@Notes.Count">
+        <div class="ppm-head">📝 플루토 오답 노트 <span class="ar-sub">왜 틀렸나 · 무엇을 보정하나 · 인간 투자자 교훈</span></div>
+        @foreach (var n in Notes)
+        {
+            <details class="ppm-card @PlutoPostMortemKind.Css(n.Kind)" data-ppm-seq="@n.Seq" data-ppm-kind="@PlutoPostMortemKind.Css(n.Kind)">
+                <summary><span class="ppm-tag">@PlutoPostMortemKind.Label(n.Kind)</span> @n.Headline <span class="ar-sub">#@n.Seq · @n.AtKst.ToString("MM-dd HH:mm")</span></summary>
+                <dl>
+                    <dt>❓ 왜 틀렸나</dt><dd>@n.WhyWrong</dd>
+                    <dt>🧬 자가 학습 보정</dt><dd data-ppm-calib>@n.Calibration</dd>
+                    <dt>🎓 함께 배울 점</dt><dd>@n.Lesson</dd>
+                </dl>
+            </details>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<PlutoPostMortemNote> Notes { get; set; } = Array.Empty<PlutoPostMortemNote>();
+}
+
+<style>
+    .ppm { margin-bottom: 8px; }
+    .ppm-head { font-size: 12.5px; font-weight: 700; color: #FDE68A; margin-bottom: 4px; }
+    .ppm-card { border: 1px solid #374151; border-left: 3px solid #1E88E5; background: #111827; border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; color: #D1D5DB; }
+    .ppm-card.veto { border-left-color: #F59E0B; } .ppm-card.miss { border-left-color: #6366F1; }
+    .ppm-card summary { cursor: pointer; font-weight: 600; }
+    .ppm-tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 8px; border: 1px solid #374151; color: #93C5FD; margin-right: 4px; }
+    .ppm-card.veto .ppm-tag { color: #FCD34D; }
+    .ppm-card dl { display: grid; grid-template-columns: 110px 1fr; gap: 4px 8px; margin: 6px 0 2px; line-height: 1.55; }
+    .ppm-card dt { color: #9CA3AF; font-weight: 700; } .ppm-card dd { margin: 0; }
+</style>

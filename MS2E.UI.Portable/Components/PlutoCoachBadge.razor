@@ -1,0 +1,25 @@
+@* PlutoCoachBadge — v12.18.93-DEV: 🤖 휴먼 주문 AI 코칭 피드백 뱃지(접수 직후 · 스프레드 · 진입 비중 · 리스크 원포인트).
+   순수 표시 — [Parameter] PlutoCoachFeedback 만(PlutoOrderCoach 합성 · 주입 0 · 엔진 참조 0). 주문 변경 · 차단 0(조언 표시만). *@
+
+@if (Feedback is { } f)
+{
+    <div class="pcb @PlutoCoachGrade.Css(f.Grade)" role="status" data-coach="@PlutoCoachGrade.Css(f.Grade)" data-coach-side="@f.Side">
+        <div class="pcb-head">@f.Headline</div>
+        @foreach (var it in f.Items)
+        {
+            <div class="pcb-item @PlutoCoachGrade.Css(it.Grade)" data-coach-topic="@it.Topic"><b>@it.Topic</b> @it.Text</div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public PlutoCoachFeedback? Feedback { get; set; }
+}
+
+<style>
+    .pcb { margin-top: 8px; border: 1px solid #374151; border-radius: 8px; padding: 6px 10px; background: #111827; font-size: 12px; color: #D1D5DB; line-height: 1.55; }
+    .pcb.warn { border-color: #7F1D1D; } .pcb.caution { border-color: #78350F; } .pcb.good { border-color: #14532D; }
+    .pcb-head { font-weight: 700; margin-bottom: 2px; color: #F9FAFB; }
+    .pcb-item b { display: inline-block; min-width: 56px; color: #9CA3AF; }
+    .pcb-item.warn b { color: #FCA5A5; } .pcb-item.caution b { color: #FCD34D; } .pcb-item.good b { color: #86EFAC; }
+</style>

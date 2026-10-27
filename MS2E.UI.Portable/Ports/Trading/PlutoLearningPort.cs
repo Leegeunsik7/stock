@@ -9,6 +9,7 @@
 //   [v12.18.85-DEV] Shadow(PlutoShadowView) = 섀도우 검증 직전 판정 · 현행 가중치 섀도우 성과 → 인지 브리핑(PlutoBriefingComposer) 입력.
 //   [v12.18.86-DEV] Tensor(PlutoTensorView) = 활성 국면 × 3대 자산군 해석 가중치(모멘텀 % · 악마의 변호인 엄격도) + 웜스타트 상태(WarmReady/NoData) → 인지 브리핑 텐서 패널.
 //   [v12.18.92-DEV] EvolveAnchor(직전 진화 심사 시점 누적 표본 · −1 = 미상) → PlutoEvolutionEta 진행도 · ReadTensorCells = 39셀 텐서 콜드 스냅샷(인스펙터 열림 시만 판독).
+//   [v12.18.93-DEV] TensorSource Prior(국면 사전 가중치 · 실측 아님) · CanFastReplay/LastReplay/RunFastReplayAsync = 원클릭 자율 학습 가속기(100회 리플레이 · 백그라운드).
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -125,11 +126,12 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// <summary>[v12.18.86-DEV] 텐서 가중치 출처 코드 — 0 전역(슬롯 · 기준선 미보정) · 1 자산 기준선 · 2 국면 × 자산군 슬롯(미상 = 전역).</summary>
     public static class PlutoTensorSourceCode
     {
-        public const int Global = 0, Baseline = 1, Regime = 2;
+        public const int Global = 0, Baseline = 1, Regime = 2, Prior = 3;
 
         public static string Label(int s) => s switch
         {
             Regime => "국면 슬롯",
+            Prior => "국면 사전 가중치",
             Baseline => "자산 기준선",
             _ => "전역 폴백",
         };
@@ -202,6 +204,15 @@ namespace MS2E.UI.Portable.Ports.Trading
 
         /// <summary>[v12.18.92-DEV] 39셀 인지 텐서 콜드 스냅샷(국면 행 1~12 → 기준선 행 순 · 자산 KRX · US · Upbit 순) · 텐서 미결선 = 빈 목록.</summary>
         IReadOnlyList<PlutoTensorCellView> ReadTensorCells() => Array.Empty<PlutoTensorCellView>();
+
+        /// <summary>[v12.18.93-DEV] 자율 학습 가속기 결선 여부(미결선 = 버튼 비활성 · 정직 문구).</summary>
+        bool CanFastReplay => false;
+
+        /// <summary>[v12.18.93-DEV] 직전 가속 리플레이 결과(미실행 = Idle · 미결선 = Off).</summary>
+        PlutoReplayRunView LastReplay => PlutoReplayRunView.Unwired;
+
+        /// <summary>[v12.18.93-DEV] 가속 리플레이 1회(백그라운드 · 실행 중 재호출 = 진행 중 결과 공유 · 미결선 = Off 즉시 반환).</summary>
+        Task<PlutoReplayRunView> RunFastReplayAsync() => Task.FromResult(PlutoReplayRunView.Unwired);
     }
 
     /// <summary>학습 엔진 미결선 null 객체(학습 비활성 호스트 · 테스트 하네스). 상태 = 정지 · 판정 전.</summary>
