@@ -4972,3 +4972,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,751 통과 / 9 건너뜀 / 0 실패(5,760) ·
   infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결/정산 핫패스 무변경 δ=0(신규 판독 = 인스펙터 열림 시 콜드) · liveArmed:false · 타 세션 파일 3종 미스테이징.
 - 정직 한계: 인스펙터 CVD/볼린저/ATR/PER 은 엔진 근거 문구에 있을 때만 표기(전용 수치 필드 없음) · 실 앱 화면 미실측(bUnit 검증).
+
+## 218. v12.18.92-GM — DualArena 시세 출처 시인성 · 진화 ETA · 쿨다운 다이얼 · 플루토 인지 인스펙터 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-27)
+
+- 선행: v12.18.92-DEV = be80b01(§217). dotnet build-server shutdown 후 착수. 12.18.91 은 DEV 전용(GM 미출하) → 12.18.90 → 12.18.92 직행 승격.
+- 12.18.90 → 12.18.92(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 92, 0)` ×2 · "12.18.92" 핀 · HostVersion_Is_12_18_92 · release-package.ps1 머리말 · 3표기 바이트 치환 · BOM/줄바꿈 보존) =
+  bb84a7b(4파일 11/11줄 = 직전 승격 f5fb5ad 합계와 일치 · 잔여 0) · 태그 v12.18.92-GM -f → bb84a7b.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · [3/11] 전체 스위트 5,751 통과 + 9 건너뜀(옵트인) · 실패 0(5,760) ·
+  [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드 · [7/11] 봉인 38(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal 7A09751A… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 봉인 오버레이 38 · 격리 기동 PID 28760 · HWND 0x70E30 실측.
+- 산출물: release-v12.18.92-GM.zip(280E4484…) · StockManager-v12.18.92-Standalone-win-x64.zip(821ACC47…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit bb84a7b) · manifest.sig 외 15종.
+  사후 독립 대조(zip 항목 스트림 SHA-256): 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 일치(불일치 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.90-GM 15종 → release/superseded-v12.18.90-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 상태(정직): 합성 시세 = '모의 가격' 경고 · 실시간 0건 = 미연결 표기(가짜 시세 0) · 인스펙터 CVD/ATR/PER 은 엔진 근거 문구에 있을 때만 · 실 앱 화면 미실측(bUnit 검증) ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.

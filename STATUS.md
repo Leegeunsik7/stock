@@ -1,12 +1,12 @@
 # STATUS
 
-- **Active Milestone**: v12.18.92-DEV — DualArena 시세 출처 시인성 · 진화 진행도(ETA) · 쿨다운 다이얼 · 🔍 플루토 인지 데이터 인스펙터
-- **Build Status**: WebOnly + sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 5,751 통과 / 9 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40
+- **Active Milestone**: v12.18.92-GM — DualArena 시세 출처 시인성 · 진화 ETA · 쿨다운 다이얼 · 플루토 인지 인스펙터 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer)
+- **Build Status**: 사중 Release -warnaserror 0W/0E · 5,751 통과 / 9 건너뜀 / 0 실패 · infra-scan 0 · 래칫 ≤40 · 패키징 [0/11]~[11/11] exit 0
 - **Updated At**: 2026-10-27
 - **Completed Deliverables**:
-  - 3대 아레나 출처 줄 — 합성 = ⚠️ '모의 가격' 경고 배너 · 실시간 = 키움/KIS/업비트 실수신 상태(0건 = 미연결 정직 표기)
-  - 관제탑 1.0s 스캔 하트비트(실측 최근 스캔 경과) · 진화 심사 진행도 바(N / 20 → n / 10) · 15분 쿨다운 원형 다이얼
-  - PlutoCognitiveInspector 모달 — 분석 피처 · 39슬롯 텐서 실측표(셀 실측 승률) · 4대 위원회 채점표
-  - 포트 확장(EvolveAnchor · ReadTensorCells 기본 구현) · 엔진 콜드 판독 2종 · 핫패스 δ=0 무변경
-  - DualArenaInspectorTests 9건 신규 · HANDOVER §217
-- **Next Milestone**: 실 앱 화면 실측(경고 배너 · 인스펙터) · 엔진 피처 수치 필드화(CVD · ATR · PER 전용 DTO) · GM 승격 패키징
+  - 버전 12.18.90 → 12.18.92 승격(4파일 11줄 · 3표기) bb84a7b · 태그 v12.18.92-GM
+  - 감사 봉인본 release-v12.18.92-GM.zip(280E4484…) · masterSeal 7A09751A… · 봉인 38 · 인터락 30 · Tighten 6
+  - 즉시 실행 배포본 StockManager-v12.18.92-Standalone-win-x64.zip(821ACC47…) · 격리 기동 실측
+  - 독립 대조 38/38 바이트 일치(봉인본 ↔ 배포본 ↔ 매니페스트) · CLI 4종 exit 0 · liveArmedDefault false
+  - v12.18.90-GM 15종 → release/superseded-v12.18.90-GM/ 이관 · worktree 제거/prune
+- **Next Milestone**: 실 앱 화면 실측(경고 배너 · 인스펙터) · 엔진 피처 수치 필드화(CVD · ATR · PER 전용 DTO) · 피어(QuantumVault) 정돈 시 피어 포함 재패키징
