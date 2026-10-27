@@ -1,0 +1,239 @@
+@* PlutoCognitiveInspector — v12.18.92-DEV: 🔍 플루토 사고 데이터 상세 열람 모달(3대 학습/분석 데이터 표).
+   ① 종목별 실시간 분석 피처 — 추천 보드 카드(시장 탭 · 4대 팩터 점수 · 학습 조정 · 위원회 합의 · 켈리) + 행 선택 시 엔진 근거 문구 원문 · 거시 레짐 줄(국면 · 유사도 · 엄격도).
+   ② 39슬롯 인지 텐서 실측표 — 12국면 행 + 자산 기준선 행 × 3대 자산(모멘텀 조정 · 변호인 엄격도 · 셀 실측 승률 · 성숙도 · 활성 국면 행 강조 · 웜스타트 상태).
+   ③ 4대 위원회 채점표 — 자산별 에이전트 발언권(bp) · 주도 · 켈리 · 엣지 승률/표본 · 리스크 비토.
+   순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0 · 텐서 = 열림 시 콜드 스냅샷). 미결선/판독 없음 = 정직 문구(가짜 지표 · 가짜 승률 0). 상승/공격 = 적색 · 하강/방어 = 청색. *@
+
+<div class="pci-scrim" @onclick="Close">
+<div class="pci-modal" role="dialog" aria-label="플루토 인지 데이터 인스펙터" data-pci @onclick:stopPropagation="true">
+    <div class="pci-head">
+        <div class="pci-title">🧠 플루토 인지 데이터 인스펙터 <small>Pluto Cognitive Inspector · 판독 전용(주문 0)</small></div>
+        <div>
+            @if (OnRefresh.HasDelegate) { <button class="pci-btn" data-pci-refresh @onclick="() => OnRefresh.InvokeAsync()">↻ 새로 판독</button> }
+            <button class="pci-x" @onclick="Close" aria-label="닫기">✕</button>
+        </div>
+    </div>
+
+    <section class="pci-sec" data-pci-sec="features">
+        <h3>① 실시간 분석 피처 분해 <span>Feature Inspector</span></h3>
+        <div class="pci-regime" data-pci-regime="@(Wired && View.HasRegime ? "on" : "off")">
+            @if (Wired && View.HasRegime)
+            {
+                <span>거시 레짐: <b>@View.RegimeName</b> 유사도 @(View.RegimeSimilarityX10 / 10).@(View.RegimeSimilarityX10 % 10)%</span>
+                <span>→ 악마의 변호인 엄격도 <b class="@(View.DevilStrictnessPts > 0 ? "def" : View.DevilStrictnessPts < 0 ? "atk" : "")">@Signed(View.DevilStrictnessPts)점</b> · 모멘텀 <b class="@(View.MomentumTiltPct > 0 ? "up" : View.MomentumTiltPct < 0 ? "down" : "")">@Signed(View.MomentumTiltPct)%</b></span>
+            }
+            else
+            {
+                <span>거시 레짐: @(Wired ? "판정 전(거시 관측 2차원 이상 수집 후 12대 국면 판정)" : "학습 엔진 미결선")</span>
+            }
+        </div>
+        <div class="pci-tabs" role="tablist">
+            @foreach (int m in s_markets)
+            {
+                <button class="pci-tab @(m == _market ? "on" : "")" role="tab" data-pci-market="@m" @onclick="() => { _market = m; _pick = -1; }">@PlutoRecoMarket.Label(m) <small>(@Board.Of(m).Cards.Count)</small></button>
+            }
+        </div>
+        @{ var mv = Board.Of(_market); }
+        @if (!RecoWired)
+        {
+            <div class="pci-empty" data-pci-features="unwired">추천 스크리너 미결선 — 종목별 분석 피처가 없습니다(가짜 지표를 표시하지 않습니다).</div>
+        }
+        else if (mv.Cards.Count == 0)
+        {
+            <div class="pci-empty" data-pci-features="empty">@PlutoRecoMarket.Label(_market): 추천 기준 통과 종목 없음 — 감시 @(mv.Monitored)종 · 피드 판독 @(mv.Scanned)종 · 차단 @(mv.BlockedTotal)종 · 판독 대기 @(mv.AwaitingFeed)종</div>
+        }
+        else
+        {
+            bool crypto = _market == PlutoRecoMarket.Crypto;
+            <table class="pci-table" data-pci-features="@mv.Cards.Count">
+                <thead><tr>
+                    <th>#</th><th>종목</th><th>점수</th>
+                    <th>@(crypto ? "유동성" : "안전마진")</th><th>@(crypto ? "볼밴 스퀴즈" : "기술적 타점")</th><th>@(crypto ? "CVD" : "수급/호가")</th><th>@(crypto ? "호가 뎁스벽" : "거시")</th>
+                    <th>학습 조정</th><th>위원회 합의</th><th>켈리</th>
+                </tr></thead>
+                <tbody>
+                    @for (int i = 0; i < mv.Cards.Count; i++)
+                    {
+                        int idx = i;
+                        var c = mv.Cards[i];
+                        <tr class="pci-row @(idx == _pick ? "on" : "")" data-pci-card="@c.Code" @onclick="() => _pick = idx == _pick ? -1 : idx">
+                            <td class="mono">@c.Rank</td>
+                            <td><b>@c.Name</b> <small class="mono">@c.Code</small></td>
+                            <td class="mono"><b>@c.Score</b></td>
+                            <td class="mono">@c.ValuationPts</td><td class="mono">@c.TechnicalPts</td><td class="mono">@c.MicroPts</td><td class="mono">@c.MacroPts</td>
+                            <td class="mono @(c.LearnNetPts > 0 ? "up" : c.LearnNetPts < 0 ? "down" : "")">@Signed(c.LearnNetPts)</td>
+                            <td class="mono">@(c.CouncilWired ? Signed(c.CouncilConsensus) : "—")</td>
+                            <td class="mono">@PlutoKellyCode.Cell(c.KellyState, c.KellyBp, c.KellySamples)</td>
+                        </tr>
+                        @if (idx == _pick)
+                        {
+                            <tr class="pci-detail" data-pci-detail="@c.Code"><td colspan="10">
+                                <div>@c.MosText · 현재가 @c.PriceText</div>
+                                @if (c.Reasons.Count > 0)
+                                {
+                                    <ul>@foreach (var r in c.Reasons) { <li>@r</li> }</ul>
+                                }
+                                else { <div class="dim">엔진 근거 문구 없음</div> }
+                                @if (c.LearnText.Length > 0) { <div>🧬 @c.LearnText</div> }
+                                @if (c.CounterText.Length > 0) { <div>😈 악마의 변호인: @c.CounterText</div> }
+                                @if (c.KellyText.Length > 0) { <div>⚖️ @c.KellyText</div> }
+                            </td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+            <div class="pci-foot">점수 = 4대 팩터 + 학습 조정(모멘텀 − 감점) · 행 클릭 = 엔진 근거 원문(CVD · 볼린저 · ATR · PER 등 엔진이 산출한 지표만 표기 · 미산출 지표 날조 0)</div>
+        }
+    </section>
+
+    <section class="pci-sec" data-pci-sec="tensor">
+        <h3>② 자가 진화 텐서 가중치 실측표 <span>39-Slot Learning Tensor · 12국면 × 3자산 + 자산 기준선</span></h3>
+        @if (Cells.Count == 0)
+        {
+            <div class="pci-empty" data-pci-tensor="unwired">인지 텐서 미결선 — 슬롯 가중치 · 실측 승률이 없습니다.</div>
+        }
+        else
+        {
+            int active = View.Tensor?.ActiveRegimeId ?? 0;
+            <table class="pci-table pci-matrix" data-pci-tensor="@Cells.Count" data-pci-active="@active">
+                <thead><tr>
+                    <th>국면</th>
+                    @foreach (int m in s_markets)
+                    {
+                        var lane = Lane(m);
+                        <th>@PlutoTensorLaneView.AssetLabel(m) @if (lane is { } l) { <span class="pci-tag @PlutoWarmCode.Css(l.Warm)" data-pci-warm="@m">@PlutoWarmCode.Label(l.Warm)</span> }</th>
+                    }
+                </tr></thead>
+                <tbody>
+                    @for (int r = 0; r + s_markets.Length <= Cells.Count; r += s_markets.Length)
+                    {
+                        var head = Cells[r];
+                        bool on = head.IsBaseline ? active == 0 : head.RegimeId == active;
+                        <tr class="@(on ? "on" : "") @(head.IsBaseline ? "base" : "")" data-pci-regime-row="@head.RegimeId">
+                            <td><b>@head.RegimeName</b>@if (on) { <small> ◀ 현재 국면</small> }</td>
+                            @for (int a = 0; a < s_markets.Length; a++)
+                            {
+                                var cell = Cells[r + a];
+                                <td data-pci-cell="@cell.RegimeId:@cell.Asset" data-pci-maturity="@PlutoSlotMaturityCode.Css(cell.Maturity)">
+                                    @if (cell.Generation > 0)
+                                    {
+                                        <span class="mono @(cell.MomentumTiltPct > 0 ? "up" : cell.MomentumTiltPct < 0 ? "down" : "")">@Signed(cell.MomentumTiltPct)%</span>
+                                        <span class="mono @(cell.DevilStrictnessPts > 0 ? "def" : cell.DevilStrictnessPts < 0 ? "atk" : "")">@Signed(cell.DevilStrictnessPts)점(@cell.StanceText)</span>
+                                    }
+                                    else { <span class="dim">가중치 미보정</span> }
+                                    <span class="mono pci-win">@cell.WinText</span>
+                                    <span class="pci-tag @PlutoSlotMaturityCode.Css(cell.Maturity)">@PlutoSlotMaturityCode.Label(cell.Maturity)@(cell.Generation > 0 ? " G" + cell.Generation : "")</span>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="pci-foot">셀 = 모멘텀 조정 % · 변호인 엄격도 점(+ 방어 / − 공격) · 셀 실측 승률(최근 회고 링) · 표본 20 이상 + 섀도우 통과 시 보정 완료</div>
+        }
+    </section>
+
+    <section class="pci-sec" data-pci-sec="council">
+        <h3>③ 4대 위원회 에이전트별 채점표 <span>발언권(합의 가중치) · 켈리</span></h3>
+        @if (!Council.Wired)
+        {
+            <div class="pci-empty" data-pci-council="unwired">위원회 미결선 — 추세 · 역발상 · 호가 수급 · 위험 통제 에이전트 비활성</div>
+        }
+        else if (!Council.Published || Council.Lanes.Count == 0)
+        {
+            <div class="pci-empty" data-pci-council="pending">첫 위원회 소집 대기 — 첫 분석 후 에이전트별 발언권을 게시합니다</div>
+        }
+        else
+        {
+            <table class="pci-table" data-pci-council="@Council.Lanes.Count">
+                <thead><tr>
+                    <th>자산</th>
+                    @foreach (int a in s_agents) { <th title="@PlutoCouncilAgentCode.Label(a)">@PlutoCouncilAgentCode.Korean(a)</th> }
+                    <th>주도</th><th>켈리</th><th>엣지 승률</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var l in Council.Lanes)
+                    {
+                        int lead = l.Lead;
+                        <tr data-pci-lane="@l.Asset">
+                            <td><b>@PlutoTensorLaneView.AssetLabel(l.Asset)</b></td>
+                            @foreach (int a in s_agents)
+                            {
+                                <td class="mono @(a == lead ? "lead" : "")" data-pci-agent="@a" data-pci-agent-bp="@l.WeightOf(a)">@PlutoKellyCode.Pct(l.WeightOf(a))</td>
+                            }
+                            <td>@PlutoCouncilAgentCode.Korean(lead)</td>
+                            <td class="mono">@PlutoKellyCode.Cell(l.KellyState, l.KellyBp, l.Samples)</td>
+                            <td class="mono">@(l.Samples > 0 ? PlutoKellyCode.Pct(l.WinRateBp) + " · 표본 " + l.Samples : "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="pci-foot @(Council.Vetoed ? "veto" : "")" data-pci-veto="@(Council.Vetoed ? "on" : "off")">@(Council.Vetoed ? "⛔ 리스크 통제관 거부권: " + Council.VetoText : "리스크 통제관: 거부권 미발동") · 직전 스캔 비토 탈락 @(Council.CouncilVetoed)종</div>
+        }
+    </section>
+</div>
+</div>
+
+@code {
+    private static readonly int[] s_markets = { PlutoRecoMarket.Krx, PlutoRecoMarket.Us, PlutoRecoMarket.Crypto };
+    private static readonly int[] s_agents = { PlutoCouncilAgentCode.Trend, PlutoCouncilAgentCode.Reversion, PlutoCouncilAgentCode.Liquidity, PlutoCouncilAgentCode.Risk };
+
+    [Parameter] public bool Wired { get; set; }
+    [Parameter] public PlutoLearningView View { get; set; }
+    /// <summary>39셀 텐서 스냅샷(IPlutoLearningPort.ReadTensorCells · 빈 목록 = 미결선).</summary>
+    [Parameter] public IReadOnlyList<PlutoTensorCellView> Cells { get; set; } = Array.Empty<PlutoTensorCellView>();
+    [Parameter] public bool RecoWired { get; set; }
+    [Parameter] public PlutoRecoBoardView Board { get; set; } = PlutoRecoBoardView.None;
+    [Parameter] public PlutoCouncilView Council { get; set; } = PlutoCouncilView.None;
+    /// <summary>처음 열 시장 탭(PlutoRecoMarket).</summary>
+    [Parameter] public int InitialMarket { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private int _market;
+    private int _pick = -1;
+
+    protected override void OnInitialized() => _market = InitialMarket is PlutoRecoMarket.Us or PlutoRecoMarket.Crypto ? InitialMarket : PlutoRecoMarket.Krx;
+
+    private PlutoTensorLaneView? Lane(int asset)
+    {
+        if (View.Tensor is not { } t) return null;
+        foreach (var l in t.Lanes) if (l.Asset == asset) return l;
+        return null;
+    }
+
+    private static string Signed(long v) => (v > 0 ? "+" : "") + v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private Task Close() => OnClose.InvokeAsync();
+}
+
+<style>
+    .pci-scrim { position: fixed; inset: 0; background: rgba(3, 7, 18, .72); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .pci-modal { width: min(1080px, 96vw); max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #111827; color: #E5E7EB; border: 1px solid #374151; border-radius: 12px; padding: 14px 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, .5); }
+    .pci-head { display: flex; align-items: center; justify-content: space-between; }
+    .pci-title { font-size: 15px; font-weight: 700; } .pci-title small { font-size: 11.5px; font-weight: 400; color: #9CA3AF; margin-left: 6px; }
+    .pci-x { background: transparent; border: 0; color: #9CA3AF; font-size: 16px; cursor: pointer; }
+    .pci-btn { font-size: 12px; padding: 4px 10px; margin-right: 6px; border-radius: 6px; border: 1px solid #374151; background: #1F2937; color: #E5E7EB; cursor: pointer; }
+    .pci-sec { border: 1px solid #1F2937; border-radius: 10px; padding: 10px 12px; background: #0B0F19; }
+    .pci-sec h3 { margin: 0 0 8px; font-size: 13.5px; color: #F9FAFB; } .pci-sec h3 span { font-size: 11px; font-weight: 400; color: #6B7280; margin-left: 6px; }
+    .pci-regime { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #C7D2FE; margin-bottom: 8px; }
+    .pci-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+    .pci-tab { font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 8px; border: 1px solid #374151; background: #1F2937; color: #9CA3AF; cursor: pointer; }
+    .pci-tab.on { color: #fff; border-color: #6366F1; background: #1e1b4b; }
+    .pci-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .pci-table th { text-align: left; font-size: 11px; font-weight: 700; color: #9CA3AF; border-bottom: 1px solid #374151; padding: 5px 6px; white-space: nowrap; }
+    .pci-table td { border-bottom: 1px solid #1F2937; padding: 5px 6px; vertical-align: top; }
+    .pci-table small { color: #6B7280; }
+    .pci-row { cursor: pointer; } .pci-row:hover, .pci-row.on { background: #1F2937; }
+    .pci-detail td { background: #111827; color: #D1D5DB; line-height: 1.6; } .pci-detail ul { margin: 4px 0; padding-left: 18px; }
+    .pci-matrix td span { display: block; } .pci-matrix tr.on td { background: #1e1b4b; } .pci-matrix tr.base td { border-top: 1px dashed #374151; }
+    .pci-win { color: #F3F4F6; }
+    .pci-tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 8px; border: 1px solid #374151; color: #9CA3AF; }
+    .pci-tag.on { border-color: #14532D; color: #86EFAC; } .pci-tag.ready, .pci-tag.stale { border-color: #78350F; color: #FCD34D; }
+    .pci-tag.acc { border-color: #312E81; color: #C7D2FE; } .pci-tag.fail { border-color: #7F1D1D; color: #FCA5A5; } .pci-tag.none { color: #6B7280; }
+    .pci-table td.lead { color: #F9FAFB; font-weight: 700; }
+    .pci-empty { padding: 12px; color: #9CA3AF; text-align: center; font-size: 12.5px; }
+    .pci-foot { margin-top: 6px; font-size: 11px; color: #6B7280; } .pci-foot.veto { color: #FCA5A5; font-weight: 700; }
+    .pci-modal .up { color: #E53935; } .pci-modal .down { color: #1E88E5; } .pci-modal .atk { color: #E53935; } .pci-modal .def { color: #1E88E5; }
+    .pci-modal .dim { color: #6B7280; } .pci-modal .mono { font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+</style>

@@ -6,8 +6,10 @@
 //   [v12.18.85-DEV] 섀도우 검증 요약(직전 판정 · 현행 가중치 섀도우 승률/MDD) → PlutoShadowView(인지 브리핑).
 //   [v12.18.84-DEV] 체크포인트 관리자(결선 시) → 평생 누적 학습 에피소드 · 영속화 상태 코드(미결선 = −1 · Off).
 //   [v12.18.86-DEV] 인지 텐서(결선 시) → 활성 국면 × 3대 자산군 해석 가중치(Resolve · 미보정 = 전역 가중치 그대로) + 웜스타트 보고 → 자산군별 WarmReady/NoData(PlutoTensorView).
+//   [v12.18.92-DEV] 진화 심사 기준점(스웜 SamplesAtLastCalibration) → EvolveAnchor · ReadTensorCells = 39셀(국면 1~12 → 기준선) 가중치 · 성숙도 · 셀 실측 승패(콜드 · 인스펙터 열림 시만).
 // ============================================================================
 using System;
+using System.Collections.Generic;
 using MS2E.UI.Portable.Ports.Trading;
 using StockManager.Engines.Cognitive.Learning;
 
@@ -38,10 +40,35 @@ namespace StockManager.Adapters
             get
             {
                 var v = Map(_swarm.Status, _swarm.Running, _macroFeedText);
+                v = v with { EvolveAnchor = _swarm.SamplesAtLastCalibration };
                 var c = _checkpoints;
                 if (c is not null) v = v with { LifetimeEpisodes = c.LifetimeEpisodes, PersistState = PersistCode(c.State) };
                 return _tensor is null ? v : v with { Tensor = MapTensor(_tensor, _warmStart?.Report, _swarm.Status?.Weights ?? default) };
             }
+        }
+
+        public IReadOnlyList<PlutoTensorCellView> ReadTensorCells() => _tensor is null ? Array.Empty<PlutoTensorCellView>() : MapCells(_tensor);
+
+        /// <summary>[v12.18.92-DEV] 39셀 → 인스펙터 DTO(국면 행 1~12 먼저 · 기준선 행 마지막 · 행 내 KRX · US · Upbit 순).</summary>
+        public static PlutoTensorCellView[] MapCells(PlutoCognitiveTensorLake tensor)
+        {
+            ArgumentNullException.ThrowIfNull(tensor);
+            var cells = new PlutoTensorCellView[PlutoCognitiveTensorLake.Cells];
+            int k = 0;
+            for (int row = 1; row <= PlutoCognitiveTensorLake.Regimes; row++)
+                for (int a = 0; a < PlutoCognitiveTensorLake.Assets; a++) cells[k++] = MapCell(tensor, row * PlutoCognitiveTensorLake.Assets + a);
+            for (int a = 0; a < PlutoCognitiveTensorLake.Assets; a++) cells[k++] = MapCell(tensor, a);
+            return cells;
+        }
+
+        private static PlutoTensorCellView MapCell(PlutoCognitiveTensorLake tensor, int cell)
+        {
+            var c = tensor.Cell(cell);
+            var e = tensor.CellEdge(cell);
+            bool baseline = c.RegimeId == PlutoCognitiveTensorLake.BaselineRegime;
+            string name = baseline ? "자산 기준선" : PlutoRegimeVectorLake.Get(c.RegimeId)?.Name ?? "국면 " + c.RegimeId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new PlutoTensorCellView(baseline ? PlutoTensorCellView.BaselineRegime : c.RegimeId, name, (int)c.Asset, c.Weights.Generation,
+                c.Weights.MomentumTiltPct, c.Weights.DevilStrictnessPts, (int)c.Maturity, c.LifetimeEpisodes, e.Wins, e.Losses, e.WinRateBp);
         }
 
         /// <summary>[v12.18.86-DEV] 텐서 활성 슬롯(자산군별 Resolve · 미보정 = 전역 가중치) + 웜스타트 보고(null = 웜스타트 비활성 → 미결선) → 브리핑 DTO.</summary>

@@ -4956,3 +4956,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,742 통과 / 9 건너뜀 / 0 실패(5,751) ·
   infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결/정산 핫패스 무변경 δ=0 · 인터락 30 무변경 · liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
 - 정직 한계: 국내 데모 = 합성 대형주 5종 · 미국 = 빅테크 5종 · 코인 = 4종만 호가 생성 → 420종 중 선택 가능 종목은 아레나 유니버스 범위(엔진 확장 별도) · 실 앱 화면 미실측(bUnit 검증).
+
+## 217. v12.18.92-DEV — DualArena 시세 출처 시인성 · 진화 진행도(ETA) · 쿨다운 다이얼 · 🔍 플루토 인지 데이터 인스펙터 (2026-10-27)
+
+- 선행: 3b7fcc7(§216 v12.18.91-DEV). 오더 전제 검증: 진화 주기 = 실재(보정기 최소 표본 20 · 스웜 재보정 10표본) · 쿨다운 15분 = PlutoDynamicSizer.CooldownTicks ·
+  39슬롯 = 36 국면 슬롯 + 자산 기준선 3 · 스크리너 스캔 = 30s 주기(1.0s = 화면 심박 펄스 · 실측 '최근 위원회 스캔 N초 전' 병기 — 1초 스캔 날조 0).
+- UI: 3대 아레나 시세 출처 줄 — 합성 요청/적용 = ⚠️ '모의 가격' 경고 배너(role=alert) · 실시간 = 키움 브리지/KIS 해외/업비트 실수신 상태(정상 = 누적 수신 건수 · 0건 = 미연결 · 가짜 시세 대체 0).
+  PlutoCognitiveHud: 1.0s 스캔 하트비트 줄 + [🔍 플루토 사고 데이터 상세 열람] · 자가 진화 타일 = 진화 심사 진행도 바(첫 심사 N / 20 · 이후 새 표본 n / 10 · 기준점 미상 = 바 미표기 ·
+  '심사 = 섀도우 통과 시에만 세대 +1' 명시). 쿨다운 뱃지 = conic 원형 다이얼 + 잔여 바 + 해제 시각.
+  PlutoCognitiveInspector(신규 순수 RCL 모달): ① 시장 탭별 추천 카드 4대 팩터 · 학습 조정 · 위원회 합의 · 켈리 + 행 클릭 = 엔진 근거 원문(엔진 미산출 지표 날조 0) · 거시 레짐 줄
+  ② 39셀 실측표(13행 × 3자산 · 활성 국면 강조 · 모멘텀 · 엄격도(방어/공격) · 셀 보정기 실측 승률 · 성숙도 · 웜스타트) ③ 4대 위원회 채점표(자산별 발언권 bp · 주도 · 켈리 · 엣지 승률 · 비토).
+- 포트/어댑터: Ports/Trading/PlutoInspector.cs(PlutoTensorCellView · PlutoSlotMaturityCode · PlutoEvolutionEta · PlutoCooldownDial) · PlutoLearningView.EvolveAnchor/Evolution ·
+  IPlutoLearningPort.ReadTensorCells(기본 구현 = 빈 목록 → 미결선 null 객체 무변경) · 엔진 콜드 판독 2종(스웜 SamplesAtLastCalibration · 텐서 CellEdge) · 어댑터 MapCells. 페이지 주입 6종 불변.
+- 테스트: DualArenaInspectorTests 9개 신규(진행도 경계 · 엔진 상수 미러 · 39셀 투사/실측 승패 · 미결선 · HUD 심박/진행도/버튼 · 실시간 미연결/합성 경고 · 인스펙터 3대 표 · 미결선 정직 렌더).
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,751 통과 / 9 건너뜀 / 0 실패(5,760) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결/정산 핫패스 무변경 δ=0(신규 판독 = 인스펙터 열림 시 콜드) · liveArmed:false · 타 세션 파일 3종 미스테이징.
+- 정직 한계: 인스펙터 CVD/볼린저/ATR/PER 은 엔진 근거 문구에 있을 때만 표기(전용 수치 필드 없음) · 실 앱 화면 미실측(bUnit 검증).

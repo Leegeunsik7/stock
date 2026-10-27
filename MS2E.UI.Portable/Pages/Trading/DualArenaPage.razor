@@ -44,7 +44,10 @@
      매트릭스 대기 행 = 신호등 기준 장외 문구. 판독 = 기존 주입 6종 스냅샷(KRX SessionOpen · US Phase · Upbit Tradable · 스웜 레인 · 거시 피드 문구) — 신규 주입 0.
    [v12.18.91-DEV] UX 결함 일괄 — ① 콕핏 입력/선택 상자 명시 대비색(#1F2937 / #F9FAFB · color: inherit 검정 상속 제거) ② 티켓별 [🔍 종목선택] → StockSearchModal
      (420종 카탈로그 · 코스피/코스닥/미국주/업비트 탭 · 선택 가능 = 아레나 실수신 호가 종목뿐 · 미수신 = 비활성 행) ③ 헤더 [⚡ 원클릭 전 자산 데모 시세 주입] = 3대 포트 SelectSource(합성) 일괄.
-     페이지 주입 6종 불변(카탈로그 포트는 모달이 열릴 때만 주입). 거버너 ON/OFF 는 원래부터 싱글톤 엔진 플래그(페이지 재생성 무관 · 회귀 테스트로 고정). *@
+     페이지 주입 6종 불변(카탈로그 포트는 모달이 열릴 때만 주입). 거버너 ON/OFF 는 원래부터 싱글톤 엔진 플래그(페이지 재생성 무관 · 회귀 테스트로 고정).
+   [v12.18.92-DEV] 시세 출처 시인성 · 진행도 · 인지 인스펙터 — ① 3대 시세 출처 줄: 합성 = ⚠️ '모의 가격' 경고 배너 · 실시간 = 키움/KIS/업비트 실수신 상태(정상 = 수신 건수 · 미연결 = 0건 정직 표기)
+     ② 관제탑 1.0s 스캔 하트비트 + 진화 심사 진행도 바(N / 20) · 쿨다운 뱃지 = 원형 다이얼(남은 분 / 15분) ③ [🔍 플루토 사고 데이터 상세 열람] → PlutoCognitiveInspector
+     (분석 피처 · 39슬롯 텐서 실측표 · 4대 위원회 채점표 — 텐서 = 열림 시 콜드 스냅샷 · 페이지 주입 6종 불변). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -90,7 +93,8 @@
 }
 <section class="ck-card ck-hud">
 <div class="ck-card-h"><h2>플루토 인지 학습 관제탑 <small>국면 연상 · 위원회 합의 · 자가 진화</small></h2></div>
-<PlutoCognitiveHud Wired="@Learning.IsWired" View="@lvHud" Briefing="@liveBrief" Lights="@lights" Insight="@hudInsight" Council="@rbHud.Council" />
+<PlutoCognitiveHud Wired="@Learning.IsWired" View="@lvHud" Briefing="@liveBrief" Lights="@lights" Insight="@hudInsight" Council="@rbHud.Council"
+                   ScanUtc="@rbHud.UpdatedUtc" ScanGeneration="@rbHud.Generation" OnInspect="OpenInspector" />
 <PlutoCouncilBalance View="@rbHud.Council" />
 <div class="da-gov-bar">
     <button class="da-gov-toggle @govState" role="switch" aria-checked="@(govOn == 3 ? "true" : "false")" data-gov="@govState" @onclick="ToggleGovernance">
@@ -279,6 +283,7 @@
             <button class="ar-tab @(cf.Requested == CryptoArenaFeed.Synthetic ? "on" : "")" role="tab" @onclick="() => SelectCrypto(CryptoArenaFeed.Synthetic)">🧪 합성 시세(데모)</button>
         </div>
         <span class="da-badge @CryptoFeedCss(cf, c)">@CryptoFeedText(cf, c)</span>
+        @FeedNotice(cf.Requested == CryptoArenaFeed.Synthetic || cf.Applied == CryptoArenaFeed.Synthetic, cf.StreamConnected && cf.StreamUpdates > 0, CryptoLiveText(cf))
         @if (cHas && c.SessionKst is { } ckst)
         {
             <span class="da-badge da-phase @(c.Tradable ? "ok" : "bad")" data-phase="@(c.Tradable ? "24x7" : "invalid")">@(c.Tradable ? "24/7 연속매매 가동" : "세션 시각 무효(fail-closed)") · @ckst.ToString("MM-dd HH:mm:ss") KST</span>
@@ -425,6 +430,7 @@ else if (_mode == ModeUs)
             <button class="ar-tab @(uf.Requested == UsArenaFeed.Synthetic ? "on" : "")" role="tab" @onclick="() => SelectUs(UsArenaFeed.Synthetic)">🧪 합성 시세(데모)</button>
         </div>
         <span class="da-badge @UsFeedCss(uf, u)">@UsFeedText(uf, u)</span>
+        @FeedNotice(uf.Requested == UsArenaFeed.Synthetic || uf.Applied == UsArenaFeed.Synthetic, uf.KisUpdates > 0, UsLiveText(uf))
         @if (uHas && u.SessionKst is { } ukst)
         {
             <span class="da-badge da-phase @PhaseCss(u.Phase)" data-phase="@u.Phase">@PhaseText(u.Phase) · @ukst.ToString("MM-dd HH:mm:ss") KST</span>
@@ -581,6 +587,7 @@ else
         <button class="ar-tab @(feed.Requested == KrxArenaFeed.Synthetic ? "on" : "")" role="tab" @onclick="() => Select(KrxArenaFeed.Synthetic)">🧪 합성 시세(데모)</button>
     </div>
     <span class="da-badge @FeedCss(feed, v)">@FeedText(feed, v)</span>
+    @FeedNotice(feed.Requested == KrxArenaFeed.Synthetic || feed.Applied == KrxArenaFeed.Synthetic, feed.BridgeUpdates > 0, KrxLiveText(feed))
     @if (hasView && v.SessionKst is { } kst)
     {
         <span class="da-badge @(v.SessionOpen ? "ok" : "wait")">@(v.SessionOpen ? "정규장" : "장외") · @kst.ToString("MM-dd HH:mm:ss") KST</span>
@@ -720,6 +727,13 @@ else
 {
     <StockSearchModal InitialTab="@_pickTab" Quoted="@_pickQuoted" OnPick="PickStock" OnClose="() => _pickOpen = false" />
 }
+@if (_inspectOpen)
+{
+    var rbIns = Reco.IsWired ? Reco.Current : PlutoRecoBoardView.None;
+    <PlutoCognitiveInspector Wired="@Learning.IsWired" View="@(Learning.IsWired ? Learning.Current : default)" Cells="@_inspectCells"
+                             RecoWired="@Reco.IsWired" Board="@rbIns" Council="@rbIns.Council" InitialMarket="@ModeMarket()"
+                             OnRefresh="OpenInspector" OnClose="() => _inspectOpen = false" />
+}
 </div>
 
 @code {
@@ -761,6 +775,46 @@ else
     private int _pickTab;
     private Dictionary<string, string> _pickQuoted = new();
     private string? _demoMsg;
+
+    // [v12.18.92-DEV] 🔍 플루토 사고 데이터 상세 열람(열림/새로 판독 시 39셀 텐서 1회 콜드 스냅샷 · 닫힘 = 판독 0)
+    private bool _inspectOpen;
+    private IReadOnlyList<PlutoTensorCellView> _inspectCells = System.Array.Empty<PlutoTensorCellView>();
+
+    private void OpenInspector()
+    {
+        _inspectCells = Learning.IsWired ? Learning.ReadTensorCells() : System.Array.Empty<PlutoTensorCellView>();
+        _inspectOpen = true;
+    }
+
+    private int ModeMarket() => _mode == ModeCrypto ? PlutoRecoMarket.Crypto : _mode == ModeUs ? PlutoRecoMarket.Us : PlutoRecoMarket.Krx;
+
+    // [v12.18.92-DEV] 시세 출처 안내 — 합성 = ⚠️ 모의 가격 경고 · 실시간 = 실수신 상태(정상 = 누적 수신 건수 · 0건 = 미연결 · 가짜 시세 대체 0).
+    public const string SyntheticWarning = "⚠️ 현재 가상 틱 생성기가 만든 '모의 가격'으로 작동 중입니다 (실제 시장 주가와 다름)";
+
+    private static RenderFragment FeedNotice(bool synthetic, bool live, string liveText) => @<text>
+        @if (synthetic)
+        {
+            <div class="da-syn-warn" role="alert" data-syn-warn>@SyntheticWarning</div>
+        }
+        else
+        {
+            <div class="da-bridge @(live ? "ok" : "bad")" data-bridge="@(live ? "ok" : "down")">@liveText</div>
+        }
+    </text>;
+
+    private static string KrxLiveText(KrxArenaFeedStatus f) => f.BridgeUpdates > 0
+        ? "✅ 키움 브리지 실시세 정상 수신 — 실제 호가 " + f.BridgeUpdates.ToString("N0") + "건"
+        : "⛔ 키움 브리지 미연결 — 실제 호가 0건(키움 OpenAPI 프록시 미가동 · 정규장 09:00~15:30 외) · 가짜 시세로 대체하지 않습니다";
+
+    private static string UsLiveText(UsArenaFeedStatus f) => f.KisUpdates > 0
+        ? "✅ KIS 해외 실시세 정상 수신 — 실제 체결가 " + f.KisUpdates.ToString("N0") + "건"
+        : "⛔ KIS 해외 시세 미연결 — 실제 체결가 0건(App Key 미설정 · 정규장 09:30~16:00 ET 외) · 가짜 시세로 대체하지 않습니다";
+
+    private static string CryptoLiveText(CryptoArenaFeedStatus f)
+        => !f.StreamAttached ? "⛔ 업비트 실시간 스트림 미결선 — 실제 호가 0건(설정 Arena.UpbitStreamEnabled 꺼짐) · 가짜 시세로 대체하지 않습니다"
+         : !f.StreamConnected ? "⛔ 업비트 스트림 연결 끊김 — 재연결 대기(누적 실제 호가 " + f.StreamUpdates.ToString("N0") + "건)"
+         : f.StreamUpdates > 0 ? "✅ 업비트 실시세 정상 수신 — 실제 호가 " + f.StreamUpdates.ToString("N0") + "건"
+         : "⏳ 업비트 스트림 연결됨 — 첫 실제 호가 대기";
 
     private void OpenPicker(int tab)
     {
@@ -1009,7 +1063,11 @@ else
         }
         @if (g.Enabled && g.InCooldown)
         {
-            <span class="da-badge da-cool" title="연패 2회 이상 — 신규 진입 15분 정지">[15분 쿨다운 중 · 남은 @(g.CooldownRemainingMinutes)분]</span>
+            <span class="da-badge da-cool" title="연패 2회 이상 — 신규 진입 15분 정지" data-cool-pct="@PlutoCooldownDial.Pct(g.CooldownRemainingMinutes)">
+                <i class="da-cool-dial" style="@PlutoCooldownDial.Ring(g.CooldownRemainingMinutes)" aria-hidden="true"></i>
+                [15분 쿨다운 중 · 남은 @(g.CooldownRemainingMinutes)분@(g.CooldownUntilKst is { } until ? " · " + until.ToString("HH:mm") + " 해제" : "")]
+                <span class="da-cool-bar"><span style="width:@(PlutoCooldownDial.Pct(g.CooldownRemainingMinutes))%"></span></span>
+            </span>
         }
     </text>;
 
@@ -1423,7 +1481,19 @@ else
     .da-regime.bull { background: #E53935; color: #fff; } .da-regime.bear { background: #1E88E5; color: #fff; }
     .da-regime.range { background: #546e7a; color: #fff; } .da-regime.panic { background: #b71c1c; color: #fff; outline: 2px solid #ff8a80; }
     .da-regime.idle { opacity: .6; }
-    .da-cool { background: #6a1b9a; color: #fff; } .da-streak.bad { background: #6d4c41; color: #fff; }
+    .da-cool { background: #6a1b9a; color: #fff; display: inline-flex; align-items: center; gap: 6px; }
+    .da-cool-dial { display: inline-block; width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 0 1px #fff inset; }
+    .da-cool-bar { display: inline-block; width: 60px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .25); overflow: hidden; }
+    .da-cool-bar span { display: block; height: 100%; background: #E53935; }
+    .da-syn-warn { flex-basis: 100%; padding: 7px 12px; border-radius: 8px; border: 1px solid #F59E0B; background: #451A03; color: #FDE68A; font-size: 12.5px; font-weight: 700; }
+    .da-bridge { flex-basis: 100%; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+    .da-bridge.ok { border: 1px solid #14532D; background: #052E16; color: #86EFAC; } .da-bridge.bad { border: 1px solid #7F1D1D; background: #2A0A0A; color: #FCA5A5; }
+    .hud-pulse { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+    .hud-beat { width: 9px; height: 9px; border-radius: 50%; background: #22C55E; animation: hud-beat 1s ease-in-out infinite; }
+    .hud-pulse[data-hud-pulse="none"] .hud-beat { background: #6B7280; }
+    @@keyframes hud-beat { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+    .hud-inspect { margin-left: auto; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 8px; border: 1px solid #6366F1; background: #1E1B4B; color: #E0E7FF; cursor: pointer; }
+    .hud-evo { margin: 4px 0 6px; } .hud-evo .hud-gauge { margin-top: 3px; } .da-streak.bad { background: #6d4c41; color: #fff; }
     .da-gov { font-size: 11.5px; margin-top: 0; }
     .da-regime-mini { padding: 0 6px; border-radius: 5px; background: #2a3040; }
     .da-regime-mini.bull { color: #ef9a9a; } .da-regime-mini.bear { color: #90caf9; } .da-regime-mini.panic { color: #ff8a80; font-weight: 700; }

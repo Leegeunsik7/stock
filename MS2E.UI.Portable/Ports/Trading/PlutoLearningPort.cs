@@ -8,6 +8,7 @@
 //   [v12.18.84-DEV] LifetimeEpisodes(재기동 합산 평생 누적 학습 에피소드 · −1 = 영속화 미결선) · PersistState(PlutoLearningPersist 코드) → 영속화 뱃지.
 //   [v12.18.85-DEV] Shadow(PlutoShadowView) = 섀도우 검증 직전 판정 · 현행 가중치 섀도우 성과 → 인지 브리핑(PlutoBriefingComposer) 입력.
 //   [v12.18.86-DEV] Tensor(PlutoTensorView) = 활성 국면 × 3대 자산군 해석 가중치(모멘텀 % · 악마의 변호인 엄격도) + 웜스타트 상태(WarmReady/NoData) → 인지 브리핑 텐서 패널.
+//   [v12.18.92-DEV] EvolveAnchor(직전 진화 심사 시점 누적 표본 · −1 = 미상) → PlutoEvolutionEta 진행도 · ReadTensorCells = 39셀 텐서 콜드 스냅샷(인스펙터 열림 시만 판독).
 //   ★판독 전용 — 주문 · 무장 · 브로커 경로 0. 학습 미가동 호스트 = UnwiredPlutoLearningPort(IsWired false) → 페이지가 '학습 엔진 미결선' 으로 정직 렌더.
 // ============================================================================
 namespace MS2E.UI.Portable.Ports.Trading
@@ -155,13 +156,18 @@ namespace MS2E.UI.Portable.Ports.Trading
     /// [v12.18.84-DEV] LifetimeEpisodes = 평생 누적 학습 에피소드(−1 = 영속화 미결선) · PersistState = PlutoLearningPersist.
     /// [v12.18.85-DEV] Shadow = 섀도우 검증 요약(인지 브리핑 · default = 판정 전).
     /// [v12.18.86-DEV] Tensor = 36슬롯 인지 텐서 활성 슬롯 가중치 · 자산군별 웜스타트 상태(null = 텐서 미결선).
+    /// [v12.18.92-DEV] EvolveAnchor = 직전 진화 심사 시점 누적 표본(−1 = 미상).
     /// </summary>
     public readonly record struct PlutoLearningView(
         bool Running, int Health, string? EpisodeName, int SimilarityPct, bool EpisodeIsSeed,
         long Generation, int MomentumTiltPct, int DevilStrictnessPts, long Samples, long Swaps, long RejectedSwaps,
         string? RegimeName = null, int RegimeSimilarityX10 = -1, string? RegimeNote = null, string? RegimeEffect = null, string? MacroFeedText = null,
-        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off, PlutoShadowView Shadow = default, PlutoTensorView? Tensor = null)
+        long LifetimeEpisodes = -1, int PersistState = PlutoLearningPersist.Off, PlutoShadowView Shadow = default, PlutoTensorView? Tensor = null,
+        long EvolveAnchor = -1)
     {
+        /// <summary>[v12.18.92-DEV] 다음 진화 심사까지 표본 진행도.</summary>
+        public PlutoEvolutionProgress Evolution => PlutoEvolutionEta.Of(Samples, EvolveAnchor);
+
         public bool HasMatch => EpisodeName is not null && SimilarityPct >= 0;
 
         public bool HasRegime => RegimeName is not null && RegimeSimilarityX10 is >= 0 and <= 1000;
@@ -193,6 +199,9 @@ namespace MS2E.UI.Portable.Ports.Trading
     {
         bool IsWired { get; }
         PlutoLearningView Current { get; }
+
+        /// <summary>[v12.18.92-DEV] 39셀 인지 텐서 콜드 스냅샷(국면 행 1~12 → 기준선 행 순 · 자산 KRX · US · Upbit 순) · 텐서 미결선 = 빈 목록.</summary>
+        IReadOnlyList<PlutoTensorCellView> ReadTensorCells() => Array.Empty<PlutoTensorCellView>();
     }
 
     /// <summary>학습 엔진 미결선 null 객체(학습 비활성 호스트 · 테스트 하네스). 상태 = 정지 · 판정 전.</summary>

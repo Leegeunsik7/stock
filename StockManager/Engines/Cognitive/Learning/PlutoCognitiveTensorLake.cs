@@ -212,6 +212,13 @@ namespace StockManager.Engines.Cognitive.Learning
 
         public PlutoShadowVerdict LastVerdict(int cell) { lock (_learnGate) return _lastVerdict[cell]; }
 
+        /// <summary>[v12.18.92-DEV] 셀 보정기 실측 엣지(최근 링 · 폴백 없음 · 콜드 — 인지 인스펙터 39셀 실측표).</summary>
+        public Council.PlutoEdgeStats CellEdge(int cell)
+        {
+            if ((uint)cell >= Cells) throw new ArgumentOutOfRangeException(nameof(cell));
+            return _calibrators[cell].Edge();
+        }
+
         /// <summary>셀 상태 스냅샷(콜드).</summary>
         public PlutoTensorCell Cell(int cell)
         {

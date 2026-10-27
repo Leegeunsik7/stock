@@ -99,6 +99,9 @@ namespace StockManager.Engines.Cognitive.Learning
         /// <summary>최신 상태(Step 0회 = null).</summary>
         public PlutoLearningStatus? Status => Volatile.Read(ref _status);
 
+        /// <summary>[v12.18.92-DEV] 직전 진화 심사 시점 누적 표본(심사 = 새 표본 ≥ RecalibrateEvery · 0 = 심사 전) — UI 진화 진행도(콜드 판독).</summary>
+        public long SamplesAtLastCalibration => Interlocked.Read(ref _samplesAtLastCalibration);
+
         /// <summary>학습 대상 아레나 등록(기동 전 · 이름 = 진단용).</summary>
         public void AddArena(string name, RationaleCopier copy) => AddArena(name, copy, null);
 
@@ -130,7 +133,7 @@ namespace StockManager.Engines.Cognitive.Learning
                 long observed = _calibrator.Observed;
                 if (observed - _samplesAtLastCalibration >= RecalibrateEvery)
                 {
-                    _samplesAtLastCalibration = observed;
+                    Interlocked.Exchange(ref _samplesAtLastCalibration, observed);
                     _weights.TryRead(out var current);
                     if (_calibrator.Propose(in current, out var candidate))
                     {

@@ -6,6 +6,8 @@
    [v12.18.90-DEV] 기관용 인지 콕핏 — 브리핑 2번째 줄(420종 분석 현황 · 국면 연상 · 리스크 비토 실적) + 3대 인지 카드
    (🧭 과거 기억 연상: 국면 · 유사도 · 방어/공격 태세 ⚖️ 4대 위원회 밸런스: 3대 자산 평균 발언권 · 주도 에이전트 · 거부권 🧬 자가 진화 성적표: 세대 · 승률 개선 · 최대 낙폭 · 웜스타트)
    · 듀얼 코어/학습 슬롯 타일 = '엔진 세부 계기'(접힘) 이동.
+   [v12.18.92-DEV] 스캔 하트비트 줄(1.0s 펄스 = 화면 갱신 심박 · 실측 '최근 위원회 스캔 N초 전' · 이력 없음 = 정직 문구) + [🔍 플루토 사고 데이터 상세 열람](OnInspect 결선 시만) ·
+   자가 진화 성적표 타일 = 진화 심사 진행도 바(첫 심사 N / 20 · 이후 새 표본 n / 10 · 기준점 미상 = 바 미표기).
    순수 표시 — [Parameter] 만(주입 0 · 엔진 참조 0). 미결선/판정 전 = 빈 게이지 + 정직 문구(가짜 국면 · 가짜 가중치 0). 상승/공격 = 적색 · 하강/방어 = 청색. *@
 
 @if (Briefing is not null)
@@ -21,6 +23,11 @@
         @if (!string.IsNullOrEmpty(Insight)) { <p class="hud-brief-i" data-hud-insight>@Insight</p> }
     </div>
 }
+<div class="hud-pulse" data-hud-pulse="@(ScanUtc is null ? "none" : "live")">
+    <span class="hud-beat" aria-hidden="true"></span>
+    <span class="hud-s mono">1.0s 스캔 하트비트 · @ScanAgeText()</span>
+    @if (OnInspect.HasDelegate) { <button class="hud-inspect" data-hud-inspect @onclick="() => OnInspect.InvokeAsync()">🔍 플루토 사고 데이터 상세 열람</button> }
+</div>
 <section class="hud" data-hud="@(Wired ? "wired" : "unwired")">
     <div class="hud-tile" data-hud-tile="regime" data-hud-sim="@(Wired && View.HasRegime ? View.RegimeSimilarityX10 : -1)">
         <div class="hud-k">🧭 과거 기억 연상 <span class="hud-en">12대 역사적 국면</span></div>
@@ -80,6 +87,12 @@
                     @if (View.Shadow.HasComparison) { <b class="mono @(View.Shadow.MddGainBp > 0 ? "good" : View.Shadow.MddGainBp < 0 ? "bad" : "")" data-hud-mdd="@View.Shadow.MddGainBp">@PlutoHudInsight.PctP(-View.Shadow.MddGainBp)</b> }
                     else { <b class="mono dim">비교 전</b> }
                 </div>
+            </div>
+            var evo = View.Evolution;
+            <div class="hud-evo" data-hud-evo="@(evo.Known ? evo.Have + "/" + evo.Need : "unknown")" data-hud-evo-pct="@evo.Pct">
+                <div class="hud-s mono">@evo.Text</div>
+                @if (evo.Known) { <div class="hud-gauge"><span style="width:@(evo.Pct)%"></span></div> }
+                <div class="hud-s">심사 = 섀도우 검증 통과 시에만 세대 +1(불통과 = 현행 유지)</div>
             </div>
             <div class="hud-s mono">평생 @(View.LifetimeEpisodes >= 0 ? View.LifetimeEpisodes.ToString("N0") + "회" : "— (영속화 미결선)") · 이번 기동 표본 @(View.Samples)</div>
             <div class="hud-s mono">섀도우 통과 @(View.Swaps) · 거부 @(View.RejectedSwaps)</div>
@@ -146,6 +159,17 @@
     /// <summary>[v12.18.90-DEV] 브리핑 2번째 줄(PlutoHudInsight.Compose · 빈 값 = 미표시) · 4대 위원회(미지정 = 미결선).</summary>
     [Parameter] public string? Insight { get; set; }
     [Parameter] public PlutoCouncilView Council { get; set; } = PlutoCouncilView.None;
+    /// <summary>[v12.18.92-DEV] 최근 위원회 스캔 시각(PlutoRecoBoardView.UpdatedUtc · null = 스캔 이력 없음) · 스캔 세대 · 인스펙터 열기(미결선 = 버튼 미표시).</summary>
+    [Parameter] public DateTime? ScanUtc { get; set; }
+    [Parameter] public long ScanGeneration { get; set; }
+    [Parameter] public EventCallback OnInspect { get; set; }
+
+    private string ScanAgeText()
+    {
+        if (ScanUtc is not { } at) return "위원회 스캔 이력 없음(스크리너 첫 스캔 대기)";
+        long sec = Math.Max(0, (long)(DateTime.UtcNow - at).TotalSeconds);
+        return "최근 위원회 스캔 " + sec.ToString(System.Globalization.CultureInfo.InvariantCulture) + "초 전 (스캔 #" + ScanGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")";
+    }
 
     private static int Pct(int x10) => Math.Clamp(x10 / 10, 0, 100);
 
