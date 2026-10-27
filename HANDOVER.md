@@ -4988,3 +4988,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 이관: 메인 release/ 의 v12.18.90-GM 15종 → release/superseded-v12.18.90-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 상태(정직): 합성 시세 = '모의 가격' 경고 · 실시간 0건 = 미연결 표기(가짜 시세 0) · 인스펙터 CVD/ATR/PER 은 엔진 근거 문구에 있을 때만 · 실 앱 화면 미실측(bUnit 검증) ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 220. v12.18.93-GM — 플루토 코-러닝 허브 · FastReplayLearner · 로컬 거시 레짐 추정 · 39슬롯 사전 가중치 이중 출하(감사 봉인본 + 즉시 실행 배포본 · -NoPeer) (2026-10-27)
+
+- 선행: v12.18.93-DEV = e9538b4(STATUS 기록 · HANDOVER §219 미기재). 화면 점검 완료 후 착수 · dotnet build-server shutdown 선행.
+- 12.18.92 → 12.18.93(csproj Version/AssemblyVersion/FileVersion · `new Version(12, 18, 93, 0)` ×2 · "12.18.93" 핀 · HostVersion_Is_12_18_93 · release-package.ps1 머리말 · 3표기 바이트 치환 · BOM/CRLF 보존) =
+  c935679(4파일 11/11줄 = 직전 승격 bb84a7b 합계와 일치 · 잔여 0) · 태그 v12.18.93-GM -f → c935679.
+- 클린 worktree(D:\PROGRAM\SM_GM_wt · safe.directory/core.commitGraph=false 프로세스 env 한정) release-package.ps1 -NoPeer [0/11]~[11/11] 원패스 exit 0:
+  [0/11] 태그 = HEAD 코드 · 미커밋 0 · [1/11] WebOnly · [2/11] sln(Default · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · [3/11] 전체 스위트 5,778 통과 + 9 건너뜀 · 실패 0(5,787) ·
+  [4/11] infra-scan 0(기준 117) · [5/11] 래칫 ≤40 · [6/11] liveArmed:false 소스 가드(이중키 조회 16 · 마스터 플래그 1) · [7/11] 봉인 38(verify-seal Sealed · 앵커 일치) · [8/11] zip · [9/11] verify-zip 무추출 일치 · masterSeal DE9C18E9… ·
+  verify-live-armed(조회 지점 21 · 위반 0) · [10/11] 매니페스트 · 핸드셰이크 Ok @c935679495 · 인터락 30(0x800000001FFFFFFF) · Tighten 6 · [11/11] self-contained win-x64 배포본 · 격리 기동 PID 11256 · HWND 0xA70FA8 실측.
+- 산출물: release-v12.18.93-GM.zip(2C784B47…) · StockManager-v12.18.93-Standalone-win-x64.zip(44F3035D…) · master-seal.txt · RELEASE_MANIFEST.json(liveArmedDefault false · sourceCommit c935679) · manifest.sig 외 15종.
+  사후 독립 대조(zip 항목 스트림 SHA-256 · 정확 경로 일치): 매니페스트 38 ↔ 봉인 zip 38/38 · 배포본 38/38 일치(불일치 0 · 누락 0) · zip 2종 .sha256 일치.
+- 태그 빌드 CLI 독립 재수검(worktree 제거 전): --verify-zip · --verify-live-armed · --verify-interlocks(30) · --verify-tighten(6) 전부 exit 0.
+- 이관: 메인 release/ 의 v12.18.92-GM 15종 → release/superseded-v12.18.92-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
+- 출하 상태(정직): 사전 가중치 = 세대 0 · 실측 아님 표기 · 리플레이 합성 표본은 실 에피소드 무오염 · 로컬 거시 추정은 차원 < 2 시 판정 보류 · 실 브로커 미연결(가짜 시세/잔고 0) ·
+  liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종(.claude 2종 · LiveWireKisLongSoakTests) 미스테이징 · 원격 푸시 없음.
