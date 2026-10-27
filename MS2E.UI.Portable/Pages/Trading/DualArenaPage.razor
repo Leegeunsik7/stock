@@ -41,7 +41,10 @@
      엔지니어링 진단 태그(접힘) ③ 추천 매트릭스(PlutoRecoMatrix · 전체/KRX/US/Upbit · 점수 분해 · 피드 미판독 = 대기 행) + 상세 근거 카드(접힘) ④ 아레나 대결 · 체결 타임라인.
      기존 판독 · 셀렉터 · 주입 6종 불변(순수 재배치 · 표시 컴포넌트 [Parameter] 만).
    [v12.18.89-DEV] UX 직관화 — 관제탑 최상단 [🧠 플루토 AI 라이브 브리핑](PlutoLiveBriefing 한 줄 자연어 요약) + 3대 시장 신호등(Upbit · KRX · US) ·
-     매트릭스 대기 행 = 신호등 기준 장외 문구. 판독 = 기존 주입 6종 스냅샷(KRX SessionOpen · US Phase · Upbit Tradable · 스웜 레인 · 거시 피드 문구) — 신규 주입 0. *@
+     매트릭스 대기 행 = 신호등 기준 장외 문구. 판독 = 기존 주입 6종 스냅샷(KRX SessionOpen · US Phase · Upbit Tradable · 스웜 레인 · 거시 피드 문구) — 신규 주입 0.
+   [v12.18.91-DEV] UX 결함 일괄 — ① 콕핏 입력/선택 상자 명시 대비색(#1F2937 / #F9FAFB · color: inherit 검정 상속 제거) ② 티켓별 [🔍 종목선택] → StockSearchModal
+     (420종 카탈로그 · 코스피/코스닥/미국주/업비트 탭 · 선택 가능 = 아레나 실수신 호가 종목뿐 · 미수신 = 비활성 행) ③ 헤더 [⚡ 원클릭 전 자산 데모 시세 주입] = 3대 포트 SelectSource(합성) 일괄.
+     페이지 주입 6종 불변(카탈로그 포트는 모달이 열릴 때만 주입). 거버너 ON/OFF 는 원래부터 싱글톤 엔진 플래그(페이지 재생성 무관 · 회귀 테스트로 고정). *@
 @implements IDisposable
 @inject IKrxArenaPort Port
 @inject IUsArenaPort UsPort
@@ -59,8 +62,14 @@
     <div class="ck-status">
         <span class="ck-pill fail" data-ck-armed="false">FAIL-CLOSED · 가상 원장</span>
         <span class="ck-pill @(Learning.IsWired ? "on" : "off")" data-ck-engine="@(Learning.IsWired ? "on" : "off")">플루토 인지 엔진: @(Learning.IsWired ? (Learning.Current.Running ? "활성" : "정지") : "미결선")</span>
+        @{ bool allDemo = AllDemoRequested(); }
+        <button class="ck-demo @(allDemo ? "on" : "")" data-demo-all="@(allDemo ? "on" : "off")" disabled="@allDemo" @onclick="StartAllDemo"
+                title="국내 · 미국 · 코인 3대 아레나 시세 출처를 합성 데모로 일괄 전환(실시세 아님 · '합성' 뱃지 표시 · 다음 정산에서 양 진영 원장 초기화)">
+            @(allDemo ? "⚡ 전 자산 합성 데모 시세 가동 중" : "⚡ 원클릭 전 자산 데모 시세 주입")
+        </button>
     </div>
 </div>
+@if (_demoMsg is not null) { <div class="ar-msg ck-demo-msg" role="status">@_demoMsg</div> }
 
 @{
     var govKrx = Port.Governance;
@@ -352,6 +361,7 @@
                         <option value="@q.Market">@Sym(q.Market) · 매수 @PriceRaw(q.BidRaw) / 매도 @PriceRaw(q.AskRaw) · 잔량 @CoinQty(q.BidQtyRaw) / @CoinQty(q.AskQtyRaw) @q.Coin</option>
                     }
                 </select>
+                <button class="ar-btn da-pick" data-pick="crypto" @onclick="() => OpenPicker(ArenaUniverseTab.Crypto)">🔍 종목선택</button>
                 <input class="da-cqty" type="number" min="0.00000001" step="0.0001" @bind="_coinQty" />
                 <span>코인</span>
                 <button class="ar-btn buy" disabled="@(cq.Count == 0)" @onclick="() => SubmitCrypto(1)">매수</button>
@@ -508,6 +518,7 @@ else if (_mode == ModeUs)
                         <option value="@q.Ticker">@Sym(q.Ticker) (@q.Exchange) · 매수 @Usd(q.BidCents) / 매도 @Usd(q.AskCents)</option>
                     }
                 </select>
+                <button class="ar-btn da-pick" data-pick="us" @onclick="() => OpenPicker(ArenaUniverseTab.Us)">🔍 종목선택</button>
                 <input class="da-uqty" type="number" min="1" @bind="_usQty" />
                 <span>주</span>
                 <button class="ar-btn buy" disabled="@(uq.Count == 0)" @onclick="() => SubmitUs(1)">매수</button>
@@ -663,6 +674,7 @@ else
                     <option value="@q.Symbol">@StockDisplayNameResolver.Display(q.Symbol) · 매수 @q.BidWon.ToString("N0") / 매도 @q.AskWon.ToString("N0")</option>
                 }
             </select>
+            <button class="ar-btn da-pick" data-pick="krx" @onclick="() => OpenPicker(ArenaUniverseTab.Kospi)">🔍 종목선택</button>
             <input class="da-qty" type="number" min="1" @bind="_qty" />
             <span>주</span>
             <button class="ar-btn buy" disabled="@(quotes.Count == 0)" @onclick="() => Submit(1)">매수</button>
@@ -704,6 +716,10 @@ else
 </div>
 }
 </section>
+@if (_pickOpen)
+{
+    <StockSearchModal InitialTab="@_pickTab" Quoted="@_pickQuoted" OnPick="PickStock" OnClose="() => _pickOpen = false" />
+}
 </div>
 
 @code {
@@ -739,6 +755,50 @@ else
     private long _drawn = -1;
     private int _renderInFlight;
     private System.Threading.Timer? _timer;
+
+    // [v12.18.91-DEV] 🔍 종목선택 모달 상태(열림 시 3대 포트 실수신 호가 1회 스냅샷 — 코드 → 호가 문구 · 미수신 = 모달이 선택 불가 렌더)
+    private bool _pickOpen;
+    private int _pickTab;
+    private Dictionary<string, string> _pickQuoted = new();
+    private string? _demoMsg;
+
+    private void OpenPicker(int tab)
+    {
+        var quoted = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var q in Port.Quotes()) quoted[q.Symbol.ToString("D6")] = "매수 " + q.BidWon.ToString("N0") + " / 매도 " + q.AskWon.ToString("N0") + "원";
+        foreach (var q in UsPort.Quotes()) quoted[q.Ticker] = "매수 " + Usd(q.BidCents) + " / 매도 " + Usd(q.AskCents);
+        foreach (var q in CryptoPort.Quotes()) quoted[q.Market] = "매수 " + PriceRaw(q.BidRaw) + " / 매도 " + PriceRaw(q.AskRaw);
+        _pickQuoted = quoted;
+        _pickTab = tab;
+        _pickOpen = true;
+    }
+
+    // 선택 = 해당 모드 전환 + 티켓 종목 바인딩만(접수 0 — 사용자가 수량 확인 후 매수/매도로 확정). 미수신 종목은 모달이 이미 차단.
+    private void PickStock(ArenaUniverseEntryView e)
+    {
+        _pickOpen = false;
+        if (!_pickQuoted.TryGetValue(e.Code, out var px)) return;
+        string text = "🔍 종목선택: " + e.Name + "(" + e.Code + ") · " + px + " — 수량 확인 후 매수/매도로 접수";
+        if (e.Tab == ArenaUniverseTab.Crypto) { SetMode(ModeCrypto); _market = e.Code; _cryptoMsg = text; }
+        else if (e.Tab == ArenaUniverseTab.Us) { SetMode(ModeUs); _ticker = e.Code; _usMsg = text; }
+        else if (long.TryParse(e.Code, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long sym)) { SetMode(ModeKrx); _symbol = sym; _msg = text; }
+    }
+
+    // [v12.18.91-DEV] ⚡ 원클릭 전 자산 데모 시세 — 3대 아레나 출처를 합성으로 일괄 요청(기존 탭 선택과 같은 경로 · '합성' 뱃지 · 실시세 위장 0).
+    private bool AllDemoRequested()
+        => Port.Feed.Requested == KrxArenaFeed.Synthetic && UsPort.Feed.Requested == UsArenaFeed.Synthetic && CryptoPort.Feed.Requested == CryptoArenaFeed.Synthetic;
+
+    private void StartAllDemo()
+    {
+        Select(KrxArenaFeed.Synthetic);
+        SelectUs(UsArenaFeed.Synthetic);
+        SelectCrypto(CryptoArenaFeed.Synthetic);
+        bool k = Port.Feed.Requested == KrxArenaFeed.Synthetic, u = UsPort.Feed.Requested == UsArenaFeed.Synthetic, c = CryptoPort.Feed.Requested == CryptoArenaFeed.Synthetic;
+        _demoMsg = k && u && c
+            ? "⚡ 국내 · 미국 · 코인 합성 데모 시세 주입 — 다음 정산에서 양 진영 원장 초기화 후 호가가 흐릅니다('합성' 뱃지 · 실시세 아님)"
+            : "일부 아레나는 데모 시세를 주입할 수 없습니다(" + (k ? "" : "국내 ") + (u ? "" : "미국 ") + (c ? "" : "코인 ") + "주입기 미결선)";
+        System.Threading.Volatile.Write(ref _drawn, -1);
+    }
 
     private void Select(int source)
     {
@@ -1216,6 +1276,11 @@ else
     .ck-status { display: flex; gap: 8px; flex-wrap: wrap; }
     .ck-pill { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 4px 10px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: #D1D5DB; }
     .ck-pill.fail { border-color: #7F1D1D; background: #1F0F12; color: #FCA5A5; } .ck-pill.on { border-color: #3730A3; color: #C7D2FE; } .ck-pill.off { color: #9CA3AF; }
+    /* [v12.18.91-DEV] 원클릭 전 자산 데모 시세 · 종목선택 버튼 */
+    .ck-demo { font-size: 12.5px; font-weight: 800; padding: 6px 14px; border-radius: 8px; border: 1px solid #B45309; background: #422006; color: #FDE68A; cursor: pointer; }
+    .ck-demo:hover:not(:disabled) { background: #713F12; } .ck-demo.on, .ck-demo:disabled { border-color: #374151; background: #1F2937; color: #FCD34D; cursor: default; }
+    .ck-demo-msg { display: block; margin: -4px 0 10px; }
+    .da-pick { white-space: nowrap; }
     .ck-card { background: #111827; border: 1px solid #1F2937; border-radius: 12px; padding: 12px 14px; margin: 0 0 12px; }
     .ck-card-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .ck-card-h h2 { font-size: 14px; font-weight: 700; color: #F3F4F6; letter-spacing: -.1px; }
@@ -1381,8 +1446,12 @@ else
     .da-empty { margin-bottom: 10px; }
     .da-pos { margin-top: 8px; } .da-pos th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; }
     .da-nopos { margin-top: 8px; }
-    .da-ticket select { background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; min-width: 260px; }
-    .da-ticket input { width: 90px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    /* [v12.18.91-DEV] 입력 시인성: color: inherit = 라이트 셸 잉크(검정) 상속 → 어두운 바탕 위 입력값 불가시. 콕핏 전 입력/선택 상자 명시 대비색 고정. */
+    .da-cockpit input:not([type=checkbox]):not([type=radio]), .da-cockpit select { background: #1F2937; color: #F9FAFB !important; border: 1px solid #374151; border-radius: 6px; padding: 4px 6px; caret-color: #F9FAFB; }
+    .da-cockpit input::placeholder { color: #6B7280; }
+    .da-cockpit select option { background: #1F2937; color: #F9FAFB; }
+    .da-ticket select { min-width: 260px; }
+    .da-ticket input { width: 90px; }
     .da-timeline { margin-top: 10px; }
     .da-closed { margin: 10px 0; } .da-closed-sum { margin: 2px 0 6px; }
     .da-closed-tbl th { text-align: left; font-size: 11px; color: var(--sub); font-weight: 400; } .da-closed-tbl td { font-variant-numeric: tabular-nums; }

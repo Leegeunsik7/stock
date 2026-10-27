@@ -4940,3 +4940,19 @@ Phase 1 감사 교정 · Phase 3 UI/DI 감사(ErrorBoundary 격리) · Phase 4·
 - 이관: 메인 release/ 의 v12.18.88-GM 15종 → release/superseded-v12.18.88-GM/. 신규 15종 복사(바이트 동일 15/15) · worktree 제거 · prune. 실행 중 MS2E.StockSuite.exe 0 · 패키징 로그 QuantumVault 참조 0.
 - 출하 상태(정직): 비토 목록 = 시세 판독 종목만 · 거시 피드(VIX · 10년물) · 파급 레인 미결선이면 리스크 통제관 비토 미발동(가짜 비토 0) ·
   liveArmed:false · 인터락 30 · Tighten 6 무변경 · QuantumVault 미접근(-NoPeer) · 타 세션 파일 3종 미스테이징 · 원격 푸시 없음.
+
+## 216. v12.18.91-DEV — DualArena UX 결함 일괄: 입력 시인성 · 🔍 종목선택 모달 · 원클릭 전 자산 데모 시세 · 거버너 상태 유지 회귀 고정 (2026-10-27)
+
+- 선행: f13f9c7(§215 v12.18.90-GM). 오더 전제 검증: ① 입력 불가시 = 실재(.da-ticket · /arena .ar-ctl/.ar-row/.ar-iceberg/.ar-replay 가 color: inherit → 라이트 셸 검정 잉크 상속).
+  ② 거버너 리셋 = 코드상 재현 불가 — ON/OFF 는 원래부터 싱글톤 엔진 _governed(Volatile) 플래그이고 페이지는 포트 판독만(로컬 변수 0) → 별도 PlutoGovernorStateService 신설 시
+  진실원 이중화 위험이라 미신설 · 대신 '페이지 재생성 후 ON 유지' 회귀 테스트로 고정. ③ 수량 외 지정가/노출수량/자본금 입력은 /arena(ArenaBattleView) 소재 → 함께 수정.
+- UI: 콕핏 전 입력/선택 상자 #1F2937 / #F9FAFB !important / #374151(+caret · placeholder · option · disabled 회색) · /arena 4개 규칙 동일 대비색.
+  StockSearchModal(신규 순수 RCL): [코스피 / 코스닥 / 미국주 / 업비트] 탭 + 이름·코드 검색 · 국내/미국/코인 티켓마다 [🔍 종목선택] → 선택 = 모드 전환 + 티켓 종목 바인딩 + 실호가 문구(접수 0).
+  ★정직: 선택 가능 = 아레나가 실제 수신 중인 호가 종목뿐(수신 종목 우선 정렬) · 미수신 = '시세 미수신 · 선택 불가' 비활성 행(가짜 현재가 0) · 카탈로그 미결선 = 정직 안내.
+  헤더 [⚡ 원클릭 전 자산 데모 시세 주입] = 3대 포트 SelectSource(합성) 일괄(기존 탭과 같은 경로 · '합성' 뱃지 · 다음 정산 원장 초기화) · 가동 중 = 비활성 · 주입기 미결선 = 시장별 안내.
+- 포트/어댑터: Ports/Trading/ArenaUniversePort.cs(IArenaUniversePort · ArenaUniverseTab · ArenaUniverseEntryView · UnwiredArenaUniversePort) ·
+  Adapters/ArenaUniversePortAdapter(PlutoMultiAssetUniverseCatalog 420종 → 4탭 · 생성 1회 캐시 · 메타데이터만) · BlazorHomeForm 싱글톤 등록. DualArenaPage 주입 6종 불변(카탈로그 = 모달 주입).
+- 테스트: DualArenaUxPolishTests 9개 신규(어댑터 420/4탭 · 필터 · 피커 바인딩/미수신 차단/검색/닫기 · 미결선 · 데모 일괄/미결선 · 거버너 재생성 유지 · CSS 대비색 · 모달 RCL 순수성).
+- 검증: WebOnly → sln(Default · Portable · PrimesBench · KiwoomProxy x86 · KiwoomComShim) Release -warnaserror 0W/0E · 전체 스위트 5,742 통과 / 9 건너뜀 / 0 실패(5,751) ·
+  infra-scan 0(기준 117) · 래칫 ≤40(PureShellFitness 통과). 체결/정산 핫패스 무변경 δ=0 · 인터락 30 무변경 · liveArmed:false · QuantumVault 미접근 · 타 세션 파일 3종 미스테이징.
+- 정직 한계: 국내 데모 = 합성 대형주 5종 · 미국 = 빅테크 5종 · 코인 = 4종만 호가 생성 → 420종 중 선택 가능 종목은 아레나 유니버스 범위(엔진 확장 별도) · 실 앱 화면 미실측(bUnit 검증).

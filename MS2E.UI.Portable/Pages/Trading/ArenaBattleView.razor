@@ -611,7 +611,10 @@ else
 <style>
     .ar-note { padding: 10px 14px; color: var(--sub); }
     .ar-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 12px; }
-    .ar-ctl input, .ar-row input { width: 130px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    /* [v12.18.91-DEV] 입력 시인성: color: inherit 는 라이트 셸 위에서 검정 잉크를 상속 → 어두운 바탕 위 검정 글씨(입력값 불가시). 명시 대비색 고정. */
+    .ar-ctl input, .ar-row input { width: 130px; background: #1F2937; color: #F9FAFB !important; border: 1px solid #374151; border-radius: 6px; padding: 4px 6px; caret-color: #F9FAFB; }
+    .ar-ctl input:disabled, .ar-row input:disabled, .ar-iceberg input:disabled { color: #9CA3AF !important; opacity: .7; }
+    .ar-ctl input::placeholder, .ar-row input::placeholder { color: #6B7280; }
     .ar-state { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; }
     .ar-state.s1 { background: #2e7d32; color: #fff; } .ar-state.s2 { background: #6a1b9a; color: #fff; }
     .ar-btn { border: 0; border-radius: 6px; padding: 5px 12px; font-weight: 600; cursor: pointer; color: #fff; background: #3a3f4b; }
@@ -640,7 +643,7 @@ else
     .ar-speed.on { background: #4dd0e1; color: #111; font-weight: 700; }
     .ar-progress { height: 6px; background: #2a3040; border-radius: 3px; margin: 8px 0 4px; overflow: hidden; } .ar-progress i { display: block; height: 100%; background: #4dd0e1; }
     .ar-rec { padding: 2px 8px; border-radius: 6px; font-weight: 600; background: #3a3f4b; color: #ccc; } .ar-rec.on { background: #E53935; color: #fff; }
-    .ar-replay select { background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; max-width: 360px; }
+    .ar-replay select { background: #1F2937; color: #F9FAFB !important; border: 1px solid #374151; border-radius: 6px; padding: 4px 6px; max-width: 360px; }
     .ar-ticket { margin-top: 10px; }
     .ar-console { margin-top: 10px; outline: none; } .ar-console:focus { box-shadow: 0 0 0 2px #4dd0e1; }
     .ar-ladder { width: 100%; max-width: 560px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -660,7 +663,7 @@ else
     .ar-gauge .bar.dev { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); } .ar-gauge .bar.imb { background: linear-gradient(90deg, #1E88E5 0%, #2a3040 50%, #E53935 100%); }
     .ar-gauge .bar i { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; background: #fff; border-radius: 2px; }
     .ar-gauge .bar em { position: absolute; top: 0; bottom: 0; width: 1px; background: #f9a825; }
-    .ar-iceberg { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; } .ar-iceberg input.ar-ice-peak { width: 90px; background: #0f1219; color: inherit; border: 1px solid #2a3040; border-radius: 6px; padding: 4px 6px; }
+    .ar-iceberg { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; } .ar-iceberg input.ar-ice-peak { width: 90px; background: #1F2937; color: #F9FAFB !important; border: 1px solid #374151; border-radius: 6px; padding: 4px 6px; }
     .ar-console.locked { opacity: .5; pointer-events: none; }
     .ar-freeze { position: fixed; inset: 0; background: rgba(229, 57, 53, .14); box-shadow: inset 0 0 120px rgba(229, 57, 53, .55); pointer-events: none; z-index: 50; }
     .ar-frozen { border: 2px solid #E53935; background: rgba(229, 57, 53, .12); display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; font-size: 12.5px; position: relative; z-index: 51; }

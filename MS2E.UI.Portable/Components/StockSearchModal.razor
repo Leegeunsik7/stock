@@ -1,0 +1,116 @@
+@* [v12.18.91-DEV] 🔍 종목선택 모달 — 순수 RCL(엔진 참조 0 · IArenaUniversePort 판독만).
+   탭 [코스피 / 코스닥 / 미국주 / 업비트] × 이름·코드 검색 → 행 클릭 = OnPick(코드 · 이름) — 부모 티켓이 종목/현재가를 바인딩한다.
+   ★정직: 선택 가능 = 부모가 넘긴 Quoted(아레나가 실제 수신 중인 호가 · 코드 → 호가 문구)에 있는 종목뿐.
+     미수신 종목 = '시세 미수신 · 선택 불가' 비활성 행(가짜 현재가 0 · 거부될 주문 바인딩 0). 카탈로그 미결선 = 정직 안내.
+   콜드 경로(열림 시 렌더 · 입력 시 필터) — 체결 핫패스 무관. *@
+@inject IArenaUniversePort Universe
+
+<div class="ssm-scrim" @onclick="Close">
+    <div class="ssm-modal" role="dialog" aria-label="종목 선택" data-ssm-tab="@_tab" @onclick:stopPropagation="true">
+        <div class="ssm-head">
+            <div class="ssm-title">🔍 종목선택 <small>마스터 유니버스 @(Universe.TotalCount)종 · 선택 가능 = 아레나 호가 수신 종목</small></div>
+            <button class="ssm-x" @onclick="Close" aria-label="닫기">✕</button>
+        </div>
+        <div class="ssm-tabs" role="tablist">
+            @for (int t = 0; t < ArenaUniverseTab.Count; t++)
+            {
+                int tab = t;
+                <button class="ssm-tab @(tab == _tab ? "on" : "")" role="tab" data-ssm-tabbtn="@tab" @onclick="() => _tab = tab">@ArenaUniverseTab.Label(tab)</button>
+            }
+        </div>
+        <input class="ssm-q" placeholder="종목명 또는 코드 검색 (예: 삼성전자 · 005930 · NVDA · 비트코인)" @bind="_q" @bind:event="oninput" />
+        @{
+            var all = Universe.Entries(_tab);
+            var rows = Filter(all, _q);
+            int live = 0;
+            foreach (var r in all) if (Quoted.ContainsKey(r.Code)) live++;
+        }
+        <div class="ssm-count" data-ssm-live="@live" data-ssm-total="@all.Count">@ArenaUniverseTab.Label(_tab) @(all.Count)종 · 호가 수신(선택 가능) @(live)종 · 검색 결과 @(rows.Count)종</div>
+        <div class="ssm-list">
+            @if (!Universe.IsWired)
+            {
+                <div class="ssm-empty">종목 유니버스 미결선 — 호스트 카탈로그가 연결되지 않았습니다.</div>
+            }
+            else if (rows.Count == 0)
+            {
+                <div class="ssm-empty">검색 결과가 없습니다.</div>
+            }
+            else
+            {
+                @foreach (var r in rows)
+                {
+                    var e = r;
+                    if (Quoted.TryGetValue(e.Code, out var px))
+                    {
+                        <button class="ssm-row live" data-ssm-code="@e.Code" @onclick="() => Pick(e)">
+                            <span class="ssm-name">@e.Name</span><span class="ssm-code">@e.Code</span><span class="ssm-seg">@e.Segment</span><span class="ssm-px">@px</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="ssm-row idle" data-ssm-code="@e.Code" aria-disabled="true" title="아레나가 이 종목의 호가를 수신하지 않아 가상 주문을 낼 수 없습니다">
+                            <span class="ssm-name">@e.Name</span><span class="ssm-code">@e.Code</span><span class="ssm-seg">@e.Segment</span><span class="ssm-px">시세 미수신 · 선택 불가</span>
+                        </div>
+                    }
+                }
+            }
+        </div>
+        <div class="ssm-foot">시세가 비어 있으면 상단 [⚡ 원클릭 전 자산 데모 시세 주입] 또는 각 아레나의 '합성 시세(데모)'를 선택하세요(합성 시세는 '합성' 뱃지로 표시됩니다).</div>
+    </div>
+</div>
+
+@code {
+    /// <summary>처음 열 탭(ArenaUniverseTab).</summary>
+    [Parameter] public int InitialTab { get; set; }
+    /// <summary>아레나 실수신 호가(코드 → 호가 문구). 없는 코드 = 선택 불가.</summary>
+    [Parameter] public IReadOnlyDictionary<string, string> Quoted { get; set; } = new Dictionary<string, string>();
+    [Parameter] public EventCallback<ArenaUniverseEntryView> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private int _tab;
+    private string _q = "";
+
+    protected override void OnInitialized() => _tab = ArenaUniverseTab.Valid(InitialTab) ? InitialTab : ArenaUniverseTab.Kospi;
+
+    /// <summary>이름 · 코드 부분일치(대소문자 무시) · 호가 수신 종목 우선(카탈로그 순서 유지).</summary>
+    public static List<ArenaUniverseEntryView> Filter(IReadOnlyList<ArenaUniverseEntryView> all, string? q, IReadOnlyDictionary<string, string>? quoted = null)
+    {
+        string s = q?.Trim() ?? "";
+        var hit = new List<ArenaUniverseEntryView>(all.Count);
+        foreach (var e in all)
+            if (s.Length == 0 || e.Name.Contains(s, StringComparison.OrdinalIgnoreCase) || e.Code.Contains(s, StringComparison.OrdinalIgnoreCase)) hit.Add(e);
+        if (quoted is null || quoted.Count == 0) return hit;
+        var ordered = new List<ArenaUniverseEntryView>(hit.Count);
+        foreach (var e in hit) if (quoted.ContainsKey(e.Code)) ordered.Add(e);
+        foreach (var e in hit) if (!quoted.ContainsKey(e.Code)) ordered.Add(e);
+        return ordered;
+    }
+
+    private List<ArenaUniverseEntryView> Filter(IReadOnlyList<ArenaUniverseEntryView> all, string? q) => Filter(all, q, Quoted);
+
+    private Task Pick(ArenaUniverseEntryView e) => Quoted.ContainsKey(e.Code) ? OnPick.InvokeAsync(e) : Task.CompletedTask;
+
+    private Task Close() => OnClose.InvokeAsync();
+}
+
+<style>
+    .ssm-scrim { position: fixed; inset: 0; background: rgba(3, 7, 18, .72); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .ssm-modal { width: min(720px, 94vw); max-height: 84vh; display: flex; flex-direction: column; gap: 8px; background: #111827; color: #E5E7EB; border: 1px solid #374151; border-radius: 12px; padding: 14px 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, .5); }
+    .ssm-head { display: flex; align-items: center; justify-content: space-between; }
+    .ssm-title { font-size: 15px; font-weight: 700; } .ssm-title small { font-size: 11.5px; font-weight: 400; color: #9CA3AF; margin-left: 6px; }
+    .ssm-x { background: transparent; border: 0; color: #9CA3AF; font-size: 16px; cursor: pointer; }
+    .ssm-tabs { display: flex; gap: 6px; }
+    .ssm-tab { font-size: 12.5px; font-weight: 700; padding: 5px 14px; border-radius: 8px; border: 1px solid #374151; background: #1F2937; color: #9CA3AF; cursor: pointer; }
+    .ssm-tab.on { color: #fff; border-color: #6366F1; background: #1e1b4b; }
+    .ssm-q { background: #1F2937; color: #F9FAFB !important; border: 1px solid #374151; border-radius: 8px; padding: 7px 10px; font-size: 13px; caret-color: #F9FAFB; }
+    .ssm-q::placeholder { color: #6B7280; }
+    .ssm-count { font-size: 11.5px; color: #9CA3AF; }
+    .ssm-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; min-height: 120px; }
+    .ssm-row { display: grid; grid-template-columns: 1.4fr .8fr .8fr 1.6fr; gap: 8px; align-items: center; text-align: left; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; border: 1px solid transparent; background: transparent; color: inherit; }
+    .ssm-row.live { cursor: pointer; } .ssm-row.live:hover { background: #1F2937; border-color: #374151; }
+    .ssm-row.idle { color: #6B7280; }
+    .ssm-name { font-weight: 600; } .ssm-code { font-family: ui-monospace, Consolas, monospace; color: #9CA3AF; } .ssm-seg { font-size: 11px; color: #9CA3AF; }
+    .ssm-row.live .ssm-px { color: #F9FAFB; font-variant-numeric: tabular-nums; }
+    .ssm-empty { padding: 18px; color: #9CA3AF; text-align: center; }
+    .ssm-foot { font-size: 11px; color: #6B7280; }
+</style>

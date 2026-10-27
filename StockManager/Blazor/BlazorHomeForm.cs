@@ -1743,6 +1743,8 @@ namespace StockManager.Blazor
             // [v12.18.69-DEV] 토글 영속화 — /dualarena 토글 → IArenaPreferencePort → 같은 DB 설정 키(고정 키 1개 · 비동기 · 연속 토글 최종값 수렴).
             //   재기동 시 위 cfg.GetBool 이 저장값을 읽어 복원(환경변수 → DB 설정 → 기본 true). UiSettingWriteGuard 허용 목록 무변경(임의 키 기입 경로 0).
             services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaPreferencePort>(new StockManager.Adapters.ArenaPreferenceAdapter(db));
+            // [v12.18.91-DEV] /dualarena [🔍 종목선택] 모달 — 420종 카탈로그 메타데이터(코드 · 이름) 판독 전용. 선택 가능 = 아레나 실수신 호가 종목뿐(페이지 판정).
+            services.AddSingleton<MS2E.UI.Portable.Ports.Trading.IArenaUniversePort>(new StockManager.Adapters.ArenaUniversePortAdapter());
             // [v12.18.72-DEV] 플루토 자동 미러링 선호 복원 — `Arena.{Krx|Us|Crypto}.AutoCopyEnabled`(기본 꺼짐) · `.AutoCopyRatio`(기본 1.0) → 3대 아레나 카피 엔진 SetAutoCopy.
             //   배율 해석 불가/범위 밖 = 복원 생략(OFF 유지 · fail-closed). 복제 목적지 = 휴먼 가상 원장뿐(송출 경로 0).
             StockManager.Adapters.ArenaPreferenceAdapter.RestoreAutoCopy(cfg, MS2E.UI.Portable.Ports.Trading.ArenaPreferenceArena.Krx, krxArena.SetAutoCopy);
